@@ -87,6 +87,24 @@ pub struct ReportRequest {
     pub channel: String,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum GitOperation {
+    Status,
+    Diff,
+    Log,
+    Add,
+    CommitAmendNoEdit,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitRequest {
+    pub project: String,
+    pub operation: GitOperation,
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
 fn default_channel() -> String {
     "omo".to_string()
 }
@@ -156,6 +174,22 @@ pub struct ReportResponse {
     pub message_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GitResponse {
+    pub success: bool,
+    pub project: String,
+    pub operation: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_tail: Option<String>,
+    pub truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -2537,6 +2571,105 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
 }
 
 #[handler]
+pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(GitResponse {
+            success: false,
+            project: String::new(),
+            operation: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            stdout_tail: None,
+            stderr_tail: None,
+            truncated: false,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let body: GitRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(GitResponse {
+                success: false,
+                project: String::new(),
+                operation: String::new(),
+                exit_code: None,
+                duration_ms: 0,
+                stdout_tail: None,
+                stderr_tail: None,
+                truncated: false,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(git_error(&body.project, &body.operation, e)));
+            return;
+        }
+    };
+    if matches!(
+        body.operation,
+        GitOperation::Add | GitOperation::CommitAmendNoEdit
+    ) && !proj.allow_patch()
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(git_error(
+            &body.project,
+            &body.operation,
+            "Git mutation is not allowed for this project".to_string(),
+        )));
+        return;
+    }
+    let cmd = match git_command_for_request(&body) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(git_error(&body.project, &body.operation, e)));
+            return;
+        }
+    };
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
+    let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
+    let truncated = stdout_trunc || stderr_trunc;
+    let success = code == 0;
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "runProjectGit",
+        project = %body.project,
+        git_operation = git_operation_name(&body.operation),
+        executor = if proj.is_ssh() { "ssh" } else { "local" },
+        success = success,
+        exit_code = code,
+        duration_ms = duration_ms,
+        ssh_calls = if proj.is_ssh() { 1 } else { 0 },
+        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+        "codex_git_completed"
+    );
+    res.render(Json(GitResponse {
+        success,
+        project: body.project,
+        operation: git_operation_name(&body.operation).to_string(),
+        exit_code: Some(code),
+        duration_ms,
+        stdout_tail: Some(stdout_tail),
+        stderr_tail: Some(stderr_tail),
+        truncated,
+        error: if success {
+            None
+        } else {
+            Some("git operation failed".to_string())
+        },
+    }));
+}
+
+#[handler]
 pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(projects) = get_projects(depot) else {
         res.render(Json(CheckResponse {
@@ -2823,6 +2956,80 @@ mod tests {
         assert!(is_sensitive_path(".git/config"));
         assert!(!is_sensitive_path("src/main.rs"));
         assert!(!is_sensitive_path("README.md"));
+    }
+
+    #[test]
+    fn test_git_command_status_and_diff_are_fixed() {
+        let status = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::Status,
+            paths: vec![],
+        };
+        assert_eq!(
+            git_command_for_request(&status).unwrap(),
+            "git status --short"
+        );
+        let diff = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::Diff,
+            paths: vec!["src/main.rs".to_string()],
+        };
+        assert_eq!(
+            git_command_for_request(&diff).unwrap(),
+            "git diff -- 'src/main.rs'"
+        );
+    }
+
+    #[test]
+    fn test_git_command_amend_is_fixed_and_no_verify() {
+        let request = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::CommitAmendNoEdit,
+            paths: vec!["src/codex.rs".to_string()],
+        };
+        let cmd = git_command_for_request(&request).unwrap();
+        assert!(cmd.contains("git add -- 'src/codex.rs'"));
+        assert!(cmd.contains("git diff --cached --quiet -- 'src/codex.rs'"));
+        assert!(cmd.contains("No staged changes to amend"));
+        assert!(cmd.contains("git commit --amend --no-edit --no-verify"));
+    }
+
+    #[test]
+    fn test_git_paths_reject_too_many_paths() {
+        let paths = (0..=MAX_GIT_PATHS)
+            .map(|i| format!("src/file{i}.rs"))
+            .collect::<Vec<_>>();
+        let err = validate_git_paths(&paths).unwrap_err();
+        assert!(err.contains("too many paths"));
+        assert!(err.contains("50"));
+    }
+
+    #[test]
+    fn test_git_paths_reject_too_long_path() {
+        let long_path = format!("src/{}.rs", "a".repeat(MAX_GIT_PATH_LEN));
+        let err = validate_git_paths(&[long_path]).unwrap_err();
+        assert!(err.contains("path is too long"));
+        assert!(err.contains("512"));
+    }
+
+    #[test]
+    fn test_git_command_rejects_sensitive_paths() {
+        let request = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::Add,
+            paths: vec![".env".to_string()],
+        };
+        assert!(git_command_for_request(&request).is_err());
+    }
+
+    #[test]
+    fn test_git_mutating_commands_require_paths() {
+        let request = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::CommitAmendNoEdit,
+            paths: vec![],
+        };
+        assert!(git_command_for_request(&request).is_err());
     }
 
     #[test]
@@ -3218,6 +3425,86 @@ mod tests {
         let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(result["success"], false);
         assert!(result["error"].as_str().unwrap().contains("sensitive"));
+    }
+}
+
+fn git_operation_name(operation: &GitOperation) -> &'static str {
+    match operation {
+        GitOperation::Status => "status",
+        GitOperation::Diff => "diff",
+        GitOperation::Log => "log",
+        GitOperation::Add => "add",
+        GitOperation::CommitAmendNoEdit => "commit_amend_no_edit",
+    }
+}
+
+fn git_error(project: &str, operation: &GitOperation, error: String) -> GitResponse {
+    GitResponse {
+        success: false,
+        project: project.to_string(),
+        operation: git_operation_name(operation).to_string(),
+        exit_code: None,
+        duration_ms: 0,
+        stdout_tail: None,
+        stderr_tail: None,
+        truncated: false,
+        error: Some(error),
+    }
+}
+
+const MAX_GIT_PATHS: usize = 50;
+const MAX_GIT_PATH_LEN: usize = 512;
+
+fn validate_git_paths(paths: &[String]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("paths cannot be empty for this git operation".to_string());
+    }
+    if paths.len() > MAX_GIT_PATHS {
+        return Err(format!("too many paths; maximum is {}", MAX_GIT_PATHS));
+    }
+    for path in paths {
+        if path.chars().count() > MAX_GIT_PATH_LEN {
+            return Err(format!(
+                "path is too long; maximum is {} characters",
+                MAX_GIT_PATH_LEN
+            ));
+        }
+        validate_edit_path(path)?;
+    }
+    Ok(())
+}
+
+fn shell_join_paths(paths: &[String]) -> String {
+    paths
+        .iter()
+        .map(|p| shell_escape(p))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn git_command_for_request(body: &GitRequest) -> Result<String, String> {
+    match body.operation {
+        GitOperation::Status => Ok("git status --short".to_string()),
+        GitOperation::Diff => {
+            if body.paths.is_empty() {
+                Ok("git diff".to_string())
+            } else {
+                validate_git_paths(&body.paths)?;
+                Ok(format!("git diff -- {}", shell_join_paths(&body.paths)))
+            }
+        }
+        GitOperation::Log => Ok("git log --oneline -n 20".to_string()),
+        GitOperation::Add => {
+            validate_git_paths(&body.paths)?;
+            Ok(format!("git add -- {}", shell_join_paths(&body.paths)))
+        }
+        GitOperation::CommitAmendNoEdit => {
+            validate_git_paths(&body.paths)?;
+            let paths = shell_join_paths(&body.paths);
+            Ok(format!(
+                "git add -- {paths} && if git diff --cached --quiet -- {paths}; then echo 'No staged changes to amend' >&2; exit 1; fi; git commit --amend --no-edit --no-verify"
+            ))
+        }
     }
 }
 

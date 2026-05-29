@@ -224,6 +224,30 @@
         },
         "required": ["success", "changed_files", "diff", "warnings"]
       },
+      "GitRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "operation": {"type": "string", "enum": ["status", "diff", "log", "add", "commit_amend_no_edit"], "description": "Controlled git operation to run"},
+          "paths": {"type": "array", "items": {"type": "string"}, "description": "Relative paths for diff/add/commit_amend_no_edit. Required for add and commit_amend_no_edit."}
+        },
+        "required": ["project", "operation"]
+      },
+      "GitResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "project": {"type": "string"},
+          "operation": {"type": "string"},
+          "exit_code": {"type": "integer", "nullable": true},
+          "duration_ms": {"type": "integer"},
+          "stdout_tail": {"type": "string", "nullable": true},
+          "stderr_tail": {"type": "string", "nullable": true},
+          "truncated": {"type": "boolean"},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "project", "operation", "duration_ms", "truncated"]
+      },
       "CheckRequest": {
         "type": "object",
         "properties": {
@@ -436,6 +460,23 @@
           "400": {"description": "Bad request"},
           "403": {"description": "Edit not allowed or unsafe path"},
           "413": {"description": "Edit payload too large"}
+        }
+      }
+    },
+    "/api/codex/git": {
+      "post": {
+        "operationId": "runProjectGit",
+        "summary": "Run a controlled git operation",
+        "description": "Run fixed git operations on a whitelisted project. Supports status, diff, log, add, and commit_amend_no_edit. Does not expose arbitrary shell.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Git result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Git mutation not allowed"}
         }
       }
     },

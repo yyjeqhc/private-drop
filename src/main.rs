@@ -726,6 +726,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
         "/api/codex/apply_patch": spec["paths"]["/api/codex/apply_patch"].clone(),
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+        "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
         "/api/codex/report": spec["paths"]["/api/codex/report"].clone()
     });
@@ -744,6 +745,8 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "WriteFileEdit": spec["components"]["schemas"]["WriteFileEdit"].clone(),
         "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
         "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
+        "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
         "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
         "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
@@ -754,6 +757,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "ContextBatchRequest",
         "PatchRequest",
         "EditRequest",
+        "GitRequest",
         "CheckRequest",
         "ReportRequest",
     ] {
@@ -1216,6 +1220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("context_batch").post(codex::codex_context_batch))
                 .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
                 .push(Router::with_path("edit").post(codex::codex_edit))
+                .push(Router::with_path("git").post(codex::codex_git))
                 .push(Router::with_path("check").post(codex::codex_check))
                 .push(Router::with_path("report").post(codex::codex_report)),
         );

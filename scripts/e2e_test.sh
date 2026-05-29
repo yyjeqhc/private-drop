@@ -472,6 +472,8 @@ assert_http_code "POST /api/codex/apply_patch without token returns 401" "401" "
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","patch":"x"}'
 assert_http_code "POST /api/codex/check without token returns 401" "401" "$CODEX/check" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","suite":"test"}'
+assert_http_code "POST /api/codex/git without token returns 401" "401" "$CODEX/git" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","operation":"status"}'
 assert_http_code "POST /api/codex/report without token returns 401" "401" "$CODEX/report" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","status":"completed","title":"t","summary":"s"}'
 
@@ -562,6 +564,34 @@ BATCH_HAS_LINE1=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.st
 assert_eq "Context batch success" "True" "$BATCH_SUCCESS"
 assert_eq "Context batch has 3 results" "3" "$BATCH_COUNT"
 assert_eq "Context batch read_file contains line1" "yes" "$BATCH_HAS_LINE1"
+
+# --- 24c. Codex: runProjectGit ---
+echo ""
+echo "--- 24c. Codex Git ---"
+RESP=$(curl -sf -X POST "$CODEX/git" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","operation":"status"}')
+GIT_SUCCESS=$(pyget "$RESP" "success")
+GIT_OPERATION=$(pyget "$RESP" "operation")
+assert_eq "Git status success" "True" "$GIT_SUCCESS"
+assert_eq "Git status operation" "status" "$GIT_OPERATION"
+RESP=$(curl -s -X POST "$CODEX/git" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","operation":"add","paths":[".env"]}')
+GIT_SUCCESS=$(pyget "$RESP" "success")
+GIT_ERROR=$(pyget "$RESP" "error")
+assert_eq "Git add .env blocked" "False" "$GIT_SUCCESS"
+assert_contains "Git add error mentions sensitive" "sensitive" "$GIT_ERROR"
+RESP=$(curl -s -X POST "$CODEX/git" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","operation":"commit_amend_no_edit","paths":["README.md"]}')
+GIT_SUCCESS=$(pyget "$RESP" "success")
+GIT_STDERR=$(pyget "$RESP" "stderr_tail")
+assert_eq "Git amend with no staged changes fails" "False" "$GIT_SUCCESS"
+assert_contains "Git amend no changes stderr" "No staged changes to amend" "$GIT_STDERR"
 
 # --- 25. Codex: applyProjectPatch ---
 echo ""
@@ -664,11 +694,13 @@ RESP=$(curl -sf "$BASE/openapi.json")
 HAS_CTX=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'getProjectContext' in sys.stdin.read() else 'no')")
 HAS_PATCH=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectPatch' in sys.stdin.read() else 'no')")
 HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
+HAS_GIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectGit' in sys.stdin.read() else 'no')")
 HAS_CHECK=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCheck' in sys.stdin.read() else 'no')")
 HAS_REPORT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'writeProjectReport' in sys.stdin.read() else 'no')")
 assert_contains "OpenAPI has getProjectContext" "yes" "$HAS_CTX"
 assert_contains "OpenAPI has applyProjectPatch" "yes" "$HAS_PATCH"
 assert_contains "OpenAPI has applyProjectEdit" "yes" "$HAS_EDIT"
+assert_contains "OpenAPI has runProjectGit" "yes" "$HAS_GIT"
 assert_contains "OpenAPI has runProjectCheck" "yes" "$HAS_CHECK"
 assert_contains "OpenAPI has writeProjectReport" "yes" "$HAS_REPORT"
 # Verify new edit schemas are present
@@ -682,7 +714,9 @@ assert_contains "OpenAPI still has createMessage" "yes" "$HAS_CREATE"
 # Also check codex-only OpenAPI endpoint
 RESP=$(curl -sf "$BASE/codex-openapi.json")
 HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
+HAS_GIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectGit' in sys.stdin.read() else 'no')")
 assert_contains "codex-openapi.json has applyProjectEdit" "yes" "$HAS_EDIT"
+assert_contains "codex-openapi.json has runProjectGit" "yes" "$HAS_GIT"
 HAS_ONEOF=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'oneOf' in sys.stdin.read() else 'no')")
 assert_contains "codex-openapi.json has oneOf schemas" "yes" "$HAS_ONEOF"
 

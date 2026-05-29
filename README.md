@@ -649,3 +649,28 @@ Example:
 ```
 
 The response contains `results`, one normal context response per request, plus `duration_ms` and `ssh_calls`. Batches are limited to 20 items. This reduces GPT Action round trips; SSH projects still execute one remote command per item, but reuse ControlMaster connections when configured.
+
+
+## Codex controlled Git API
+
+`POST /api/codex/git` exposes a small fixed set of Git operations without opening an arbitrary shell. It is intended for safe Codex maintenance tasks such as checking status or amending the current commit after tests pass.
+
+Supported operations:
+
+- `status`: runs `git status --short`
+- `diff`: runs `git diff`, optionally restricted to `paths`
+- `log`: runs `git log --oneline -n 20`
+- `add`: runs `git add -- <paths>`; requires project patch permission
+- `commit_amend_no_edit`: runs `git add -- <paths> && git commit --amend --no-edit --no-verify`; requires project patch permission
+
+Example:
+
+```json
+{
+  "project": "private-drop-v4",
+  "operation": "commit_amend_no_edit",
+  "paths": ["src/codex.rs"]
+}
+```
+
+Paths are relative to the project root and use the same sensitive path checks as the edit API. `.env`, `.git`, `target`, `node_modules`, private key paths, absolute paths, and `..` traversal are rejected. The API does not accept arbitrary Git subcommands or shell snippets.
