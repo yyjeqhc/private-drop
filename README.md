@@ -611,3 +611,21 @@ previous one-SSH-process-per-call behavior.
 For SSH projects, `getProjectContext(mode="overview")` is batched into one SSH call that gathers
 the branch, `git status --short`, allowed checks, and important-file presence in a single remote
 command.
+
+
+## Codex API performance tracing
+
+Codex operations emit lightweight structured tracing logs under the `codex.metrics` target. These logs are intended to help compare SSH executor latency before and after connection reuse or batching changes without changing the public JSON response schema.
+
+Examples of logged fields include:
+
+- `operation`: `getProjectContext`, `runProjectCheck`, or `applyProjectEdit`
+- `project`
+- `mode` or `suite` where applicable
+- `executor`: `local` or `ssh`
+- `success`
+- `duration_ms`
+- `ssh_calls`
+- `control_master`
+
+For SSH projects, `getProjectContext(mode="overview")` should report `ssh_calls=1` because overview is batched into a single remote command. `read_file`, `search`, `git_status`, `git_diff`, `check`, and `edit` also log their per-request duration so you can identify remaining slow operations.

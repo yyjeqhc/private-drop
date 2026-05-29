@@ -1317,6 +1317,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             return;
         }
     };
+    let request_start = Instant::now();
     let proj = match projects.get_project(&body.project) {
         Ok(p) => p,
         Err(e) => {
@@ -1431,6 +1432,22 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 }
             }
         };
+        let ssh_calls = match resp.mode.as_str() {
+            "overview" | "tree" | "search" | "read_file" | "git_status" | "git_diff" => 1,
+            _ => 0,
+        };
+        tracing::info!(
+            target: "codex.metrics",
+            operation = "getProjectContext",
+            project = %resp.project,
+            mode = %resp.mode,
+            executor = "ssh",
+            success = resp.success,
+            duration_ms = request_start.elapsed().as_millis() as u64,
+            ssh_calls = ssh_calls,
+            control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+            "codex_context_completed"
+        );
         res.render(Json(resp));
         return;
     }
@@ -1869,6 +1886,19 @@ pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Respons
     let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
     let truncated = stdout_trunc || stderr_trunc;
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "runProjectCheck",
+        project = %body.project,
+        suite = %body.suite,
+        executor = if proj.is_ssh() { "ssh" } else { "local" },
+        success = code == 0,
+        exit_code = code,
+        duration_ms = duration_ms,
+        ssh_calls = if proj.is_ssh() { 1 } else { 0 },
+        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+        "codex_check_completed"
+    );
 
     res.render(Json(CheckResponse {
         success: code == 0,
@@ -2790,15 +2820,42 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     }
+    let edit_start = Instant::now();
     if proj.is_ssh() {
-        res.render(Json(ssh_apply_project_edit(
-            proj,
-            &body,
-            projects.ssh.as_ref(),
-        )));
+        let response = ssh_apply_project_edit(proj, &body, projects.ssh.as_ref());
+        tracing::info!(
+            target: "codex.metrics",
+            operation = "applyProjectEdit",
+            project = %body.project,
+            executor = "ssh",
+            success = response.success,
+            dry_run = body.dry_run,
+            edit_count = body.edits.len(),
+            changed_files = response.changed_files.len(),
+            duration_ms = edit_start.elapsed().as_millis() as u64,
+            ssh_calls = 1,
+            control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+            "codex_edit_completed"
+        );
+        res.render(Json(response));
         return;
     }
-    res.render(Json(local_apply_project_edit(proj, &body)));
+    let response = local_apply_project_edit(proj, &body);
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "applyProjectEdit",
+        project = %body.project,
+        executor = "local",
+        success = response.success,
+        dry_run = body.dry_run,
+        edit_count = body.edits.len(),
+        changed_files = response.changed_files.len(),
+        duration_ms = edit_start.elapsed().as_millis() as u64,
+        ssh_calls = 0,
+        control_master = false,
+        "codex_edit_completed"
+    );
+    res.render(Json(response));
 }
 
 #[cfg(test)]
