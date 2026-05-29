@@ -649,16 +649,28 @@ echo "--- 30. Codex OpenAPI Spec ---"
 RESP=$(curl -sf "$BASE/openapi.json")
 HAS_CTX=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'getProjectContext' in sys.stdin.read() else 'no')")
 HAS_PATCH=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectPatch' in sys.stdin.read() else 'no')")
+HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
 HAS_CHECK=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCheck' in sys.stdin.read() else 'no')")
 HAS_REPORT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'writeProjectReport' in sys.stdin.read() else 'no')")
 assert_contains "OpenAPI has getProjectContext" "yes" "$HAS_CTX"
 assert_contains "OpenAPI has applyProjectPatch" "yes" "$HAS_PATCH"
+assert_contains "OpenAPI has applyProjectEdit" "yes" "$HAS_EDIT"
 assert_contains "OpenAPI has runProjectCheck" "yes" "$HAS_CHECK"
 assert_contains "OpenAPI has writeProjectReport" "yes" "$HAS_REPORT"
+# Verify new edit schemas are present
+HAS_REPLACE_TEXT_SCHEMA=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'ReplaceTextEdit' in sys.stdin.read() else 'no')")
+assert_contains "OpenAPI has ReplaceTextEdit schema" "yes" "$HAS_REPLACE_TEXT_SCHEMA"
 
-# Also verify old operations are still there
-HAS_CREATE=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createMessage' in sys.stdin.read() else 'no')")
+# Also verify old operations are still there (check main openapi.json, not codex subset)
+HAS_CREATE=$(curl -sf "$BASE/openapi.json" | python3 -c "import sys; print('yes' if 'createMessage' in sys.stdin.read() else 'no')")
 assert_contains "OpenAPI still has createMessage" "yes" "$HAS_CREATE"
+
+# Also check codex-only OpenAPI endpoint
+RESP=$(curl -sf "$BASE/codex-openapi.json")
+HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
+assert_contains "codex-openapi.json has applyProjectEdit" "yes" "$HAS_EDIT"
+HAS_ONEOF=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'oneOf' in sys.stdin.read() else 'no')")
+assert_contains "codex-openapi.json has oneOf schemas" "yes" "$HAS_ONEOF"
 
 # --- 31. Path safety: read_file rejects dangerous paths ---
 echo ""
@@ -764,6 +776,220 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
     -d '{"project":"test-project","mode":"overview"}')
 CTX_SUCCESS=$(pyget "$RESP" "success")
 assert_eq "Local executor overview still works" "True" "$CTX_SUCCESS"
+
+# ============================================================================
+# applyProjectEdit E2E Tests (34-47)
+# ============================================================================
+echo ""
+echo "=== applyProjectEdit Tests ==="
+
+EDIT="$CODEX/edit"
+
+# --- 34. Edit: replace_text modifies file ---
+echo ""
+echo "--- 34. Edit replace_text ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"replace_text","path":"test.txt","old_text":"line2","new_text":"LINE2"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "replace_text success" "True" "$EDIT_SUCCESS"
+# Verify the file was modified
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"test.txt"}')
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_contains "test.txt now contains LINE2" "LINE2" "$CTX_CONTENT"
+
+# --- 35. Edit: replace_text multiple matches without occurrence fails ---
+echo ""
+echo "--- 35. Edit replace_text multi-match fails ---"
+# First, create a file with multiple matches
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_file","path":"multi.txt","content":"aaa bbb aaa bbb aaa\n","allow_overwrite":true}]}')
+# Now try replace_text without occurrence
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"replace_text","path":"multi.txt","old_text":"aaa","new_text":"AAA"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_ERROR=$(pyget "$RESP" "error")
+assert_eq "multi-match without occurrence fails" "False" "$EDIT_SUCCESS"
+assert_contains "Error mentions occurrence" "occurrence" "$EDIT_ERROR"
+
+# --- 36. Edit: replace_text with occurrence succeeds ---
+echo ""
+echo "--- 36. Edit replace_text with occurrence ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"replace_text","path":"multi.txt","old_text":"aaa","new_text":"AAA","occurrence":2}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "replace_text with occurrence=2 success" "True" "$EDIT_SUCCESS"
+# Verify: should be "aaa bbb AAA bbb aaa"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"multi.txt"}')
+CTX_CONTENT=$(pyget "$RESP" "content")
+# Should have exactly one AAA (the second aaa was replaced)
+AAA_COUNT=$(echo "$CTX_CONTENT" | python3 -c "import sys; print(sys.stdin.read().count('AAA'))")
+assert_eq "Exactly one AAA in file" "1" "$AAA_COUNT"
+
+# --- 37. Edit: replace_range ---
+echo ""
+echo "--- 37. Edit replace_range ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"replace_range","path":"test.txt","start_line":1,"end_line":1,"new_text":"first_line"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "replace_range success" "True" "$EDIT_SUCCESS"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"test.txt"}')
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_contains "test.txt line1 replaced" "first_line" "$CTX_CONTENT"
+
+# --- 38. Edit: append_file ---
+echo ""
+echo "--- 38. Edit append_file ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"append_file","path":"test.txt","text":"appended_line\n"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "append_file success" "True" "$EDIT_SUCCESS"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"test.txt"}')
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_contains "test.txt has appended line" "appended_line" "$CTX_CONTENT"
+
+# --- 39. Edit: create_file ---
+echo ""
+echo "--- 39. Edit create_file ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_file","path":"new_file.txt","content":"brand new file\n"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "create_file success" "True" "$EDIT_SUCCESS"
+# Verify the file exists
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"new_file.txt"}')
+CTX_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "new_file.txt readable" "True" "$CTX_SUCCESS"
+
+# --- 40. Edit: write_file allow_overwrite=false on existing file fails ---
+echo ""
+echo "--- 40. Edit write_file no-overwrite fails ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_file","path":"new_file.txt","content":"overwrite attempt\n","allow_overwrite":false}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "write_file no-overwrite fails" "False" "$EDIT_SUCCESS"
+
+# --- 41. Edit: write_file allow_overwrite=true on existing file succeeds ---
+echo ""
+echo "--- 41. Edit write_file overwrite succeeds ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_file","path":"new_file.txt","content":"overwritten content\n","allow_overwrite":true}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "write_file overwrite success" "True" "$EDIT_SUCCESS"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"new_file.txt"}')
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_contains "new_file.txt overwritten" "overwritten content" "$CTX_CONTENT"
+
+# --- 42. Edit: dry_run=true returns diff but does not modify ---
+echo ""
+echo "--- 42. Edit dry_run ---"
+# Read current content first
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"new_file.txt"}')
+BEFORE_CONTENT=$(pyget "$RESP" "content")
+# Dry run edit
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","dry_run":true,"edits":[{"type":"replace_text","path":"new_file.txt","old_text":"overwritten","new_text":"DRYRUN"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_DIFF=$(pyget "$RESP" "diff")
+assert_eq "dry_run success" "True" "$EDIT_SUCCESS"
+assert_contains "dry_run diff contains -overwritten" "overwritten" "$EDIT_DIFF"
+# Verify file was NOT modified
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"new_file.txt"}')
+AFTER_CONTENT=$(pyget "$RESP" "content")
+assert_eq "dry_run did not modify file" "$BEFORE_CONTENT" "$AFTER_CONTENT"
+
+# --- 43. Edit: rejects .env ---
+echo ""
+echo "--- 43. Edit rejects .env ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_file","path":".env","content":"SECRET=x\n"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Edit .env blocked" "False" "$EDIT_SUCCESS"
+
+# --- 44. Edit: rejects ../evil.txt ---
+echo ""
+echo "--- 44. Edit rejects traversal ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_file","path":"../evil.txt","content":"evil\n"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Edit ../evil.txt blocked" "False" "$EDIT_SUCCESS"
+
+# --- 45. Edit: rejects /etc/passwd ---
+echo ""
+echo "--- 45. Edit rejects absolute path ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_file","path":"/etc/passwd","content":"evil\n","allow_overwrite":true}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Edit /etc/passwd blocked" "False" "$EDIT_SUCCESS"
+
+# --- 46. Edit: rejects target/foo ---
+echo ""
+echo "--- 46. Edit rejects target/ ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_file","path":"target/evil.txt","content":"evil\n"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Edit target/ blocked" "False" "$EDIT_SUCCESS"
+
+# --- 47. Edit + runProjectCheck(test) passes ---
+echo ""
+echo "--- 47. Edit then check ---"
+# The check.sh in test project just echoes "check passed" and exits 0
+RESP=$(curl -sf -X POST "$CODEX/check" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","suite":"test"}')
+CHECK_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Check after edits passes" "True" "$CHECK_SUCCESS"
 
 # ============================================================================
 # Summary

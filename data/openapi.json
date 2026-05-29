@@ -105,13 +105,80 @@
         },
         "required": ["success"]
       },
+      "ReplaceTextEdit": {
+        "type": "object",
+        "description": "Replace occurrences of old_text with new_text in an existing file. occurrence is 1-based; omit it when old_text appears exactly once.",
+        "properties": {
+          "type": {"type": "string", "enum": ["replace_text"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "old_text": {"type": "string", "description": "Exact text to find (must appear at least once)"},
+          "new_text": {"type": "string", "description": "Replacement text"},
+          "occurrence": {"type": "integer", "minimum": 1, "description": "1-based occurrence index; required when old_text matches more than once"}
+        },
+        "required": ["type", "path", "old_text", "new_text"]
+      },
+      "ReplaceRangeEdit": {
+        "type": "object",
+        "description": "Replace a 1-based inclusive line range [start_line, end_line] with new_text.",
+        "properties": {
+          "type": {"type": "string", "enum": ["replace_range"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "start_line": {"type": "integer", "minimum": 1, "description": "First line to replace (1-based, inclusive)"},
+          "end_line": {"type": "integer", "minimum": 1, "description": "Last line to replace (1-based, inclusive)"},
+          "new_text": {"type": "string", "description": "Replacement text for the line range"}
+        },
+        "required": ["type", "path", "start_line", "end_line", "new_text"]
+      },
+      "AppendFileEdit": {
+        "type": "object",
+        "description": "Append text to the end of an existing file.",
+        "properties": {
+          "type": {"type": "string", "enum": ["append_file"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "text": {"type": "string", "description": "Text to append"}
+        },
+        "required": ["type", "path", "text"]
+      },
+      "CreateFileEdit": {
+        "type": "object",
+        "description": "Create a new file. Fails if the file already exists.",
+        "properties": {
+          "type": {"type": "string", "enum": ["create_file"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "content": {"type": "string", "description": "Initial file content"}
+        },
+        "required": ["type", "path", "content"]
+      },
+      "WriteFileEdit": {
+        "type": "object",
+        "description": "Write content to a file. Not recommended for small changes — prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
+        "properties": {
+          "type": {"type": "string", "enum": ["write_file"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "content": {"type": "string", "description": "Full file content to write"},
+          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+        },
+        "required": ["type", "path", "content"]
+      },
       "EditRequest": {
         "type": "object",
         "properties": {
           "project": {"type": "string", "description": "Project name from whitelist"},
           "reason": {"type": "string"},
-          "dry_run": {"type": "boolean", "default": false},
-          "edits": {"type": "array", "items": {"type": "object", "description": "Edit operation: replace_text, replace_range, append_file, create_file, or write_file"}}
+          "dry_run": {"type": "boolean", "default": false, "description": "If true, returns a diff but does not write files"},
+          "edits": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {"$ref": "#/components/schemas/ReplaceTextEdit"},
+                {"$ref": "#/components/schemas/ReplaceRangeEdit"},
+                {"$ref": "#/components/schemas/AppendFileEdit"},
+                {"$ref": "#/components/schemas/CreateFileEdit"},
+                {"$ref": "#/components/schemas/WriteFileEdit"}
+              ],
+              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit"}}
+            }
+          }
         },
         "required": ["project", "edits"]
       },

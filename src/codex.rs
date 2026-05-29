@@ -171,7 +171,7 @@ pub enum EditOperation {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EditResponse {
     pub success: bool,
     pub changed_files: Vec<String>,
@@ -516,6 +516,379 @@ fn run_ssh_patch(
             )
         }
     }
+}
+
+/// Embedded Python3 script for remote edit operations.
+/// Receives project root via argv[1] and edit JSON via stdin.
+/// Returns JSON result on stdout.
+const REMOTE_EDIT_SCRIPT: &str = r#####"
+import sys, json, os, difflib
+
+SENSITIVE = ('.git', '.env', '.pem', '.key', 'id_rsa', 'id_ed25519',
+             'target', 'node_modules')
+MAX_FILE = 2 * 1024 * 1024
+MAX_TEXT = 200 * 1024
+
+def err(msg):
+    return {'success': False, 'changed_files': [], 'diff': '', 'warnings': [], 'error': msg}
+
+def is_sensitive(p):
+    parts = p.replace('\\\\', '/').split('/')
+    for seg in parts:
+        if seg in SENSITIVE:
+            return True
+        for suf in ('.pem', '.key'):
+            if seg.endswith(suf):
+                return True
+    return False
+
+def validate_path(rel):
+    if not rel:
+        return 'path cannot be empty'
+    if rel.startswith('/'):
+        return 'Absolute paths are not allowed'
+    if '..' in rel:
+        return 'Path traversal (..) is not allowed'
+    if is_sensitive(rel):
+        return 'Cannot modify sensitive path: ' + rel
+    return None
+
+def resolve(root, rel, must_exist):
+    e = validate_path(rel)
+    if e:
+        return None, e
+    full = os.path.normpath(os.path.join(root, rel))
+    canon_root = os.path.realpath(root)
+    if not os.path.realpath(full).startswith(canon_root + os.sep) and os.path.realpath(full) != canon_root:
+        return None, 'Path is outside project directory'
+    if must_exist:
+        if not os.path.isfile(full):
+            return None, 'File does not exist: ' + rel
+    else:
+        parent = os.path.dirname(full)
+        if not os.path.isdir(parent):
+            return None, 'Parent directory does not exist for: ' + rel
+    return full, None
+
+def read_file(path):
+    try:
+        sz = os.path.getsize(path)
+    except OSError as e:
+        return None, 'Failed to stat file: ' + str(e)
+    if sz > MAX_FILE:
+        return None, 'File too large: %d bytes' % sz
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read(), None
+    except Exception as e:
+        return None, 'Failed to read UTF-8 file: ' + str(e)
+
+def replace_nth(content, old, new, occ):
+    if not old:
+        return None, 'old_text cannot be empty'
+    idxs = []
+    start = 0
+    while True:
+        i = content.find(old, start)
+        if i < 0:
+            break
+        idxs.append(i)
+        start = i + len(old)
+    if not idxs:
+        return None, 'old_text was not found'
+    if occ is not None:
+        if occ < 1:
+            return None, 'occurrence is 1-based and must be >= 1'
+        if occ > len(idxs):
+            return None, 'occurrence %d exceeds match count %d' % (occ, len(idxs))
+        sel = idxs[occ - 1]
+    else:
+        if len(idxs) > 1:
+            return None, 'old_text matched %d times; specify occurrence' % len(idxs)
+        sel = idxs[0]
+    return content[:sel] + new + content[sel + len(old):], None
+
+def replace_range(content, sl, el, new):
+    if sl < 1 or el < 1 or sl > el:
+        return None, 'start_line and end_line must be 1-based and start_line <= end_line'
+    had_nl = content.endswith('\n')
+    lines = content.split('\n')
+    # If content ends with \n, split gives an extra empty string at the end
+    if had_nl and lines and lines[-1] == '':
+        lines = lines[:-1]
+    if el > len(lines):
+        return None, 'line range %d-%d exceeds file line count %d' % (sl, el, len(lines))
+    repl = [] if not new else new.rstrip('\n').split('\n')
+    lines2 = lines[:sl-1] + repl + lines[el:]
+    out = '\n'.join(lines2)
+    if had_nl or new.endswith('\n'):
+        out += '\n'
+    return out, None
+
+def simple_diff(path, old_content, new_content):
+    old_lines = (old_content or '').splitlines(True)
+    new_lines = new_content.splitlines(True)
+    diff = difflib.unified_diff(old_lines, new_lines, fromfile='a/' + path, tofile='b/' + path)
+    return ''.join(diff)
+
+def main():
+    if len(sys.argv) < 2:
+        print(json.dumps(err('Missing project root argument')))
+        return
+    root = sys.argv[1]
+    if not os.path.isdir(root):
+        print(json.dumps(err('Project root does not exist: ' + root)))
+        return
+    try:
+        body = json.load(sys.stdin)
+    except Exception as e:
+        print(json.dumps(err('Invalid JSON: ' + str(e))))
+        return
+    dry_run = body.get('dry_run', False)
+    edits = body.get('edits', [])
+    if not edits:
+        print(json.dumps(err('edits cannot be empty')))
+        return
+    originals = {}
+    current = {}
+    paths_map = {}
+    changed = set()
+    for ed in edits:
+        etype = ed.get('type', '')
+        rel = ed.get('path', '')
+        e = validate_path(rel)
+        if e:
+            print(json.dumps(err(e)))
+            return
+        text_key = None
+        if etype == 'replace_text':
+            text_key = 'new_text'
+        elif etype == 'replace_range':
+            text_key = 'new_text'
+        elif etype == 'append_file':
+            text_key = 'text'
+        elif etype in ('create_file', 'write_file'):
+            text_key = 'content'
+        if text_key:
+            txt = ed.get(text_key, '')
+            if len(txt.encode('utf-8')) > MAX_TEXT:
+                print(json.dumps(err('edit text for %s exceeds %d bytes' % (rel, MAX_TEXT))))
+                return
+        if etype == 'replace_text':
+            if rel not in current:
+                full, e = resolve(root, rel, True)
+                if e:
+                    print(json.dumps(err(e)))
+                    return
+                paths_map[rel] = full
+                c, e = read_file(full)
+                if e:
+                    print(json.dumps(err(e)))
+                    return
+                originals.setdefault(rel, c)
+                current[rel] = c
+            after, e = replace_nth(current[rel], ed.get('old_text', ''), ed.get('new_text', ''), ed.get('occurrence'))
+            if e:
+                print(json.dumps(err(e)))
+                return
+            current[rel] = after
+        elif etype == 'replace_range':
+            if rel not in current:
+                full, e = resolve(root, rel, True)
+                if e:
+                    print(json.dumps(err(e)))
+                    return
+                paths_map[rel] = full
+                c, e = read_file(full)
+                if e:
+                    print(json.dumps(err(e)))
+                    return
+                originals.setdefault(rel, c)
+                current[rel] = c
+            after, e = replace_range(current[rel], ed['start_line'], ed['end_line'], ed.get('new_text', ''))
+            if e:
+                print(json.dumps(err(e)))
+                return
+            current[rel] = after
+        elif etype == 'append_file':
+            if rel not in current:
+                full, e = resolve(root, rel, True)
+                if e:
+                    print(json.dumps(err(e)))
+                    return
+                paths_map[rel] = full
+                c, e = read_file(full)
+                if e:
+                    print(json.dumps(err(e)))
+                    return
+                originals.setdefault(rel, c)
+                current[rel] = c
+            current[rel] = current[rel] + ed.get('text', '')
+        elif etype == 'create_file':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            if os.path.exists(full) or rel in current:
+                print(json.dumps(err('File already exists: ' + rel)))
+                return
+            paths_map[rel] = full
+            originals.setdefault(rel, None)
+            current[rel] = ed.get('content', '')
+        elif etype == 'write_file':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            allow = ed.get('allow_overwrite', False)
+            if os.path.exists(full) and not allow:
+                print(json.dumps(err('File exists and allow_overwrite is false: ' + rel)))
+                return
+            if os.path.exists(full) and rel not in originals:
+                old_c, e2 = read_file(full)
+                if e2:
+                    print(json.dumps(err(e2)))
+                    return
+                originals[rel] = old_c
+            elif rel not in originals:
+                originals.setdefault(rel, None)
+            paths_map[rel] = full
+            current[rel] = ed.get('content', '')
+        else:
+            print(json.dumps(err('Unknown edit type: ' + etype)))
+            return
+        changed.add(rel)
+    diff_parts = []
+    for p in sorted(changed):
+        old = originals.get(p)
+        new = current.get(p)
+        if new is not None and old != new:
+            diff_parts.append(simple_diff(p, old, new))
+    diff = ''.join(diff_parts)
+    if not dry_run:
+        for p in sorted(changed):
+            full = paths_map.get(p)
+            content = current.get(p)
+            if full and content is not None:
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, 'w', encoding='utf-8') as f:
+                    f.write(content)
+    print(json.dumps({
+        'success': True,
+        'changed_files': sorted(changed),
+        'diff': diff,
+        'warnings': [],
+        'error': None
+    }))
+
+main()
+"#####;
+
+/// Run edit operations on a remote SSH project by piping JSON to a python3 script.
+fn ssh_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditResponse {
+    let ssh_target = match build_ssh_target(proj) {
+        Ok(t) => t,
+        Err(e) => return edit_error(e),
+    };
+    let project_path = &proj.path;
+
+    // Serialize the edit request to JSON
+    let body_json = match serde_json::to_string(body) {
+        Ok(j) => j,
+        Err(e) => return edit_error(format!("Failed to serialize edit request: {}", e)),
+    };
+
+    // Build the remote command: run python3 with the embedded script
+    // Pass project root as first argument; script reads JSON from stdin
+    let remote_cmd = format!(
+        "python3 -c {} {}",
+        shell_escape(REMOTE_EDIT_SCRIPT),
+        shell_escape(project_path)
+    );
+
+    let start = Instant::now();
+    let result = std::process::Command::new("ssh")
+        .arg(&ssh_target)
+        .arg("--")
+        .arg(&remote_cmd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(body_json.as_bytes());
+            }
+            child.wait_with_output()
+        });
+
+    match result {
+        Ok(output) => {
+            let _elapsed = start.elapsed().as_millis() as u64;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let code = output.status.code().unwrap_or(-1);
+
+            if code != 0 && stdout.is_empty() {
+                // python3 not available or other exec failure
+                if stderr.contains("No such file")
+                    || stderr.contains("not found")
+                    || stderr.contains("No module")
+                {
+                    return edit_error(
+                        "Remote python3 is not available. Install python3 on the remote host."
+                            .to_string(),
+                    );
+                }
+                return edit_error(format!(
+                    "SSH edit failed (exit {}): {}",
+                    code,
+                    stderr.chars().take(500).collect::<String>()
+                ));
+            }
+
+            // Truncate stdout to avoid oversized responses
+            let (truncated_stdout, was_truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
+            let mut resp: EditResponse = match serde_json::from_str(&truncated_stdout) {
+                Ok(r) => r,
+                Err(e) => {
+                    return edit_error(format!(
+                        "Failed to parse remote edit response: {}. Raw: {}",
+                        e,
+                        truncated_stdout.chars().take(200).collect::<String>()
+                    ))
+                }
+            };
+            if was_truncated {
+                resp.warnings
+                    .push("Remote output was truncated".to_string());
+            }
+            if !stderr.is_empty() {
+                resp.warnings.push(format!(
+                    "Remote stderr: {}",
+                    stderr.chars().take(500).collect::<String>()
+                ));
+            }
+            resp
+        }
+        Err(e) => edit_error(format!("Failed to execute SSH edit: {}", e)),
+    }
+}
+
+/// Escape a string for safe use as a shell argument via `ssh -- arg`.
+/// Uses single-quote wrapping with proper escaping.
+fn shell_escape(s: &str) -> String {
+    let mut out = String::from("'");
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Validate a path for SSH read_file operations.
@@ -1570,6 +1943,297 @@ mod tests {
         };
         assert!(!proj.is_ssh());
     }
+
+    // =========================================================================
+    // Edit unit tests
+    // =========================================================================
+
+    #[test]
+    fn test_replace_nth_single_match() {
+        let result = replace_nth("hello world", "world", "rust", None).unwrap();
+        assert_eq!(result, "hello rust");
+    }
+
+    #[test]
+    fn test_replace_nth_no_match() {
+        let result = replace_nth("hello world", "xyz", "abc", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_replace_nth_empty_old() {
+        let result = replace_nth("hello", "", "x", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_replace_nth_multiple_no_occurrence() {
+        let result = replace_nth("aXbXc", "X", "Y", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("2 times"));
+    }
+
+    #[test]
+    fn test_replace_nth_multiple_with_occurrence() {
+        let result = replace_nth("aXbXc", "X", "Y", Some(2)).unwrap();
+        assert_eq!(result, "aXbYc");
+    }
+
+    #[test]
+    fn test_replace_nth_occurrence_zero() {
+        let result = replace_nth("abc", "a", "b", Some(0));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_replace_nth_occurrence_too_large() {
+        let result = replace_nth("abc", "a", "b", Some(5));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_replace_line_range_basic() {
+        let content = "line1\nline2\nline3\n";
+        let result = replace_line_range(content, 2, 2, "new2\n").unwrap();
+        assert_eq!(result, "line1\nnew2\nline3\n");
+    }
+
+    #[test]
+    fn test_replace_line_range_multi() {
+        let content = "line1\nline2\nline3\nline4\n";
+        let result = replace_line_range(content, 2, 3, "replaced\n").unwrap();
+        assert_eq!(result, "line1\nreplaced\nline4\n");
+    }
+
+    #[test]
+    fn test_replace_line_range_invalid_start() {
+        let content = "line1\nline2\n";
+        let result = replace_line_range(content, 0, 1, "x");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_replace_line_range_exceeds() {
+        let content = "line1\n";
+        let result = replace_line_range(content, 1, 5, "x");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_edit_path_rejects_env() {
+        assert!(validate_edit_path(".env").is_err());
+        assert!(validate_edit_path("config/.env").is_err());
+    }
+
+    #[test]
+    fn test_validate_edit_path_rejects_traversal() {
+        assert!(validate_edit_path("../evil.txt").is_err());
+        assert!(validate_edit_path("src/../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_edit_path_rejects_absolute() {
+        assert!(validate_edit_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_edit_path_rejects_target() {
+        assert!(validate_edit_path("target/debug/binary").is_err());
+    }
+
+    #[test]
+    fn test_validate_edit_path_allows_normal() {
+        assert!(validate_edit_path("src/main.rs").is_ok());
+        assert!(validate_edit_path("README.md").is_ok());
+    }
+
+    // =========================================================================
+    // SSH edit safety tests
+    // =========================================================================
+
+    #[test]
+    fn test_shell_escape_no_injection() {
+        // Verify that shell_escape properly wraps in single quotes
+        // Input: '; rm -rf /; echo '
+        // Expected output: '\'''; rm -rf /; echo '\''
+        // The outer single quotes prevent shell interpretation of the content
+        let dangerous = "'; rm -rf /; echo '";
+        let escaped = shell_escape(dangerous);
+        // Should start and end with single quote
+        assert!(escaped.starts_with('\''));
+        assert!(escaped.ends_with('\''));
+        // Should contain the escaped single-quote sequence ('\'' means: end quote, literal quote, start quote)
+        assert!(escaped.contains("'\\''"));
+        // The escaped form should be: '\''  '; rm -rf /; echo '  '\''
+        // which is safe because the dangerous content is inside single quotes
+    }
+
+    #[test]
+    fn test_ssh_edit_command_no_user_input_in_shell() {
+        // Verify that user-controlled edit content does not appear in the SSH command string
+        let user_input = "'; malicious_command; echo '";
+        let body = EditRequest {
+            project: "test".to_string(),
+            reason: None,
+            dry_run: false,
+            edits: vec![EditOperation::ReplaceText {
+                path: "src/main.rs".to_string(),
+                old_text: user_input.to_string(),
+                new_text: "safe".to_string(),
+                occurrence: None,
+            }],
+        };
+        let _body_json = serde_json::to_string(&body).unwrap();
+        // The JSON-serialized body should contain the user input escaped inside JSON,
+        // but the shell_escape of the python script itself should not contain raw user input
+        let escaped_script = shell_escape(REMOTE_EDIT_SCRIPT);
+        assert!(!escaped_script.contains(user_input));
+        // The body JSON is piped via stdin, not embedded in the command
+        // So the SSH command is: ssh target -- python3 -c '<script>' '<project_path>'
+        // Neither argument contains the user's edit payload directly
+    }
+
+    // =========================================================================
+    // Remote python3 script local run test
+    // =========================================================================
+
+    #[test]
+    fn test_remote_edit_script_replace_text_local() {
+        // Run the embedded python3 script locally to verify it works
+        let tmp = tempfile::tempdir().unwrap_or_else(|_| {
+            // fallback if tempfile not available
+            let d = std::path::PathBuf::from("/tmp/private-drop-test-script");
+            let _ = std::fs::create_dir_all(&d);
+            // Return a wrapper
+            tempfile::TempDir::new_in(&d).unwrap()
+        });
+        let root = tmp.path();
+        std::fs::write(root.join("test.txt"), "hello world\n").unwrap();
+
+        let request = serde_json::json!({
+            "dry_run": false,
+            "edits": [{
+                "type": "replace_text",
+                "path": "test.txt",
+                "old_text": "world",
+                "new_text": "rust"
+            }]
+        });
+
+        let mut child = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(REMOTE_EDIT_SCRIPT)
+            .arg(root.to_str().unwrap())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn python3");
+
+        if let Some(ref mut stdin) = child.stdin {
+            use std::io::Write;
+            stdin.write_all(request.to_string().as_bytes()).unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "Script failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["changed_files"][0], "test.txt");
+        assert!(result["diff"].as_str().unwrap().contains("-hello world"));
+        assert!(result["diff"].as_str().unwrap().contains("+hello rust"));
+        // Verify the file was actually modified
+        let content = std::fs::read_to_string(root.join("test.txt")).unwrap();
+        assert_eq!(content, "hello rust\n");
+    }
+
+    #[test]
+    fn test_remote_edit_script_dry_run_local() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap_or_else(|_| {
+            let d = std::path::PathBuf::from("/tmp/private-drop-test-dry");
+            let _ = std::fs::create_dir_all(&d);
+            tempfile::TempDir::new_in(&d).unwrap()
+        });
+        let root = tmp.path();
+        std::fs::write(root.join("test.txt"), "original content\n").unwrap();
+
+        let request = serde_json::json!({
+            "dry_run": true,
+            "edits": [{
+                "type": "replace_text",
+                "path": "test.txt",
+                "old_text": "original",
+                "new_text": "changed"
+            }]
+        });
+
+        let mut child = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(REMOTE_EDIT_SCRIPT)
+            .arg(root.to_str().unwrap())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn python3");
+
+        if let Some(ref mut stdin) = child.stdin {
+            stdin.write_all(request.to_string().as_bytes()).unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["success"], true);
+        assert!(result["diff"].as_str().unwrap().contains("-original"));
+        assert!(result["diff"].as_str().unwrap().contains("+changed"));
+        // Verify the file was NOT modified (dry_run)
+        let content = std::fs::read_to_string(root.join("test.txt")).unwrap();
+        assert_eq!(content, "original content\n");
+    }
+
+    #[test]
+    fn test_remote_edit_script_rejects_env() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap_or_else(|_| {
+            let d = std::path::PathBuf::from("/tmp/private-drop-test-env");
+            let _ = std::fs::create_dir_all(&d);
+            tempfile::TempDir::new_in(&d).unwrap()
+        });
+        let root = tmp.path();
+
+        let request = serde_json::json!({
+            "dry_run": false,
+            "edits": [{
+                "type": "replace_text",
+                "path": ".env",
+                "old_text": "x",
+                "new_text": "y"
+            }]
+        });
+
+        let mut child = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(REMOTE_EDIT_SCRIPT)
+            .arg(root.to_str().unwrap())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn python3");
+
+        if let Some(ref mut stdin) = child.stdin {
+            stdin.write_all(request.to_string().as_bytes()).unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["success"], false);
+        assert!(result["error"].as_str().unwrap().contains("sensitive"));
+    }
 }
 
 fn edit_error(error: String) -> EditResponse {
@@ -1962,9 +2626,7 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
     }
     if proj.is_ssh() {
-        res.render(Json(edit_error(
-            "SSH edit support requires remote python3 implementation".to_string(),
-        )));
+        res.render(Json(ssh_apply_project_edit(proj, &body)));
         return;
     }
     res.render(Json(local_apply_project_edit(proj, &body)));

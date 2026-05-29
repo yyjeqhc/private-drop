@@ -15,3 +15,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

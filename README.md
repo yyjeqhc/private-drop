@@ -208,7 +208,7 @@ bash scripts/e2e_test.sh
 This script:
 - Builds the project (`cargo fmt`, `cargo test`, `cargo build --release`)
 - Starts the server on a random free port with a temporary data directory
-- Runs 31 test cases covering:
+- Runs 47+ test cases covering:
   - Health check endpoint
   - Token authentication (401 on missing/wrong token)
   - Create, list, get, delete text messages
@@ -226,7 +226,7 @@ This script:
 cargo test
 ```
 
-8 unit tests covering UUID generation, config defaults, token validation, filename sanitization, and message serialization.
+37 unit tests covering UUID generation, config defaults, token validation, filename sanitization, message serialization, SSH path validation, edit path validation, replace_nth, replace_line_range, shell escape safety, and remote edit script execution.
 
 ## Codex-like GPT Actions API
 
@@ -296,6 +296,7 @@ e2e = "bash scripts/e2e_test.sh"
 - `path`: Project root on the remote machine
 - All path safety checks (no `..`, no absolute paths, no sensitive files) are enforced before SSH commands are constructed
 - Patches are piped via SSH stdin to a temp file on the remote machine
+- **Edit operations** (`applyProjectEdit`) are executed via an embedded Python3 script on the remote host. Edit JSON is piped via stdin; the remote python3 script validates paths and performs edits. Requires `python3` on the remote host.
 
 **Before using SSH executor, verify connectivity:**
 ```bash
@@ -341,6 +342,159 @@ curl -X POST http://localhost:8080/api/codex/report \
 1. Import `https://your-server/openapi.json` into your GPT Actions
 2. Set authentication to API Key / Bearer with your `DROP_TOKEN`
 3. GPT can use the `codex` operationIds: `getProjectContext`, `applyProjectEdit`, `applyProjectPatch`, `runProjectCheck`, `writeProjectReport`
+
+### Codex Edit API (applyProjectEdit)
+
+`applyProjectEdit` is the recommended way for GPT to make small, targeted file changes. Unlike `applyProjectPatch` (which requires a full unified diff), `applyProjectEdit` accepts structured JSON edit operations that are easier for GPT to generate correctly.
+
+**Why use applyProjectEdit over applyProjectPatch?**
+
+| Feature | applyProjectEdit | applyProjectPatch |
+|---------|------------------|-------------------|
+| Input format | Structured JSON operations | Unified diff text |
+| Error-prone? | Low — field names are explicit | High — diff format is fragile |
+| Supports dry_run | Yes | No |
+| Best for | Small targeted changes (1-10 files) | Large refactors, bulk changes |
+| GPT Actions friendly | Yes — explicit schema with oneOf | Requires diff generation skill |
+
+**Edit operation types:**
+
+#### replace_text — Find and replace text in an existing file
+
+```bash
+curl -X POST http://localhost:8080/api/codex/edit \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "my-project",
+    "reason": "fix typo",
+    "edits": [{
+      "type": "replace_text",
+      "path": "src/main.rs",
+      "old_text": "println!(\"hello\");",
+      "new_text": "println!(\"Hello, world!\");"
+    }]
+  }'
+```
+
+If `old_text` appears multiple times, specify `occurrence` (1-based):
+
+```json
+{
+  "type": "replace_text",
+  "path": "config.toml",
+  "old_text": "localhost",
+  "new_text": "0.0.0.0",
+  "occurrence": 2
+}
+```
+
+#### replace_range — Replace a range of lines
+
+Replace lines 5-10 (inclusive, 1-based) with new content:
+
+```bash
+curl -X POST http://localhost:8080/api/codex/edit \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "my-project",
+    "edits": [{
+      "type": "replace_range",
+      "path": "src/lib.rs",
+      "start_line": 5,
+      "end_line": 10,
+      "new_text": "fn new_function() -> i32 {\n    42\n}\n"
+    }]
+  }'
+```
+
+#### append_file — Append text to an existing file
+
+```bash
+curl -X POST http://localhost:8080/api/codex/edit \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "my-project",
+    "edits": [{
+      "type": "append_file",
+      "path": "TODO.md",
+      "text": "\n- [ ] New task added by GPT\n"
+    }]
+  }'
+```
+
+#### create_file — Create a new file (fails if it already exists)
+
+```bash
+curl -X POST http://localhost:8080/api/codex/edit \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "my-project",
+    "edits": [{
+      "type": "create_file",
+      "path": "src/utils.rs",
+      "content": "pub fn add(a: i32, b: i32) -> i32 { a + b }\n"
+    }]
+  }'
+```
+
+#### write_file — Write full file content (use sparingly)
+
+```bash
+curl -X POST http://localhost:8080/api/codex/edit \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "my-project",
+    "edits": [{
+      "type": "write_file",
+      "path": "config.json",
+      "content": "{\"key\": \"value\"}\n",
+      "allow_overwrite": true
+    }]
+  }'
+```
+
+> **Note:** `write_file` with `allow_overwrite=true` replaces the entire file. Prefer `replace_text` or `replace_range` for partial edits.
+
+#### dry_run — Preview changes without writing
+
+```bash
+curl -X POST http://localhost:8080/api/codex/edit \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "my-project",
+    "dry_run": true,
+    "edits": [{
+      "type": "replace_text",
+      "path": "src/main.rs",
+      "old_text": "old_code()",
+      "new_text": "new_code()"
+    }]
+  }'
+```
+
+Returns the same response with a `diff` field showing what would change, but does not modify any files.
+
+#### Security limits
+
+- **Path validation**: No absolute paths, no `..` traversal, no `.git/`, `.env`, `*.pem`, `*.key`, `id_rsa`, `target/`, `node_modules/`
+- **File size**: Max 2MB per file (read), max 200KB per edit text
+- **Project whitelist**: Only projects in `projects.toml` with `allow_patch = true`
+- **UTF-8 only**: Binary files are rejected
+
+#### GPT Actions recommendation
+
+**Prefer `applyProjectEdit` for most code changes.** Use `applyProjectPatch` only when:
+- You need to change many files in a coordinated way
+- The change is a large refactor that's easier expressed as a diff
+- You're applying an externally generated patch
+
+For simple edits (fix a bug, add a function, update a config value), `applyProjectEdit` with `replace_text` or `replace_range` is more reliable and less error-prone.
 
 ### Security Boundaries
 
