@@ -1233,9 +1233,22 @@ fn ssh_read_file(
             error: Some(e),
         };
     }
-    let end_line = start_line + limit - 1;
-    let escaped_path = rel_path.replace('\'', "'\\''");
-    let cmd = format!("sed -n '{},{}p' '{}'", start_line, end_line, escaped_path);
+    let end_line = match validate_read_file_range(start_line, limit) {
+        Ok(end_line) => end_line,
+        Err(e) => {
+            return ContextResponse {
+                success: false,
+                project: project_name.to_string(),
+                mode: "read_file".to_string(),
+                content: None,
+                items: None,
+                truncated: false,
+                error: Some(e),
+            }
+        }
+    };
+    let escaped_path = shell_escape(rel_path);
+    let cmd = format!("sed -n '{},{}p' -- {}", start_line, end_line, escaped_path);
     let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30, ssh_config);
     if code != 0 {
         return ContextResponse {
@@ -1332,6 +1345,290 @@ fn context_error(project: &str, mode: &ContextMode, error: String) -> ContextRes
         truncated: false,
         error: Some(error),
     }
+}
+
+const MAX_READ_FILE_LIMIT: usize = 2_000;
+
+fn validate_read_file_range(start_line: usize, limit: usize) -> Result<usize, String> {
+    if start_line == 0 {
+        return Err("start_line must be >= 1".to_string());
+    }
+    if limit == 0 {
+        return Err("limit must be >= 1".to_string());
+    }
+    if limit > MAX_READ_FILE_LIMIT {
+        return Err(format!("limit must be <= {}", MAX_READ_FILE_LIMIT));
+    }
+    start_line
+        .checked_add(limit - 1)
+        .ok_or_else(|| "start_line + limit - 1 overflowed".to_string())
+}
+
+fn parse_ssh_batch_blocks(stdout: &str, count: usize, nonce: &str) -> Vec<String> {
+    let mut blocks = vec![String::new(); count];
+    let mut current: Option<usize> = None;
+    let start_prefix = format!("__PDCTX_{}_START_", nonce);
+    let end_prefix = format!("__PDCTX_{}_END_", nonce);
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix(&start_prefix) {
+            if let Some(idx) = rest
+                .strip_suffix("__")
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                current = if idx < count { Some(idx) } else { None };
+            }
+            continue;
+        }
+        if line.starts_with(&end_prefix) {
+            current = None;
+            continue;
+        }
+        if let Some(idx) = current {
+            blocks[idx].push_str(line);
+            blocks[idx].push('\n');
+        }
+    }
+    blocks
+}
+
+fn ssh_overview_from_batch_block(
+    proj: &ProjectConfig,
+    project_name: &str,
+    block: &str,
+) -> ContextResponse {
+    let important_files = [
+        "README.md",
+        "TODO.md",
+        "Cargo.toml",
+        "scripts/e2e_test.sh",
+        "src/main.rs",
+    ];
+    let mut section = "";
+    let mut branch = "unknown".to_string();
+    let mut status_lines: Vec<String> = Vec::new();
+    let mut file_status: HashMap<String, String> = HashMap::new();
+    for line in block.lines() {
+        match line {
+            "__BRANCH__" => section = "branch",
+            "__STATUS__" => section = "status",
+            "__FILES__" => section = "files",
+            _ => match section {
+                "branch" if !line.trim().is_empty() => branch = line.trim().to_string(),
+                "status" => status_lines.push(line.to_string()),
+                "files" => {
+                    if let Some((path, exists)) = line.split_once('=') {
+                        file_status.insert(path.to_string(), exists.to_string());
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    let status = status_lines.join("\n");
+    let mut content = format!(
+        "Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:",
+        project_name,
+        proj.path,
+        branch,
+        status.trim(),
+        proj.allowed_checks.join(", ")
+    );
+    for f in &important_files {
+        let exists = file_status.get(*f).map(String::as_str).unwrap_or("no");
+        content.push_str(&format!(
+            "\n  {}: {}",
+            f,
+            if exists == "yes" { "yes" } else { "no" }
+        ));
+    }
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: "overview".to_string(),
+        content: Some(content),
+        items: None,
+        truncated: false,
+        error: None,
+    }
+}
+
+fn ssh_batch_block_to_response(
+    proj: &ProjectConfig,
+    project_name: &str,
+    item: &ContextBatchItem,
+    block: &str,
+) -> ContextResponse {
+    if let Some(err) = block.strip_prefix("__PDCTX_ERROR__:") {
+        return context_error(project_name, &item.mode, err.trim().to_string());
+    }
+    match item.mode {
+        ContextMode::Overview => ssh_overview_from_batch_block(proj, project_name, block),
+        ContextMode::Tree => {
+            let mut items: Vec<String> = block
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect();
+            let truncated = items.len() >= MAX_TREE_ITEMS;
+            items.truncate(MAX_TREE_ITEMS);
+            ContextResponse {
+                success: true,
+                project: project_name.to_string(),
+                mode: "tree".to_string(),
+                content: None,
+                items: Some(items),
+                truncated,
+                error: None,
+            }
+        }
+        ContextMode::ReadFile => {
+            let lines: Vec<String> = block
+                .lines()
+                .enumerate()
+                .map(|(i, l)| format!("{:4} | {}", item.start_line + i, l))
+                .collect();
+            let (output, truncated) = truncate_string(lines.join("\n"), MAX_OUTPUT_LEN);
+            ContextResponse {
+                success: true,
+                project: project_name.to_string(),
+                mode: "read_file".to_string(),
+                content: Some(output),
+                items: None,
+                truncated,
+                error: None,
+            }
+        }
+        ContextMode::GitStatus => {
+            let (content, truncated) = truncate_string(block.to_string(), MAX_OUTPUT_LEN);
+            ContextResponse {
+                success: true,
+                project: project_name.to_string(),
+                mode: "git_status".to_string(),
+                content: Some(content),
+                items: None,
+                truncated,
+                error: None,
+            }
+        }
+        ContextMode::GitDiff => {
+            let (content, truncated) = truncate_string(block.to_string(), MAX_OUTPUT_LEN);
+            ContextResponse {
+                success: true,
+                project: project_name.to_string(),
+                mode: "git_diff".to_string(),
+                content: Some(content),
+                items: None,
+                truncated,
+                error: None,
+            }
+        }
+        ContextMode::Search => context_error(
+            project_name,
+            &item.mode,
+            "search is not supported by single-SSH context batch".to_string(),
+        ),
+    }
+}
+
+fn ssh_context_batch_error_results(
+    project_name: &str,
+    requests: &[ContextBatchItem],
+    error: String,
+) -> Vec<ContextResponse> {
+    requests
+        .iter()
+        .map(|item| context_error(project_name, &item.mode, error.clone()))
+        .collect()
+}
+
+fn try_ssh_context_batch_once(
+    proj: &ProjectConfig,
+    project_name: &str,
+    requests: &[ContextBatchItem],
+    ssh_config: Option<&SshConfig>,
+) -> Option<(Vec<ContextResponse>, u64)> {
+    if requests.is_empty() {
+        return Some((Vec::new(), 0));
+    }
+    let ssh_target = match build_ssh_target(proj) {
+        Ok(t) => t,
+        Err(e) => {
+            return Some((
+                ssh_context_batch_error_results(project_name, requests, e),
+                0,
+            ))
+        }
+    };
+
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let mut script = format!("cd {} || exit 2;", shell_escape(&proj.path));
+    for (idx, item) in requests.iter().enumerate() {
+        if matches!(item.mode, ContextMode::Search) {
+            return None;
+        }
+        script.push_str(&format!(" printf '\n__PDCTX_{}_START_{}__\n';", nonce, idx));
+        match item.mode {
+            ContextMode::Overview => {
+                let file_args = [
+                    "README.md",
+                    "TODO.md",
+                    "Cargo.toml",
+                    "scripts/e2e_test.sh",
+                    "src/main.rs",
+                ]
+                .iter()
+                .map(|f| shell_escape(f))
+                .collect::<Vec<_>>()
+                .join(" ");
+                script.push_str(&format!(" printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done;", file_args));
+            }
+            ContextMode::Tree => {
+                let mut excludes = String::new();
+                for dir in IGNORED_DIRS {
+                    excludes.push_str(&format!(" -not -path '*/{}/*'", dir));
+                }
+                script.push_str(&format!(" find . -mindepth 1 -maxdepth 8{} -type f -print 2>/dev/null | sort | head -n {} | sed 's|^\\./||';", excludes, MAX_TREE_ITEMS));
+            }
+            ContextMode::ReadFile => {
+                let Some(path) = &item.path else {
+                    return None;
+                };
+                if validate_ssh_read_path(path).is_err() {
+                    return None;
+                }
+                let end_line = match validate_read_file_range(item.start_line, item.limit) {
+                    Ok(end_line) => end_line,
+                    Err(_) => return None,
+                };
+                let escaped_path = shell_escape(path);
+                script.push_str(&format!(" if test -f {0}; then sed -n '{1},{2}p' -- {0}; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line));
+            }
+            ContextMode::GitStatus => {
+                script.push_str(" git status --short 2>/dev/null || true;");
+            }
+            ContextMode::GitDiff => {
+                script.push_str(" git diff 2>/dev/null || true;");
+            }
+            ContextMode::Search => return None,
+        }
+        script.push_str(&format!(" printf '\n__PDCTX_{}_END_{}__\n';", nonce, idx));
+    }
+
+    let (code, stdout, stderr, _) = run_ssh(&ssh_target, &script, 30, ssh_config);
+    if code != 0 {
+        let error = format!("SSH context batch failed: {}", stderr.trim());
+        return Some((
+            ssh_context_batch_error_results(project_name, requests, error),
+            1,
+        ));
+    }
+    let blocks = parse_ssh_batch_blocks(&stdout, requests.len(), &nonce);
+    let results = requests
+        .iter()
+        .zip(blocks.iter())
+        .map(|(item, block)| ssh_batch_block_to_response(proj, project_name, item, block))
+        .collect();
+    Some((results, 1))
 }
 
 fn execute_context_item(
@@ -1511,8 +1808,15 @@ fn execute_context_item(
                         Ok(content) => {
                             let lines: Vec<&str> = content.lines().collect();
                             let total = lines.len();
-                            let start = item.start_line.max(1) - 1;
-                            let end = (start + item.limit).min(total);
+                            let end_line =
+                                match validate_read_file_range(item.start_line, item.limit) {
+                                    Ok(end_line) => end_line,
+                                    Err(e) => {
+                                        return (context_error(project_name, &item.mode, e), 0)
+                                    }
+                                };
+                            let start = item.start_line - 1;
+                            let end = end_line.min(total);
                             let selected: Vec<String> = if start < total {
                                 lines[start..end]
                                     .iter()
@@ -1872,8 +2176,24 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     Ok(content) => {
                         let lines: Vec<&str> = content.lines().collect();
                         let total = lines.len();
-                        let start = body.start_line.max(1) - 1;
-                        let end = (start + body.limit).min(total);
+                        let end_line = match validate_read_file_range(body.start_line, body.limit) {
+                            Ok(end_line) => end_line,
+                            Err(e) => {
+                                res.status_code(StatusCode::BAD_REQUEST);
+                                res.render(Json(ContextResponse {
+                                    success: false,
+                                    project: body.project,
+                                    mode: "read_file".to_string(),
+                                    content: None,
+                                    items: None,
+                                    truncated: false,
+                                    error: Some(e),
+                                }));
+                                return;
+                            }
+                        };
+                        let start = body.start_line - 1;
+                        let end = end_line.min(total);
                         let selected: Vec<String> = if start < total {
                             lines[start..end]
                                 .iter()
@@ -2009,13 +2329,30 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
     };
 
     let start = Instant::now();
-    let mut ssh_calls = 0;
-    let mut results = Vec::with_capacity(body.requests.len());
-    for item in &body.requests {
-        let (resp, calls) = execute_context_item(proj, &body.project, item, projects.ssh.as_ref());
-        ssh_calls += calls;
-        results.push(resp);
-    }
+    let (results, ssh_calls) = if proj.is_ssh() {
+        match try_ssh_context_batch_once(proj, &body.project, &body.requests, projects.ssh.as_ref())
+        {
+            Some((results, ssh_calls)) => (results, ssh_calls),
+            None => {
+                let mut ssh_calls = 0;
+                let mut results = Vec::with_capacity(body.requests.len());
+                for item in &body.requests {
+                    let (resp, calls) =
+                        execute_context_item(proj, &body.project, item, projects.ssh.as_ref());
+                    ssh_calls += calls;
+                    results.push(resp);
+                }
+                (results, ssh_calls)
+            }
+        }
+    } else {
+        let mut results = Vec::with_capacity(body.requests.len());
+        for item in &body.requests {
+            let (resp, _) = execute_context_item(proj, &body.project, item, None);
+            results.push(resp);
+        }
+        (results, 0)
+    };
     let success = results.iter().all(|r| r.success);
     let duration_ms = start.elapsed().as_millis() as u64;
     tracing::info!(
@@ -2486,6 +2823,57 @@ mod tests {
         assert!(is_sensitive_path(".git/config"));
         assert!(!is_sensitive_path("src/main.rs"));
         assert!(!is_sensitive_path("README.md"));
+    }
+
+    #[test]
+    fn test_parse_ssh_batch_blocks_with_nonce() {
+        let nonce = "abc123";
+        let stdout = "__PDCTX_abc123_START_0__\nfirst\n__PDCTX_abc123_END_0__\n__PDCTX_abc123_START_1__\nsecond\n__PDCTX_abc123_END_1__\n";
+        let blocks = parse_ssh_batch_blocks(stdout, 2, nonce);
+        assert_eq!(blocks[0], "first\n");
+        assert_eq!(blocks[1], "second\n");
+    }
+
+    #[test]
+    fn test_parse_ssh_batch_blocks_ignores_old_style_markers() {
+        let nonce = "abc123";
+        let stdout = "__PDCTX_abc123_START_0__\nline before\n__PDCTX_START_0__\nfile content\n__PDCTX_END_0__\nline after\n__PDCTX_abc123_END_0__\n";
+        let blocks = parse_ssh_batch_blocks(stdout, 1, nonce);
+        assert!(blocks[0].contains("__PDCTX_START_0__"));
+        assert!(blocks[0].contains("__PDCTX_END_0__"));
+        assert!(blocks[0].contains("line after"));
+    }
+
+    #[test]
+    fn test_invalid_read_file_ranges_return_errors() {
+        assert!(validate_read_file_range(0, 10).is_err());
+        assert!(validate_read_file_range(1, 0).is_err());
+        assert!(validate_read_file_range(1, MAX_READ_FILE_LIMIT + 1).is_err());
+        assert!(validate_read_file_range(usize::MAX, 2).is_err());
+    }
+
+    #[test]
+    fn test_ssh_batch_failure_returns_one_result_per_request() {
+        let requests = vec![
+            ContextBatchItem {
+                mode: ContextMode::Overview,
+                path: None,
+                query: None,
+                start_line: 1,
+                limit: 10,
+            },
+            ContextBatchItem {
+                mode: ContextMode::ReadFile,
+                path: Some("README.md".to_string()),
+                query: None,
+                start_line: 1,
+                limit: 10,
+            },
+        ];
+        let results = ssh_context_batch_error_results("proj", &requests, "boom".to_string());
+        assert_eq!(results.len(), requests.len());
+        assert!(results.iter().all(|r| !r.success));
+        assert!(results.iter().all(|r| r.error.as_deref() == Some("boom")));
     }
 
     #[test]
