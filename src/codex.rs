@@ -1041,6 +1041,16 @@ def blocked_ip(ip):
         return True
     return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_unspecified or addr.is_reserved
 
+def is_allowed_chatgpt_estuary_url(parsed):
+    if parsed.scheme != 'https' or parsed.hostname != 'chatgpt.com':
+        return False
+    if parsed.path != '/backend-api/estuary/content':
+        return False
+    qs = urllib.parse.parse_qs(parsed.query)
+    ids = qs.get('id') or []
+    sigs = qs.get('sig') or []
+    return any(v.startswith('file_') for v in ids) and any(bool(v) for v in sigs)
+
 def validate_url(source_url):
     try:
         parsed = urllib.parse.urlparse(source_url)
@@ -1055,6 +1065,8 @@ def validate_url(source_url):
         return None, 'source_url must include a host'
     if host.lower() == 'localhost' or host.lower().endswith('.localhost'):
         return None, 'source_url host is not allowed'
+    if is_allowed_chatgpt_estuary_url(parsed):
+        return source_url, None
     port = parsed.port or (443 if parsed.scheme == 'https' else 80)
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
@@ -5694,6 +5706,20 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_source_url_allows_chatgpt_estuary_content() {
+        let url = validate_source_url("https://chatgpt.com/backend-api/estuary/content?id=file_abc123&ts=1&p=fsns&cid=1&sig=abc&v=0").unwrap();
+        assert_eq!(url.host_str(), Some("chatgpt.com"));
+        assert_eq!(url.path(), "/backend-api/estuary/content");
+    }
+
+    #[test]
+    fn test_chatgpt_estuary_allowlist_rejects_non_estuary_path() {
+        let url = reqwest::Url::parse("https://chatgpt.com/api/not-estuary?id=file_abc123&sig=abc")
+            .unwrap();
+        assert!(!is_allowed_chatgpt_estuary_url(&url));
+    }
+
+    #[test]
     fn test_decode_binary_artifact_accepts_small_base64() {
         let bytes = decode_binary_artifact("AAECAw==", "docs/pixel.bin").unwrap();
         assert_eq!(bytes, vec![0, 1, 2, 3]);
@@ -6409,6 +6435,16 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
     }
 }
 
+fn is_allowed_chatgpt_estuary_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("chatgpt.com")
+        && url.path() == "/backend-api/estuary/content"
+        && url
+            .query_pairs()
+            .any(|(k, v)| k == "id" && v.starts_with("file_"))
+        && url.query_pairs().any(|(k, v)| k == "sig" && !v.is_empty())
+}
+
 fn validate_source_url(source_url: &str) -> Result<reqwest::Url, String> {
     let url = reqwest::Url::parse(source_url).map_err(|e| format!("Invalid source_url: {}", e))?;
     match url.scheme() {
@@ -6424,6 +6460,9 @@ fn validate_source_url(source_url: &str) -> Result<reqwest::Url, String> {
     let host_lower = host.to_ascii_lowercase();
     if host_lower == "localhost" || host_lower.ends_with(".localhost") {
         return Err("source_url host is not allowed".to_string());
+    }
+    if is_allowed_chatgpt_estuary_url(&url) {
+        return Ok(url);
     }
     let port = url.port_or_known_default().unwrap_or(80);
     let addrs = (host, port)

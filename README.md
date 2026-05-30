@@ -927,6 +927,14 @@ For generated images and other binary outputs, the higher-level Codex artifact e
 - `save_upload`: use when the artifact file exists on the Private Drop server in an allowed upload/temp location.
 - `save_url`: use when the artifact is available from an external HTTP/HTTPS URL.
 
+For ChatGPT-generated images, the copied image content link can be saved with `save_url` when it has this exact shape:
+
+```text
+https://chatgpt.com/backend-api/estuary/content?id=file_...&sig=...
+```
+
+That allowlist is intentionally narrow: it requires HTTPS, host `chatgpt.com`, path `/backend-api/estuary/content`, an `id` beginning with `file_`, and a non-empty `sig` query parameter. Other URL imports still use the normal SSRF checks.
+
 Set `allow_overwrite=true` to replace an existing artifact. Internally this endpoint reuses the same binary edit implementation and safety checks as `applyProjectEdit`, including project path validation, sensitive path blocking, no-overwrite defaults, URL SSRF protections, and a 5MB decoded/downloaded size limit.
 
 
