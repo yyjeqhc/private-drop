@@ -256,6 +256,22 @@
         },
         "required": ["project", "command"]
       },
+      "CommandRequestCreate": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "command": {"type": "string", "description": "Command id configured under [projects.<name>.commands]"},
+          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Why this command is requested"}
+        },
+        "required": ["project", "command"]
+      },
+      "CommandApproveRequest": {
+        "type": "object",
+        "properties": {
+          "request_id": {"type": "string", "description": "Command request id to approve and execute"}
+        },
+        "required": ["request_id"]
+      },
       "CommandResponse": {
         "type": "object",
         "properties": {
@@ -270,6 +286,16 @@
           "error": {"type": "string", "nullable": true}
         },
         "required": ["success", "project", "command", "duration_ms", "truncated"]
+      },
+      "CommandRequestResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "request_id": {"type": "string", "nullable": true},
+          "record": {"type": "object", "nullable": true, "description": "Audited command request record"},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success"]
       },
       "CheckRequest": {
         "type": "object",
@@ -516,6 +542,41 @@
         "responses": {
           "200": {"description": "Command result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResponse"}}}},
           "400": {"description": "Bad request or unknown command"}
+        }
+      }
+    },
+    "/api/codex/command_request": {
+      "post": {
+        "operationId": "createCommandRequest",
+        "summary": "Create an auditable command request",
+        "description": "Create a pending request for a configured project command. The command is not executed until approved via command_approve. Requires allow_command_requests=true for the project.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestCreate"}}}
+        },
+        "responses": {
+          "200": {"description": "Command request created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Command requests disabled"}
+        }
+      }
+    },
+    "/api/codex/command_approve": {
+      "post": {
+        "operationId": "approveCommandRequest",
+        "summary": "Approve and execute a pending command request",
+        "description": "Atomically claim a pending command request, execute the stored command_text snapshot, and record stdout/stderr/exit status in SQLite audit records.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandApproveRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Command request execution result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Command requests disabled"},
+          "404": {"description": "Request not found"}
         }
       }
     },

@@ -13,6 +13,7 @@
 [projects.private-drop]
 path = "/root/git/private-drop"
 allow_patch = true
+allow_command_requests = true
 allowed_checks = ["fmt", "test", "build", "e2e", "full"]
 
 [projects.private-drop.checks]
@@ -41,6 +42,7 @@ doc = "cargo doc --no-deps"
 # user = "root"
 # path = "/root/git/private-drop"
 # allow_patch = true
+# allow_command_requests = true
 # allowed_checks = ["fmt", "test", "build", "e2e"]
 #
 # [projects.private-drop.checks]

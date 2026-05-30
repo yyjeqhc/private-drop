@@ -64,6 +64,7 @@ cat > "$PROJECTS_TOML" << EOF
 [projects.test-project]
 path = "$TEST_PROJECT_DIR"
 allow_patch = true
+allow_command_requests = true
 allowed_checks = ["fmt", "test", "build", "e2e", "full"]
 
 [projects.test-project.checks]
@@ -75,6 +76,7 @@ full = "echo fmt-ok && echo test-ok && bash check.sh"
 
 [projects.test-project.commands]
 smoke = "echo command-smoke-ok"
+counter = "printf run >> approval-count.txt"
 fail = "echo command-failed >&2; exit 7"
 EOF
 
@@ -205,11 +207,15 @@ echo "  Port: $PORT"
 echo "  Data dir: $TMPDIR_DATA"
 echo "  Log file: $LOGFILE"
 
-DROP_TOKEN="$TOKEN" \
-DROP_ADDR="127.0.0.1:$PORT" \
-DROP_DATA="$TMPDIR_DATA" \
-PROJECTS_CONFIG="$PROJECTS_TOML" \
-    ./target/release/private-drop > "$LOGFILE" 2>&1 &
+ENV_FILE="$TMPDIR_DATA/private-drop.env"
+cat > "$ENV_FILE" << EOF
+DROP_TOKEN=$TOKEN
+DROP_ADDR=127.0.0.1:$PORT
+DROP_DATA=$TMPDIR_DATA
+PROJECTS_CONFIG=$PROJECTS_TOML
+EOF
+
+DROP_ENV_FILE="$ENV_FILE" ./target/release/private-drop > "$LOGFILE" 2>&1 &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID"
 
@@ -480,6 +486,10 @@ assert_http_code "POST /api/codex/git without token returns 401" "401" "$CODEX/g
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","operation":"status"}'
 assert_http_code "POST /api/codex/command without token returns 401" "401" "$CODEX/command" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","command":"smoke"}'
+assert_http_code "POST /api/codex/command_request without token returns 401" "401" "$CODEX/command_request" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","command":"smoke"}'
+assert_http_code "POST /api/codex/command_approve without token returns 401" "401" "$CODEX/command_approve" \
+    -X POST -H "Content-Type: application/json" -d '{"request_id":"missing"}'
 assert_http_code "POST /api/codex/report without token returns 401" "401" "$CODEX/report" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","status":"completed","title":"t","summary":"s"}'
 
@@ -618,6 +628,63 @@ CMD_SUCCESS=$(pyget "$RESP" "success")
 CMD_ERROR=$(pyget "$RESP" "error")
 assert_eq "Unknown command rejected" "False" "$CMD_SUCCESS"
 assert_contains "Unknown command error" "not configured" "$CMD_ERROR"
+
+# --- 24e. Codex: chat-approved command request ---
+echo ""
+echo "--- 24e. Codex Command Approval ---"
+RESP=$(curl -sf -X POST "$CODEX/command_request" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","command":"smoke","reason":"e2e approval smoke"}')
+REQ_SUCCESS=$(pyget "$RESP" "success")
+REQ_ID=$(pyget "$RESP" "request_id")
+REQ_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record']['status'])")
+REQ_COMMAND_TEXT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('command_text') or '')")
+assert_eq "Command request created" "True" "$REQ_SUCCESS"
+assert_not_empty "Command request has id" "$REQ_ID"
+assert_eq "Command request pending" "pending" "$REQ_STATUS"
+assert_contains "Command request stores command_text" "echo command-smoke-ok" "$REQ_COMMAND_TEXT"
+RESP=$(curl -sf -X POST "$CODEX/command_approve" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'request_id':'$REQ_ID'}))")")
+APPROVE_SUCCESS=$(pyget "$RESP" "success")
+APPROVE_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record']['status'])")
+APPROVE_STDOUT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stdout_tail') or '')")
+assert_eq "Command approval executed" "True" "$APPROVE_SUCCESS"
+assert_eq "Command approval completed" "completed" "$APPROVE_STATUS"
+assert_contains "Command approval stdout" "command-smoke-ok" "$APPROVE_STDOUT"
+RESP=$(curl -s -X POST "$CODEX/command_approve" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'request_id':'$REQ_ID'}))")")
+REAPPROVE_SUCCESS=$(pyget "$RESP" "success")
+REAPPROVE_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command approval cannot rerun" "False" "$REAPPROVE_SUCCESS"
+assert_contains "Command approval rerun error" "not pending" "$REAPPROVE_ERROR"
+RESP=$(curl -s -X POST "$CODEX/command_request" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','command':'smoke','reason':'x'*2001}))")")
+LONG_REASON_SUCCESS=$(pyget "$RESP" "success")
+LONG_REASON_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command request long reason rejected" "False" "$LONG_REASON_SUCCESS"
+assert_contains "Command request long reason error" "maximum is 2000" "$LONG_REASON_ERROR"
+RESP=$(curl -sf -X POST "$CODEX/command_request" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","command":"counter","reason":"verify duplicate approve does not rerun"}')
+COUNTER_ID=$(pyget "$RESP" "request_id")
+RESP=$(curl -sf -X POST "$CODEX/command_approve" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'request_id':'$COUNTER_ID'}))")")
+RESP=$(curl -s -X POST "$CODEX/command_approve" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'request_id':'$COUNTER_ID'}))")")
+COUNTER_CONTENT=$(cat "$TEST_PROJECT_DIR/approval-count.txt")
+assert_eq "Command duplicate approval ran once" "run" "$COUNTER_CONTENT"
 
 # --- 25. Codex: applyProjectPatch ---
 echo ""

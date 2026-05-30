@@ -1,7 +1,7 @@
 use salvo::cors::Cors;
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -45,6 +45,23 @@ pub struct Channel {
     pub message_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandAuditRecord {
+    pub id: String,
+    pub project: String,
+    pub command: String,
+    pub command_text: Option<String>,
+    pub reason: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+    pub approved_at: Option<i64>,
+    pub executed_at: Option<i64>,
+    pub exit_code: Option<i32>,
+    pub stdout_tail: Option<String>,
+    pub stderr_tail: Option<String>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub addr: String,
@@ -52,6 +69,85 @@ pub struct Config {
     pub token: Option<String>,
     pub max_text_size: usize,
     pub max_file_size: usize,
+}
+
+#[derive(Debug, Clone)]
+struct EnvFileLoad {
+    path: PathBuf,
+    loaded_count: usize,
+}
+
+fn parse_env_file_line(line: &str) -> Option<Result<(String, String), String>> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let line = line.strip_prefix("export ").unwrap_or(line).trim();
+    let Some((key, value)) = line.split_once('=') else {
+        return Some(Err("missing '='".to_string()));
+    };
+    let key = key.trim();
+    if key.is_empty()
+        || !key
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        return Some(Err(format!("invalid env key '{}'", key)));
+    }
+    let value = value.trim();
+    let value = if (value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\''))
+    {
+        value[1..value.len() - 1].to_string()
+    } else {
+        value.to_string()
+    };
+    Some(Ok((key.to_string(), value)))
+}
+
+fn load_env_file(path: &Path) -> Result<EnvFileLoad, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read env file {}: {}", path.display(), e))?;
+    let mut loaded_count = 0;
+    for (idx, line) in content.lines().enumerate() {
+        let Some(parsed) = parse_env_file_line(line) else {
+            continue;
+        };
+        let (key, value) = parsed.map_err(|e| {
+            format!(
+                "failed to parse env file {} line {}: {}",
+                path.display(),
+                idx + 1,
+                e
+            )
+        })?;
+        if std::env::var_os(&key).is_none() {
+            std::env::set_var(&key, value);
+            loaded_count += 1;
+        }
+    }
+    Ok(EnvFileLoad {
+        path: path.to_path_buf(),
+        loaded_count,
+    })
+}
+
+fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
+    if let Ok(path) = std::env::var("DROP_ENV_FILE") {
+        return Ok(vec![load_env_file(Path::new(&path))?]);
+    }
+    let candidates = [
+        PathBuf::from("./private-drop.env"),
+        PathBuf::from("/opt/private-drop/private-drop.env"),
+        PathBuf::from("/etc/private-drop/private-drop.env"),
+    ];
+    let mut loaded = Vec::new();
+    for path in candidates {
+        if path.exists() {
+            loaded.push(load_env_file(&path)?);
+        }
+    }
+    Ok(loaded)
 }
 
 impl Config {
@@ -132,8 +228,43 @@ impl Database {
                 expires_at INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
-            CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);",
+            CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS command_requests (
+                id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                command TEXT NOT NULL,
+                command_text TEXT,
+                reason TEXT,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                approved_at INTEGER,
+                executed_at INTEGER,
+                exit_code INTEGER,
+                stdout_tail TEXT,
+                stderr_tail TEXT,
+                error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_command_requests_created_at ON command_requests(created_at DESC);",
         )?;
+        let has_command_text = {
+            let mut stmt = conn.prepare("PRAGMA table_info(command_requests)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for row in rows {
+                if row? == "command_text" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_command_text {
+            conn.execute(
+                "ALTER TABLE command_requests ADD COLUMN command_text TEXT",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -208,6 +339,94 @@ impl Database {
         let has_more = messages.len() > limit;
         messages.truncate(limit);
         Ok((messages, has_more))
+    }
+
+    pub fn insert_command_request(&self, record: &CommandAuditRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO command_requests (id, project, command, command_text, reason, status, created_at, approved_at, executed_at, exit_code, stdout_tail, stderr_tail, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                record.id,
+                record.project,
+                record.command,
+                record.command_text,
+                record.reason,
+                record.status,
+                record.created_at,
+                record.approved_at,
+                record.executed_at,
+                record.exit_code,
+                record.stdout_tail,
+                record.stderr_tail,
+                record.error,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_command_request(&self, id: &str) -> anyhow::Result<Option<CommandAuditRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, project, command, command_text, reason, status, created_at, approved_at, executed_at, exit_code, stdout_tail, stderr_tail, error FROM command_requests WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(CommandAuditRecord {
+                id: row.get(0)?,
+                project: row.get(1)?,
+                command: row.get(2)?,
+                command_text: row.get(3)?,
+                reason: row.get(4)?,
+                status: row.get(5)?,
+                created_at: row.get(6)?,
+                approved_at: row.get(7)?,
+                executed_at: row.get(8)?,
+                exit_code: row.get(9)?,
+                stdout_tail: row.get(10)?,
+                stderr_tail: row.get(11)?,
+                error: row.get(12)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn claim_command_request_for_execution(
+        &self,
+        id: &str,
+        approved_at: i64,
+    ) -> anyhow::Result<Option<CommandAuditRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE command_requests SET status = 'running', approved_at = ?2 WHERE id = ?1 AND status = 'pending'",
+            params![id, approved_at],
+        )?;
+        drop(conn);
+        if changed == 1 {
+            self.get_command_request(id)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn update_command_request_result(&self, record: &CommandAuditRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE command_requests SET status = ?2, approved_at = ?3, executed_at = ?4, exit_code = ?5, stdout_tail = ?6, stderr_tail = ?7, error = ?8 WHERE id = ?1",
+            params![
+                record.id,
+                record.status,
+                record.approved_at,
+                record.executed_at,
+                record.exit_code,
+                record.stdout_tail,
+                record.stderr_tail,
+                record.error,
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn list_channels(&self) -> anyhow::Result<Vec<Channel>> {
@@ -728,6 +947,8 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
         "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
+        "/api/codex/command_request": spec["paths"]["/api/codex/command_request"].clone(),
+        "/api/codex/command_approve": spec["paths"]["/api/codex/command_approve"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
         "/api/codex/report": spec["paths"]["/api/codex/report"].clone()
     });
@@ -750,6 +971,9 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
         "CommandRequest": spec["components"]["schemas"]["CommandRequest"].clone(),
         "CommandResponse": spec["components"]["schemas"]["CommandResponse"].clone(),
+        "CommandRequestCreate": spec["components"]["schemas"]["CommandRequestCreate"].clone(),
+        "CommandApproveRequest": spec["components"]["schemas"]["CommandApproveRequest"].clone(),
+        "CommandRequestResponse": spec["components"]["schemas"]["CommandRequestResponse"].clone(),
         "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
         "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
@@ -762,6 +986,8 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "EditRequest",
         "GitRequest",
         "CommandRequest",
+        "CommandRequestCreate",
+        "CommandApproveRequest",
         "CheckRequest",
         "ReportRequest",
     ] {
@@ -1130,11 +1356,19 @@ pub async fn send_page(req: &mut Request, _depot: &mut Depot, res: &mut Response
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let env_loads = load_startup_env_files().map_err(std::io::Error::other)?;
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    for load in &env_loads {
+        tracing::info!(
+            "Loaded env file {} ({} variables set)",
+            load.path.display(),
+            load.loaded_count
+        );
+    }
     let config = Config::from_env();
     if !config.is_auth_enabled() {
         tracing::warn!(
@@ -1226,6 +1460,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("edit").post(codex::codex_edit))
                 .push(Router::with_path("git").post(codex::codex_git))
                 .push(Router::with_path("command").post(codex::codex_command))
+                .push(Router::with_path("command_request").post(codex::codex_command_request))
+                .push(Router::with_path("command_approve").post(codex::codex_command_approve))
                 .push(Router::with_path("check").post(codex::codex_check))
                 .push(Router::with_path("report").post(codex::codex_report)),
         );
@@ -1248,6 +1484,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_env_file_line_basic() {
+        let parsed = parse_env_file_line("DROP_ADDR=127.0.0.1:8080")
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed.0, "DROP_ADDR");
+        assert_eq!(parsed.1, "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn test_parse_env_file_line_quotes_and_export() {
+        let parsed = parse_env_file_line("export RUST_LOG='info,codex.metrics=info'")
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed.0, "RUST_LOG");
+        assert_eq!(parsed.1, "info,codex.metrics=info");
+    }
+
+    #[test]
+    fn test_parse_env_file_line_ignores_empty_and_comments() {
+        assert!(parse_env_file_line("").is_none());
+        assert!(parse_env_file_line("  # comment").is_none());
+    }
+
+    #[test]
+    fn test_parse_env_file_line_rejects_invalid_key() {
+        assert!(parse_env_file_line("drop_token=x").unwrap().is_err());
+        assert!(parse_env_file_line("DROP TOKEN=x").unwrap().is_err());
+    }
 
     #[test]
     fn test_uuid_generation_not_empty() {
@@ -1325,6 +1591,40 @@ mod tests {
         let filename = "file\"name.txt";
         let safe = filename.replace('"', "_");
         assert_eq!(safe, "file_name.txt");
+    }
+
+    #[test]
+    fn test_command_request_claim_is_atomic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let record = CommandAuditRecord {
+            id: "req-1".to_string(),
+            project: "p".to_string(),
+            command: "smoke".to_string(),
+            command_text: Some("echo ok".to_string()),
+            reason: Some("test".to_string()),
+            status: "pending".to_string(),
+            created_at: 1,
+            approved_at: None,
+            executed_at: None,
+            exit_code: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            error: None,
+        };
+        db.insert_command_request(&record).unwrap();
+        let claimed = db
+            .claim_command_request_for_execution("req-1", 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.status, "running");
+        assert_eq!(claimed.approved_at, Some(2));
+        assert_eq!(claimed.command_text.as_deref(), Some("echo ok"));
+        let second = db.claim_command_request_for_execution("req-1", 3).unwrap();
+        assert!(second.is_none());
+        let current = db.get_command_request("req-1").unwrap().unwrap();
+        assert_eq!(current.status, "running");
+        assert_eq!(current.approved_at, Some(2));
     }
 
     #[test]

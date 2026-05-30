@@ -25,15 +25,35 @@ cargo build --release
 
 ### 2. Run
 
+For local development you can still pass environment variables directly:
+
 ```bash
 DROP_TOKEN="your-secret-token" ./target/release/private-drop
 ```
 
-With custom settings:
+For deployment, put settings in an env file so startup does not require a long inline command:
 
 ```bash
-DROP_ADDR=0.0.0.0:8080 DROP_DATA=./data DROP_TOKEN=your-secret ./target/release/private-drop
+cat > /opt/private-drop/private-drop.env << 'EOF'
+RUST_LOG=info,codex.metrics=info
+DROP_TOKEN=your-secret-token
+DROP_ADDR=127.0.0.1:8080
+DROP_DATA=/var/lib/private-drop
+PROJECTS_CONFIG=/opt/private-drop/projects.toml
+DROP_PUBLIC_URL=https://example.com
+EOF
+
+./private-drop
 ```
+
+By default private-drop loads env files from:
+
+1. `./private-drop.env`
+2. `/opt/private-drop/private-drop.env`
+3. `/etc/private-drop/private-drop.env`
+
+Set `DROP_ENV_FILE=/path/to/file` to load one explicit file instead.
+Existing process environment variables take precedence over env-file values.
 
 ### 3. Access
 
@@ -48,6 +68,7 @@ DROP_ADDR=0.0.0.0:8080 DROP_DATA=./data DROP_TOKEN=your-secret ./target/release/
 | `DROP_ADDR` | `0.0.0.0:8080` | Listen address |
 | `DROP_DATA` | `./data` | Data directory (SQLite DB + uploads) |
 | `DROP_TOKEN` | (none) | Auth token. **Required for production.** If unset, runs in dev mode with warning. |
+| `DROP_ENV_FILE` | (none) | Optional explicit env file to load before reading other settings. |
 
 ## API Examples
 
@@ -701,3 +722,40 @@ Example request:
 The response includes `success`, `exit_code`, `duration_ms`, `stdout_tail`, `stderr_tail`, and `truncated`. SSH projects use the existing SSH executor path and therefore benefit from configured ControlMaster reuse.
 
 Command ids may only contain ASCII letters, digits, `_`, `-`, and `.` and must be configured in `projects.toml`. This endpoint is intended for project-specific checks such as `clippy`, `doc`, `pytest`, `lint`, or smoke tests while avoiding arbitrary command execution from API requests.
+
+
+## Codex chat-approved command requests
+
+`POST /api/codex/command_request` creates an audited pending command request for a command id configured in `[projects.<name>.commands]`. It does not execute the command.
+
+Project opt-in is required:
+
+```toml
+[projects.private-drop-v4]
+allow_command_requests = true
+
+[projects.private-drop-v4.commands]
+smoke = "cargo test smoke"
+```
+
+Create a request:
+
+```json
+{
+  "project": "private-drop-v4",
+  "command": "smoke",
+  "reason": "Need to verify smoke tests before deploy"
+}
+```
+
+The response contains a `request_id` and an audit `record` with `status = "pending"`. After approval in chat, execute the exact configured command id with:
+
+```json
+{
+  "request_id": "<id from command_request>"
+}
+```
+
+sent to `POST /api/codex/command_approve`.
+
+The server records status, timestamps, exit code, stdout/stderr tails, and error in SQLite. A request can only be approved while pending, so repeated approval attempts do not re-run the command. Approval atomically claims a pending request by moving it to `running` before execution, preventing concurrent double execution. Approval executes the stored `command_text` snapshot captured when the request was created, not a later value from a changed `projects.toml`. `reason` is limited to 2000 characters. This is a chat-friendly approval flow with server-side audit records, not an arbitrary shell endpoint.

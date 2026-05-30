@@ -1,5 +1,5 @@
 use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig, SshConfig};
-use crate::{Database, Message, MessageKind};
+use crate::{CommandAuditRecord, Database, Message, MessageKind};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -111,6 +111,19 @@ pub struct CommandRequest {
     pub command: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CommandRequestCreate {
+    pub project: String,
+    pub command: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommandApproveRequest {
+    pub request_id: String,
+}
+
 fn default_channel() -> String {
     "omo".to_string()
 }
@@ -212,6 +225,17 @@ pub struct CommandResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr_tail: Option<String>,
     pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CommandRequestResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record: Option<CommandAuditRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -2778,6 +2802,308 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
 }
 
 #[handler]
+pub async fn codex_command_request(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let Some(db) = get_db(depot) else {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Database not configured".to_string()),
+        }));
+        return;
+    };
+    let body: CommandRequestCreate = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: None,
+                record: None,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    if let Some(reason) = &body.reason {
+        if reason.chars().count() > MAX_COMMAND_REASON_LEN {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: None,
+                record: None,
+                error: Some(format!(
+                    "reason is too long; maximum is {} characters",
+                    MAX_COMMAND_REASON_LEN
+                )),
+            }));
+            return;
+        }
+    }
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: None,
+                record: None,
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    if !proj.allow_command_requests {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Command requests are not enabled for this project".to_string()),
+        }));
+        return;
+    }
+    let command_text = match get_project_command(proj, &body.command) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: None,
+                record: None,
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    let now = chrono::Utc::now().timestamp();
+    let record = CommandAuditRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        project: body.project,
+        command: body.command,
+        command_text: Some(command_text),
+        reason: body.reason,
+        status: "pending".to_string(),
+        created_at: now,
+        approved_at: None,
+        executed_at: None,
+        exit_code: None,
+        stdout_tail: None,
+        stderr_tail: None,
+        error: None,
+    };
+    let request_id = record.id.clone();
+    if let Err(e) = db.insert_command_request(&record) {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some(format!("Failed to create command request: {}", e)),
+        }));
+        return;
+    }
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "createCommandRequest",
+        project = %record.project,
+        command = %record.command,
+        request_id = %request_id,
+        "codex_command_request_created"
+    );
+    res.render(Json(CommandRequestResponse {
+        success: true,
+        request_id: Some(request_id),
+        record: Some(record),
+        error: None,
+    }));
+}
+
+#[handler]
+pub async fn codex_command_approve(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let Some(db) = get_db(depot) else {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Database not configured".to_string()),
+        }));
+        return;
+    };
+    let body: CommandApproveRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: None,
+                record: None,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    let approved_at = chrono::Utc::now().timestamp();
+    let mut record = match db.claim_command_request_for_execution(&body.request_id, approved_at) {
+        Ok(Some(record)) => record,
+        Ok(None) => match db.get_command_request(&body.request_id) {
+            Ok(Some(record)) => {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(CommandRequestResponse {
+                    success: false,
+                    request_id: Some(record.id.clone()),
+                    record: Some(record),
+                    error: Some("Command request is not pending".to_string()),
+                }));
+                return;
+            }
+            Ok(None) => {
+                res.status_code(StatusCode::NOT_FOUND);
+                res.render(Json(CommandRequestResponse {
+                    success: false,
+                    request_id: Some(body.request_id),
+                    record: None,
+                    error: Some("Command request not found".to_string()),
+                }));
+                return;
+            }
+            Err(e) => {
+                res.render(Json(CommandRequestResponse {
+                    success: false,
+                    request_id: Some(body.request_id),
+                    record: None,
+                    error: Some(format!("Failed to load command request: {}", e)),
+                }));
+                return;
+            }
+        },
+        Err(e) => {
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: Some(body.request_id),
+                record: None,
+                error: Some(format!("Failed to claim command request: {}", e)),
+            }));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&record.project) {
+        Ok(p) => p,
+        Err(e) => {
+            record.status = "failed".to_string();
+            record.executed_at = Some(chrono::Utc::now().timestamp());
+            record.error = Some(e.clone());
+            let _ = db.update_command_request_result(&record);
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: Some(record.id.clone()),
+                record: Some(record),
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    if !proj.allow_command_requests {
+        let error = "Command requests are not enabled for this project".to_string();
+        record.status = "failed".to_string();
+        record.executed_at = Some(chrono::Utc::now().timestamp());
+        record.error = Some(error.clone());
+        let _ = db.update_command_request_result(&record);
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: Some(record.id.clone()),
+            record: Some(record),
+            error: Some(error),
+        }));
+        return;
+    }
+    let cmd = match record.command_text.clone() {
+        Some(cmd) if !cmd.is_empty() => cmd,
+        _ => {
+            let error = "Command request is missing command_text snapshot".to_string();
+            record.status = "failed".to_string();
+            record.executed_at = Some(chrono::Utc::now().timestamp());
+            record.error = Some(error.clone());
+            let _ = db.update_command_request_result(&record);
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: Some(record.id.clone()),
+                record: Some(record),
+                error: Some(error),
+            }));
+            return;
+        }
+    };
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
+    let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
+    let now = chrono::Utc::now().timestamp();
+    record.status = if code == 0 { "completed" } else { "failed" }.to_string();
+    record.approved_at = Some(approved_at);
+    record.executed_at = Some(now);
+    record.exit_code = Some(code);
+    record.stdout_tail = Some(stdout_tail);
+    record.stderr_tail = Some(stderr_tail);
+    record.error = if code == 0 {
+        None
+    } else {
+        Some("command failed".to_string())
+    };
+    if let Err(e) = db.update_command_request_result(&record) {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: Some(record.id.clone()),
+            record: Some(record),
+            error: Some(format!("Failed to update command request: {}", e)),
+        }));
+        return;
+    }
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "approveCommandRequest",
+        project = %record.project,
+        command = %record.command,
+        request_id = %record.id,
+        success = code == 0,
+        exit_code = code,
+        duration_ms = duration_ms,
+        truncated = stdout_trunc || stderr_trunc,
+        "codex_command_request_executed"
+    );
+    res.render(Json(CommandRequestResponse {
+        success: code == 0,
+        request_id: Some(record.id.clone()),
+        record: Some(record),
+        error: if code == 0 {
+            None
+        } else {
+            Some("command failed".to_string())
+        },
+    }));
+}
+
+#[handler]
 pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(projects) = get_projects(depot) else {
         res.render(Json(CheckResponse {
@@ -3090,6 +3416,7 @@ mod tests {
             host: None,
             user: None,
             allow_patch: true,
+            allow_command_requests: true,
             allowed_checks: vec![],
             checks: None,
             commands,
@@ -3231,6 +3558,7 @@ mod tests {
             host: Some("msi".to_string()),
             user: Some("root".to_string()),
             allow_patch: false,
+            allow_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -3243,6 +3571,7 @@ mod tests {
             host: Some("msi".to_string()),
             user: None,
             allow_patch: false,
+            allow_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -3258,6 +3587,7 @@ mod tests {
             host: None,
             user: None,
             allow_patch: false,
+            allow_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -3273,6 +3603,7 @@ mod tests {
             host: None,
             user: None,
             allow_patch: false,
+            allow_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -3643,6 +3974,7 @@ fn git_error(project: &str, operation: &GitOperation, error: String) -> GitRespo
 
 const MAX_GIT_PATHS: usize = 50;
 const MAX_GIT_PATH_LEN: usize = 512;
+const MAX_COMMAND_REASON_LEN: usize = 2_000;
 
 fn validate_git_paths(paths: &[String]) -> Result<(), String> {
     if paths.is_empty() {

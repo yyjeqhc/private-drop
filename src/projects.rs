@@ -29,6 +29,8 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub user: Option<String>,
     pub allow_patch: bool,
+    #[serde(default)]
+    pub allow_command_requests: bool,
     pub allowed_checks: Vec<String>,
     pub checks: Option<ProjectChecks>,
     #[serde(default)]
