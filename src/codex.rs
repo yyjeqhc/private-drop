@@ -1,5 +1,5 @@
 use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig, SshConfig};
-use crate::{CodexGoalRecord, Config, Database};
+use crate::{CodexGoalRecord, Database};
 use salvo::prelude::*;
 mod artifact;
 mod command_request;
@@ -13,7 +13,7 @@ mod shell;
 mod ssh;
 mod types;
 mod url_security;
-use artifact::*;
+pub use artifact::codex_artifact;
 use command_request::*;
 pub use command_request::{
     codex_check, codex_command, codex_command_approve, codex_command_reject, codex_command_request,
@@ -3534,127 +3534,6 @@ pub(super) fn apply_edit_request_with_metrics(
         "codex_edit_completed"
     );
     response
-}
-
-#[handler]
-pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(projects) = get_projects(depot) else {
-        res.render(Json(edit_error("Projects not configured".to_string())));
-        return;
-    };
-    let Some(config) = depot.obtain::<Arc<Config>>().ok().cloned() else {
-        res.render(Json(edit_error("Config not configured".to_string())));
-        return;
-    };
-    let Some(db) = depot.obtain::<Arc<Database>>().ok().cloned() else {
-        res.render(Json(edit_error("Database not configured".to_string())));
-        return;
-    };
-    let artifact_body: ArtifactRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(edit_error(format!("Invalid JSON: {}", e))));
-            return;
-        }
-    };
-    let plan = match plan_artifact_request(&artifact_body, &config, &db) {
-        Ok(plan) => plan,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ArtifactResponse {
-                success: false,
-                changed_files: Vec::new(),
-                saved_path: None,
-                relative_path: None,
-                file_size: None,
-                mime_type: artifact_body.mime_type.clone(),
-                markdown_snippet: None,
-                selected_source: None,
-                diff: String::new(),
-                warnings: Vec::new(),
-                error: Some(e),
-            }));
-            return;
-        }
-    };
-    let edit_body = &plan.edit_request;
-    let proj = match projects.get_project(&edit_body.project) {
-        Ok(p) => p,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ArtifactResponse {
-                success: false,
-                changed_files: Vec::new(),
-                saved_path: None,
-                relative_path: None,
-                file_size: None,
-                mime_type: artifact_body.mime_type.clone(),
-                markdown_snippet: plan.markdown_snippet.clone(),
-                selected_source: Some(plan.selected_source.clone()),
-                diff: String::new(),
-                warnings: Vec::new(),
-                error: Some(e),
-            }));
-            return;
-        }
-    };
-    if !proj.allow_patch() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(ArtifactResponse {
-            success: false,
-            changed_files: Vec::new(),
-            saved_path: None,
-            relative_path: None,
-            file_size: None,
-            mime_type: artifact_body.mime_type.clone(),
-            markdown_snippet: plan.markdown_snippet.clone(),
-            selected_source: Some(plan.selected_source.clone()),
-            diff: String::new(),
-            warnings: Vec::new(),
-            error: Some("Artifact save is not allowed for this project".to_string()),
-        }));
-        return;
-    }
-    if let Err(e) = validate_no_mixed_edit_kinds(&edit_body.edits) {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(ArtifactResponse {
-            success: false,
-            changed_files: Vec::new(),
-            saved_path: None,
-            relative_path: None,
-            file_size: None,
-            mime_type: artifact_body.mime_type.clone(),
-            markdown_snippet: plan.markdown_snippet.clone(),
-            selected_source: Some(plan.selected_source.clone()),
-            diff: String::new(),
-            warnings: Vec::new(),
-            error: Some(e),
-        }));
-        return;
-    }
-    for edit in &edit_body.edits {
-        if let Err(e) = validate_edit_path(edit_path(edit)) {
-            res.status_code(StatusCode::FORBIDDEN);
-            res.render(Json(ArtifactResponse {
-                success: false,
-                changed_files: Vec::new(),
-                saved_path: None,
-                relative_path: None,
-                file_size: None,
-                mime_type: artifact_body.mime_type.clone(),
-                markdown_snippet: plan.markdown_snippet.clone(),
-                selected_source: Some(plan.selected_source.clone()),
-                diff: String::new(),
-                warnings: Vec::new(),
-                error: Some(e),
-            }));
-            return;
-        }
-    }
-    let response =
-        apply_edit_request_with_metrics(&projects, proj, edit_body, "saveProjectArtifact");
-    res.render(Json(artifact_response_from_edit(&plan, response)));
 }
 
 #[cfg(test)]

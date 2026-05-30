@@ -1,12 +1,16 @@
-use crate::{Config, Database, MessageKind};
-
+use super::apply_edit_request_with_metrics;
+use super::edit::{edit_error, edit_path, validate_edit_path, validate_no_mixed_edit_kinds};
+use super::get_projects;
 use super::security::is_sensitive_path;
 use super::types::{
     ArtifactOperation, ArtifactPlan, ArtifactRequest, ArtifactResponse, EditOperation, EditRequest,
     EditResponse,
 };
 use super::url_security::{is_allowed_chatgpt_estuary_url, validate_source_url};
+use crate::{Config, Database, MessageKind};
+use salvo::prelude::*;
 use std::path::Path;
+use std::sync::Arc;
 
 const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
 
@@ -350,4 +354,125 @@ pub(super) fn artifact_response_from_edit(
             error: response.error,
         }
     }
+}
+
+#[handler]
+pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(edit_error("Projects not configured".to_string())));
+        return;
+    };
+    let Some(config) = depot.obtain::<Arc<Config>>().ok().cloned() else {
+        res.render(Json(edit_error("Config not configured".to_string())));
+        return;
+    };
+    let Some(db) = depot.obtain::<Arc<Database>>().ok().cloned() else {
+        res.render(Json(edit_error("Database not configured".to_string())));
+        return;
+    };
+    let artifact_body: ArtifactRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(format!("Invalid JSON: {}", e))));
+            return;
+        }
+    };
+    let plan = match plan_artifact_request(&artifact_body, &config, &db) {
+        Ok(plan) => plan,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(ArtifactResponse {
+                success: false,
+                changed_files: Vec::new(),
+                saved_path: None,
+                relative_path: None,
+                file_size: None,
+                mime_type: artifact_body.mime_type.clone(),
+                markdown_snippet: None,
+                selected_source: None,
+                diff: String::new(),
+                warnings: Vec::new(),
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    let edit_body = &plan.edit_request;
+    let proj = match projects.get_project(&edit_body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(ArtifactResponse {
+                success: false,
+                changed_files: Vec::new(),
+                saved_path: None,
+                relative_path: None,
+                file_size: None,
+                mime_type: artifact_body.mime_type.clone(),
+                markdown_snippet: plan.markdown_snippet.clone(),
+                selected_source: Some(plan.selected_source.clone()),
+                diff: String::new(),
+                warnings: Vec::new(),
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    if !proj.allow_patch() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ArtifactResponse {
+            success: false,
+            changed_files: Vec::new(),
+            saved_path: None,
+            relative_path: None,
+            file_size: None,
+            mime_type: artifact_body.mime_type.clone(),
+            markdown_snippet: plan.markdown_snippet.clone(),
+            selected_source: Some(plan.selected_source.clone()),
+            diff: String::new(),
+            warnings: Vec::new(),
+            error: Some("Artifact save is not allowed for this project".to_string()),
+        }));
+        return;
+    }
+    if let Err(e) = validate_no_mixed_edit_kinds(&edit_body.edits) {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(ArtifactResponse {
+            success: false,
+            changed_files: Vec::new(),
+            saved_path: None,
+            relative_path: None,
+            file_size: None,
+            mime_type: artifact_body.mime_type.clone(),
+            markdown_snippet: plan.markdown_snippet.clone(),
+            selected_source: Some(plan.selected_source.clone()),
+            diff: String::new(),
+            warnings: Vec::new(),
+            error: Some(e),
+        }));
+        return;
+    }
+    for edit in &edit_body.edits {
+        if let Err(e) = validate_edit_path(edit_path(edit)) {
+            res.status_code(StatusCode::FORBIDDEN);
+            res.render(Json(ArtifactResponse {
+                success: false,
+                changed_files: Vec::new(),
+                saved_path: None,
+                relative_path: None,
+                file_size: None,
+                mime_type: artifact_body.mime_type.clone(),
+                markdown_snippet: plan.markdown_snippet.clone(),
+                selected_source: Some(plan.selected_source.clone()),
+                diff: String::new(),
+                warnings: Vec::new(),
+                error: Some(e),
+            }));
+            return;
+        }
+    }
+    let response =
+        apply_edit_request_with_metrics(&projects, proj, edit_body, "saveProjectArtifact");
+    res.render(Json(artifact_response_from_edit(&plan, response)));
 }
