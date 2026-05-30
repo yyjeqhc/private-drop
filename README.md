@@ -876,3 +876,16 @@ https://<your-domain>/codex-openapi-compact.json
 ```
 
 The compact schema keeps the same `servers[0].url` behavior as the other schemas: it uses `DROP_PUBLIC_URL` when set, otherwise it falls back to `http://localhost:8080`.
+
+
+## GPT workflow and diagram assets
+
+This repository includes version-controlled visual documentation for the compact Codex/GPT workflow:
+
+- `docs/GPT_WORKFLOW.md`: recommended GPT development loop and goal-scoped command workflow.
+- `docs/diagrams/goal-workflow.svg`: browser-friendly static diagram.
+- `docs/diagrams/goal-workflow.mmd`: Mermaid source for Markdown renderers.
+- `docs/diagrams/goal-workflow.html`: standalone HTML diagram.
+- `docs/diagrams/goal-workflow.excalidraw.json`: editable Excalidraw scene.
+
+Use SVG for stable documentation, Mermaid for quick text edits, HTML for standalone sharing, and Excalidraw JSON for manual visual editing.

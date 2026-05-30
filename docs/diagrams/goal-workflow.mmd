@@ -1,0 +1,22 @@
+flowchart TD
+  A[GPT proposes bounded goal] --> B[create_goal]
+  B --> C[Goal status: pending]
+  C --> D{User approves goal_id?}
+  D -- No --> E[reject_goal]
+  E --> F[Goal status: rejected]
+  D -- Yes --> G[approve_goal]
+  G --> H[Goal status: active]
+  H --> I[applyProjectEdit]
+  H --> J[runProjectCheck]
+  H --> K[create_and_approve]
+  H --> L[create_raw_and_approve]
+  K --> M[command_requests audit]
+  L --> M
+  I --> N[runProjectGit commit]
+  J --> N
+  N --> O[writeProjectReport]
+  O --> P[close_goal]
+  P --> Q[Goal status: closed]
+  C -. denied .-> R[auto approval denied]
+  F -. denied .-> R
+  Q -. denied .-> R

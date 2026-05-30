@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="680" viewBox="0 0 1120 680" role="img" aria-labelledby="title desc">
+<title id="title">Private Drop goal-scoped command workflow</title>
+<desc id="desc">Goal starts pending, becomes active only after explicit user approval, then permits bounded audited work until closed.</desc>
+<defs><style>.bg{fill:#f8fafc}.box{fill:#fff;stroke:#334155;stroke-width:2}.pending{fill:#fff7ed;stroke:#ea580c}.active{fill:#ecfdf5;stroke:#059669}.action{fill:#eff6ff;stroke:#2563eb}.audit{fill:#f5f3ff;stroke:#7c3aed}.deny{fill:#fef2f2;stroke:#dc2626}.t{font-family:Arial,sans-serif;font-size:16px;fill:#0f172a}.s{font-size:13px;fill:#475569}.h{font-size:28px;font-weight:700}.a{stroke:#334155;stroke-width:2;fill:none;marker-end:url(#arr)}.d{stroke-dasharray:7 7}</style><marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker></defs>
+<rect class="bg" width="1120" height="680"/><text class="t h" x="48" y="54">Goal-scoped command workflow</text><text class="t s" x="48" y="82">create_goal proposes work; approve_goal activates a bounded permission window.</text>
+<g><rect class="box action" x="60" y="130" width="200" height="72" rx="14"/><text class="t" x="94" y="162">create_goal</text><text class="t s" x="92" y="184">proposal only</text></g>
+<g><rect class="box pending" x="330" y="130" width="200" height="72" rx="14"/><text class="t" x="380" y="162">pending</text><text class="t s" x="370" y="184">no execution rights</text></g>
+<g><rect class="box active" x="610" y="130" width="200" height="72" rx="14"/><text class="t" x="658" y="162">approve_goal</text><text class="t s" x="674" y="184">active</text></g>
+<g><rect class="box action" x="350" y="310" width="190" height="72" rx="14"/><text class="t" x="386" y="342">bounded work</text><text class="t s" x="378" y="364">edits + checks</text></g>
+<g><rect class="box action" x="610" y="310" width="230" height="72" rx="14"/><text class="t" x="638" y="342">*_and_approve</text><text class="t s" x="642" y="364">goal-scoped commands</text></g>
+<g><rect class="box audit" x="900" y="310" width="170" height="72" rx="14"/><text class="t" x="938" y="342">audit</text><text class="t s" x="916" y="364">command_requests</text></g>
+<g><rect class="box action" x="350" y="480" width="190" height="72" rx="14"/><text class="t" x="405" y="512">commit</text><text class="t s" x="376" y="534">runProjectGit</text></g>
+<g><rect class="box action" x="610" y="480" width="190" height="72" rx="14"/><text class="t" x="663" y="512">report</text><text class="t s" x="642" y="534">writeProjectReport</text></g>
+<g><rect class="box active" x="880" y="480" width="190" height="72" rx="14"/><text class="t" x="932" y="512">close_goal</text><text class="t s" x="934" y="534">closed</text></g>
+<g><rect class="box deny" x="880" y="130" width="190" height="72" rx="14"/><text class="t" x="925" y="162">reject_goal</text><text class="t s" x="920" y="184">rejected/denied</text></g>
+<path class="a" d="M260 166 H330"/><path class="a" d="M530 166 H610"/><path class="a" d="M530 182 C620 250 560 310 540 346"/><path class="a" d="M710 202 V310"/><path class="a" d="M840 346 H900"/><path class="a" d="M445 382 V480"/><path class="a" d="M540 516 H610"/><path class="a" d="M800 516 H880"/><path class="a d" d="M530 150 H880"/><path class="a d" d="M975 202 V480"/>
+</svg>
