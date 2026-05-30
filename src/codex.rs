@@ -6336,58 +6336,6 @@ mod tests {
         assert!(result["error"].as_str().unwrap().contains("sensitive"));
     }
 }
-
-fn command_error(project: &str, command: &str, error: String) -> CommandResponse {
-    CommandResponse {
-        success: false,
-        project: project.to_string(),
-        command: command.to_string(),
-        exit_code: None,
-        duration_ms: 0,
-        stdout_tail: None,
-        stderr_tail: None,
-        truncated: false,
-        error: Some(error),
-    }
-}
-
-fn get_project_command(proj: &ProjectConfig, command: &str) -> Result<String, String> {
-    validate_command_name(command)?;
-    proj.commands.get(command).cloned().ok_or_else(|| {
-        let mut commands = proj.commands.keys().cloned().collect::<Vec<_>>();
-        commands.sort();
-        format!(
-            "Command '{}' is not configured. Available: {}",
-            command,
-            commands.join(", ")
-        )
-    })
-}
-
-fn build_command_audit_record(
-    project: String,
-    command: String,
-    command_text: String,
-    reason: Option<String>,
-    created_at: i64,
-) -> CommandAuditRecord {
-    CommandAuditRecord {
-        id: uuid::Uuid::new_v4().to_string(),
-        project,
-        command,
-        command_text: Some(command_text),
-        reason,
-        status: "pending".to_string(),
-        created_at,
-        approved_at: None,
-        executed_at: None,
-        exit_code: None,
-        stdout_tail: None,
-        stderr_tail: None,
-        error: None,
-    }
-}
-
 fn git_operation_name(operation: &GitOperation) -> &'static str {
     match operation {
         GitOperation::Status => "status",
