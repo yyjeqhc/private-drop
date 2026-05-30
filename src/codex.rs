@@ -449,6 +449,7 @@ pub enum ArtifactOperation {
     SaveBase64,
     SaveUpload,
     SaveUrl,
+    SaveGenerated,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -469,7 +470,40 @@ pub struct ArtifactRequest {
     #[serde(default)]
     pub source_url: Option<String>,
     #[serde(default)]
+    pub chatgpt_estuary_url: Option<String>,
+    #[serde(default)]
     pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub alt_text: Option<String>,
+    #[serde(default)]
+    pub companion_markdown_path: Option<String>,
+    #[serde(default)]
+    pub companion_markdown_template: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ArtifactResponse {
+    pub success: bool,
+    pub changed_files: Vec<String>,
+    pub saved_path: Option<String>,
+    pub relative_path: Option<String>,
+    pub file_size: Option<u64>,
+    pub mime_type: Option<String>,
+    pub markdown_snippet: Option<String>,
+    pub diff: String,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+}
+
+struct ArtifactPlan {
+    edit_request: EditRequest,
+    saved_path: String,
+    relative_path: String,
+    file_size: Option<u64>,
+    mime_type: Option<String>,
+    markdown_snippet: Option<String>,
 }
 
 // =============================================================================
@@ -7042,29 +7076,131 @@ fn resolve_upload_file_id(
     Ok(canonical.to_string_lossy().to_string())
 }
 
-fn edit_request_from_artifact(
+fn markdown_snippet_for_artifact(path: &str, alt_text: Option<&str>) -> String {
+    let alt = alt_text.unwrap_or("Generated artifact");
+    let file_name = Path::new(path)
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or(path);
+    format!("![{}](./{})", alt, file_name)
+}
+
+fn companion_markdown_content(body: &ArtifactRequest, snippet: &str) -> Option<String> {
+    body.companion_markdown_path.as_ref()?;
+    if let Some(template) = &body.companion_markdown_template {
+        return Some(
+            template
+                .replace("{{path}}", &body.path)
+                .replace("{{markdown_snippet}}", snippet)
+                .replace(
+                    "{{alt_text}}",
+                    body.alt_text.as_deref().unwrap_or("Generated artifact"),
+                ),
+        );
+    }
+    Some(format!(
+        "# Generated Artifact\n\nThis companion file was created by `saveProjectArtifact`.\n\n- Artifact path: `{}`\n- Source workflow: `save_generated` / artifact ingest\n\n{}\n",
+        body.path, snippet
+    ))
+}
+
+fn base64_decoded_len(base64_content: &str) -> Option<u64> {
+    let trimmed = base64_content.trim_end_matches('=');
+    let padding = base64_content.len().saturating_sub(trimmed.len());
+    Some(((base64_content.len() * 3) / 4).saturating_sub(padding) as u64)
+}
+
+fn artifact_edit_from_base64(body: &ArtifactRequest, base64_content: String) -> EditOperation {
+    if body.allow_overwrite {
+        EditOperation::WriteBinaryArtifact {
+            path: body.path.clone(),
+            base64_content,
+            allow_overwrite: true,
+        }
+    } else {
+        EditOperation::CreateBinaryArtifact {
+            path: body.path.clone(),
+            base64_content,
+        }
+    }
+}
+
+fn artifact_edit_from_upload(body: &ArtifactRequest, source_file: String) -> EditOperation {
+    if body.allow_overwrite {
+        EditOperation::WriteBinaryFileFromUpload {
+            path: body.path.clone(),
+            source_file,
+            allow_overwrite: true,
+        }
+    } else {
+        EditOperation::CreateBinaryFileFromUpload {
+            path: body.path.clone(),
+            source_file,
+        }
+    }
+}
+
+fn artifact_edit_from_url(body: &ArtifactRequest, source_url: String) -> EditOperation {
+    if body.allow_overwrite {
+        EditOperation::WriteBinaryFileFromUrl {
+            path: body.path.clone(),
+            source_url,
+            allow_overwrite: true,
+        }
+    } else {
+        EditOperation::CreateBinaryFileFromUrl {
+            path: body.path.clone(),
+            source_url,
+        }
+    }
+}
+
+fn select_generated_artifact_edit(
     body: &ArtifactRequest,
     config: &Config,
     db: &Database,
-) -> Result<EditRequest, String> {
-    let edit = match body.op {
+) -> Result<(EditOperation, Option<u64>), String> {
+    if let Some(file_id) = body.file_id.as_deref() {
+        let source_file = resolve_upload_file_id(config, db, file_id, &body.path)?;
+        return Ok((artifact_edit_from_upload(body, source_file), None));
+    }
+    if let Some(base64_content) = body.base64_content.clone() {
+        let file_size = base64_decoded_len(&base64_content);
+        return Ok((artifact_edit_from_base64(body, base64_content), file_size));
+    }
+    if let Some(source_url) = body.chatgpt_estuary_url.clone() {
+        validate_source_url(&source_url)?;
+        let parsed = reqwest::Url::parse(&source_url)
+            .map_err(|e| format!("Invalid chatgpt_estuary_url: {}", e))?;
+        if !is_allowed_chatgpt_estuary_url(&parsed) {
+            return Err(
+                "chatgpt_estuary_url is not an allowed ChatGPT estuary content URL".to_string(),
+            );
+        }
+        return Ok((artifact_edit_from_url(body, source_url), None));
+    }
+    if let Some(source_url) = body.source_url.clone() {
+        return Ok((artifact_edit_from_url(body, source_url), None));
+    }
+    if let Some(source_file) = body.source_file.clone() {
+        return Ok((artifact_edit_from_upload(body, source_file), None));
+    }
+    Err("save_generated requires one of file_id, base64_content, chatgpt_estuary_url, source_url, or source_file".to_string())
+}
+
+fn plan_artifact_request(
+    body: &ArtifactRequest,
+    config: &Config,
+    db: &Database,
+) -> Result<ArtifactPlan, String> {
+    let (artifact_edit, file_size) = match body.op {
         ArtifactOperation::SaveBase64 => {
             let base64_content = body
                 .base64_content
                 .clone()
                 .ok_or_else(|| "base64_content is required for save_base64".to_string())?;
-            if body.allow_overwrite {
-                EditOperation::WriteBinaryArtifact {
-                    path: body.path.clone(),
-                    base64_content,
-                    allow_overwrite: true,
-                }
-            } else {
-                EditOperation::CreateBinaryArtifact {
-                    path: body.path.clone(),
-                    base64_content,
-                }
-            }
+            let file_size = base64_decoded_len(&base64_content);
+            (artifact_edit_from_base64(body, base64_content), file_size)
         }
         ArtifactOperation::SaveUpload => {
             let source_file = if let Some(file_id) = body.file_id.as_deref() {
@@ -7074,44 +7210,79 @@ fn edit_request_from_artifact(
                     "file_id or source_file is required for save_upload".to_string()
                 })?
             };
-            if body.allow_overwrite {
-                EditOperation::WriteBinaryFileFromUpload {
-                    path: body.path.clone(),
-                    source_file,
-                    allow_overwrite: true,
-                }
-            } else {
-                EditOperation::CreateBinaryFileFromUpload {
-                    path: body.path.clone(),
-                    source_file,
-                }
-            }
+            (artifact_edit_from_upload(body, source_file), None)
         }
         ArtifactOperation::SaveUrl => {
             let source_url = body
                 .source_url
                 .clone()
+                .or_else(|| body.chatgpt_estuary_url.clone())
                 .ok_or_else(|| "source_url is required for save_url".to_string())?;
+            (artifact_edit_from_url(body, source_url), None)
+        }
+        ArtifactOperation::SaveGenerated => select_generated_artifact_edit(body, config, db)?,
+    };
+    let snippet = markdown_snippet_for_artifact(&body.path, body.alt_text.as_deref());
+    let mut edits = vec![artifact_edit];
+    if let Some(content) = companion_markdown_content(body, &snippet) {
+        if let Some(path) = &body.companion_markdown_path {
             if body.allow_overwrite {
-                EditOperation::WriteBinaryFileFromUrl {
-                    path: body.path.clone(),
-                    source_url,
+                edits.push(EditOperation::WriteFile {
+                    path: path.clone(),
+                    content,
                     allow_overwrite: true,
-                }
+                });
             } else {
-                EditOperation::CreateBinaryFileFromUrl {
-                    path: body.path.clone(),
-                    source_url,
-                }
+                edits.push(EditOperation::CreateFile {
+                    path: path.clone(),
+                    content,
+                });
             }
         }
-    };
-    Ok(EditRequest {
-        project: body.project.clone(),
-        reason: body.reason.clone(),
-        dry_run: false,
-        edits: vec![edit],
+    }
+    Ok(ArtifactPlan {
+        edit_request: EditRequest {
+            project: body.project.clone(),
+            reason: body.reason.clone(),
+            dry_run: false,
+            edits,
+        },
+        saved_path: body.path.clone(),
+        relative_path: body.path.clone(),
+        file_size,
+        mime_type: body.mime_type.clone(),
+        markdown_snippet: Some(snippet),
     })
+}
+
+fn artifact_response_from_edit(plan: &ArtifactPlan, response: EditResponse) -> ArtifactResponse {
+    if response.success {
+        ArtifactResponse {
+            success: true,
+            changed_files: response.changed_files,
+            saved_path: Some(plan.saved_path.clone()),
+            relative_path: Some(plan.relative_path.clone()),
+            file_size: plan.file_size,
+            mime_type: plan.mime_type.clone(),
+            markdown_snippet: plan.markdown_snippet.clone(),
+            diff: response.diff,
+            warnings: response.warnings,
+            error: None,
+        }
+    } else {
+        ArtifactResponse {
+            success: false,
+            changed_files: response.changed_files,
+            saved_path: None,
+            relative_path: None,
+            file_size: None,
+            mime_type: plan.mime_type.clone(),
+            markdown_snippet: plan.markdown_snippet.clone(),
+            diff: response.diff,
+            warnings: response.warnings,
+            error: response.error,
+        }
+    }
 }
 
 fn apply_edit_request_with_metrics(
@@ -7238,44 +7409,98 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
             return;
         }
     };
-    let edit_body = match edit_request_from_artifact(&artifact_body, &config, &db) {
-        Ok(body) => body,
+    let plan = match plan_artifact_request(&artifact_body, &config, &db) {
+        Ok(plan) => plan,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(edit_error(e)));
+            res.render(Json(ArtifactResponse {
+                success: false,
+                changed_files: Vec::new(),
+                saved_path: None,
+                relative_path: None,
+                file_size: None,
+                mime_type: artifact_body.mime_type.clone(),
+                markdown_snippet: None,
+                diff: String::new(),
+                warnings: Vec::new(),
+                error: Some(e),
+            }));
             return;
         }
     };
+    let edit_body = &plan.edit_request;
     let proj = match projects.get_project(&edit_body.project) {
         Ok(p) => p,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(edit_error(e)));
+            res.render(Json(ArtifactResponse {
+                success: false,
+                changed_files: Vec::new(),
+                saved_path: None,
+                relative_path: None,
+                file_size: None,
+                mime_type: artifact_body.mime_type.clone(),
+                markdown_snippet: plan.markdown_snippet.clone(),
+                diff: String::new(),
+                warnings: Vec::new(),
+                error: Some(e),
+            }));
             return;
         }
     };
     if !proj.allow_patch() {
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(edit_error(
-            "Artifact save is not allowed for this project".to_string(),
-        )));
+        res.render(Json(ArtifactResponse {
+            success: false,
+            changed_files: Vec::new(),
+            saved_path: None,
+            relative_path: None,
+            file_size: None,
+            mime_type: artifact_body.mime_type.clone(),
+            markdown_snippet: plan.markdown_snippet.clone(),
+            diff: String::new(),
+            warnings: Vec::new(),
+            error: Some("Artifact save is not allowed for this project".to_string()),
+        }));
         return;
     }
     if let Err(e) = validate_no_mixed_edit_kinds(&edit_body.edits) {
         res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(edit_error(e)));
+        res.render(Json(ArtifactResponse {
+            success: false,
+            changed_files: Vec::new(),
+            saved_path: None,
+            relative_path: None,
+            file_size: None,
+            mime_type: artifact_body.mime_type.clone(),
+            markdown_snippet: plan.markdown_snippet.clone(),
+            diff: String::new(),
+            warnings: Vec::new(),
+            error: Some(e),
+        }));
         return;
     }
     for edit in &edit_body.edits {
         if let Err(e) = validate_edit_path(edit_path(edit)) {
             res.status_code(StatusCode::FORBIDDEN);
-            res.render(Json(edit_error(e)));
+            res.render(Json(ArtifactResponse {
+                success: false,
+                changed_files: Vec::new(),
+                saved_path: None,
+                relative_path: None,
+                file_size: None,
+                mime_type: artifact_body.mime_type.clone(),
+                markdown_snippet: plan.markdown_snippet.clone(),
+                diff: String::new(),
+                warnings: Vec::new(),
+                error: Some(e),
+            }));
             return;
         }
     }
     let response =
-        apply_edit_request_with_metrics(&projects, proj, &edit_body, "saveProjectArtifact");
-    res.render(Json(response));
+        apply_edit_request_with_metrics(&projects, proj, edit_body, "saveProjectArtifact");
+    res.render(Json(artifact_response_from_edit(&plan, response)));
 }
 
 #[cfg(test)]

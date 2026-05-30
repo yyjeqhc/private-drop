@@ -318,23 +318,41 @@
       },
       "ArtifactRequest": {
         "type": "object",
-        "description": "Save a generated or imported binary artifact to a whitelisted project. Prefer save_base64 when GPT has image bytes/base64 available; use save_upload only for files visible to the Private Drop server; use save_url only for external HTTP/HTTPS URLs.",
+        "description": "Save a generated or imported binary artifact to a whitelisted project. Prefer op=save_generated for GPT workflows; it automatically chooses file_id, base64_content, chatgpt_estuary_url, source_url, or source_file in that priority order.",
         "properties": {
           "project": {"type": "string", "description": "Project name from whitelist"},
-          "op": {"type": "string", "enum": ["save_base64", "save_upload", "save_url"], "description": "Artifact source mode"},
+          "op": {"type": "string", "enum": ["save_generated", "save_base64", "save_upload", "save_url"], "description": "Artifact source mode. save_generated is the high-level GPT-friendly mode."},
           "path": {"type": "string", "description": "Relative destination path inside the project"},
           "reason": {"type": "string", "nullable": true},
-          "allow_overwrite": {"type": "boolean", "default": false, "description": "If true, overwrite an existing artifact"},
-          "base64_content": {"type": "string", "nullable": true, "description": "Required for save_base64. Base64-encoded artifact bytes; decoded size max 5MB."},
-          "source_file": {"type": "string", "nullable": true, "description": "Low-level fallback for save_upload. Server-accessible upload/temp file path; max 5MB."},
-          "file_id": {"type": "string", "nullable": true, "description": "Required/recommended for save_upload when the artifact was uploaded through /api/files. The server resolves it to DROP_DATA/uploads via the messages table."},
-          "source_url": {"type": "string", "nullable": true, "description": "Required for save_url. HTTP/HTTPS URL with SSRF protection; max 5MB."},
-          "mime_type": {"type": "string", "nullable": true, "description": "Optional caller-provided MIME hint for audit/UI purposes"}
+          "allow_overwrite": {"type": "boolean", "default": false, "description": "If true, overwrite an existing artifact and optional companion markdown"},
+          "base64_content": {"type": "string", "nullable": true, "description": "Base64-encoded artifact bytes; decoded size max 5MB. Used by save_base64 or save_generated."},
+          "file_id": {"type": "string", "nullable": true, "description": "Recommended upload reference. For save_upload/save_generated, resolves a /api/files upload id to DROP_DATA/uploads via the messages table."},
+          "source_file": {"type": "string", "nullable": true, "description": "Low-level fallback for server-accessible upload/temp file path; max 5MB."},
+          "source_url": {"type": "string", "nullable": true, "description": "External HTTP/HTTPS URL with SSRF protection; max 5MB."},
+          "chatgpt_estuary_url": {"type": "string", "nullable": true, "description": "Optional ChatGPT estuary content URL. Must match the narrow chatgpt.com/backend-api/estuary/content allowlist."},
+          "mime_type": {"type": "string", "nullable": true, "description": "Optional caller-provided MIME hint for audit/UI purposes"},
+          "file_name": {"type": "string", "nullable": true, "description": "Optional original/generated artifact name hint"},
+          "alt_text": {"type": "string", "nullable": true, "description": "Optional alt text used when returning markdown_snippet"},
+          "companion_markdown_path": {"type": "string", "nullable": true, "description": "Optional relative path for a companion markdown file that references the artifact"},
+          "companion_markdown_template": {"type": "string", "nullable": true, "description": "Optional template for companion markdown. Supports {{path}}, {{markdown_snippet}}, and {{alt_text}}."}
         },
         "required": ["project", "op", "path"]
       },
       "ArtifactResponse": {
-        "allOf": [{"$ref": "#/components/schemas/EditResponse"}]
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "changed_files": {"type": "array", "items": {"type": "string"}},
+          "saved_path": {"type": "string", "nullable": true},
+          "relative_path": {"type": "string", "nullable": true},
+          "file_size": {"type": "integer", "nullable": true},
+          "mime_type": {"type": "string", "nullable": true},
+          "markdown_snippet": {"type": "string", "nullable": true},
+          "diff": {"type": "string"},
+          "warnings": {"type": "array", "items": {"type": "string"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "changed_files", "diff", "warnings"]
       },
       "GitRequest": {
         "type": "object",

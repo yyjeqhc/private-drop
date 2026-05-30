@@ -1097,6 +1097,8 @@ COMPACT_OK=$(echo "$RESP" | python3 -c "import sys,json; json.load(sys.stdin); p
 COMPACT_SERVER=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['servers'][0]['url'])")
 assert_eq "codex-openapi-compact.json loads" "yes" "$COMPACT_OK"
 assert_eq "codex-openapi-compact.json server url" "http://localhost:8080" "$COMPACT_SERVER"
+COMPACT_HAS_SAVE_GENERATED=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'save_generated' in sys.stdin.read() else 'no')")
+assert_eq "codex-openapi-compact.json has save_generated artifact mode" "yes" "$COMPACT_HAS_SAVE_GENERATED"
 COMPACT_OPS=$(echo "$RESP" | python3 -c '
 import json, sys
 spec=json.load(sys.stdin)
@@ -1650,6 +1652,82 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
     -d '{"project":"test-project","mode":"tree"}')
 TREE_ITEMS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(d.get('items') or []))")
 assert_contains "artifact save_upload file_id appears in tree" "docs/diagrams/artifact-upload-file-id.bin" "$TREE_ITEMS"
+
+# --- 41r2. Artifact API: save_generated base64 with companion markdown ---
+echo ""
+echo "--- 41r2. Artifact API save_generated base64 companion ---"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_generated","path":"docs/diagrams/generated-base64.png","base64_content":"AAECAw==","mime_type":"image/png","alt_text":"Generated base64 smoke","companion_markdown_path":"docs/diagrams/generated-base64.md"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_SAVED=$(pyget "$RESP" "saved_path")
+ART_REL=$(pyget "$RESP" "relative_path")
+ART_SIZE=$(pyget "$RESP" "file_size")
+ART_SNIPPET=$(pyget "$RESP" "markdown_snippet")
+ART_DIFF=$(pyget "$RESP" "diff")
+assert_eq "artifact save_generated base64 success" "True" "$ART_SUCCESS"
+assert_eq "artifact save_generated saved_path" "docs/diagrams/generated-base64.png" "$ART_SAVED"
+assert_eq "artifact save_generated relative_path" "docs/diagrams/generated-base64.png" "$ART_REL"
+assert_eq "artifact save_generated file_size" "4" "$ART_SIZE"
+assert_contains "artifact save_generated markdown snippet" "Generated base64 smoke" "$ART_SNIPPET"
+assert_contains "artifact save_generated diff has companion" "generated-base64.md" "$ART_DIFF"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"docs/diagrams/generated-base64.md"}')
+COMPANION_CONTENT=$(pyget "$RESP" "content")
+assert_contains "artifact companion markdown references image" "./generated-base64.png" "$COMPANION_CONTENT"
+
+# --- 41r3. Artifact API: save_generated no-overwrite fails ---
+echo ""
+echo "--- 41r3. Artifact API save_generated no-overwrite fails ---"
+RESP=$(curl -s -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_generated","path":"docs/diagrams/generated-base64.png","base64_content":"AAECAw==","mime_type":"image/png"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_ERROR=$(pyget "$RESP" "error")
+assert_eq "artifact save_generated no-overwrite fails" "False" "$ART_SUCCESS"
+assert_contains "artifact save_generated no-overwrite error" "already exists" "$ART_ERROR"
+
+# --- 41r4. Artifact API: save_generated overwrite succeeds ---
+echo ""
+echo "--- 41r4. Artifact API save_generated overwrite succeeds ---"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_generated","path":"docs/diagrams/generated-base64.png","base64_content":"AAECAwQFBg==","mime_type":"image/png","allow_overwrite":true}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_DIFF=$(pyget "$RESP" "diff")
+assert_eq "artifact save_generated overwrite success" "True" "$ART_SUCCESS"
+assert_contains "artifact save_generated overwrite diff" "new size: 7 bytes" "$ART_DIFF"
+
+# --- 41r5. Artifact API: save_generated file_id succeeds ---
+echo ""
+echo "--- 41r5. Artifact API save_generated file_id ---"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'save_generated','path':'docs/diagrams/generated-file-id.bin','file_id':'$ART_UPLOAD_ID','mime_type':'application/octet-stream'}))")")
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_SAVED=$(pyget "$RESP" "saved_path")
+ART_DIFF=$(pyget "$RESP" "diff")
+assert_eq "artifact save_generated file_id success" "True" "$ART_SUCCESS"
+assert_eq "artifact save_generated file_id saved_path" "docs/diagrams/generated-file-id.bin" "$ART_SAVED"
+assert_contains "artifact save_generated file_id diff" "new size: 4 bytes" "$ART_DIFF"
+
+# --- 41r6. Artifact API: save_generated rejects localhost URL ---
+echo ""
+echo "--- 41r6. Artifact API save_generated rejects localhost URL ---"
+RESP=$(curl -s -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_generated","path":"docs/diagrams/generated-local.bin","source_url":"http://127.0.0.1:1/local.bin"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_ERROR=$(pyget "$RESP" "error")
+assert_eq "artifact save_generated localhost URL fails" "False" "$ART_SUCCESS"
+assert_contains "artifact save_generated localhost URL error" "blocked private/local" "$ART_ERROR"
 
 # --- 41s. Artifact API: missing file_id fails ---
 echo ""
