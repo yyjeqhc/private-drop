@@ -889,3 +889,20 @@ This repository includes version-controlled visual documentation for the compact
 - `docs/diagrams/goal-workflow.excalidraw.json`: editable Excalidraw scene.
 
 Use SVG for stable documentation, Mermaid for quick text edits, HTML for standalone sharing, and Excalidraw JSON for manual visual editing.
+
+Binary diagram or document artifacts can also be saved through `applyProjectEdit` without adding a new GPT Action. Use `create_binary_file` for new PNG/JPG/WebP/GIF/PDF files and `write_binary_file` for overwrites:
+
+```json
+{
+  "project": "private-drop-v4",
+  "edits": [
+    {
+      "type": "create_binary_file",
+      "path": "docs/diagrams/example.png",
+      "base64_content": "..."
+    }
+  ]
+}
+```
+
+Binary artifact writes keep the same project path safety checks as text edits, reject sensitive paths, default to no overwrite, and limit decoded content to 5MB.

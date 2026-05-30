@@ -1,5 +1,6 @@
 use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig, SshConfig};
 use crate::{CodexGoalRecord, CommandAuditRecord, Database, Message, MessageKind};
+use base64::Engine;
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -390,6 +391,16 @@ pub enum EditOperation {
         #[serde(default)]
         allow_overwrite: bool,
     },
+    CreateBinaryFile {
+        path: String,
+        base64_content: String,
+    },
+    WriteBinaryFile {
+        path: String,
+        base64_content: String,
+        #[serde(default)]
+        allow_overwrite: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -420,6 +431,7 @@ const MAX_OUTPUT_LEN: usize = 50_000;
 const CHECK_TIMEOUT_SECS: u64 = 300;
 const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
+const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
 
 const SENSITIVE_PATHS: &[&str] = &[
     ".git",
@@ -792,12 +804,13 @@ fn run_ssh_patch(
 /// Receives project root via argv[1] and edit JSON via stdin.
 /// Returns JSON result on stdout.
 const REMOTE_EDIT_SCRIPT: &str = r#####"
-import sys, json, os, difflib
+import sys, json, os, difflib, base64
 
 SENSITIVE = ('.git', '.env', '.pem', '.key', 'id_rsa', 'id_ed25519',
              'target', 'node_modules')
 MAX_FILE = 2 * 1024 * 1024
 MAX_TEXT = 200 * 1024
+MAX_BINARY = 5 * 1024 * 1024
 
 def err(msg):
     return {'success': False, 'changed_files': [], 'diff': '', 'warnings': [], 'error': msg}
@@ -901,6 +914,22 @@ def simple_diff(path, old_content, new_content):
     diff = difflib.unified_diff(old_lines, new_lines, fromfile='a/' + path, tofile='b/' + path)
     return ''.join(diff)
 
+def simple_binary_diff(path, old_len, new_len):
+    if old_len is None:
+        return 'diff --git a/{0} b/{0}\nnew file mode 100644\nBinary file b/{0} added\n# new size: {1} bytes\n'.format(path, new_len)
+    return 'diff --git a/{0} b/{0}\nBinary files a/{0} and b/{0} differ\n# old size: {1} bytes\n# new size: {2} bytes\n'.format(path, old_len, new_len)
+
+def decode_binary(payload, rel):
+    if len(payload) > MAX_BINARY * 2:
+        return None, 'base64 content for %s is too large; maximum decoded size is %d bytes' % (rel, MAX_BINARY)
+    try:
+        data = base64.b64decode(payload, validate=True)
+    except Exception as e:
+        return None, 'Invalid base64 content for %s: %s' % (rel, e)
+    if len(data) > MAX_BINARY:
+        return None, 'binary content for %s exceeds %d bytes' % (rel, MAX_BINARY)
+    return data, None
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps(err('Missing project root argument')))
@@ -922,6 +951,8 @@ def main():
     originals = {}
     current = {}
     paths_map = {}
+    binary_originals = {}
+    binary_current = {}
     changed = set()
     for ed in edits:
         etype = ed.get('type', '')
@@ -1024,6 +1055,45 @@ def main():
                 originals.setdefault(rel, None)
             paths_map[rel] = full
             current[rel] = ed.get('content', '')
+        elif etype == 'create_binary_file':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            if os.path.exists(full) or rel in binary_current:
+                print(json.dumps(err('File already exists: ' + rel)))
+                return
+            data, e = decode_binary(ed.get('base64_content', ''), rel)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            paths_map[rel] = full
+            binary_originals.setdefault(rel, None)
+            binary_current[rel] = data
+        elif etype == 'write_binary_file':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            allow = ed.get('allow_overwrite', False)
+            if os.path.exists(full) and not allow:
+                print(json.dumps(err('File exists and allow_overwrite is false: ' + rel)))
+                return
+            data, e = decode_binary(ed.get('base64_content', ''), rel)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            if os.path.exists(full) and rel not in binary_originals:
+                try:
+                    with open(full, 'rb') as f:
+                        binary_originals[rel] = f.read()
+                except Exception as e:
+                    print(json.dumps(err('Failed to read binary file: ' + str(e))))
+                    return
+            elif rel not in binary_originals:
+                binary_originals.setdefault(rel, None)
+            paths_map[rel] = full
+            binary_current[rel] = data
         else:
             print(json.dumps(err('Unknown edit type: ' + etype)))
             return
@@ -1034,6 +1104,11 @@ def main():
         new = current.get(p)
         if new is not None and old != new:
             diff_parts.append(simple_diff(p, old, new))
+        elif p in binary_current:
+            old_b = binary_originals.get(p)
+            new_b = binary_current.get(p)
+            if new_b is not None and old_b != new_b:
+                diff_parts.append(simple_binary_diff(p, None if old_b is None else len(old_b), len(new_b)))
     diff = ''.join(diff_parts)
     if not dry_run:
         for p in sorted(changed):
@@ -1043,6 +1118,10 @@ def main():
                 os.makedirs(os.path.dirname(full), exist_ok=True)
                 with open(full, 'w', encoding='utf-8') as f:
                     f.write(content)
+            elif full and p in binary_current and binary_current[p] is not None:
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, 'wb') as f:
+                    f.write(binary_current[p])
     print(json.dumps({
         'success': True,
         'changed_files': sorted(changed),
@@ -5316,6 +5395,26 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_binary_artifact_accepts_small_base64() {
+        let bytes = decode_binary_artifact("AAECAw==", "docs/pixel.bin").unwrap();
+        assert_eq!(bytes, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_decode_binary_artifact_rejects_invalid_base64() {
+        let err = decode_binary_artifact("not valid base64!", "docs/pixel.bin").unwrap_err();
+        assert!(err.contains("Invalid base64"));
+    }
+
+    #[test]
+    fn test_simple_binary_diff_mentions_sizes() {
+        let diff = simple_binary_diff("docs/pixel.bin", Some(2), 4);
+        assert!(diff.contains("Binary files"));
+        assert!(diff.contains("old size: 2"));
+        assert!(diff.contains("new size: 4"));
+    }
+
+    #[test]
     fn test_validate_edit_path_rejects_env() {
         assert!(validate_edit_path(".env").is_err());
         assert!(validate_edit_path("config/.env").is_err());
@@ -5809,7 +5908,9 @@ fn edit_path(edit: &EditOperation) -> &str {
         | EditOperation::ReplaceRange { path, .. }
         | EditOperation::AppendFile { path, .. }
         | EditOperation::CreateFile { path, .. }
-        | EditOperation::WriteFile { path, .. } => path,
+        | EditOperation::WriteFile { path, .. }
+        | EditOperation::CreateBinaryFile { path, .. }
+        | EditOperation::WriteBinaryFile { path, .. } => path,
     }
 }
 
@@ -5820,6 +5921,7 @@ fn edit_text_len(edit: &EditOperation) -> usize {
         EditOperation::AppendFile { text, .. } => text.len(),
         EditOperation::CreateFile { content, .. } => content.len(),
         EditOperation::WriteFile { content, .. } => content.len(),
+        EditOperation::CreateBinaryFile { .. } | EditOperation::WriteBinaryFile { .. } => 0,
     }
 }
 
@@ -5837,6 +5939,38 @@ fn validate_edit_path(rel_path: &str) -> Result<(), String> {
         return Err(format!("Cannot modify sensitive path: {}", rel_path));
     }
     Ok(())
+}
+
+fn decode_binary_artifact(base64_content: &str, rel_path: &str) -> Result<Vec<u8>, String> {
+    if base64_content.len() > MAX_BINARY_ARTIFACT_SIZE * 2 {
+        return Err(format!(
+            "base64 content for {} is too large; maximum decoded size is {} bytes",
+            rel_path, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_content)
+        .map_err(|e| format!("Invalid base64 content for {}: {}", rel_path, e))?;
+    if bytes.len() > MAX_BINARY_ARTIFACT_SIZE {
+        return Err(format!(
+            "binary content for {} exceeds {} bytes",
+            rel_path, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    Ok(bytes)
+}
+
+fn simple_binary_diff(path: &str, old_len: Option<usize>, new_len: usize) -> String {
+    match old_len {
+        Some(old_len) => format!(
+            "diff --git a/{0} b/{0}\nBinary files a/{0} and b/{0} differ\n# old size: {1} bytes\n# new size: {2} bytes\n",
+            path, old_len, new_len
+        ),
+        None => format!(
+            "diff --git a/{0} b/{0}\nnew file mode 100644\nBinary file b/{0} added\n# new size: {1} bytes\n",
+            path, new_len
+        ),
+    }
 }
 
 fn simple_file_diff(path: &str, old: Option<&str>, new: &str) -> String {
@@ -5989,6 +6123,8 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
     let mut paths: HashMap<String, PathBuf> = HashMap::new();
     let mut originals: HashMap<String, Option<String>> = HashMap::new();
     let mut current: HashMap<String, Option<String>> = HashMap::new();
+    let mut binary_originals: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut binary_current: HashMap<String, Option<Vec<u8>>> = HashMap::new();
     let mut changed = BTreeSet::new();
     for edit in &body.edits {
         let rel_path = edit_path(edit).to_string();
@@ -6099,6 +6235,53 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
                 originals.entry(rel_path.clone()).or_insert(old);
                 current.insert(rel_path.clone(), Some(content.clone()));
             }
+            EditOperation::CreateBinaryFile { base64_content, .. } => {
+                let bytes = match decode_binary_artifact(base64_content, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(binary_current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(None);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::WriteBinaryFile {
+                base64_content,
+                allow_overwrite,
+                ..
+            } => {
+                let bytes = match decode_binary_artifact(base64_content, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => return edit_error(format!("Failed to read binary file: {}", e)),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(old);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
         }
         changed.insert(rel_path);
     }
@@ -6111,6 +6294,15 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
                 originals.get(path).and_then(|v| v.as_deref()),
                 new_content,
             ));
+        } else if let Some(Some(new_bytes)) = binary_current.get(path) {
+            diff.push_str(&simple_binary_diff(
+                path,
+                binary_originals
+                    .get(path)
+                    .and_then(|v| v.as_ref())
+                    .map(|v| v.len()),
+                new_bytes.len(),
+            ));
         }
     }
     if !body.dry_run {
@@ -6119,6 +6311,12 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
             {
                 if let Err(e) = std::fs::write(full_path, new_content) {
                     return edit_error(format!("Failed to write {}: {}", path, e));
+                }
+            } else if let (Some(full_path), Some(Some(new_bytes))) =
+                (paths.get(path), binary_current.get(path))
+            {
+                if let Err(e) = std::fs::write(full_path, new_bytes) {
+                    return edit_error(format!("Failed to write binary {}: {}", path, e));
                 }
             }
         }

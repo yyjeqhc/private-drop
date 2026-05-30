@@ -191,6 +191,27 @@
         },
         "required": ["type", "path", "content"]
       },
+      "CreateBinaryFileEdit": {
+        "type": "object",
+        "description": "Create a new binary artifact from base64 content. Fails if the file already exists. Intended for PNG/JPG/PDF/WebP/GIF and other generated artifacts.",
+        "properties": {
+          "type": {"type": "string", "enum": ["create_binary_file"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "base64_content": {"type": "string", "description": "Base64-encoded file bytes. Decoded size max 5MB."}
+        },
+        "required": ["type", "path", "base64_content"]
+      },
+      "WriteBinaryFileEdit": {
+        "type": "object",
+        "description": "Write a binary artifact from base64 content. Defaults to no overwrite unless allow_overwrite=true.",
+        "properties": {
+          "type": {"type": "string", "enum": ["write_binary_file"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "base64_content": {"type": "string", "description": "Base64-encoded file bytes. Decoded size max 5MB."},
+          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+        },
+        "required": ["type", "path", "base64_content"]
+      },
       "EditRequest": {
         "type": "object",
         "properties": {
@@ -205,9 +226,11 @@
                 {"$ref": "#/components/schemas/ReplaceRangeEdit"},
                 {"$ref": "#/components/schemas/AppendFileEdit"},
                 {"$ref": "#/components/schemas/CreateFileEdit"},
-                {"$ref": "#/components/schemas/WriteFileEdit"}
+                {"$ref": "#/components/schemas/WriteFileEdit"},
+                {"$ref": "#/components/schemas/CreateBinaryFileEdit"},
+                {"$ref": "#/components/schemas/WriteBinaryFileEdit"}
               ],
-              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit"}}
+              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit", "create_binary_file": "#/components/schemas/CreateBinaryFileEdit", "write_binary_file": "#/components/schemas/WriteBinaryFileEdit"}}
             }
           }
         },
