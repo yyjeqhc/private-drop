@@ -65,10 +65,11 @@
         "properties": {
           "project": {"type": "string", "description": "Project name from whitelist"},
           "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "markdown_outline", "read_section", "agent_context", "git_status", "git_diff"], "description": "Context retrieval mode. agent_context reads AGENTS.md and .codex/memory files. markdown_outline lists Markdown headings. read_section returns one Markdown section matched by query."},
-          "path": {"type": "string", "description": "File path (for read_file, markdown_outline, or read_section mode)"},
+          "path": {"type": "string", "description": "File path (for read_file, markdown_outline, read_section, or scoped tree mode)"},
           "query": {"type": "string", "description": "Search query (for search mode) or heading text (for read_section mode)"},
           "start_line": {"type": "integer", "default": 1, "description": "Start line for read_file (1-based)"},
-          "limit": {"type": "integer", "default": 200, "description": "Max lines/items to return"}
+          "limit": {"type": "integer", "default": 200, "description": "Max lines/items to return"},
+          "max_depth": {"type": "integer", "default": 4, "minimum": 1, "maximum": 8, "description": "Maximum directory depth for tree mode"}
         },
         "required": ["project", "mode"]
       },
@@ -89,10 +90,11 @@
         "type": "object",
         "properties": {
           "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "markdown_outline", "read_section", "agent_context", "git_status", "git_diff"]},
-          "path": {"type": "string", "description": "File path for read_file, markdown_outline, or read_section mode"},
+          "path": {"type": "string", "description": "File path for read_file, markdown_outline, read_section, or scoped tree mode"},
           "query": {"type": "string", "description": "Search query for search mode, or heading text for read_section mode"},
           "start_line": {"type": "integer", "default": 1},
-          "limit": {"type": "integer", "default": 200}
+          "limit": {"type": "integer", "default": 200},
+          "max_depth": {"type": "integer", "default": 4, "minimum": 1, "maximum": 8}
         },
         "required": ["mode"]
       },

@@ -39,6 +39,8 @@ pub struct ContextRequest {
     pub start_line: usize,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default = "default_tree_max_depth")]
+    pub max_depth: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +54,8 @@ pub struct ContextBatchItem {
     pub start_line: usize,
     #[serde(default = "default_limit")]
     pub limit: usize,
+    #[serde(default = "default_tree_max_depth")]
+    pub max_depth: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +74,9 @@ fn default_limit() -> usize {
 }
 fn default_context_batch_max_total_chars() -> usize {
     60_000
+}
+fn default_tree_max_depth() -> usize {
+    4
 }
 
 #[derive(Debug, Deserialize)]
@@ -625,6 +632,8 @@ const IGNORED_DIRS: &[&str] = &[
 const MAX_TREE_ITEMS: usize = 300;
 const MAX_SEARCH_RESULTS: usize = 50;
 const MAX_OUTPUT_LEN: usize = 50_000;
+const MAX_CONTEXT_LINE_LEN: usize = 2_000;
+const MAX_TREE_DEPTH: usize = 8;
 const CHECK_TIMEOUT_SECS: u64 = 300;
 const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
@@ -660,16 +669,48 @@ fn truncate_string(s: String, max_len: usize) -> (String, bool) {
     if s.len() <= max_len {
         (s, false)
     } else {
-        (s[..max_len].to_string(), true)
+        let mut end = max_len;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        (s[..end].to_string(), true)
     }
+}
+
+fn truncate_context_line(line: &str) -> (String, bool) {
+    if line.len() <= MAX_CONTEXT_LINE_LEN {
+        return (line.to_string(), false);
+    }
+    let mut end = MAX_CONTEXT_LINE_LEN;
+    while end > 0 && !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    (format!("{}… [line truncated]", &line[..end]), true)
+}
+
+fn format_context_line(line_no: usize, line: &str) -> (String, bool) {
+    let (line, truncated) = truncate_context_line(line);
+    (format!("{:4} | {}", line_no, line), truncated)
+}
+
+fn git_status_command() -> &'static str {
+    "git status --short --untracked-files=no"
+}
+
+fn normalize_tree_depth(max_depth: usize) -> usize {
+    max_depth.clamp(1, MAX_TREE_DEPTH)
+}
+
+fn normalize_tree_limit(limit: usize) -> usize {
+    limit.clamp(1, MAX_TREE_ITEMS)
 }
 
 fn is_ignored_dir(name: &str) -> bool {
     IGNORED_DIRS.contains(&name) || name.starts_with('.')
 }
 
-fn collect_tree(dir: &Path, base: &Path, items: &mut Vec<String>, limit: usize) {
-    if items.len() >= limit {
+fn collect_tree(dir: &Path, base: &Path, items: &mut Vec<String>, limit: usize, max_depth: usize) {
+    if items.len() >= limit || max_depth == 0 {
         return;
     }
     let entries = match std::fs::read_dir(dir) {
@@ -694,7 +735,7 @@ fn collect_tree(dir: &Path, base: &Path, items: &mut Vec<String>, limit: usize) 
             .to_string();
         if path.is_dir() {
             items.push(format!("{}/", rel));
-            collect_tree(&path, base, items, limit);
+            collect_tree(&path, base, items, limit, max_depth - 1);
         } else {
             items.push(rel);
         }
@@ -1702,7 +1743,7 @@ fn ssh_overview(
         .collect::<Vec<_>>()
         .join(" ");
     let remote_cmd = format!(
-        "cd {} || exit 2; printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done",
+        "cd {} || exit 2; printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short --untracked-files=no 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done",
         shell_escape(&proj.path),
         file_args
     );
@@ -1771,16 +1812,29 @@ fn ssh_overview(
 fn ssh_tree(
     proj: &ProjectConfig,
     project_name: &str,
+    rel_path: Option<&str>,
+    limit: usize,
+    max_depth: usize,
     ssh_config: Option<&SshConfig>,
 ) -> ContextResponse {
-    // Build find exclusions
     let mut excludes = String::new();
     for dir in IGNORED_DIRS {
         excludes.push_str(&format!(" -not -path '*/{}/*'", dir));
     }
+    let limit = normalize_tree_limit(limit);
+    let max_depth = normalize_tree_depth(max_depth);
+    let find_root = match rel_path {
+        Some(path) => {
+            if let Err(e) = validate_ssh_read_path(path) {
+                return context_error(project_name, &ContextMode::Tree, e);
+            }
+            shell_escape(path)
+        }
+        None => shell_escape("."),
+    };
     let cmd = format!(
-        "cd {} && find . -mindepth 1 -maxdepth 8{} -type f -print | sort | head -n {} | sed 's|^\\./||'",
-        shell_escape(&proj.path), excludes, MAX_TREE_ITEMS
+        "cd {} && find {} -mindepth 1 -maxdepth {}{} -type f -print 2>/dev/null | sort | head -n {} | sed 's|^\\./||'",
+        shell_escape(&proj.path), find_root, max_depth, excludes, limit
     );
     let (code, stdout, stderr, _) = run_ssh(
         &build_ssh_target(proj).unwrap_or_default(),
@@ -1804,8 +1858,8 @@ fn ssh_tree(
         .filter(|l| !l.is_empty())
         .map(|l| l.to_string())
         .collect();
-    let truncated = items.len() >= MAX_TREE_ITEMS;
-    items.truncate(MAX_TREE_ITEMS);
+    let truncated = items.len() >= limit;
+    items.truncate(limit);
     ContextResponse {
         success: true,
         project: project_name.to_string(),
@@ -1906,7 +1960,10 @@ fn ssh_read_file(
         }
     };
     let escaped_path = shell_escape(rel_path);
-    let cmd = format!("sed -n '{},{}p' -- {}", start_line, end_line, escaped_path);
+    let cmd = format!(
+        "sed -n '{},{}p' -- {} | awk '{{ if(length($0)>{}) print substr($0,1,{}) \"… [line truncated]\"; else print }}'",
+        start_line, end_line, escaped_path, MAX_CONTEXT_LINE_LEN, MAX_CONTEXT_LINE_LEN
+    );
     let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30, ssh_config);
     if code != 0 {
         return ContextResponse {
@@ -1923,7 +1980,7 @@ fn ssh_read_file(
     let lines: Vec<String> = stdout
         .lines()
         .enumerate()
-        .map(|(i, l)| format!("{:4} | {}", start_line + i, l))
+        .map(|(i, l)| format_context_line(start_line + i, l).0)
         .collect();
     let output = lines.join("\n");
     let (output, truncated) = truncate_string(output, MAX_OUTPUT_LEN);
@@ -2503,14 +2560,25 @@ fn try_ssh_context_batch_once(
                 .map(|f| shell_escape(f))
                 .collect::<Vec<_>>()
                 .join(" ");
-                script.push_str(&format!(" printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done;", file_args));
+                script.push_str(&format!(" printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short --untracked-files=no 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done;", file_args));
             }
             ContextMode::Tree => {
                 let mut excludes = String::new();
                 for dir in IGNORED_DIRS {
                     excludes.push_str(&format!(" -not -path '*/{}/*'", dir));
                 }
-                script.push_str(&format!(" find . -mindepth 1 -maxdepth 8{} -type f -print 2>/dev/null | sort | head -n {} | sed 's|^\\./||';", excludes, MAX_TREE_ITEMS));
+                let limit = normalize_tree_limit(item.limit);
+                let max_depth = normalize_tree_depth(item.max_depth);
+                let find_root = match &item.path {
+                    Some(path) => {
+                        if validate_ssh_read_path(path).is_err() {
+                            return None;
+                        }
+                        shell_escape(path)
+                    }
+                    None => shell_escape("."),
+                };
+                script.push_str(&format!(" find {} -mindepth 1 -maxdepth {}{} -type f -print 2>/dev/null | sort | head -n {} | sed 's|^\\./||';", find_root, max_depth, excludes, limit));
             }
             ContextMode::ReadFile => {
                 let Some(path) = &item.path else {
@@ -2524,7 +2592,7 @@ fn try_ssh_context_batch_once(
                     Err(_) => return None,
                 };
                 let escaped_path = shell_escape(path);
-                script.push_str(&format!(" if test -f {0}; then sed -n '{1},{2}p' -- {0}; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line));
+                script.push_str(&format!(" if test -f {0}; then sed -n '{1},{2}p' -- {0} | awk '{{ if(length($0)>{3}) print substr($0,1,{3}) \"… [line truncated]\"; else print }}'; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line, MAX_CONTEXT_LINE_LEN));
             }
             ContextMode::MarkdownOutline => {
                 let Some(path) = &item.path else {
@@ -2548,7 +2616,7 @@ fn try_ssh_context_batch_once(
                 script.push_str(&agent_context_shell_fragment());
             }
             ContextMode::GitStatus => {
-                script.push_str(" git status --short 2>/dev/null || true;");
+                script.push_str(" git status --short --untracked-files=no 2>/dev/null || true;");
             }
             ContextMode::GitDiff => {
                 script.push_str(" git diff 2>/dev/null || true;");
@@ -2584,7 +2652,14 @@ fn execute_context_item(
     if proj.is_ssh() {
         let resp = match item.mode {
             ContextMode::Overview => ssh_overview(proj, project_name, ssh_config),
-            ContextMode::Tree => ssh_tree(proj, project_name, ssh_config),
+            ContextMode::Tree => ssh_tree(
+                proj,
+                project_name,
+                item.path.as_deref(),
+                item.limit,
+                item.max_depth,
+                ssh_config,
+            ),
             ContextMode::Search => match &item.query {
                 Some(query) => ssh_search(proj, project_name, query, ssh_config),
                 None => context_error(
@@ -2681,7 +2756,7 @@ fn execute_context_item(
             }
             ContextMode::GitStatus => {
                 let (code, stdout, stderr, _) =
-                    run_project_cmd(proj, "git status --short", 10, ssh_config);
+                    run_project_cmd(proj, git_status_command(), 10, ssh_config);
                 if code == 0 {
                     let (content, truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
                     ContextResponse {
@@ -2743,7 +2818,7 @@ fn execute_context_item(
                 .1
                 .trim()
                 .to_string();
-            let status = run_command("git status --short", &root, 10)
+            let status = run_command(git_status_command(), &root, 10)
                 .1
                 .trim()
                 .to_string();
@@ -2773,9 +2848,18 @@ fn execute_context_item(
             )
         }
         ContextMode::Tree => {
+            let limit = normalize_tree_limit(item.limit);
+            let max_depth = normalize_tree_depth(item.max_depth);
+            let tree_root = match &item.path {
+                Some(rel_path) => match canonicalize_and_verify(&root.join(rel_path), &root) {
+                    Ok(path) => path,
+                    Err(e) => return (context_error(project_name, &item.mode, e), 0),
+                },
+                None => root.clone(),
+            };
             let mut items = Vec::new();
-            collect_tree(&root, &root, &mut items, MAX_TREE_ITEMS);
-            let truncated = items.len() >= MAX_TREE_ITEMS;
+            collect_tree(&tree_root, &root, &mut items, limit, max_depth);
+            let truncated = items.len() >= limit;
             (
                 ContextResponse {
                     success: true,
@@ -2836,7 +2920,7 @@ fn execute_context_item(
                                 lines[start..end]
                                     .iter()
                                     .enumerate()
-                                    .map(|(i, l)| format!("{:4} | {}", start + i + 1, l))
+                                    .map(|(i, l)| format_context_line(start + i + 1, l).0)
                                     .collect()
                             } else {
                                 Vec::new()
@@ -2882,7 +2966,7 @@ fn execute_context_item(
         }
         ContextMode::AgentContext => (local_agent_context(&root, project_name), 0),
         ContextMode::GitStatus => {
-            let output = run_command("git status --short", &root, 10);
+            let output = run_command(git_status_command(), &root, 10);
             let (content, truncated) = truncate_string(output.1, MAX_OUTPUT_LEN);
             (
                 ContextResponse {
@@ -3540,7 +3624,14 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
         let ssh_config = projects.ssh.as_ref();
         let resp = match body.mode {
             ContextMode::Overview => ssh_overview(proj, &body.project, ssh_config),
-            ContextMode::Tree => ssh_tree(proj, &body.project, ssh_config),
+            ContextMode::Tree => ssh_tree(
+                proj,
+                &body.project,
+                body.path.as_deref(),
+                body.limit,
+                body.max_depth,
+                ssh_config,
+            ),
             ContextMode::Search => {
                 let Some(query) = &body.query else {
                     res.status_code(StatusCode::BAD_REQUEST);
@@ -3682,7 +3773,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             }
             ContextMode::GitStatus => {
                 let (code, stdout, stderr, _) =
-                    run_project_cmd(proj, "git status --short", 10, ssh_config);
+                    run_project_cmd(proj, git_status_command(), 10, ssh_config);
                 if code != 0 {
                     ContextResponse {
                         success: false,
@@ -3774,7 +3865,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 .1
                 .trim()
                 .to_string();
-            let status = run_command("git status --short", &root, 10)
+            let status = run_command(git_status_command(), &root, 10)
                 .1
                 .trim()
                 .to_string();
@@ -3802,9 +3893,30 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             }));
         }
         ContextMode::Tree => {
+            let limit = normalize_tree_limit(body.limit);
+            let max_depth = normalize_tree_depth(body.max_depth);
+            let tree_root = match &body.path {
+                Some(rel_path) => match canonicalize_and_verify(&root.join(rel_path), &root) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(ContextResponse {
+                            success: false,
+                            project: body.project,
+                            mode: "tree".to_string(),
+                            content: None,
+                            items: None,
+                            truncated: false,
+                            error: Some(e),
+                        }));
+                        return;
+                    }
+                },
+                None => root.clone(),
+            };
             let mut items = Vec::new();
-            collect_tree(&root, &root, &mut items, MAX_TREE_ITEMS);
-            let truncated = items.len() >= MAX_TREE_ITEMS;
+            collect_tree(&tree_root, &root, &mut items, limit, max_depth);
+            let truncated = items.len() >= limit;
             res.render(Json(ContextResponse {
                 success: true,
                 project: body.project,
@@ -3883,7 +3995,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                             lines[start..end]
                                 .iter()
                                 .enumerate()
-                                .map(|(i, l)| format!("{:4} | {}", start + i + 1, l))
+                                .map(|(i, l)| format_context_line(start + i + 1, l).0)
                                 .collect()
                         } else {
                             Vec::new()
@@ -3933,6 +4045,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 query: body.query.clone(),
                 start_line: body.start_line,
                 limit: body.limit,
+                max_depth: body.max_depth,
             };
             let (resp, _) = local_markdown_file_response(&root, &body.project, &item);
             res.render(Json(resp));
@@ -3941,7 +4054,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             res.render(Json(local_agent_context(&root, &body.project)));
         }
         ContextMode::GitStatus => {
-            let output = run_command("git status --short", &root, 10);
+            let output = run_command(git_status_command(), &root, 10);
             let (content, truncated) = truncate_string(output.1, MAX_OUTPUT_LEN);
             res.render(Json(ContextResponse {
                 success: true,
@@ -7042,6 +7155,7 @@ mod tests {
                 query: None,
                 start_line: 1,
                 limit: 10,
+                max_depth: default_tree_max_depth(),
             },
             ContextBatchItem {
                 mode: ContextMode::ReadFile,
@@ -7049,6 +7163,7 @@ mod tests {
                 query: None,
                 start_line: 1,
                 limit: 10,
+                max_depth: default_tree_max_depth(),
             },
         ];
         let results = ssh_context_batch_error_results("proj", &requests, "boom".to_string());

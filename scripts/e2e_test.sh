@@ -43,6 +43,9 @@ git config user.name "Test"
 
 echo "# Test Project" > README.md
 echo 'fn main() { println!("hello"); }' > src/main.rs
+mkdir -p data/a/b/c data/other
+printf 'scoped file\n' > data/a/b/c/scoped.txt
+printf 'other file\n' > data/other/other.txt
 echo "line1" > test.txt
 echo "line2" >> test.txt
 echo "line3" >> test.txt
@@ -70,6 +73,7 @@ EOF
 python3 - <<'PY'
 from pathlib import Path
 Path('big.md').write_text('# Big\n\n' + '\n'.join(f'line {i} ' + ('x' * 120) for i in range(120)) + '\n')
+Path('longline.csv').write_text('col\n' + 'x' * 5000 + '\n')
 PY
 mkdir -p .codex/memory
 cat > AGENTS.md <<'EOF'
@@ -616,6 +620,16 @@ HAS_README=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin);
 assert_contains "Tree contains README.md" "yes" "$HAS_README"
 HAS_MAIN=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('yes' if any('main.rs' in i for i in items) else 'no')")
 assert_contains "Tree contains main.rs" "yes" "$HAS_MAIN"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"tree","path":"data/a","limit":20,"max_depth":3}')
+TREE_SCOPED_SUCCESS=$(pyget "$RESP" "success")
+TREE_SCOPED_HAS_FILE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('yes' if any('data/a/b/c/scoped.txt' in i for i in items) else 'no')")
+TREE_SCOPED_HAS_OTHER=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('yes' if any('data/other' in i for i in items) else 'no')")
+assert_eq "Scoped tree success" "True" "$TREE_SCOPED_SUCCESS"
+assert_eq "Scoped tree contains scoped file" "yes" "$TREE_SCOPED_HAS_FILE"
+assert_eq "Scoped tree excludes sibling dir" "no" "$TREE_SCOPED_HAS_OTHER"
 
 # --- 22. Codex: getProjectContext mode=read_file ---
 echo ""
@@ -629,6 +643,12 @@ CTX_CONTENT=$(pyget "$RESP" "content")
 assert_eq "Read file success" "True" "$CTX_SUCCESS"
 assert_contains "Read file contains line1" "line1" "$CTX_CONTENT"
 assert_contains "Read file contains line2" "line2" "$CTX_CONTENT"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"longline.csv","start_line":2,"limit":1}')
+LONG_LINE_CONTENT=$(pyget "$RESP" "content")
+assert_contains "Read file long line is truncated" "[line truncated]" "$LONG_LINE_CONTENT"
 
 # --- 23. Codex: getProjectContext mode=search ---
 echo ""

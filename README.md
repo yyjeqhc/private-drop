@@ -703,6 +703,8 @@ Example:
 
 `max_total_chars` is a best-effort total character budget for context batch responses. It truncates later results if needed, which helps avoid large-response gateway failures when reading several long Markdown files.
 
+Large repositories should avoid unscoped `tree` calls. Use `tree` with `path`, `limit`, and `max_depth` to inspect a specific directory, for example `{ "mode": "tree", "path": "paper_rebuild_strict", "limit": 80, "max_depth": 2 }`. Context `git_status` uses `--untracked-files=no` so large data directories do not block status checks. `read_file` truncates very long individual lines, which makes CSV/JSONL audit files safer to inspect.
+
 
 ## Codex controlled Git API
 
