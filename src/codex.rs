@@ -2953,7 +2953,7 @@ fn build_goal_record(
         project,
         title,
         summary,
-        status: "active".to_string(),
+        status: "pending".to_string(),
         created_at: now,
         expires_at: now + ttl_secs,
         closed_at: None,
@@ -2985,7 +2985,7 @@ fn validate_goal_text(title: &str, summary: &Option<String>) -> Result<(), Strin
 
 fn validate_goal_status(status: &str) -> Result<(), String> {
     match status {
-        "active" | "closed" | "expired" => Ok(()),
+        "pending" | "active" | "closed" | "expired" | "rejected" => Ok(()),
         _ => Err("invalid goal status filter".to_string()),
     }
 }
@@ -3357,6 +3357,163 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     false,
                     Vec::new(),
                     Some(format!("Failed to close goal: {}", e)),
+                ))),
+            }
+        }
+        "approve_goal" => {
+            let Some(goal_id) = body.goal_id else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("goal_id is required".to_string()),
+                )));
+                return;
+            };
+            let now = chrono::Utc::now().timestamp();
+            let current = match db.get_goal(&goal_id) {
+                Ok(Some(goal)) => goal,
+                Ok(None) => {
+                    res.status_code(StatusCode::NOT_FOUND);
+                    res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some("Goal not found".to_string()),
+                    )));
+                    return;
+                }
+                Err(e) => {
+                    res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some(format!("Failed to load goal: {}", e)),
+                    )));
+                    return;
+                }
+            };
+            if current.status != "pending" {
+                res.render(Json(op_response_with_goals(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    vec![current],
+                    Some("Goal is not pending".to_string()),
+                )));
+                return;
+            }
+            if current.expires_at < now {
+                let expired = db
+                    .update_pending_goal_status(
+                        &goal_id,
+                        "expired",
+                        Some(now),
+                        Some("Goal expired"),
+                    )
+                    .ok()
+                    .flatten()
+                    .unwrap_or(current);
+                res.render(Json(op_response_with_goals(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    vec![expired],
+                    Some("Goal expired".to_string()),
+                )));
+                return;
+            }
+            match db.update_pending_goal_status(&goal_id, "active", None, None) {
+                Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                    &body.op,
+                    true,
+                    Vec::new(),
+                    vec![goal],
+                    None,
+                ))),
+                Ok(None) => match db.get_goal(&goal_id) {
+                    Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        vec![goal],
+                        Some("Goal is not pending".to_string()),
+                    ))),
+                    Ok(None) => {
+                        res.status_code(StatusCode::NOT_FOUND);
+                        res.render(Json(op_response(
+                            &body.op,
+                            false,
+                            Vec::new(),
+                            Some("Goal not found".to_string()),
+                        )));
+                    }
+                    Err(e) => res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some(format!("Failed to load goal: {}", e)),
+                    ))),
+                },
+                Err(e) => res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!("Failed to approve goal: {}", e)),
+                ))),
+            }
+        }
+        "reject_goal" => {
+            let Some(goal_id) = body.goal_id else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("goal_id is required".to_string()),
+                )));
+                return;
+            };
+            let now = chrono::Utc::now().timestamp();
+            let reason = body.reason.as_deref().unwrap_or("Goal rejected");
+            match db.update_pending_goal_status(&goal_id, "rejected", Some(now), Some(reason)) {
+                Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                    &body.op,
+                    true,
+                    Vec::new(),
+                    vec![goal],
+                    None,
+                ))),
+                Ok(None) => match db.get_goal(&goal_id) {
+                    Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        vec![goal],
+                        Some("Goal is not pending".to_string()),
+                    ))),
+                    Ok(None) => {
+                        res.status_code(StatusCode::NOT_FOUND);
+                        res.render(Json(op_response(
+                            &body.op,
+                            false,
+                            Vec::new(),
+                            Some("Goal not found".to_string()),
+                        )));
+                    }
+                    Err(e) => res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some(format!("Failed to load goal: {}", e)),
+                    ))),
+                },
+                Err(e) => res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!("Failed to reject goal: {}", e)),
                 ))),
             }
         }

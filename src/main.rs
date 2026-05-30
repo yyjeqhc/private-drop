@@ -470,6 +470,26 @@ impl Database {
         }
     }
 
+    pub fn update_pending_goal_status(
+        &self,
+        id: &str,
+        status: &str,
+        closed_at: Option<i64>,
+        error: Option<&str>,
+    ) -> anyhow::Result<Option<CodexGoalRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE codex_goals SET status = ?2, closed_at = ?3, error = ?4 WHERE id = ?1 AND status = 'pending'",
+            params![id, status, closed_at, error],
+        )?;
+        drop(conn);
+        if changed == 1 {
+            self.get_goal(id)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn insert_command_request(&self, record: &CommandAuditRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

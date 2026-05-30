@@ -815,7 +815,31 @@ GOAL_ID=$(pyget "$RESP" "goal_id")
 GOAL_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['goal']['status'])")
 assert_eq "Command op create_goal success" "True" "$GOAL_SUCCESS"
 assert_not_empty "Command op create_goal id" "$GOAL_ID"
-assert_eq "Command op create_goal active" "active" "$GOAL_STATUS"
+assert_eq "Command op create_goal pending" "pending" "$GOAL_STATUS"
+RESP=$(curl -s -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_and_approve','project':'test-project','goal_id':'$GOAL_ID','command':'smoke','reason':'should not run while pending'}))")")
+GOAL_PENDING_SUCCESS=$(pyget "$RESP" "success")
+GOAL_PENDING_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command op pending goal cannot auto approve" "False" "$GOAL_PENDING_SUCCESS"
+assert_contains "Command op pending goal error" "not active" "$GOAL_PENDING_ERROR"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"list_goals","project":"test-project","status":"pending","limit":10}')
+GOAL_PENDING_LIST_SUCCESS=$(pyget "$RESP" "success")
+GOAL_PENDING_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); ids={g['id'] for g in d.get('goals', [])}; print('yes' if '$GOAL_ID' in ids else 'no')")
+assert_eq "Command op list_goals pending success" "True" "$GOAL_PENDING_LIST_SUCCESS"
+assert_eq "Command op list_goals pending has id" "yes" "$GOAL_PENDING_LIST_HAS_ID"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'approve_goal','goal_id':'$GOAL_ID'}))")")
+GOAL_APPROVE_SUCCESS=$(pyget "$RESP" "success")
+GOAL_APPROVE_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['goal']['status'])")
+assert_eq "Command op approve_goal success" "True" "$GOAL_APPROVE_SUCCESS"
+assert_eq "Command op approve_goal active" "active" "$GOAL_APPROVE_STATUS"
 RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -840,8 +864,45 @@ RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
     -d '{"op":"list_goals","project":"test-project","status":"active","limit":10}')
 GOAL_LIST_SUCCESS=$(pyget "$RESP" "success")
 GOAL_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); ids={g['id'] for g in d.get('goals', [])}; print('yes' if '$GOAL_ID' in ids else 'no')")
-assert_eq "Command op list_goals success" "True" "$GOAL_LIST_SUCCESS"
-assert_eq "Command op list_goals has id" "yes" "$GOAL_LIST_HAS_ID"
+assert_eq "Command op list_goals active success" "True" "$GOAL_LIST_SUCCESS"
+assert_eq "Command op list_goals active has id" "yes" "$GOAL_LIST_HAS_ID"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"create_goal","project":"test-project","title":"Rejected goal","ttl_secs":600}')
+REJECT_GOAL_ID=$(pyget "$RESP" "goal_id")
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'reject_goal','goal_id':'$REJECT_GOAL_ID','reason':'not approved'}))")")
+REJECT_GOAL_SUCCESS=$(pyget "$RESP" "success")
+REJECT_GOAL_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['goal']['status'])")
+assert_eq "Command op reject_goal success" "True" "$REJECT_GOAL_SUCCESS"
+assert_eq "Command op reject_goal rejected" "rejected" "$REJECT_GOAL_STATUS"
+RESP=$(curl -s -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'approve_goal','goal_id':'$REJECT_GOAL_ID'}))")")
+REJECTED_APPROVE_SUCCESS=$(pyget "$RESP" "success")
+REJECTED_APPROVE_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command op rejected goal cannot approve" "False" "$REJECTED_APPROVE_SUCCESS"
+assert_contains "Command op rejected goal approve error" "not pending" "$REJECTED_APPROVE_ERROR"
+RESP=$(curl -s -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_and_approve','project':'test-project','goal_id':'$REJECT_GOAL_ID','command':'smoke'}))")")
+REJECTED_RUN_SUCCESS=$(pyget "$RESP" "success")
+REJECTED_RUN_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command op rejected goal cannot auto approve" "False" "$REJECTED_RUN_SUCCESS"
+assert_contains "Command op rejected goal run error" "not active" "$REJECTED_RUN_ERROR"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"list_goals","project":"test-project","status":"rejected","limit":10}')
+REJECTED_LIST_SUCCESS=$(pyget "$RESP" "success")
+REJECTED_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); ids={g['id'] for g in d.get('goals', [])}; print('yes' if '$REJECT_GOAL_ID' in ids else 'no')")
+assert_eq "Command op list_goals rejected success" "True" "$REJECTED_LIST_SUCCESS"
+assert_eq "Command op list_goals rejected has id" "yes" "$REJECTED_LIST_HAS_ID"
 RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
