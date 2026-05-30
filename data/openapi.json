@@ -265,10 +265,42 @@
         },
         "required": ["project", "command"]
       },
+      "CommandRequestBatchItem": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string", "description": "Command id configured under [projects.<name>.commands]"},
+          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Why this command is requested"}
+        },
+        "required": ["command"]
+      },
+      "CommandRequestBatchCreate": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "requests": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"$ref": "#/components/schemas/CommandRequestBatchItem"}}
+        },
+        "required": ["project", "requests"]
+      },
+      "CommandRequestsListRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "nullable": true, "description": "Optional project filter"},
+          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "rejected", "expired"], "description": "Optional status filter"},
+          "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+        }
+      },
       "CommandApproveRequest": {
         "type": "object",
         "properties": {
           "request_id": {"type": "string", "description": "Command request id to approve and execute"}
+        },
+        "required": ["request_id"]
+      },
+      "CommandRejectRequest": {
+        "type": "object",
+        "properties": {
+          "request_id": {"type": "string", "description": "Command request id to reject"},
+          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Rejection reason"}
         },
         "required": ["request_id"]
       },
@@ -296,6 +328,24 @@
           "error": {"type": "string", "nullable": true}
         },
         "required": ["success"]
+      },
+      "CommandRequestsListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "records": {"type": "array", "items": {"type": "object"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "records"]
+      },
+      "CommandRequestBatchResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "records": {"type": "array", "items": {"type": "object"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "records"]
       },
       "CheckRequest": {
         "type": "object",
@@ -562,6 +612,39 @@
         }
       }
     },
+    "/api/codex/command_requests": {
+      "post": {
+        "operationId": "listCommandRequests",
+        "summary": "List audited command requests",
+        "description": "List command request audit records, optionally filtered by project and status.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestsListRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Command request records", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestsListResponse"}}}},
+          "400": {"description": "Bad request"}
+        }
+      }
+    },
+    "/api/codex/command_request_batch": {
+      "post": {
+        "operationId": "createCommandRequestBatch",
+        "summary": "Create multiple auditable command requests",
+        "description": "Create 1-20 pending command requests for one project in a single call. Commands are not executed until individually approved.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestBatchCreate"}}}
+        },
+        "responses": {
+          "200": {"description": "Command requests created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestBatchResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Command requests disabled"}
+        }
+      }
+    },
     "/api/codex/command_approve": {
       "post": {
         "operationId": "approveCommandRequest",
@@ -576,6 +659,23 @@
           "200": {"description": "Command request execution result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
           "400": {"description": "Bad request"},
           "403": {"description": "Command requests disabled"},
+          "404": {"description": "Request not found"}
+        }
+      }
+    },
+    "/api/codex/command_reject": {
+      "post": {
+        "operationId": "rejectCommandRequest",
+        "summary": "Reject a pending command request",
+        "description": "Reject a pending command request and store the rejection reason in the audit record.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRejectRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Command request rejected", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
+          "400": {"description": "Bad request"},
           "404": {"description": "Request not found"}
         }
       }

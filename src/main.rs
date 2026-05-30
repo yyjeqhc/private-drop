@@ -393,15 +393,97 @@ impl Database {
         }
     }
 
+    pub fn list_command_requests(
+        &self,
+        project: Option<&str>,
+        status: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<CommandAuditRecord>> {
+        let limit = limit.clamp(1, 100) as i64;
+        let conn = self.conn.lock().unwrap();
+        let sql = match (project, status) {
+            (Some(_), Some(_)) => "SELECT id, project, command, command_text, reason, status, created_at, approved_at, executed_at, exit_code, stdout_tail, stderr_tail, error FROM command_requests WHERE project = ?1 AND status = ?2 ORDER BY created_at DESC LIMIT ?3",
+            (Some(_), None) => "SELECT id, project, command, command_text, reason, status, created_at, approved_at, executed_at, exit_code, stdout_tail, stderr_tail, error FROM command_requests WHERE project = ?1 ORDER BY created_at DESC LIMIT ?2",
+            (None, Some(_)) => "SELECT id, project, command, command_text, reason, status, created_at, approved_at, executed_at, exit_code, stdout_tail, stderr_tail, error FROM command_requests WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2",
+            (None, None) => "SELECT id, project, command, command_text, reason, status, created_at, approved_at, executed_at, exit_code, stdout_tail, stderr_tail, error FROM command_requests ORDER BY created_at DESC LIMIT ?1",
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let map_row = |row: &rusqlite::Row| {
+            Ok(CommandAuditRecord {
+                id: row.get(0)?,
+                project: row.get(1)?,
+                command: row.get(2)?,
+                command_text: row.get(3)?,
+                reason: row.get(4)?,
+                status: row.get(5)?,
+                created_at: row.get(6)?,
+                approved_at: row.get(7)?,
+                executed_at: row.get(8)?,
+                exit_code: row.get(9)?,
+                stdout_tail: row.get(10)?,
+                stderr_tail: row.get(11)?,
+                error: row.get(12)?,
+            })
+        };
+        let rows = match (project, status) {
+            (Some(project), Some(status)) => {
+                stmt.query_map(params![project, status, limit], map_row)?
+            }
+            (Some(project), None) => stmt.query_map(params![project, limit], map_row)?,
+            (None, Some(status)) => stmt.query_map(params![status, limit], map_row)?,
+            (None, None) => stmt.query_map(params![limit], map_row)?,
+        };
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn reject_command_request(
+        &self,
+        id: &str,
+        rejected_at: i64,
+        error: &str,
+    ) -> anyhow::Result<Option<CommandAuditRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE command_requests SET status = 'rejected', executed_at = ?2, error = ?3 WHERE id = ?1 AND status = 'pending'",
+            params![id, rejected_at, error],
+        )?;
+        drop(conn);
+        if changed == 1 {
+            self.get_command_request(id)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn expire_command_request(
+        &self,
+        id: &str,
+        expired_at: i64,
+        error: &str,
+    ) -> anyhow::Result<Option<CommandAuditRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE command_requests SET status = 'expired', executed_at = ?2, error = ?3 WHERE id = ?1 AND status = 'pending'",
+            params![id, expired_at, error],
+        )?;
+        drop(conn);
+        if changed == 1 {
+            self.get_command_request(id)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn claim_command_request_for_execution(
         &self,
         id: &str,
         approved_at: i64,
+        min_created_at: i64,
     ) -> anyhow::Result<Option<CommandAuditRecord>> {
         let conn = self.conn.lock().unwrap();
         let changed = conn.execute(
-            "UPDATE command_requests SET status = 'running', approved_at = ?2 WHERE id = ?1 AND status = 'pending'",
-            params![id, approved_at],
+            "UPDATE command_requests SET status = 'running', approved_at = ?2 WHERE id = ?1 AND status = 'pending' AND created_at >= ?3",
+            params![id, approved_at, min_created_at],
         )?;
         drop(conn);
         if changed == 1 {
@@ -948,7 +1030,10 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
         "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
         "/api/codex/command_request": spec["paths"]["/api/codex/command_request"].clone(),
+        "/api/codex/command_requests": spec["paths"]["/api/codex/command_requests"].clone(),
+        "/api/codex/command_request_batch": spec["paths"]["/api/codex/command_request_batch"].clone(),
         "/api/codex/command_approve": spec["paths"]["/api/codex/command_approve"].clone(),
+        "/api/codex/command_reject": spec["paths"]["/api/codex/command_reject"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
         "/api/codex/report": spec["paths"]["/api/codex/report"].clone()
     });
@@ -972,8 +1057,14 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "CommandRequest": spec["components"]["schemas"]["CommandRequest"].clone(),
         "CommandResponse": spec["components"]["schemas"]["CommandResponse"].clone(),
         "CommandRequestCreate": spec["components"]["schemas"]["CommandRequestCreate"].clone(),
+        "CommandRequestBatchItem": spec["components"]["schemas"]["CommandRequestBatchItem"].clone(),
+        "CommandRequestBatchCreate": spec["components"]["schemas"]["CommandRequestBatchCreate"].clone(),
+        "CommandRequestsListRequest": spec["components"]["schemas"]["CommandRequestsListRequest"].clone(),
         "CommandApproveRequest": spec["components"]["schemas"]["CommandApproveRequest"].clone(),
+        "CommandRejectRequest": spec["components"]["schemas"]["CommandRejectRequest"].clone(),
         "CommandRequestResponse": spec["components"]["schemas"]["CommandRequestResponse"].clone(),
+        "CommandRequestsListResponse": spec["components"]["schemas"]["CommandRequestsListResponse"].clone(),
+        "CommandRequestBatchResponse": spec["components"]["schemas"]["CommandRequestBatchResponse"].clone(),
         "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
         "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
@@ -987,7 +1078,10 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "GitRequest",
         "CommandRequest",
         "CommandRequestCreate",
+        "CommandRequestBatchCreate",
+        "CommandRequestsListRequest",
         "CommandApproveRequest",
+        "CommandRejectRequest",
         "CheckRequest",
         "ReportRequest",
     ] {
@@ -1461,7 +1555,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("git").post(codex::codex_git))
                 .push(Router::with_path("command").post(codex::codex_command))
                 .push(Router::with_path("command_request").post(codex::codex_command_request))
+                .push(Router::with_path("command_requests").post(codex::codex_command_requests))
+                .push(
+                    Router::with_path("command_request_batch")
+                        .post(codex::codex_command_request_batch),
+                )
                 .push(Router::with_path("command_approve").post(codex::codex_command_approve))
+                .push(Router::with_path("command_reject").post(codex::codex_command_reject))
                 .push(Router::with_path("check").post(codex::codex_check))
                 .push(Router::with_path("report").post(codex::codex_report)),
         );
@@ -1614,17 +1714,77 @@ mod tests {
         };
         db.insert_command_request(&record).unwrap();
         let claimed = db
-            .claim_command_request_for_execution("req-1", 2)
+            .claim_command_request_for_execution("req-1", 2, 0)
             .unwrap()
             .unwrap();
         assert_eq!(claimed.status, "running");
         assert_eq!(claimed.approved_at, Some(2));
         assert_eq!(claimed.command_text.as_deref(), Some("echo ok"));
-        let second = db.claim_command_request_for_execution("req-1", 3).unwrap();
+        let second = db
+            .claim_command_request_for_execution("req-1", 3, 0)
+            .unwrap();
         assert!(second.is_none());
         let current = db.get_command_request("req-1").unwrap().unwrap();
         assert_eq!(current.status, "running");
         assert_eq!(current.approved_at, Some(2));
+    }
+
+    #[test]
+    fn test_command_request_claim_respects_ttl() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let record = CommandAuditRecord {
+            id: "old-req".to_string(),
+            project: "p".to_string(),
+            command: "smoke".to_string(),
+            command_text: Some("echo ok".to_string()),
+            reason: None,
+            status: "pending".to_string(),
+            created_at: 10,
+            approved_at: None,
+            executed_at: None,
+            exit_code: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            error: None,
+        };
+        db.insert_command_request(&record).unwrap();
+        let claimed = db
+            .claim_command_request_for_execution("old-req", 100, 50)
+            .unwrap();
+        assert!(claimed.is_none());
+        let current = db.get_command_request("old-req").unwrap().unwrap();
+        assert_eq!(current.status, "pending");
+    }
+
+    #[test]
+    fn test_command_request_reject_only_pending() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let record = CommandAuditRecord {
+            id: "reject-req".to_string(),
+            project: "p".to_string(),
+            command: "smoke".to_string(),
+            command_text: Some("echo ok".to_string()),
+            reason: None,
+            status: "pending".to_string(),
+            created_at: 1,
+            approved_at: None,
+            executed_at: None,
+            exit_code: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            error: None,
+        };
+        db.insert_command_request(&record).unwrap();
+        let rejected = db
+            .reject_command_request("reject-req", 2, "no")
+            .unwrap()
+            .unwrap();
+        assert_eq!(rejected.status, "rejected");
+        assert_eq!(rejected.error.as_deref(), Some("no"));
+        let second = db.reject_command_request("reject-req", 3, "again").unwrap();
+        assert!(second.is_none());
     }
 
     #[test]

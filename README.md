@@ -758,4 +758,12 @@ The response contains a `request_id` and an audit `record` with `status = "pendi
 
 sent to `POST /api/codex/command_approve`.
 
-The server records status, timestamps, exit code, stdout/stderr tails, and error in SQLite. A request can only be approved while pending, so repeated approval attempts do not re-run the command. Approval atomically claims a pending request by moving it to `running` before execution, preventing concurrent double execution. Approval executes the stored `command_text` snapshot captured when the request was created, not a later value from a changed `projects.toml`. `reason` is limited to 2000 characters. This is a chat-friendly approval flow with server-side audit records, not an arbitrary shell endpoint.
+The server records status, timestamps, exit code, stdout/stderr tails, and error in SQLite. A request can only be approved while pending, so repeated approval attempts do not re-run the command. Approval atomically claims a pending request by moving it to `running` before execution, preventing concurrent double execution. Approval executes the stored `command_text` snapshot captured when the request was created, not a later value from a changed `projects.toml`. `reason` is limited to 2000 characters. Pending requests expire after 2 hours.
+
+Additional approval helpers:
+
+- `POST /api/codex/command_requests` lists audit records and supports optional `project`, `status`, and `limit` filters.
+- `POST /api/codex/command_request_batch` creates 1-20 pending requests for one project in a single call, which is useful when GPT wants to ask for approval for several checks at once.
+- `POST /api/codex/command_reject` rejects a pending request and records the rejection reason.
+
+This is a chat-friendly approval flow with server-side audit records, not an arbitrary shell endpoint.
