@@ -350,13 +350,15 @@ pub(super) fn enforce_context_batch_total_limit(
             if used >= max_total {
                 content.clear();
                 result.truncated = true;
+                result.error = Some("Omitted: max_total_chars budget exceeded".to_string());
                 continue;
             }
             let remaining = max_total - used;
             if content.len() > remaining {
-                let (truncated, _) = truncate_output_string(content.clone(), remaining);
-                *content = truncated;
+                let (truncated_content, _) = truncate_output_string(content.clone(), remaining);
+                *content = truncated_content;
                 result.truncated = true;
+                result.error = Some("Omitted: max_total_chars budget exceeded".to_string());
                 used = max_total;
             } else {
                 used += content.len();
@@ -367,6 +369,9 @@ pub(super) fn enforce_context_batch_total_limit(
             for item in items.iter() {
                 if used + item.len() + 1 > max_total {
                     result.truncated = true;
+                    if result.error.is_none() {
+                        result.error = Some("Omitted: max_total_chars budget exceeded".to_string());
+                    }
                     break;
                 }
                 used += item.len() + 1;
