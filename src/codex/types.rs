@@ -247,6 +247,12 @@ pub struct JobMetadata {
     pub project: String,
     pub goal_id: String,
     pub command: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub suite: Option<String>,
+    #[serde(default)]
+    pub script_path: Option<String>,
     pub reason: Option<String>,
     pub status: String,
     pub created_at: i64,
@@ -265,6 +271,9 @@ pub struct JobInfo {
     pub project: String,
     pub goal_id: String,
     pub command: String,
+    pub kind: Option<String>,
+    pub suite: Option<String>,
+    pub script_path: Option<String>,
     pub reason: Option<String>,
     pub status: String,
     pub created_at: i64,

@@ -226,6 +226,9 @@ pub(super) fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInf
         project: meta.project.clone(),
         goal_id: meta.goal_id.clone(),
         command: meta.command.clone(),
+        kind: meta.kind.clone(),
+        suite: meta.suite.clone(),
+        script_path: meta.script_path.clone(),
         reason: meta.reason.clone(),
         status,
         created_at: meta.created_at,
@@ -249,6 +252,9 @@ pub(super) fn create_local_job(
     goal_id: &str,
     command: &str,
     client_request_id: Option<String>,
+    kind: Option<String>,
+    suite: Option<String>,
+    script_path: Option<String>,
     reason: Option<String>,
     max_runtime_secs: i64,
 ) -> Result<JobInfo, String> {
@@ -264,6 +270,9 @@ pub(super) fn create_local_job(
         project: project.to_string(),
         goal_id: goal_id.to_string(),
         command: command.to_string(),
+        kind,
+        suite,
+        script_path,
         reason,
         status: "running".to_string(),
         created_at: now,
@@ -416,6 +425,9 @@ pub(super) fn update_job_status_ssh(
         project: meta.project.clone(),
         goal_id: meta.goal_id.clone(),
         command: meta.command.clone(),
+        kind: meta.kind.clone(),
+        suite: meta.suite.clone(),
+        script_path: meta.script_path.clone(),
         reason: meta.reason.clone(),
         status: status_value,
         created_at: meta.created_at,
@@ -443,6 +455,9 @@ pub(super) fn create_ssh_job(
     goal_id: &str,
     command: &str,
     client_request_id: Option<String>,
+    kind: Option<String>,
+    suite: Option<String>,
+    script_path: Option<String>,
     reason: Option<String>,
     max_runtime_secs: i64,
     ssh_config: Option<&SshConfig>,
@@ -457,6 +472,9 @@ pub(super) fn create_ssh_job(
         project: project.to_string(),
         goal_id: goal_id.to_string(),
         command: command.to_string(),
+        kind,
+        suite,
+        script_path,
         reason,
         status: "running".to_string(),
         created_at: now,
@@ -650,7 +668,7 @@ pub(super) fn stop_ssh_job(
 }
 
 pub(super) fn summarize_jobs_markdown(jobs: &[JobInfo], log_tails: &[(String, String)]) -> String {
-    let mut md = String::from("# Codex job summary\n\n| job_id | status | exit_code | duration_secs | command |\n|---|---:|---:|---:|---|\n");
+    let mut md = String::from("# Codex job summary\n\n| job_id | kind | suite | status | exit_code | duration_secs | command |\n|---|---|---|---:|---:|---:|---|\n");
     for job in jobs {
         let duration = job
             .finished_at
@@ -658,8 +676,10 @@ pub(super) fn summarize_jobs_markdown(jobs: &[JobInfo], log_tails: &[(String, St
             .unwrap_or(job.created_at)
             - job.started_at.unwrap_or(job.created_at);
         md.push_str(&format!(
-            "| `{}` | {} | {} | {} | `{}` |\n",
+            "| `{}` | {} | {} | {} | {} | {} | `{}` |\n",
             job.job_id,
+            job.kind.as_deref().unwrap_or("command"),
+            job.suite.as_deref().unwrap_or(""),
             job.status,
             job.exit_code
                 .map(|c| c.to_string())
@@ -829,6 +849,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     goal_id,
                     &command,
                     body.client_request_id.clone(),
+                    Some("check".to_string()),
+                    Some(suite.to_string()),
+                    None,
                     reason,
                     max_runtime_secs,
                     ssh_config,
@@ -840,6 +863,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     goal_id,
                     &command,
                     body.client_request_id.clone(),
+                    Some("check".to_string()),
+                    Some(suite.to_string()),
+                    None,
                     reason,
                     max_runtime_secs,
                 )
@@ -939,6 +965,12 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     return;
                 }
             }
+            let job_kind = if body.script_path.is_some() {
+                "script"
+            } else {
+                "command"
+            };
+            let job_script_path = body.script_path.clone();
             let result = if proj.is_ssh() {
                 create_ssh_job(
                     proj,
@@ -946,6 +978,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     goal_id,
                     &command,
                     body.client_request_id.clone(),
+                    Some(job_kind.to_string()),
+                    None,
+                    job_script_path.clone(),
                     body.reason.clone(),
                     max_runtime_secs,
                     ssh_config,
@@ -957,6 +992,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     goal_id,
                     &command,
                     body.client_request_id.clone(),
+                    Some(job_kind.to_string()),
+                    None,
+                    job_script_path.clone(),
                     body.reason.clone(),
                     max_runtime_secs,
                 )
@@ -1064,6 +1102,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         body.client_request_id
                             .as_ref()
                             .map(|id| format!("{}.{}", id, idx + 1)),
+                        Some("command".to_string()),
+                        None,
+                        None,
                         body.reason.clone(),
                         max_runtime_secs,
                         ssh_config,
@@ -1077,6 +1118,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         body.client_request_id
                             .as_ref()
                             .map(|id| format!("{}.{}", id, idx + 1)),
+                        Some("command".to_string()),
+                        None,
+                        None,
                         body.reason.clone(),
                         max_runtime_secs,
                     )

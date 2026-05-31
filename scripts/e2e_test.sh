@@ -1129,9 +1129,11 @@ RESP=$(curl -sf -X POST "$CODEX/job" \
     -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'status','job_id':'$JOB_ID'}))")")
 JOB_STATUS_SUCCESS=$(pyget "$RESP" "success")
 JOB_STATUS_VALUE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
+JOB_KIND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('kind') or '')")
 JOB_FINISHED_AT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('finished_at') or '')")
 assert_eq "Job status success" "True" "$JOB_STATUS_SUCCESS"
 assert_eq "Job status completed" "completed" "$JOB_STATUS_VALUE"
+assert_eq "Job status has command kind" "command" "$JOB_KIND"
 assert_not_empty "Job completed has finished_at" "$JOB_FINISHED_AT"
 JOB_IDEMPOTENCY_KEY="e2e-job-idempotent-$(date +%s)-$$"
 RESP=$(curl -sf -X POST "$CODEX/job" \
@@ -1197,9 +1199,13 @@ RESP=$(curl -sf -X POST "$CODEX/job" \
 JOB_CHECK_SUCCESS=$(pyget "$RESP" "success")
 JOB_CHECK_ID=$(pyget "$RESP" "job_id")
 JOB_CHECK_CLIENT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('client_request_id') or '')")
+JOB_CHECK_KIND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('kind') or '')")
+JOB_CHECK_SUITE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('suite') or '')")
 assert_eq "Job check create success" "True" "$JOB_CHECK_SUCCESS"
 assert_not_empty "Job check returns job_id" "$JOB_CHECK_ID"
 assert_eq "Job check echoes client_request_id" "$JOB_CHECK_KEY" "$JOB_CHECK_CLIENT"
+assert_eq "Job check has check kind" "check" "$JOB_CHECK_KIND"
+assert_eq "Job check has suite" "test" "$JOB_CHECK_SUITE"
 sleep 1
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
@@ -1223,8 +1229,12 @@ RESP=$(curl -sf -X POST "$CODEX/job" \
     -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','script_path':'scripts/codex_jobs/job_smoke.sh','script_args':['alpha value','beta value'],'reason':'job script_path smoke','max_runtime_secs':30}))")")
 JOB_SCRIPT_SUCCESS=$(pyget "$RESP" "success")
 JOB_SCRIPT_ID=$(pyget "$RESP" "job_id")
+JOB_SCRIPT_KIND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('kind') or '')")
+JOB_SCRIPT_PATH_META=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('script_path') or '')")
 assert_eq "Job script_path create success" "True" "$JOB_SCRIPT_SUCCESS"
 assert_not_empty "Job script_path returns job_id" "$JOB_SCRIPT_ID"
+assert_eq "Job script_path has script kind" "script" "$JOB_SCRIPT_KIND"
+assert_eq "Job script_path metadata path" "scripts/codex_jobs/job_smoke.sh" "$JOB_SCRIPT_PATH_META"
 sleep 1
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
@@ -1287,6 +1297,8 @@ JOB_SUMMARY_SUCCESS=$(pyget "$RESP" "success")
 JOB_SUMMARY=$(pyget "$RESP" "summary_markdown")
 assert_eq "Job summarize success" "True" "$JOB_SUMMARY_SUCCESS"
 assert_contains "Job summarize markdown" "Codex job summary" "$JOB_SUMMARY"
+assert_contains "Job summarize includes kind column" "| job_id | kind | suite |" "$JOB_SUMMARY"
+assert_contains "Job summarize includes check kind" "| check | test |" "$JOB_SUMMARY"
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
