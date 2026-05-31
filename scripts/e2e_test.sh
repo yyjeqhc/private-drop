@@ -268,6 +268,12 @@ except Exception:
 # Build
 # ============================================================================
 echo "=== Building ==="
+if command -v node > /dev/null 2>&1; then
+    npm --prefix frontend run build
+    npm --prefix frontend run check:dist
+else
+    echo "NOTE: node not found; skipping frontend dist drift check"
+fi
 cargo fmt
 cargo test
 cargo build --release

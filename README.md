@@ -148,6 +148,15 @@ curl -H "Authorization: Bearer your-secret-token" \
 
 The web UI is server-rendered HTML with shared frontend assets in `frontend/`, mobile-friendly, no JavaScript framework required. Common browser helpers and styles live in TypeScript/CSS (`frontend/src/app.ts`, `frontend/src/styles.css`) and are served from built assets under `/assets/app.js` and `/assets/styles.css`.
 
+When changing `frontend/src/*`, regenerate and verify committed assets before building Rust:
+
+```bash
+npm --prefix frontend run build
+npm --prefix frontend run check:dist
+```
+
+`check:dist` fails when `frontend/dist/*` has drifted from `frontend/src/*`, which protects the Rust `include_str!` assets from going stale.
+
 - `GET /` - Home page with channel list and recent messages
 - `GET /c/{channel}` - Channel messages (e.g., `/c/inbox`)
 - `GET /m/{id}` - Message detail
