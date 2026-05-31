@@ -33,6 +33,8 @@ pub struct ProjectConfig {
     pub allow_command_requests: bool,
     #[serde(default)]
     pub allow_raw_command_requests: bool,
+    #[serde(default)]
+    pub default_apply_patch_backend: Option<String>,
     pub allowed_checks: Vec<String>,
     pub checks: Option<ProjectChecks>,
     #[serde(default)]

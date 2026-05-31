@@ -125,7 +125,7 @@
           "project": {"type": "string", "description": "Project name from whitelist"},
           "patch": {"type": "string", "description": "Patch content. backend=builtin expects unified diff/git apply format; backend=codex expects Codex apply_patch format."},
           "reason": {"type": "string", "description": "Optional explanation for the patch"},
-          "backend": {"type": "string", "enum": ["builtin", "codex"], "default": "builtin", "description": "Experimental patch backend. Default builtin uses git apply. codex uses an external codex apply_patch executable after private-drop path validation."}
+          "backend": {"type": "string", "enum": ["builtin", "codex"], "default": "project default or builtin", "description": "Optional patch backend override. If omitted, private-drop uses the project's default_apply_patch_backend from projects.toml, falling back to builtin. builtin uses git apply. codex uses an external codex apply_patch executable after private-drop path validation."}
         },
         "required": ["project", "patch"]
       },
@@ -620,9 +620,10 @@
           "allowed_checks": {"type": "array", "items": {"type": "string"}},
           "configured_checks": {"type": "array", "items": {"type": "string"}},
           "commands": {"type": "array", "items": {"type": "string"}},
+          "default_apply_patch_backend": {"type": "string", "enum": ["builtin", "codex"], "description": "Effective project default patch backend when request.backend is omitted."},
           "capabilities": {"$ref": "#/components/schemas/ProjectCapabilities"}
         },
-        "required": ["name", "executor", "root", "allowed_checks", "configured_checks", "commands", "capabilities"]
+        "required": ["name", "executor", "root", "allowed_checks", "configured_checks", "commands", "default_apply_patch_backend", "capabilities"]
       },
       "InstanceInfo": {
         "type": "object",
@@ -848,7 +849,7 @@
       "post": {
         "operationId": "applyProjectPatch",
         "summary": "Apply a patch",
-        "description": "Apply a patch to a whitelisted project. Default backend=builtin uses git apply for unified diffs. Experimental backend=codex uses an external Codex apply_patch executable after private-drop validates changed paths and blocks sensitive paths.",
+        "description": "Apply a patch to a whitelisted project. If request.backend is omitted, the project default_apply_patch_backend from projects.toml is used, falling back to builtin. backend=builtin uses git apply for unified diffs. Experimental backend=codex uses an external Codex apply_patch executable after private-drop validates changed paths and blocks sensitive paths.",
         "tags": ["codex"],
         "requestBody": {
           "required": true,

@@ -444,7 +444,29 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
             return;
         }
     };
-    let backend = body.backend.as_deref().unwrap_or(BUILTIN_PATCH_BACKEND);
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(patch_response(
+                false,
+                body.backend.as_deref().unwrap_or(BUILTIN_PATCH_BACKEND),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(e),
+            )));
+            return;
+        }
+    };
+    let backend = body
+        .backend
+        .as_deref()
+        .or(proj.default_apply_patch_backend.as_deref())
+        .unwrap_or(BUILTIN_PATCH_BACKEND);
     if backend != BUILTIN_PATCH_BACKEND && backend != CODEX_APPLY_PATCH_BACKEND {
         res.status_code(StatusCode::BAD_REQUEST);
         res.render(Json(patch_response(
@@ -460,24 +482,6 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
         )));
         return;
     }
-    let proj = match projects.get_project(&body.project) {
-        Ok(p) => p,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(patch_response(
-                false,
-                backend,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(e),
-            )));
-            return;
-        }
-    };
     if !proj.allow_patch() {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(patch_response(

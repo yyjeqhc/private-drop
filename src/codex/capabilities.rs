@@ -82,6 +82,10 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
         allowed_checks,
         configured_checks: configured_checks.clone(),
         commands: commands.clone(),
+        default_apply_patch_backend: project
+            .default_apply_patch_backend
+            .clone()
+            .unwrap_or_else(|| "builtin".to_string()),
         capabilities: ProjectCapabilities {
             edit: true,
             patch: project.allow_patch(),

@@ -663,6 +663,7 @@ pub struct ProjectCapabilityInfo {
     pub allowed_checks: Vec<String>,
     pub configured_checks: Vec<String>,
     pub commands: Vec<String>,
+    pub default_apply_patch_backend: String,
     pub capabilities: ProjectCapabilities,
 }
 

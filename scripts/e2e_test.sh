@@ -49,6 +49,8 @@ printf 'other file\n' > data/other/other.txt
 echo "line1" > test.txt
 echo "line2" >> test.txt
 echo "line3" >> test.txt
+echo "old codex value" > codex-update.txt
+echo "partial original" > codex-partial.txt
 echo "delete me" > delete-codex.txt
 cat > chapter.md <<'EOF'
 # Chapter 1
@@ -237,6 +239,12 @@ full = "echo fmt-ok && echo test-ok && bash check.sh"
 smoke = "echo command-smoke-ok"
 counter = "printf run >> approval-count.txt"
 fail = "echo command-failed >&2; exit 7"
+
+[projects.codex-default-project]
+path = "$TEST_PROJECT_DIR"
+allow_patch = true
+default_apply_patch_backend = "codex"
+allowed_checks = []
 EOF
 
 cleanup() {
@@ -699,6 +707,8 @@ PROJECTS_TEST_EXECUTOR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load
 PROJECTS_TEST_CHECKS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('allowed_checks', [])))")
 PROJECTS_TEST_COMMANDS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('commands', [])))")
 PROJECTS_TEST_RAW=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('capabilities', {}).get('raw_command_requests'))")
+PROJECTS_TEST_DEFAULT_BACKEND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('default_apply_patch_backend') or '')")
+PROJECTS_CODEX_DEFAULT_BACKEND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'codex-default-project'); print(p.get('default_apply_patch_backend') or '')")
 PROJECTS_INSTANCE_SERVICE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('service') or '')")
 PROJECTS_INSTANCE_API=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('api') or '')")
 PROJECTS_INSTANCE_SCHEMA=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('schema') or '')")
@@ -712,6 +722,8 @@ assert_eq "Projects capabilities executor" "local" "$PROJECTS_TEST_EXECUTOR"
 assert_contains "Projects capabilities allowed checks" "test" "$PROJECTS_TEST_CHECKS"
 assert_contains "Projects capabilities configured commands" "smoke" "$PROJECTS_TEST_COMMANDS"
 assert_eq "Projects capabilities raw commands enabled" "True" "$PROJECTS_TEST_RAW"
+assert_eq "Projects default backend fallback" "builtin" "$PROJECTS_TEST_DEFAULT_BACKEND"
+assert_eq "Projects codex default backend" "codex" "$PROJECTS_CODEX_DEFAULT_BACKEND"
 assert_eq "Projects instance service" "private-drop" "$PROJECTS_INSTANCE_SERVICE"
 assert_eq "Projects instance api" "codex" "$PROJECTS_INSTANCE_API"
 assert_eq "Projects instance schema" "codex-openapi-compact" "$PROJECTS_INSTANCE_SCHEMA"
@@ -914,6 +926,132 @@ CMD_SUCCESS=$(pyget "$RESP" "success")
 CMD_ERROR=$(pyget "$RESP" "error")
 assert_eq "Unknown command rejected" "False" "$CMD_SUCCESS"
 assert_contains "Unknown command error" "not configured" "$CMD_ERROR"
+
+# --- 24d2. Codex: applyProjectPatch experimental codex backend ---
+echo ""
+echo "--- 24d2. Codex Apply Patch Codex Backend ---"
+CODEX_PATCH_FILE="$TMPDIR_DATA/codex.patch"
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Add File: codex-single.txt
++codex backend single file
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex single'}))
+")")
+CODEX_PATCH_SUCCESS=$(pyget "$RESP" "success")
+CODEX_PATCH_BACKEND=$(pyget "$RESP" "backend")
+CODEX_PATCH_EXIT=$(pyget "$RESP" "exit_code")
+CODEX_PATCH_STDOUT=$(pyget "$RESP" "stdout")
+CODEX_PATCH_DIFF=$(pyget "$RESP" "diff")
+assert_eq "Codex backend single patch success" "True" "$CODEX_PATCH_SUCCESS"
+assert_eq "Codex backend is reported" "codex" "$CODEX_PATCH_BACKEND"
+assert_eq "Codex backend exit code 0" "0" "$CODEX_PATCH_EXIT"
+assert_contains "Codex backend stdout lists file" "codex-single.txt" "$CODEX_PATCH_STDOUT"
+assert_contains "Codex backend diff includes file" "codex-single.txt" "$CODEX_PATCH_DIFF"
+
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Add File: codex-default-backend.txt
++codex backend via project default
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'codex-default-project','patch':patch,'reason':'project default codex'}))
+")")
+CODEX_DEFAULT_SUCCESS=$(pyget "$RESP" "success")
+CODEX_DEFAULT_BACKEND=$(pyget "$RESP" "backend")
+CODEX_DEFAULT_STDOUT=$(pyget "$RESP" "stdout")
+assert_eq "Codex backend project default success" "True" "$CODEX_DEFAULT_SUCCESS"
+assert_eq "Codex backend project default reported" "codex" "$CODEX_DEFAULT_BACKEND"
+assert_contains "Codex backend project default stdout" "codex-default-backend.txt" "$CODEX_DEFAULT_STDOUT"
+
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Update File: codex-update.txt
+@@
+-old codex value
++new codex value
+*** Add File: codex-added.txt
++codex backend added
+*** Delete File: delete-codex.txt
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex multi'}))
+")")
+CODEX_MULTI_SUCCESS=$(pyget "$RESP" "success")
+CODEX_MULTI_STDOUT=$(pyget "$RESP" "stdout")
+CODEX_MULTI_CHANGED=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d.get('changed_files') or []))")
+assert_eq "Codex backend multi patch success" "True" "$CODEX_MULTI_SUCCESS"
+assert_contains "Codex backend multi stdout add" "A codex-added.txt" "$CODEX_MULTI_STDOUT"
+assert_contains "Codex backend multi stdout modify" "M codex-update.txt" "$CODEX_MULTI_STDOUT"
+assert_contains "Codex backend multi stdout delete" "D delete-codex.txt" "$CODEX_MULTI_STDOUT"
+assert_contains "Codex backend changed files include update" "codex-update.txt" "$CODEX_MULTI_CHANGED"
+
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Add File: ../codex-escape.txt
++bad
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex traversal'}))
+")")
+CODEX_TRAVERSAL_SUCCESS=$(pyget "$RESP" "success")
+CODEX_TRAVERSAL_ERROR=$(pyget "$RESP" "error")
+assert_eq "Codex backend traversal blocked" "False" "$CODEX_TRAVERSAL_SUCCESS"
+assert_contains "Codex backend traversal error" "Path traversal" "$CODEX_TRAVERSAL_ERROR"
+
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Update File: codex-partial.txt
+@@
+-partial original
++partial changed
+*** Update File: missing-codex.txt
+@@
+-missing
++patched
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex failure'}))
+")")
+CODEX_FAIL_SUCCESS=$(pyget "$RESP" "success")
+CODEX_FAIL_ERROR=$(pyget "$RESP" "error")
+CODEX_FAIL_STDERR=$(pyget "$RESP" "stderr")
+CODEX_FAIL_DIFF=$(pyget "$RESP" "diff")
+assert_eq "Codex backend failed patch reports failure" "False" "$CODEX_FAIL_SUCCESS"
+assert_contains "Codex backend failure error warns partial" "partial" "$CODEX_FAIL_ERROR"
+assert_contains "Codex backend failure stderr" "missing-codex.txt" "$CODEX_FAIL_STDERR"
+assert_contains "Codex backend failure diff includes partial change" "partial changed" "$CODEX_FAIL_DIFF"
 
 # --- 24e. Codex: chat-approved command request ---
 echo ""
@@ -1494,110 +1632,7 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
     -d '{"project":"test-project","mode":"read_file","path":"test.txt"}')
 CTX_CONTENT=$(pyget "$RESP" "content")
 assert_contains "Patch added line4" "line4" "$CTX_CONTENT"
-# --- 25b. Codex: applyProjectPatch experimental codex backend ---
-echo ""
-echo "--- 25b. Codex Apply Patch Codex Backend ---"
-CODEX_PATCH_FILE="$TMPDIR_DATA/codex.patch"
-cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
-*** Begin Patch
-*** Add File: codex-single.txt
-+codex backend single file
-*** End Patch
-PATCHEOF
-RESP=$(curl -s -X POST "$CODEX/apply_patch" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "$(python3 -c "
-import json
-patch = open('$CODEX_PATCH_FILE').read()
-print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex single'}))
-")")
-CODEX_PATCH_SUCCESS=$(pyget "$RESP" "success")
-CODEX_PATCH_BACKEND=$(pyget "$RESP" "backend")
-CODEX_PATCH_EXIT=$(pyget "$RESP" "exit_code")
-CODEX_PATCH_STDOUT=$(pyget "$RESP" "stdout")
-CODEX_PATCH_DIFF=$(pyget "$RESP" "diff")
-assert_eq "Codex backend single patch success" "True" "$CODEX_PATCH_SUCCESS"
-assert_eq "Codex backend is reported" "codex" "$CODEX_PATCH_BACKEND"
-assert_eq "Codex backend exit code 0" "0" "$CODEX_PATCH_EXIT"
-assert_contains "Codex backend stdout lists file" "codex-single.txt" "$CODEX_PATCH_STDOUT"
-assert_contains "Codex backend diff includes file" "codex-single.txt" "$CODEX_PATCH_DIFF"
-
-cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
-*** Begin Patch
-*** Update File: test.txt
-@@
--line2
-+line2-codex
-*** Add File: codex-added.txt
-+codex backend added
-*** Delete File: delete-codex.txt
-*** End Patch
-PATCHEOF
-RESP=$(curl -s -X POST "$CODEX/apply_patch" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "$(python3 -c "
-import json
-patch = open('$CODEX_PATCH_FILE').read()
-print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex multi'}))
-")")
-CODEX_MULTI_SUCCESS=$(pyget "$RESP" "success")
-CODEX_MULTI_STDOUT=$(pyget "$RESP" "stdout")
-CODEX_MULTI_CHANGED=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d.get('changed_files') or []))")
-assert_eq "Codex backend multi patch success" "True" "$CODEX_MULTI_SUCCESS"
-assert_contains "Codex backend multi stdout add" "A codex-added.txt" "$CODEX_MULTI_STDOUT"
-assert_contains "Codex backend multi stdout modify" "M test.txt" "$CODEX_MULTI_STDOUT"
-assert_contains "Codex backend multi stdout delete" "D delete-codex.txt" "$CODEX_MULTI_STDOUT"
-assert_contains "Codex backend changed files include update" "test.txt" "$CODEX_MULTI_CHANGED"
-
-cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
-*** Begin Patch
-*** Add File: ../codex-escape.txt
-+bad
-*** End Patch
-PATCHEOF
-RESP=$(curl -s -X POST "$CODEX/apply_patch" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "$(python3 -c "
-import json
-patch = open('$CODEX_PATCH_FILE').read()
-print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex traversal'}))
-")")
-CODEX_TRAVERSAL_SUCCESS=$(pyget "$RESP" "success")
-CODEX_TRAVERSAL_ERROR=$(pyget "$RESP" "error")
-assert_eq "Codex backend traversal blocked" "False" "$CODEX_TRAVERSAL_SUCCESS"
-assert_contains "Codex backend traversal error" "Path traversal" "$CODEX_TRAVERSAL_ERROR"
-
-cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
-*** Begin Patch
-*** Update File: test.txt
-@@
--line3
-+line3-codex-partial
-*** Update File: missing-codex.txt
-@@
--missing
-+patched
-*** End Patch
-PATCHEOF
-RESP=$(curl -s -X POST "$CODEX/apply_patch" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "$(python3 -c "
-import json
-patch = open('$CODEX_PATCH_FILE').read()
-print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex failure'}))
-")")
-CODEX_FAIL_SUCCESS=$(pyget "$RESP" "success")
-CODEX_FAIL_ERROR=$(pyget "$RESP" "error")
-CODEX_FAIL_STDERR=$(pyget "$RESP" "stderr")
-CODEX_FAIL_DIFF=$(pyget "$RESP" "diff")
-assert_eq "Codex backend failed patch reports failure" "False" "$CODEX_FAIL_SUCCESS"
-assert_contains "Codex backend failure error warns partial" "partial" "$CODEX_FAIL_ERROR"
-assert_contains "Codex backend failure stderr" "missing-codex.txt" "$CODEX_FAIL_STDERR"
-assert_contains "Codex backend failure diff includes partial change" "line3-codex-partial" "$CODEX_FAIL_DIFF"
+# Codex apply_patch backend tests run earlier before async job checks.
 
 # --- 26. Codex: applyProjectPatch blocked sensitive path ---
 echo ""

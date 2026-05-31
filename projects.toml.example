@@ -13,6 +13,9 @@
 [projects.private-drop]
 path = "/root/git/private-drop"
 allow_patch = true
+# Optional: default patch backend for /api/codex/apply_patch when request.backend is omitted.
+# Valid values: "builtin" (default, git apply) or "codex" (experimental Codex apply_patch executable).
+# default_apply_patch_backend = "builtin"
 allow_command_requests = true
 allow_raw_command_requests = false
 allowed_checks = ["fmt", "test", "build", "e2e", "full"]
@@ -43,6 +46,7 @@ doc = "cargo doc --no-deps"
 # user = "root"
 # path = "/root/git/private-drop"
 # allow_patch = true
+# default_apply_patch_backend = "builtin"
 # allow_command_requests = true
 # allow_raw_command_requests = false
 # allowed_checks = ["fmt", "test", "build", "e2e"]
