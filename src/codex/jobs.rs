@@ -741,6 +741,125 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         }
     }
     match op.as_str() {
+        "check" => {
+            let Some(goal_id) = body.goal_id.as_deref() else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(job_response(
+                    &op,
+                    false,
+                    Some("goal_id is required".to_string()),
+                )));
+                return;
+            };
+            if let Err(e) = require_active_goal(&db, goal_id, &project) {
+                res.status_code(StatusCode::FORBIDDEN);
+                res.render(Json(job_response(&op, false, Some(e))));
+                return;
+            }
+            let Some(suite) = body.suite.as_deref() else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(job_response(
+                    &op,
+                    false,
+                    Some("suite is required".to_string()),
+                )));
+                return;
+            };
+            if !proj.is_check_allowed(suite) {
+                res.status_code(StatusCode::FORBIDDEN);
+                res.render(Json(job_response(
+                    &op,
+                    false,
+                    Some(format!(
+                        "Check '{}' is not allowed. Allowed: {}",
+                        suite,
+                        proj.allowed_checks.join(", ")
+                    )),
+                )));
+                return;
+            }
+            let command = match proj.get_check_command(suite) {
+                Ok(c) => c,
+                Err(e) => {
+                    res.render(Json(job_response(&op, false, Some(e))));
+                    return;
+                }
+            };
+            let max_runtime_secs = match validate_job_runtime(body.max_runtime_secs) {
+                Ok(v) => v,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(job_response(&op, false, Some(e))));
+                    return;
+                }
+            };
+            if let Some(client_request_id) = client_request_id {
+                let mut existing = if proj.is_ssh() {
+                    list_ssh_jobs(proj, 100, None, ssh_config)
+                } else {
+                    list_local_jobs(&proj.root(), 100, None)
+                };
+                existing.retain(|j| j.goal_id == goal_id);
+                filter_jobs_by_client_request_id(&mut existing, Some(client_request_id));
+                existing.sort_by_key(|j| -j.created_at);
+                if let Some(job) = existing.first().cloned() {
+                    res.render(Json(JobOpResponse {
+                        success: true,
+                        op,
+                        job_id: Some(job.job_id.clone()),
+                        job_ids: vec![job.job_id.clone()],
+                        job: Some(job),
+                        jobs: Vec::new(),
+                        stdout_tail: None,
+                        stderr_tail: None,
+                        summary_markdown: None,
+                        error: None,
+                    }));
+                    return;
+                }
+            }
+            let reason = body
+                .reason
+                .clone()
+                .or_else(|| Some(format!("run check {}", suite)));
+            let result = if proj.is_ssh() {
+                create_ssh_job(
+                    proj,
+                    &project,
+                    goal_id,
+                    &command,
+                    body.client_request_id.clone(),
+                    reason,
+                    max_runtime_secs,
+                    ssh_config,
+                )
+            } else {
+                create_local_job(
+                    proj,
+                    &project,
+                    goal_id,
+                    &command,
+                    body.client_request_id.clone(),
+                    reason,
+                    max_runtime_secs,
+                )
+            };
+            match result {
+                Ok(job) => res.render(Json(JobOpResponse {
+                    success: true,
+                    op,
+                    job_id: Some(job.job_id.clone()),
+                    job_ids: vec![job.job_id.clone()],
+                    job: Some(job),
+                    jobs: Vec::new(),
+                    stdout_tail: None,
+                    stderr_tail: None,
+                    summary_markdown: None,
+                    error: None,
+                })),
+                Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
+            }
+        }
         "create" => {
             let Some(goal_id) = body.goal_id.as_deref() else {
                 res.status_code(StatusCode::BAD_REQUEST);

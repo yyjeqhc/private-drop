@@ -218,6 +218,8 @@ pub struct JobOpRequest {
     #[serde(default)]
     pub client_request_id: Option<String>,
     #[serde(default)]
+    pub suite: Option<String>,
+    #[serde(default)]
     pub command: Option<String>,
     #[serde(default)]
     pub script_path: Option<String>,

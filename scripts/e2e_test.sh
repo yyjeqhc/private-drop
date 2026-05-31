@@ -1162,6 +1162,34 @@ JOB_IDEMPOTENT_STOP_RETURN_ID=$(pyget "$RESP" "job_id")
 JOB_IDEMPOTENT_STOP_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
 assert_eq "Job stop by client_request_id returns job" "$JOB_IDEMPOTENT_STOP_ID" "$JOB_IDEMPOTENT_STOP_RETURN_ID"
 assert_eq "Job stop by client_request_id stopped" "stopped" "$JOB_IDEMPOTENT_STOP_STATUS"
+JOB_CHECK_KEY="e2e-job-check-$(date +%s)-$$"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'check','goal_id':'$GOAL_ID','suite':'test','client_request_id':'$JOB_CHECK_KEY','reason':'async check smoke','max_runtime_secs':30}))")")
+JOB_CHECK_SUCCESS=$(pyget "$RESP" "success")
+JOB_CHECK_ID=$(pyget "$RESP" "job_id")
+JOB_CHECK_CLIENT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('client_request_id') or '')")
+assert_eq "Job check create success" "True" "$JOB_CHECK_SUCCESS"
+assert_not_empty "Job check returns job_id" "$JOB_CHECK_ID"
+assert_eq "Job check echoes client_request_id" "$JOB_CHECK_KEY" "$JOB_CHECK_CLIENT"
+sleep 1
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'status','goal_id':'$GOAL_ID','client_request_id':'$JOB_CHECK_KEY'}))")")
+JOB_CHECK_STATUS_ID=$(pyget "$RESP" "job_id")
+JOB_CHECK_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
+assert_eq "Job check status by client_request_id returns job" "$JOB_CHECK_ID" "$JOB_CHECK_STATUS_ID"
+assert_eq "Job check completed" "completed" "$JOB_CHECK_STATUS"
+RESP=$(curl -s -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'check','goal_id':'$GOAL_ID','suite':'missing','reason':'bad async check','max_runtime_secs':30}))")")
+JOB_BAD_CHECK_SUCCESS=$(pyget "$RESP" "success")
+JOB_BAD_CHECK_ERROR=$(pyget "$RESP" "error")
+assert_eq "Job check unknown suite fails" "False" "$JOB_BAD_CHECK_SUCCESS"
+assert_contains "Job check unknown suite error" "not allowed" "$JOB_BAD_CHECK_ERROR"
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \

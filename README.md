@@ -919,6 +919,7 @@ Supported ops:
 
 - `create`: start one shell command in the background and return `job_id` immediately. Provide either `command` or `script_path`. Optional `client_request_id` makes retries idempotent.
 - `create_batch`: start up to 20 shell commands under the same active goal. The server validates all commands first so ordinary input validation errors do not partially start a batch. Optional `client_request_id` groups retries and created jobs.
+- `check`: start a configured project check suite, such as `fmt`, `test`, `build`, `e2e`, or `full`, as an async job under an active goal. This is preferred for long checks that may exceed Action/nginx timeouts.
 - `list`: list jobs for a project, optionally filtered by `goal_id`, `status`, or `client_request_id`.
 - `status`: refresh and return one job status by `job_id`, or recover one by `client_request_id`.
 - `log`: return stdout/stderr tails by `job_id`, or recover one job by `client_request_id`.
@@ -930,7 +931,7 @@ Permission model:
 - `create` and `create_batch` require `project` and `goal_id`.
 - The goal must belong to the same project.
 - The goal must be `active` and unexpired.
-- Within that active goal scope, job commands are trusted shell commands; they are not matched against configured command IDs and are not individually approved.
+- Within that active goal scope, job commands are trusted shell commands; they are not matched against configured command IDs and are not individually approved. `check` is narrower: it can only run suites configured in `projects.toml` and allowed by `allowed_checks`.
 - Every job is audited on disk under `.codex/jobs/<job_id>/` with `metadata.json`, `command.sh`, `stdout.log`, `stderr.log`, `pid`, `exit_code`, `status`, and `finished_at` when the job ends.
 - When `client_request_id` is supplied, retrying the same `create` within the same goal returns the existing job instead of starting a duplicate. After an HTTP 504 or client disconnect, call `status` or `list` with the same `client_request_id` to recover the job id.
 - `script_path` must be project-relative, cannot use traversal or sensitive paths, and is executed as `bash <script_path> <script_args...>` from the project root.
@@ -961,6 +962,19 @@ For long commands with quoting, pipes, or many arguments, prefer `script_path`:
   "script_args": ["--seed", "45"],
   "reason": "run scripted seed extension",
   "max_runtime_secs": 7200
+}
+```
+
+For long checks, prefer async `check` over synchronous `runProjectCheck`:
+
+```json
+{
+  "project": "paper",
+  "op": "check",
+  "goal_id": "...",
+  "suite": "e2e",
+  "client_request_id": "e2e-20260101T000000Z",
+  "max_runtime_secs": 1800
 }
 ```
 
