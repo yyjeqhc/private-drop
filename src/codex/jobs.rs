@@ -381,9 +381,7 @@ pub(super) fn update_job_status_ssh(
         if let Some(pid) = pid {
             if meta.started_at.unwrap_or(meta.created_at) + meta.max_runtime_secs < now {
                 let cmd = format!(
-                    "kill -TERM -{} 2>/dev/null || kill {} 2>/dev/null || true; sleep 1; kill -KILL -{} 2>/dev/null || true; now=$(date +%s); printf timeout > {}/status; echo $now > {}/finished_at",
-                    pid,
-                    pid,
+                    "pid={}; kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -TERM \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; sleep 1; if kill -0 \"$pid\" 2>/dev/null; then kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -KILL \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; fi; now=$(date +%s); printf timeout > {}/status; echo $now > {}/finished_at",
                     pid,
                     shell_escape(&dir),
                     shell_escape(&dir)
@@ -622,27 +620,35 @@ pub(super) fn ssh_job_log(
     Ok((out.trim_end().to_string(), err.trim_end().to_string()))
 }
 
+fn kill_local_tree(pid: i64, signal: &str) {
+    let children = std::process::Command::new("pgrep")
+        .arg("-P")
+        .arg(pid.to_string())
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+        .unwrap_or_default();
+    for child in children.lines() {
+        if let Ok(child_pid) = child.trim().parse::<i64>() {
+            kill_local_tree(child_pid, signal);
+        }
+    }
+    let _ = std::process::Command::new("kill")
+        .arg(signal)
+        .arg(pid.to_string())
+        .status();
+}
+
 pub(super) fn stop_local_job(root: &Path, job_id: &str) -> Result<JobInfo, String> {
     validate_job_id(job_id)?;
     let meta = read_job_metadata_local(root, job_id)?;
     let dir = local_job_dir(root, job_id);
     if let Some(pid) = read_file_to_string(&dir.join("pid")).and_then(|s| s.parse::<i64>().ok()) {
-        let group = format!("-{}", pid);
-        let _ = std::process::Command::new("kill")
-            .arg("-TERM")
-            .arg(&group)
-            .status();
+        kill_local_tree(pid, "-TERM");
         std::thread::sleep(std::time::Duration::from_millis(300));
         if pid_running_local(pid) {
-            let _ = std::process::Command::new("kill")
-                .arg("-KILL")
-                .arg(&group)
-                .status();
+            kill_local_tree(pid, "-KILL");
         }
-        let _ = std::process::Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status();
     }
     write_status_file(&dir, "stopped");
     write_finished_at_file(&dir, chrono::Utc::now().timestamp());
@@ -657,7 +663,7 @@ pub(super) fn stop_ssh_job(
     validate_job_id(job_id)?;
     let dir = job_dir_rel(job_id);
     let cmd = format!(
-        "if test -f {0}/pid; then pid=$(cat {0}/pid); kill -TERM -$pid 2>/dev/null || kill $pid 2>/dev/null || true; sleep 1; kill -KILL -$pid 2>/dev/null || true; fi; now=$(date +%s); printf stopped > {0}/status; echo $now > {0}/finished_at",
+        "if test -f {0}/pid; then pid=$(cat {0}/pid); kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -TERM \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; sleep 1; if kill -0 \"$pid\" 2>/dev/null; then kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -KILL \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; fi; fi; now=$(date +%s); printf stopped > {0}/status; echo $now > {0}/finished_at",
         shell_escape(&dir)
     );
     let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
