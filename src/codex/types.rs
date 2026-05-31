@@ -648,10 +648,24 @@ pub struct ProjectCapabilityInfo {
 }
 
 #[derive(Debug, Serialize)]
+pub struct InstanceInfo {
+    pub package_version: String,
+    pub pid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    pub data_dir: String,
+    pub projects_config_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ProjectsResponse {
     pub success: bool,
     pub projects: Vec<ProjectCapabilityInfo>,
     pub project_names: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<InstanceInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

@@ -614,12 +614,18 @@ PROJECTS_TEST_EXECUTOR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load
 PROJECTS_TEST_CHECKS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('allowed_checks', [])))")
 PROJECTS_TEST_COMMANDS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('commands', [])))")
 PROJECTS_TEST_RAW=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('capabilities', {}).get('raw_command_requests'))")
+PROJECTS_INSTANCE_VERSION=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('package_version') or '')")
+PROJECTS_INSTANCE_PID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('pid') or '')")
+PROJECTS_INSTANCE_DATA_DIR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('data_dir') or '')")
 assert_eq "Projects capabilities success" "True" "$PROJECTS_SUCCESS"
 assert_eq "Projects capabilities lists test-project" "yes" "$PROJECTS_HAS_TEST"
 assert_eq "Projects capabilities executor" "local" "$PROJECTS_TEST_EXECUTOR"
 assert_contains "Projects capabilities allowed checks" "test" "$PROJECTS_TEST_CHECKS"
 assert_contains "Projects capabilities configured commands" "smoke" "$PROJECTS_TEST_COMMANDS"
 assert_eq "Projects capabilities raw commands enabled" "True" "$PROJECTS_TEST_RAW"
+assert_not_empty "Projects instance has package version" "$PROJECTS_INSTANCE_VERSION"
+assert_not_empty "Projects instance has pid" "$PROJECTS_INSTANCE_PID"
+assert_not_empty "Projects instance has data dir" "$PROJECTS_INSTANCE_DATA_DIR"
 
 # --- 20. Codex: getProjectContext mode=overview ---
 echo ""

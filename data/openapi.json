@@ -596,16 +596,30 @@
         },
         "required": ["name", "executor", "root", "allowed_checks", "configured_checks", "commands", "capabilities"]
       },
+      "InstanceInfo": {
+        "type": "object",
+        "properties": {
+          "package_version": {"type": "string"},
+          "pid": {"type": "integer"},
+          "hostname": {"type": "string", "nullable": true},
+          "data_dir": {"type": "string"},
+          "projects_config_path": {"type": "string"},
+          "public_url": {"type": "string", "nullable": true}
+        },
+        "required": ["package_version", "pid", "data_dir", "projects_config_path"]
+      },
       "ProjectsResponse": {
         "type": "object",
         "properties": {
           "success": {"type": "boolean"},
           "projects": {"type": "array", "items": {"$ref": "#/components/schemas/ProjectCapabilityInfo"}},
           "project_names": {"type": "array", "items": {"type": "string"}},
+          "instance": {"$ref": "#/components/schemas/InstanceInfo"},
           "error": {"type": "string", "nullable": true}
         },
         "required": ["success", "projects", "project_names"]
       },
+      
       "CheckRequest": {
         "type": "object",
         "properties": {

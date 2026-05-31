@@ -1,5 +1,6 @@
 use super::get_projects;
-use super::types::{ProjectCapabilities, ProjectCapabilityInfo, ProjectsResponse};
+use super::types::{InstanceInfo, ProjectCapabilities, ProjectCapabilityInfo, ProjectsResponse};
+use crate::auth::get_config;
 use crate::projects::{Executor, ProjectChecks, ProjectConfig};
 use salvo::prelude::*;
 
@@ -24,6 +25,35 @@ fn configured_checks(checks: &Option<ProjectChecks>) -> Vec<String> {
         names.push("full".to_string());
     }
     names
+}
+
+fn hostname() -> Option<String> {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+fn instance_info(depot: &Depot) -> InstanceInfo {
+    let data_dir = get_config(depot)
+        .map(|cfg| cfg.data_dir.display().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    InstanceInfo {
+        package_version: env!("CARGO_PKG_VERSION").to_string(),
+        pid: std::process::id(),
+        hostname: hostname(),
+        data_dir,
+        projects_config_path: std::env::var("PROJECTS_CONFIG")
+            .unwrap_or_else(|_| "./projects.toml".to_string()),
+        public_url: std::env::var("PUBLIC_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+    }
 }
 
 fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
@@ -71,6 +101,7 @@ pub async fn codex_projects(depot: &mut Depot, res: &mut Response) {
             success: false,
             projects: Vec::new(),
             project_names: Vec::new(),
+            instance: Some(instance_info(depot)),
             error: Some("Projects config not loaded".to_string()),
         }));
         return;
@@ -86,6 +117,7 @@ pub async fn codex_projects(depot: &mut Depot, res: &mut Response) {
         success: true,
         projects: infos,
         project_names,
+        instance: Some(instance_info(depot)),
         error: None,
     }));
 }
