@@ -1,5 +1,9 @@
 use super::command_workflow::require_active_goal;
 use super::get_projects;
+use super::shell::shell_escape;
+use super::trusted::{
+    check_background_escape, check_denylist, check_secret_read, validate_trusted_script,
+};
 use super::types::{job_response, JobOpRequest, JobOpResponse};
 use crate::get_db;
 use crate::projects::{ProjectConfig, SshConfig};
@@ -7,7 +11,6 @@ use salvo::prelude::*;
 
 use super::run_project_cmd;
 use super::security::is_sensitive_path;
-use super::shell::shell_escape;
 use super::types::{JobInfo, JobMetadata};
 use base64::Engine;
 use std::path::{Component, Path, PathBuf};
@@ -1386,8 +1389,73 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 res.render(Json(job_response(&op, false, Some(e))));
                 return;
             }
-            let command = match (body.command.as_deref(), body.script_path.as_deref()) {
-                (Some(_), Some(_)) => {
+            // Determine the command source: trusted script_text, command, or script_path
+            let (command, job_kind, job_script_path, trusted_script_text) = match (
+                body.script_text.as_deref(),
+                body.trusted.unwrap_or(false),
+                body.command.as_deref(),
+                body.script_path.as_deref(),
+            ) {
+                // Trusted script_text mode
+                (Some(script_text), true, None, None) => {
+                    // Validate the trusted script
+                    if let Err(e) = validate_trusted_script(script_text) {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(job_response(&op, false, Some(e))));
+                        return;
+                    }
+                    // Safety checks
+                    if let Some(err) = check_denylist(script_text) {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(job_response(&op, false, Some(err))));
+                        return;
+                    }
+                    if let Some(err) = check_secret_read(script_text) {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(job_response(&op, false, Some(err))));
+                        return;
+                    }
+                    if let Some(err) = check_background_escape(script_text) {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(job_response(&op, false, Some(err))));
+                        return;
+                    }
+                    // Build command that wraps the script with set -euo pipefail
+                    // We embed the script in a heredoc-like fashion for bash -c
+                    let escaped = script_text.replace("'", "'\\''");
+                    let command = format!("set -euo pipefail; '{}'", escaped);
+                    (
+                        command,
+                        "trusted_script".to_string(),
+                        None,
+                        Some(script_text.to_string()),
+                    )
+                }
+                // script_text without trusted=true
+                (Some(_), false, _, _) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(job_response(
+                        &op,
+                        false,
+                        Some("script_text requires trusted=true".to_string()),
+                    )));
+                    return;
+                }
+                // script_text conflicts with command/script_path
+                (Some(_), true, Some(_), _) | (Some(_), true, _, Some(_)) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(job_response(
+                        &op,
+                        false,
+                        Some(
+                            "provide script_text (trusted) or command/script_path, not both"
+                                .to_string(),
+                        ),
+                    )));
+                    return;
+                }
+                // Original command or script_path mode (not trusted)
+                (None, _, Some(_), Some(_)) => {
                     res.status_code(StatusCode::BAD_REQUEST);
                     res.render(Json(job_response(
                         &op,
@@ -1396,10 +1464,17 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     )));
                     return;
                 }
-                (Some(command), None) => command.to_string(),
-                (None, Some(script_path)) => {
+                (None, _, Some(command), None) => {
+                    (command.to_string(), "command".to_string(), None, None)
+                }
+                (None, _, None, Some(script_path)) => {
                     match build_script_job_command(script_path, &body.script_args) {
-                        Ok(command) => command,
+                        Ok(command) => (
+                            command,
+                            "script".to_string(),
+                            Some(script_path.to_string()),
+                            None,
+                        ),
                         Err(e) => {
                             res.status_code(StatusCode::BAD_REQUEST);
                             res.render(Json(job_response(&op, false, Some(e))));
@@ -1407,12 +1482,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         }
                     }
                 }
-                (None, None) => {
+                (None, _, None, None) => {
                     res.status_code(StatusCode::BAD_REQUEST);
                     res.render(Json(job_response(
                         &op,
                         false,
-                        Some("command or script_path is required".to_string()),
+                        Some(
+                            "command, script_path, or script_text (with trusted=true) is required"
+                                .to_string(),
+                        ),
                     )));
                     return;
                 }
@@ -1455,12 +1533,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     return;
                 }
             }
-            let job_kind = if body.script_path.is_some() {
-                "script"
-            } else {
-                "command"
-            };
-            let job_script_path = body.script_path.clone();
             let result = if proj.is_ssh() {
                 create_ssh_job(
                     proj,
@@ -1468,7 +1540,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     goal_id,
                     &command,
                     body.client_request_id.clone(),
-                    Some(job_kind.to_string()),
+                    Some(job_kind.clone()),
                     None,
                     job_script_path.clone(),
                     body.reason.clone(),
@@ -1482,33 +1554,51 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     goal_id,
                     &command,
                     body.client_request_id.clone(),
-                    Some(job_kind.to_string()),
+                    Some(job_kind.clone()),
                     None,
                     job_script_path.clone(),
                     body.reason.clone(),
                     max_runtime_secs,
                 )
             };
-            match result {
-                Ok(job) => res.render(Json(JobOpResponse {
-                    success: true,
-                    op,
-                    job_id: Some(job.job_id.clone()),
-                    job_ids: vec![job.job_id.clone()],
-                    job: Some(job),
-                    jobs: Vec::new(),
-                    stdout_tail: None,
-                    stderr_tail: None,
-                    summary_markdown: None,
-                    error: None,
-                    log_total_lines: None,
-                    next_cursor: None,
-                    metadata_only: None,
-                    logs_included: None,
-                    warnings: Vec::new(),
-                })),
-                Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
+            let job = match result {
+                Ok(job) => job,
+                Err(e) => {
+                    res.render(Json(job_response(&op, false, Some(e))));
+                    return;
+                }
+            };
+            // If trusted script_text was provided, write the script file in the job directory
+            // for audit/reference purposes
+            if let Some(ref script_text) = trusted_script_text {
+                let job_dir = local_job_dir(&proj.root(), &job.job_id);
+                let script_path = job_dir.join("script.sh");
+                let script_content = format!(
+                    "#!/usr/bin/env bash\nset -euo pipefail\n{}\n",
+                    script_text.trim()
+                );
+                if let Err(e) = std::fs::write(&script_path, &script_content) {
+                    // Non-fatal: the job is already running, just log the error
+                    tracing::warn!("Failed to write trusted job script audit file: {}", e);
+                }
             }
+            res.render(Json(JobOpResponse {
+                success: true,
+                op,
+                job_id: Some(job.job_id.clone()),
+                job_ids: vec![job.job_id.clone()],
+                job: Some(job),
+                jobs: Vec::new(),
+                stdout_tail: None,
+                stderr_tail: None,
+                summary_markdown: None,
+                error: None,
+                log_total_lines: None,
+                next_cursor: None,
+                metadata_only: None,
+                logs_included: None,
+                warnings: Vec::new(),
+            }));
         }
         "create_batch" => {
             let Some(goal_id) = body.goal_id.as_deref() else {

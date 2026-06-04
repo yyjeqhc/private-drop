@@ -3,6 +3,11 @@ use super::command_workflow::{approve_command_request_inner, reject_command_requ
 use super::get_projects;
 use super::jobs::build_script_job_command;
 use super::shell::sanitize_tail;
+use super::trusted::{
+    build_trusted_result, build_trusted_wrapper, check_background_escape, check_denylist,
+    check_secret_read, validate_response_mode, validate_trusted_reason, validate_trusted_script,
+    validate_trusted_timeout, write_trusted_audit,
+};
 use super::types::{
     CheckRequest, CheckResponse, CommandApproveRequest, CommandRejectRequest, CommandRequest,
     CommandRequestBatchCreate, CommandRequestBatchResponse, CommandRequestCreate,
@@ -249,6 +254,7 @@ pub(super) fn op_response_with_goals(
         records,
         goals,
         error,
+        trusted_result: None,
     }
 }
 
@@ -684,6 +690,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 goal_id: Some(goal.id.clone()),
                 goal: Some(goal),
                 error: resp.error,
+                trusted_result: None,
             }));
         }
         "create_and_approve" => {
@@ -790,6 +797,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 goal_id: Some(goal.id.clone()),
                 goal: Some(goal),
                 error: resp.error,
+                trusted_result: None,
             }));
         }
         "list" => {
@@ -1059,6 +1067,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 goal_id: None,
                 goal: None,
                 error: resp.error,
+                trusted_result: None,
             }));
         }
         "approve_batch" | "reject_batch" => {
@@ -1098,6 +1107,310 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 records,
                 first_error,
             )));
+        }
+        "create_trusted_raw" | "create_trusted_raw_and_approve" => {
+            let approve_immediately = body.op == "create_trusted_raw_and_approve";
+            let Some(project) = body.project else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("project is required".to_string()),
+                )));
+                return;
+            };
+            // Require script_text or command_text
+            let script = match (body.script_text.as_deref(), body.command_text.as_deref()) {
+                (Some(script_text), None) => script_text.to_string(),
+                (None, Some(cmd_text)) => cmd_text.to_string(),
+                (Some(_), Some(_)) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some("provide either script_text or command_text, not both".to_string()),
+                    )));
+                    return;
+                }
+                (None, None) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some("script_text or command_text is required".to_string()),
+                    )));
+                    return;
+                }
+            };
+            if let Err(e) = validate_trusted_script(&script) {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
+            if let Err(e) = validate_trusted_reason(&body.reason) {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
+            let timeout_secs = match validate_trusted_timeout(body.timeout_secs) {
+                Ok(t) => t,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            };
+            let response_mode = match validate_response_mode(&body.response_mode) {
+                Ok(m) => m,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            };
+            // For approve variant, require goal_id
+            if approve_immediately {
+                let Some(_goal_id) = body.goal_id.as_deref() else {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some("goal_id is required for create_trusted_raw_and_approve".to_string()),
+                    )));
+                    return;
+                };
+            }
+            // Validate project exists and allows raw command requests
+            let proj = match projects.get_project(&project) {
+                Ok(p) => p,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            };
+            if !proj.allow_raw_command_requests {
+                res.status_code(StatusCode::FORBIDDEN);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("Raw command requests are not enabled for this project".to_string()),
+                )));
+                return;
+            }
+            // Safety checks
+            if let Some(err) = check_denylist(&script) {
+                // Log the blocked attempt
+                let reason_text = body.reason.as_deref().unwrap_or("no reason");
+                let _ = write_trusted_audit(
+                    &proj.root().join(".codex").join("audit"),
+                    &project,
+                    &proj.path,
+                    reason_text,
+                    &script,
+                    chrono::Utc::now().timestamp(),
+                    chrono::Utc::now().timestamp(),
+                    -1,
+                    0,
+                    false,
+                    false,
+                    true,
+                );
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(CommandRequestOpResponse {
+                    success: false,
+                    op: body.op,
+                    records: Vec::new(),
+                    goals: Vec::new(),
+                    request_id: None,
+                    record: None,
+                    goal_id: None,
+                    goal: None,
+                    error: Some(err),
+                    trusted_result: None,
+                }));
+                return;
+            }
+            if let Some(err) = check_secret_read(&script) {
+                let reason_text = body.reason.as_deref().unwrap_or("no reason");
+                let _ = write_trusted_audit(
+                    &proj.root().join(".codex").join("audit"),
+                    &project,
+                    &proj.path,
+                    reason_text,
+                    &script,
+                    chrono::Utc::now().timestamp(),
+                    chrono::Utc::now().timestamp(),
+                    -1,
+                    0,
+                    false,
+                    false,
+                    true,
+                );
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(CommandRequestOpResponse {
+                    success: false,
+                    op: body.op,
+                    records: Vec::new(),
+                    goals: Vec::new(),
+                    request_id: None,
+                    record: None,
+                    goal_id: None,
+                    goal: None,
+                    error: Some(err),
+                    trusted_result: None,
+                }));
+                return;
+            }
+            if let Some(err) = check_background_escape(&script) {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(CommandRequestOpResponse {
+                    success: false,
+                    op: body.op,
+                    records: Vec::new(),
+                    goals: Vec::new(),
+                    request_id: None,
+                    record: None,
+                    goal_id: None,
+                    goal: None,
+                    error: Some(err),
+                    trusted_result: None,
+                }));
+                return;
+            }
+            // If not approving immediately, just create the record and return
+            if !approve_immediately {
+                let record = build_command_audit_record(
+                    project.clone(),
+                    "trusted_raw".to_string(),
+                    script.trim().to_string(),
+                    body.reason.clone(),
+                    chrono::Utc::now().timestamp(),
+                );
+                if let Err(e) = db.insert_command_request(&record) {
+                    res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some(format!(
+                            "Failed to create trusted raw command request: {}",
+                            e
+                        )),
+                    )));
+                    return;
+                }
+                res.render(Json(CommandRequestOpResponse {
+                    success: true,
+                    op: body.op.clone(),
+                    records: vec![record],
+                    goals: Vec::new(),
+                    request_id: None,
+                    record: None,
+                    goal_id: None,
+                    goal: None,
+                    error: None,
+                    trusted_result: None,
+                }));
+                return;
+            }
+            // Execute immediately for create_trusted_raw_and_approve
+            let wrapped = build_trusted_wrapper(&script);
+            let start_time = chrono::Utc::now().timestamp();
+            let (code, stdout, stderr, duration_ms) =
+                run_project_cmd(proj, &wrapped, timeout_secs, projects.ssh.as_ref());
+            let end_time = chrono::Utc::now().timestamp();
+            // Write audit
+            let audit_dir = proj.root().join(".codex").join("audit");
+            let audit_log_path = format!(".codex/audit/trusted_{}.json", start_time);
+            let reason_text = body.reason.as_deref().unwrap_or("no reason");
+            let _ = write_trusted_audit(
+                &audit_dir,
+                &project,
+                &proj.path,
+                reason_text,
+                &script,
+                start_time,
+                end_time,
+                code,
+                duration_ms,
+                stdout.len()
+                    > if response_mode == "full" {
+                        40_000
+                    } else {
+                        8_000
+                    },
+                stderr.len()
+                    > if response_mode == "full" {
+                        20_000
+                    } else {
+                        4_000
+                    },
+                false,
+            );
+            let trusted_result = build_trusted_result(
+                code,
+                duration_ms,
+                &proj.path,
+                &stdout,
+                &stderr,
+                &response_mode,
+                Some(audit_log_path),
+                false,
+            );
+            // Also create an audit record in the DB
+            let record = build_command_audit_record(
+                project.clone(),
+                "trusted_raw".to_string(),
+                script.trim().to_string(),
+                body.reason.clone(),
+                start_time,
+            );
+            let request_id = record.id.clone();
+            if let Err(e) = db.insert_command_request(&record) {
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!(
+                        "Failed to create trusted raw command request: {}",
+                        e
+                    )),
+                )));
+                return;
+            }
+            let success = code == 0;
+            tracing::info!(
+                target: "codex.metrics",
+                operation = "createTrustedRawAndApprove",
+                project = %project,
+                exit_code = code,
+                duration_ms = duration_ms,
+                timeout_secs = timeout_secs,
+                response_mode = %response_mode,
+                success = success,
+                "codex_trusted_raw_executed"
+            );
+            res.render(Json(CommandRequestOpResponse {
+                success,
+                op: body.op.clone(),
+                records: vec![record],
+                goals: Vec::new(),
+                request_id: Some(request_id),
+                record: None,
+                goal_id: body.goal_id.clone(),
+                goal: None,
+                error: if success {
+                    None
+                } else {
+                    Some("trusted command failed".to_string())
+                },
+                trusted_result: Some(trusted_result),
+            }));
         }
         _ => {
             res.status_code(StatusCode::BAD_REQUEST);

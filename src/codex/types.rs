@@ -209,6 +209,16 @@ pub struct CommandRequestOpRequest {
     pub status: Option<String>,
     #[serde(default = "default_command_request_limit")]
     pub limit: usize,
+    /// For create_trusted_raw / create_trusted_raw_and_approve: multi-line script text.
+    #[serde(default)]
+    pub script_text: Option<String>,
+    /// For create_trusted_raw / create_trusted_raw_and_approve: timeout in seconds (default 120, max 1800).
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// For create_trusted_raw / create_trusted_raw_and_approve: response mode.
+    /// "summary" (default, tail only), "full" (more output but still truncated), "minimal" (success/exit_code/cwd only).
+    #[serde(default)]
+    pub response_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,6 +240,12 @@ pub struct JobOpRequest {
     pub script_path: Option<String>,
     #[serde(default)]
     pub script_args: Vec<String>,
+    /// For trusted job creation: multi-line script content (written to script.sh in job dir).
+    #[serde(default)]
+    pub script_text: Option<String>,
+    /// For trusted job creation: must be true when script_text is provided.
+    #[serde(default)]
+    pub trusted: Option<bool>,
     #[serde(default)]
     pub commands: Vec<String>,
     #[serde(default)]
@@ -251,6 +267,10 @@ pub struct JobOpRequest {
     /// tail_lines only affects detail=logs or op=log, not the default detail level.
     #[serde(default)]
     pub detail: Option<String>,
+    /// For trusted job: response mode. "summary" (default) or "minimal".
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub response_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -541,6 +561,30 @@ pub struct CommandRequestOpResponse {
     pub goal: Option<CodexGoalRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// For create_trusted_raw / create_trusted_raw_and_approve: structured result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trusted_result: Option<TrustedRawCommandResult>,
+}
+
+/// Result of a trusted raw command execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrustedRawCommandResult {
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    /// CWD that was used for execution.
+    pub cwd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_tail: Option<String>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    /// Path to the audit log on disk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit_log_path: Option<String>,
+    /// Whether the command was blocked by the denylist before execution.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub blocked_by_denylist: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

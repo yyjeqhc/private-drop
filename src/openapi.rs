@@ -84,6 +84,107 @@ fn apply_context_batch_guidance(spec: &mut serde_json::Value) {
     }
 }
 
+fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
+    // Update command_request_op description to mention trusted raw mode
+    let cr_op_desc = &mut spec["paths"]["/api/codex/command_request_op"]["post"]["description"];
+    if cr_op_desc
+        .as_str()
+        .map_or(true, |s| !s.contains("create_trusted_raw"))
+    {
+        *cr_op_desc = serde_json::json!(
+            "Command request operations with goal-based approval. Trusted raw mode: use create_trusted_raw_and_approve for short multi-line shell commands (timeout default 120s, max 1800s). For long-running scripts use runJobOp create with trusted=true + script_text. Use response_mode=summary for large output. If timeout, recover with runJobOp recover/status first."
+        );
+    }
+
+    // Update job description to mention trusted script_text
+    let job_desc = &mut spec["paths"]["/api/codex/job"]["post"]["description"];
+    if job_desc
+        .as_str()
+        .map_or(true, |s| !s.contains("script_text"))
+    {
+        *job_desc = serde_json::json!(
+            "Job operations. create: use command, script_path, or trusted=true with script_text for multi-line scripts. recover/status first if timeout. detail=basic (default) or detail=logs."
+        );
+    }
+
+    // Add fields to CommandRequestOpRequest
+    {
+        let cr_props = &mut spec["components"]["schemas"]["CommandRequestOpRequest"]["properties"];
+        if cr_props["script_text"].is_null() {
+            cr_props["script_text"] = serde_json::json!({
+                "type": "string",
+                "description": "For create_trusted_raw: multi-line shell script content. Supports grep, python one-liners, file stats."
+            });
+        }
+        if cr_props["timeout_secs"].is_null() {
+            cr_props["timeout_secs"] = serde_json::json!({
+                "type": "integer",
+                "description": "For create_trusted_raw: timeout in seconds. Default 120, max 1800."
+            });
+        }
+        if cr_props["response_mode"].is_null() {
+            cr_props["response_mode"] = serde_json::json!({
+                "type": "string",
+                "enum": ["summary", "full", "minimal"],
+                "description": "For create_trusted_raw: summary (default, tail only), full (more output, still truncated), minimal (success/exit_code/cwd only)."
+            });
+        }
+        // Add create_trusted_raw and create_trusted_raw_and_approve to op enum
+        if let Some(op_enum) = cr_props["op"]["enum"].as_array_mut() {
+            let ops: Vec<String> = op_enum
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect();
+            if !ops.contains(&"create_trusted_raw".to_string()) {
+                op_enum.push(serde_json::json!("create_trusted_raw"));
+            }
+            if !ops.contains(&"create_trusted_raw_and_approve".to_string()) {
+                op_enum.push(serde_json::json!("create_trusted_raw_and_approve"));
+            }
+        }
+    }
+
+    // Add fields to JobOpRequest
+    {
+        let job_props = &mut spec["components"]["schemas"]["JobOpRequest"]["properties"];
+        if job_props["script_text"].is_null() {
+            job_props["script_text"] = serde_json::json!({
+                "type": "string",
+                "description": "For trusted job creation: multi-line script content. Requires trusted=true."
+            });
+        }
+        if job_props["trusted"].is_null() {
+            job_props["trusted"] = serde_json::json!({
+                "type": "boolean",
+                "description": "For trusted job creation: must be true when script_text is provided."
+            });
+        }
+    }
+
+    // Add trusted_result to CommandRequestOpResponse
+    {
+        let cr_resp_props =
+            &mut spec["components"]["schemas"]["CommandRequestOpResponse"]["properties"];
+        if cr_resp_props["trusted_result"].is_null() {
+            cr_resp_props["trusted_result"] = serde_json::json!({
+                "type": "object",
+                "description": "For create_trusted_raw / create_trusted_raw_and_approve: structured execution result.",
+                "properties": {
+                    "exit_code": { "type": "integer" },
+                    "duration_ms": { "type": "integer" },
+                    "cwd": { "type": "string" },
+                    "stdout_tail": { "type": "string" },
+                    "stderr_tail": { "type": "string" },
+                    "stdout_truncated": { "type": "boolean" },
+                    "stderr_truncated": { "type": "boolean" },
+                    "audit_log_path": { "type": "string" },
+                    "blocked_by_denylist": { "type": "boolean" }
+                }
+            });
+        }
+    }
+}
+
 #[handler]
 pub async fn codex_openapi_json(res: &mut Response) {
     let mut spec =
@@ -199,6 +300,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
     apply_edit_timeout_guidance(&mut spec);
     apply_job_recovery_guidance(&mut spec);
     apply_context_batch_guidance(&mut spec);
+    apply_trusted_command_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -206,7 +308,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_edit_timeout_guidance;
+    use super::{apply_edit_timeout_guidance, apply_trusted_command_guidance};
 
     #[test]
     fn apply_project_edit_description_stays_under_300_chars() {
@@ -296,6 +398,48 @@ mod tests {
         assert!(
             !props["warnings"].is_null(),
             "ContextBatchResponse should have warnings"
+        );
+    }
+
+    #[test]
+    fn trusted_command_guidance_adds_fields() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_trusted_command_guidance(&mut spec);
+        let cr_desc = spec["paths"]["/api/codex/command_request_op"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            cr_desc.contains("create_trusted_raw"),
+            "command_request_op description should mention create_trusted_raw: {}",
+            cr_desc
+        );
+        let cr_props = &spec["components"]["schemas"]["CommandRequestOpRequest"]["properties"];
+        assert!(
+            !cr_props["script_text"].is_null(),
+            "script_text should be added"
+        );
+        assert!(
+            !cr_props["timeout_secs"].is_null(),
+            "timeout_secs should be added"
+        );
+        assert!(
+            !cr_props["response_mode"].is_null(),
+            "response_mode should be added"
+        );
+        let job_props = &spec["components"]["schemas"]["JobOpRequest"]["properties"];
+        assert!(
+            !job_props["script_text"].is_null(),
+            "JobOpRequest script_text should be added"
+        );
+        assert!(
+            !job_props["trusted"].is_null(),
+            "JobOpRequest trusted should be added"
+        );
+        let resp_props = &spec["components"]["schemas"]["CommandRequestOpResponse"]["properties"];
+        assert!(
+            !resp_props["trusted_result"].is_null(),
+            "CommandRequestOpResponse trusted_result should be added"
         );
     }
 }
@@ -392,6 +536,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
     apply_edit_timeout_guidance(&mut spec);
     apply_job_recovery_guidance(&mut spec);
     apply_context_batch_guidance(&mut spec);
+    apply_trusted_command_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));

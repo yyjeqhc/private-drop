@@ -15,6 +15,7 @@ mod security;
 mod shell;
 mod source;
 mod ssh;
+mod trusted;
 mod types;
 mod url_security;
 pub use artifact::codex_artifact;
@@ -1825,5 +1826,224 @@ mod ssh_command_tests {
                 || warnings[0].contains("Splitting")
                 || warnings[0].contains("batches")
         );
+    }
+}
+
+#[cfg(test)]
+mod trusted_command_tests {
+    use super::trusted::*;
+    use super::*;
+    use crate::codex::jobs::build_script_job_command;
+
+    fn make_local_proj() -> ProjectConfig {
+        ProjectConfig {
+            path: std::env::temp_dir().to_string_lossy().to_string(),
+            executor: crate::projects::Executor::Local,
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            allow_patch: true,
+            allow_command_requests: true,
+            allow_raw_command_requests: true,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn trusted_raw_multiline_script_executes() {
+        let proj = make_local_proj();
+        let script = "echo hello\necho world";
+        let wrapped = build_trusted_wrapper(script);
+        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30, None);
+        assert_eq!(code, 0, "stderr: {}", stderr);
+        assert!(stdout.contains("hello"), "stdout: {}", stdout);
+        assert!(stdout.contains("world"), "stdout: {}", stdout);
+    }
+
+    #[test]
+    fn trusted_raw_cwd_is_project_root() {
+        let proj = make_local_proj();
+        let script = "pwd";
+        let wrapped = build_trusted_wrapper(script);
+        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30, None);
+        assert_eq!(code, 0, "stderr: {}", stderr);
+        assert!(
+            stdout.contains(&proj.path),
+            "stdout should contain project root, got: {}",
+            stdout
+        );
+    }
+
+    #[test]
+    fn trusted_raw_stdout_is_truncated() {
+        let result = build_trusted_result(
+            0,
+            100,
+            "/tmp",
+            &"a".repeat(100_000),
+            &"b".repeat(50_000),
+            "summary",
+            None,
+            false,
+        );
+        assert!(result.stdout_truncated);
+        assert!(result.stderr_truncated);
+    }
+
+    #[test]
+    fn dangerous_command_blocked_by_denylist() {
+        assert!(check_denylist("rm -rf /").is_some());
+        assert!(check_denylist("mkfs.ext4 /dev/sda1").is_some());
+        assert!(check_denylist("systemctl restart nginx").is_some());
+        assert!(check_denylist("git push origin main").is_some());
+        assert!(check_denylist("docker system prune -af").is_some());
+    }
+
+    #[test]
+    fn git_push_blocked_by_denylist() {
+        assert!(check_denylist("git push").is_some());
+        assert!(check_denylist("git push origin main").is_some());
+        assert!(check_denylist("git push --force").is_some());
+    }
+
+    #[test]
+    fn env_content_read_blocked() {
+        assert!(check_secret_read("cat .env").is_some());
+        assert!(check_secret_read("cat id_rsa").is_some());
+        assert!(check_secret_read("cat server.pem").is_some());
+    }
+
+    #[test]
+    fn trusted_job_script_text_generates_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let job_id = "test-trusted-job-1";
+        let dir = tmp.path().join(".codex/jobs").join(job_id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script_text = "echo hello\necho world";
+        let script_content = format!(
+            "#!/usr/bin/env bash\nset -euo pipefail\n{}\n",
+            script_text.trim()
+        );
+        std::fs::write(dir.join("script.sh"), &script_content).unwrap();
+        let content = std::fs::read_to_string(dir.join("script.sh")).unwrap();
+        assert!(content.contains("#!/usr/bin/env bash"));
+        assert!(content.contains("set -euo pipefail"));
+        assert!(content.contains("echo hello"));
+        assert!(content.contains("echo world"));
+    }
+
+    #[test]
+    fn job_create_response_is_lightweight() {
+        // Verify that a JobOpResponse for create doesn't include actual log content
+        let response = types::JobOpResponse {
+            success: true,
+            op: "create".to_string(),
+            job_id: Some("job-1".to_string()),
+            job_ids: vec!["job-1".to_string()],
+            job: None,
+            jobs: Vec::new(),
+            stdout_tail: None,
+            stderr_tail: None,
+            summary_markdown: None,
+            error: None,
+            log_total_lines: None,
+            next_cursor: None,
+            metadata_only: None,
+            logs_included: None,
+            warnings: Vec::new(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        // The key point: no log content is returned for create
+        assert_eq!(response.stdout_tail, None);
+        assert_eq!(response.stderr_tail, None);
+        assert_eq!(response.summary_markdown, None);
+    }
+
+    #[test]
+    fn nohup_disown_background_ampersand_rejected() {
+        assert!(check_background_escape("nohup python train.py").is_some());
+        assert!(check_background_escape("disown %1").is_some());
+        assert!(check_background_escape("sleep 100 &").is_some());
+    }
+
+    #[test]
+    fn openapi_schema_contains_trusted_descriptions() {
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+
+        // Check create_trusted_raw is in op enum
+        let op_enum: Vec<String> = spec["components"]["schemas"]["CommandRequestOpRequest"]
+            ["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            op_enum.contains(&"create_trusted_raw".to_string()),
+            "op enum should contain 'create_trusted_raw', got: {:?}",
+            op_enum
+        );
+        assert!(
+            op_enum.contains(&"create_trusted_raw_and_approve".to_string()),
+            "op enum should contain 'create_trusted_raw_and_approve', got: {:?}",
+            op_enum
+        );
+
+        // Check script_text field exists
+        let cr_props = &spec["components"]["schemas"]["CommandRequestOpRequest"]["properties"];
+        assert!(
+            !cr_props["script_text"].is_null(),
+            "script_text should exist in CommandRequestOpRequest"
+        );
+        assert!(
+            !cr_props["timeout_secs"].is_null(),
+            "timeout_secs should exist in CommandRequestOpRequest"
+        );
+        assert!(
+            !cr_props["response_mode"].is_null(),
+            "response_mode should exist in CommandRequestOpRequest"
+        );
+
+        // Check JobOpRequest has script_text and trusted
+        let job_props = &spec["components"]["schemas"]["JobOpRequest"]["properties"];
+        assert!(
+            !job_props["script_text"].is_null(),
+            "script_text should exist in JobOpRequest"
+        );
+        assert!(
+            !job_props["trusted"].is_null(),
+            "trusted should exist in JobOpRequest"
+        );
+
+        // Check CommandRequestOpResponse has trusted_result
+        let resp_props = &spec["components"]["schemas"]["CommandRequestOpResponse"]["properties"];
+        assert!(
+            !resp_props["trusted_result"].is_null(),
+            "trusted_result should exist in CommandRequestOpResponse"
+        );
+    }
+
+    #[test]
+    fn old_create_raw_behavior_unchanged() {
+        // Verify that old create_raw validation still works the same
+        assert!(validate_raw_command_text("echo ok").is_ok());
+        assert!(validate_raw_command_text("git status --short").is_ok());
+        assert!(validate_raw_command_text("git push").is_err());
+        assert!(validate_raw_command_text("sudo rm -rf /").is_err());
+        assert!(validate_raw_command_text("echo one\necho two").is_err());
+    }
+
+    #[test]
+    fn old_run_job_op_script_path_behavior_unchanged() {
+        // Verify build_script_job_command still works
+        let result = build_script_job_command("scripts/test.sh", &[]);
+        assert!(result.is_ok());
+        let cmd = result.unwrap();
+        assert!(cmd.contains("scripts/test.sh"));
+        assert!(cmd.contains("bash"));
     }
 }

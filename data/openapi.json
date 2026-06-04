@@ -1698,7 +1698,9 @@
               "list_goals",
               "close_goal",
               "create_raw_and_approve",
-              "create_and_approve"
+              "create_and_approve",
+              "create_trusted_raw",
+              "create_trusted_raw_and_approve"
             ],
             "description": "Command request or goal operation to perform"
           },
@@ -1732,6 +1734,22 @@
             },
             "maxItems": 100,
             "description": "Arguments passed to script_path for op=create_raw or op=create_raw_and_approve"
+          },
+          "script_text": {
+            "type": "string",
+            "nullable": true,
+            "description": "For create_trusted_raw / create_trusted_raw_and_approve: multi-line shell script content. Supports grep, python one-liners, file stats. Requires reason."
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "nullable": true,
+            "description": "For create_trusted_raw: timeout in seconds. Default 120, max 1800."
+          },
+          "response_mode": {
+            "type": "string",
+            "nullable": true,
+            "enum": ["summary", "full", "minimal"],
+            "description": "For create_trusted_raw: summary (default, tail only), full (more output, still truncated), minimal (success/exit_code/cwd only)."
           },
           "reason": {
             "type": "string",
@@ -1848,6 +1866,22 @@
           "error": {
             "type": "string",
             "nullable": true
+          },
+          "trusted_result": {
+            "type": "object",
+            "nullable": true,
+            "description": "For create_trusted_raw / create_trusted_raw_and_approve: structured execution result",
+            "properties": {
+              "exit_code": { "type": "integer" },
+              "duration_ms": { "type": "integer" },
+              "cwd": { "type": "string" },
+              "stdout_tail": { "type": "string", "nullable": true },
+              "stderr_tail": { "type": "string", "nullable": true },
+              "stdout_truncated": { "type": "boolean" },
+              "stderr_truncated": { "type": "boolean" },
+              "audit_log_path": { "type": "string", "nullable": true },
+              "blocked_by_denylist": { "type": "boolean" }
+            }
           }
         },
         "required": [
@@ -1858,7 +1892,7 @@
       },
       "JobOpRequest": {
         "type": "object",
-        "description": "Trusted active-goal scoped async shell jobs. create/create_batch require project and active goal_id; command text is audited to .codex/jobs/<job_id>.",
+        "description": "Trusted active-goal scoped async shell jobs. create/create_batch require project and active goal_id; command text is audited to .codex/jobs/<job_id>. Trusted mode: use trusted=true + script_text for multi-line scripts (short commands: create_trusted_raw_and_approve; long scripts: runJobOp create trusted script_text).",
         "properties": {
           "op": {
             "type": "string",
@@ -1921,6 +1955,16 @@
             },
             "maxItems": 100,
             "description": "Arguments passed to script_path for op=create"
+          },
+          "script_text": {
+            "type": "string",
+            "nullable": true,
+            "description": "For trusted job creation: multi-line script content. Requires trusted=true. Script is written to .codex/jobs/<job_id>/script.sh with set -euo pipefail header."
+          },
+          "trusted": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "For trusted job creation: must be true when script_text is provided."
           },
           "commands": {
             "type": "array",
@@ -3475,7 +3519,7 @@
       "post": {
         "operationId": "runCommandRequestOp",
         "summary": "Run an aggregated command request operation",
-        "description": "Single aggregated endpoint for command request workflow operations. Use op=list/create/create_raw/create_batch/approve/approve_batch/reject/reject_batch to reduce GPT Action count while preserving audit and approval semantics.",
+        "description": "Single aggregated endpoint for command request workflow operations. Use op=list/create/create_raw/create_batch/approve/approve_batch/reject/reject_batch to reduce GPT Action count while preserving audit and approval semantics. Trusted raw mode: use create_trusted_raw_and_approve for short multi-line shell commands (timeout default 120s, max 1800s). For long-running scripts use runJobOp create with trusted=true + script_text. Use response_mode=summary for large output. If timeout, recover with runJobOp recover/status first.",
         "tags": [
           "codex"
         ],
