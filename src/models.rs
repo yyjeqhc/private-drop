@@ -139,7 +139,7 @@ pub struct DesktopTaskOpRequest {
     pub screenshot_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AgentSpecRecord {
     pub id: String,
     pub name: String,
@@ -150,7 +150,7 @@ pub struct AgentSpecRecord {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AgentModelProfileRecord {
     pub id: String,
     pub base_url: String,

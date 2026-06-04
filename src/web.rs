@@ -373,6 +373,7 @@ pub async fn agent_playground_page(_req: &mut Request, _depot: &mut Depot, res: 
             }
             if(ev.type==='tool_response'){
                 return '<div class="card"><div class="card-header"><div><div class="card-title">Tool response: '+escapeHtml(ev.name)+'</div><div class="card-meta">status '+escapeHtml(ev.status||'n/a')+' · '+ev.duration_ms+'ms</div></div></div>'+
+                    (ev.truncated?'<div class="card-meta" style="margin-bottom:8px">response truncated</div>':'')+
                     (ev.error?'<div class="alert alert-error">'+escapeHtml(ev.error)+'</div>':'')+
                     '<pre class="card-text" style="max-height:none;white-space:pre-wrap">'+escapeHtml(ev.response_preview||'')+'</pre></div>';
             }
@@ -382,6 +383,7 @@ pub async fn agent_playground_page(_req: &mut Request, _depot: &mut Depot, res: 
     function renderShell(){
         app.innerHTML=
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2>Tool Calling Playground</h2><button id="reload" class="btn btn-sm btn-primary">Reload</button></div>'+
+            '<div class="alert alert-info">MVP only supports POST application/json tools. Prefer importing codex-openapi-compact.json.</div>'+
             '<div id="msg"></div>'+
             '<div class="card"><h3 style="margin-bottom:12px">Model profile</h3>'+
                 '<div class="form-group"><label for="modelBase">base_url</label><input id="modelBase" placeholder="https://api.openai.com/v1"></div>'+
@@ -469,6 +471,7 @@ pub async fn agent_playground_page(_req: &mut Request, _depot: &mut Depot, res: 
         var msg=document.getElementById('msg');
         msg.innerHTML='';
         var payload={
+            id:selectedSpec?selectedSpec.id:null,
             name:document.getElementById('specName').value.trim(),
             base_url:document.getElementById('actionBase').value.trim(),
             auth_token:document.getElementById('actionToken').value,

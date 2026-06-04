@@ -4,11 +4,16 @@ use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::io::Read;
 use std::time::{Duration, Instant};
+use url::Url;
 use uuid::Uuid;
 
 const DEFAULT_MODEL_PROFILE_ID: &str = "default";
 const MAX_TIMELINE_BODY_CHARS: usize = 12_000;
+const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_TOOL_CALLS_TOTAL: usize = 30;
+const DEFAULT_MAX_RUN_SECS: u64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTool {
@@ -45,6 +50,8 @@ pub struct AgentModelProfileView {
 
 #[derive(Debug, Deserialize)]
 pub struct SaveAgentSpecRequest {
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     pub base_url: String,
     #[serde(default)]
@@ -65,6 +72,14 @@ pub struct AgentRunRequest {
     pub user_message: String,
     #[serde(default)]
     pub max_rounds: Option<usize>,
+    #[serde(default)]
+    pub max_run_secs: Option<u64>,
+}
+
+#[derive(Debug)]
+struct LimitedBody {
+    text: String,
+    truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +114,7 @@ pub enum TimelineEvent {
         status: Option<u16>,
         duration_ms: u128,
         response_preview: String,
+        truncated: bool,
         error: Option<String>,
     },
     Error {
@@ -165,6 +181,21 @@ fn trim_trailing_slash(value: &str) -> String {
     value.trim().trim_end_matches('/').to_string()
 }
 
+fn validate_base_url(value: &str, field: &str) -> Result<String, String> {
+    let trimmed = trim_trailing_slash(value);
+    let parsed =
+        Url::parse(&trimmed).map_err(|e| format!("{} must be a valid URL: {}", field, e))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!("{} must use http or https", field));
+    }
+    if parsed.host_str().unwrap_or_default().is_empty() {
+        return Err(format!("{} must include a host", field));
+    }
+    // This is a personal intranet debugging tool, so private/link-local/localhost
+    // addresses are intentionally allowed for now.
+    Ok(trimmed)
+}
+
 fn spec_to_view(record: AgentSpecRecord, include_json: bool) -> AgentSpecView {
     let parsed = extract_tools_from_openapi(&record.openapi_json);
     let (tools, parse_error) = match parsed {
@@ -182,6 +213,34 @@ fn spec_to_view(record: AgentSpecRecord, include_json: bool) -> AgentSpecView {
         tools,
         parse_error,
     }
+}
+
+fn build_agent_spec_record(
+    body: SaveAgentSpecRequest,
+    existing: Option<&AgentSpecRecord>,
+    now: i64,
+) -> Result<AgentSpecRecord, String> {
+    if body.name.trim().is_empty() || body.base_url.trim().is_empty() {
+        return Err("name and base_url are required".to_string());
+    }
+    let base_url = validate_base_url(&body.base_url, "base_url")?;
+    let auth_token = match body.auth_token {
+        Some(token) if !token.trim().is_empty() => token,
+        _ => existing
+            .map(|record| record.auth_token.clone())
+            .unwrap_or_default(),
+    };
+    Ok(AgentSpecRecord {
+        id: existing
+            .map(|record| record.id.clone())
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+        name: body.name.trim().to_string(),
+        base_url,
+        auth_token,
+        openapi_json: body.openapi_json,
+        created_at: existing.map(|record| record.created_at).unwrap_or(now),
+        updated_at: now,
+    })
 }
 
 fn profile_to_view(profile: Option<AgentModelProfileRecord>) -> AgentModelProfileView {
@@ -231,6 +290,17 @@ fn extract_request_schema(root: &Value, op: &Value) -> Value {
     resolve_ref(root, schema)
 }
 
+fn has_json_request_body(op: &Value) -> bool {
+    match op.get("requestBody") {
+        None => true,
+        Some(request_body) => request_body
+            .get("content")
+            .and_then(Value::as_object)
+            .map(|content| content.contains_key("application/json"))
+            .unwrap_or(false),
+    }
+}
+
 pub fn extract_tools_from_openapi(openapi_json: &str) -> Result<Vec<AgentTool>, String> {
     let root: Value =
         serde_json::from_str(openapi_json).map_err(|e| format!("Invalid OpenAPI JSON: {}", e))?;
@@ -246,6 +316,9 @@ pub fn extract_tools_from_openapi(openapi_json: &str) -> Result<Vec<AgentTool>, 
         let Some(operation_id) = post.get("operationId").and_then(Value::as_str) else {
             continue;
         };
+        if !has_json_request_body(post) {
+            continue;
+        }
         let description = post
             .get("description")
             .or_else(|| post.get("summary"))
@@ -291,6 +364,20 @@ fn preview_body(text: &str) -> String {
     out
 }
 
+fn read_limited_body<R: Read>(reader: R, max_bytes: u64) -> std::io::Result<LimitedBody> {
+    let mut limited = reader.take(max_bytes.saturating_add(1));
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes)?;
+    let truncated = bytes.len() as u64 > max_bytes;
+    if truncated {
+        bytes.truncate(max_bytes as usize);
+    }
+    Ok(LimitedBody {
+        text: String::from_utf8_lossy(&bytes).to_string(),
+        truncated,
+    })
+}
+
 fn chat_completions_url(base_url: &str) -> String {
     let base = trim_trailing_slash(base_url);
     if base.ends_with("/chat/completions") {
@@ -315,7 +402,7 @@ fn call_action(
     spec: &AgentSpecRecord,
     tool: &AgentTool,
     args: &Value,
-) -> (Option<u16>, u128, String, Option<String>) {
+) -> (Option<u16>, u128, String, bool, Option<String>) {
     let start = Instant::now();
     let result = client
         .post(action_url(&spec.base_url, &tool.path))
@@ -326,12 +413,19 @@ fn call_action(
     match result {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            match resp.text() {
-                Ok(text) => (Some(status), duration_ms, preview_body(&text), None),
+            match read_limited_body(resp, MAX_RESPONSE_BYTES) {
+                Ok(body) => (
+                    Some(status),
+                    duration_ms,
+                    preview_body(&body.text),
+                    body.truncated,
+                    None,
+                ),
                 Err(e) => (
                     Some(status),
                     duration_ms,
                     String::new(),
+                    false,
                     Some(format!("Failed to read action response: {}", e)),
                 ),
             }
@@ -340,6 +434,7 @@ fn call_action(
             None,
             duration_ms,
             String::new(),
+            false,
             Some(format!("Action request failed: {}", e)),
         ),
     }
@@ -397,8 +492,21 @@ fn run_tool_loop(
     ];
     let tool_defs = openai_tools(&tools);
     let url = chat_completions_url(&req.model_base_url);
+    let run_started = Instant::now();
+    let max_run_secs = req.max_run_secs.unwrap_or(DEFAULT_MAX_RUN_SECS).max(1);
+    let mut tool_calls_total = 0usize;
 
     for round in 1..=max_rounds {
+        if run_started.elapsed() >= Duration::from_secs(max_run_secs) {
+            return AgentRunResponse {
+                success: false,
+                final_response: None,
+                rounds: round.saturating_sub(1),
+                stopped_reason: "max_run_secs_exceeded".to_string(),
+                timeline,
+                error: Some("Max run seconds exceeded".to_string()),
+            };
+        }
         let mut body = Map::new();
         body.insert("model".to_string(), json!(req.model));
         body.insert("messages".to_string(), Value::Array(messages.clone()));
@@ -434,8 +542,8 @@ fn run_tool_loop(
             }
         };
         let status = response.status();
-        let response_text = match response.text() {
-            Ok(text) => text,
+        let response_body = match read_limited_body(response, MAX_RESPONSE_BYTES) {
+            Ok(body) => body,
             Err(e) => {
                 timeline.push(TimelineEvent::Error {
                     round,
@@ -451,11 +559,29 @@ fn run_tool_loop(
                 };
             }
         };
+        if response_body.truncated {
+            let msg = format!(
+                "Model response exceeded {} bytes and was truncated",
+                MAX_RESPONSE_BYTES
+            );
+            timeline.push(TimelineEvent::Error {
+                round,
+                message: msg.clone(),
+            });
+            return AgentRunResponse {
+                success: false,
+                final_response: None,
+                rounds: round,
+                stopped_reason: "model_response_too_large".to_string(),
+                timeline,
+                error: Some(msg),
+            };
+        }
         if !status.is_success() {
             let msg = format!(
                 "Model returned HTTP {}: {}",
                 status.as_u16(),
-                preview_body(&response_text)
+                preview_body(&response_body.text)
             );
             timeline.push(TimelineEvent::Error {
                 round,
@@ -470,7 +596,7 @@ fn run_tool_loop(
                 error: Some(msg),
             };
         }
-        let parsed: ChatCompletionResponse = match serde_json::from_str(&response_text) {
+        let parsed: ChatCompletionResponse = match serde_json::from_str(&response_body.text) {
             Ok(parsed) => parsed,
             Err(e) => {
                 let msg = format!("Invalid model response JSON: {}", e);
@@ -539,6 +665,27 @@ fn run_tool_loop(
             };
         }
         for call in assistant_tool_calls {
+            tool_calls_total += 1;
+            if tool_calls_total > MAX_TOOL_CALLS_TOTAL {
+                return AgentRunResponse {
+                    success: false,
+                    final_response: None,
+                    rounds: round,
+                    stopped_reason: "max_tool_calls_total_exceeded".to_string(),
+                    timeline,
+                    error: Some("Max total tool calls exceeded".to_string()),
+                };
+            }
+            if run_started.elapsed() >= Duration::from_secs(max_run_secs) {
+                return AgentRunResponse {
+                    success: false,
+                    final_response: None,
+                    rounds: round,
+                    stopped_reason: "max_run_secs_exceeded".to_string(),
+                    timeline,
+                    error: Some("Max run seconds exceeded".to_string()),
+                };
+            }
             if call.call_type != "function" {
                 let msg = format!("Unsupported tool call type: {}", call.call_type);
                 timeline.push(TimelineEvent::Error {
@@ -575,7 +722,7 @@ fn run_tool_loop(
                 }));
                 continue;
             };
-            let (status, duration_ms, response_preview, error) =
+            let (status, duration_ms, response_preview, truncated, error) =
                 call_action(&client, &spec, tool, &args);
             timeline.push(TimelineEvent::ToolResponse {
                 round,
@@ -584,6 +731,7 @@ fn run_tool_loop(
                 status,
                 duration_ms,
                 response_preview: response_preview.clone(),
+                truncated,
                 error: error.clone(),
             });
             messages.push(json!({
@@ -592,6 +740,7 @@ fn run_tool_loop(
                 "content": json!({
                     "status": status,
                     "response": response_preview,
+                    "truncated": truncated,
                     "error": error
                 }).to_string()
             }));
@@ -648,28 +797,38 @@ pub async fn save_agent_spec(req: &mut Request, depot: &mut Depot, res: &mut Res
             return;
         }
     };
-    if body.name.trim().is_empty() || body.base_url.trim().is_empty() {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(json_error(
-            StatusCode::BAD_REQUEST,
-            "name and base_url are required",
-        ));
-        return;
-    }
     if let Err(e) = extract_tools_from_openapi(&body.openapi_json) {
         res.status_code(StatusCode::BAD_REQUEST);
         res.render(json_error(StatusCode::BAD_REQUEST, &e));
         return;
     }
     let now = chrono::Utc::now().timestamp();
-    let record = AgentSpecRecord {
-        id: Uuid::new_v4().to_string(),
-        name: body.name.trim().to_string(),
-        base_url: trim_trailing_slash(&body.base_url),
-        auth_token: body.auth_token.unwrap_or_default(),
-        openapi_json: body.openapi_json,
-        created_at: now,
-        updated_at: now,
+    let existing = match body.id.as_deref().filter(|id| !id.trim().is_empty()) {
+        Some(id) => match db.get_agent_spec(id) {
+            Ok(Some(record)) => Some(record),
+            Ok(None) => {
+                res.status_code(StatusCode::NOT_FOUND);
+                res.render(json_error(StatusCode::NOT_FOUND, "Spec not found"));
+                return;
+            }
+            Err(e) => {
+                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                res.render(json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &e.to_string(),
+                ));
+                return;
+            }
+        },
+        None => None,
+    };
+    let record = match build_agent_spec_record(body, existing.as_ref(), now) {
+        Ok(record) => record,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, &e));
+            return;
+        }
     };
     match db.upsert_agent_spec(&record) {
         Ok(()) => res.render(Json(spec_to_view(record, false))),
@@ -758,6 +917,14 @@ pub async fn run_agent(req: &mut Request, depot: &mut Depot, res: &mut Response)
         ));
         return;
     }
+    let model_base_url = match validate_base_url(&body.model_base_url, "model_base_url") {
+        Ok(base_url) => base_url,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, &e));
+            return;
+        }
+    };
     let existing_profile = db
         .get_agent_model_profile(DEFAULT_MODEL_PROFILE_ID)
         .ok()
@@ -779,7 +946,7 @@ pub async fn run_agent(req: &mut Request, depot: &mut Depot, res: &mut Response)
     let now = chrono::Utc::now().timestamp();
     let profile = AgentModelProfileRecord {
         id: DEFAULT_MODEL_PROFILE_ID.to_string(),
-        base_url: trim_trailing_slash(&body.model_base_url),
+        base_url: model_base_url,
         api_key: model_api_key.clone(),
         model: body.model.clone(),
         temperature: body.temperature,
@@ -813,6 +980,11 @@ pub async fn run_agent(req: &mut Request, depot: &mut Depot, res: &mut Response)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant as TestInstant};
 
     fn compact_fixture() -> String {
         let mut spec: Value = serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
@@ -821,6 +993,28 @@ mod tests {
             "/api/codex/job": spec["paths"]["/api/codex/job"].clone()
         });
         serde_json::to_string(&spec).unwrap()
+    }
+
+    fn demo_openapi() -> String {
+        json!({
+            "openapi": "3.1.0",
+            "paths": {
+                "/api/demo": {
+                    "post": {
+                        "operationId": "demoOp",
+                        "description": "Demo operation",
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {"type":"object","properties":{"name":{"type":"string"}}}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
     }
 
     #[test]
@@ -882,13 +1076,70 @@ mod tests {
     }
 
     #[test]
-    fn tool_loop_uses_mock_model_and_action() {
-        use std::io::{Read, Write};
-        use std::net::{TcpListener, TcpStream};
-        use std::sync::{Arc, Mutex};
-        use std::thread;
-        use std::time::{Duration, Instant as TestInstant};
+    fn update_spec_with_empty_auth_token_keeps_existing_token() {
+        let existing = AgentSpecRecord {
+            id: "spec-1".to_string(),
+            name: "old".to_string(),
+            base_url: "https://old.example".to_string(),
+            auth_token: "keep-me".to_string(),
+            openapi_json: demo_openapi(),
+            created_at: 10,
+            updated_at: 11,
+        };
+        let record = build_agent_spec_record(
+            SaveAgentSpecRequest {
+                id: Some(existing.id.clone()),
+                name: "new".to_string(),
+                base_url: "https://new.example/".to_string(),
+                auth_token: Some(String::new()),
+                openapi_json: demo_openapi(),
+            },
+            Some(&existing),
+            20,
+        )
+        .unwrap();
+        assert_eq!(record.id, "spec-1");
+        assert_eq!(record.auth_token, "keep-me");
+        assert_eq!(record.base_url, "https://new.example");
+        assert_eq!(record.created_at, 10);
+        assert_eq!(record.updated_at, 20);
+    }
 
+    #[test]
+    fn base_url_rejects_non_http_schemes() {
+        assert!(validate_base_url("file:///tmp/spec", "base_url").is_err());
+        assert!(validate_base_url("ssh://example.com", "model_base_url").is_err());
+        assert!(validate_base_url("https://example.com", "base_url").is_ok());
+        assert!(validate_base_url("http://127.0.0.1:8080", "base_url").is_ok());
+    }
+
+    #[test]
+    fn extracts_tools_skips_non_json_post() {
+        let text = json!({
+            "openapi": "3.1.0",
+            "paths": {
+                "/api/json": {
+                    "post": {
+                        "operationId": "jsonOp",
+                        "requestBody": {"content": {"application/json": {"schema": {"type":"object"}}}}
+                    }
+                },
+                "/api/form": {
+                    "post": {
+                        "operationId": "formOp",
+                        "requestBody": {"content": {"multipart/form-data": {"schema": {"type":"object"}}}}
+                    }
+                }
+            }
+        })
+        .to_string();
+        let tools = extract_tools_from_openapi(&text).unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "jsonOp");
+    }
+
+    #[test]
+    fn tool_loop_uses_mock_model_and_action() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -981,31 +1232,12 @@ mod tests {
         });
 
         let base = format!("http://{}", addr);
-        let openapi = json!({
-            "openapi": "3.1.0",
-            "paths": {
-                "/api/demo": {
-                    "post": {
-                        "operationId": "demoOp",
-                        "description": "Demo operation",
-                        "requestBody": {
-                            "content": {
-                                "application/json": {
-                                    "schema": {"type":"object","properties":{"name":{"type":"string"}}}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        })
-        .to_string();
         let spec = AgentSpecRecord {
             id: "spec".to_string(),
             name: "demo".to_string(),
             base_url: base.clone(),
             auth_token: "action-token".to_string(),
-            openapi_json: openapi,
+            openapi_json: demo_openapi(),
             created_at: 1,
             updated_at: 1,
         };
@@ -1019,6 +1251,7 @@ mod tests {
                 system_prompt: "system".to_string(),
                 user_message: "hello".to_string(),
                 max_rounds: Some(3),
+                max_run_secs: None,
             },
             spec,
             "model-token".to_string(),
@@ -1037,5 +1270,78 @@ mod tests {
                 "/v1/chat/completions".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn max_rounds_is_clamped_to_twenty() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let hits = Arc::new(Mutex::new(0usize));
+        let hits_for_thread = hits.clone();
+        let handle = thread::spawn(move || {
+            let deadline = TestInstant::now() + Duration::from_secs(10);
+            while TestInstant::now() < deadline {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    thread::sleep(Duration::from_millis(10));
+                    continue;
+                };
+                let mut buf = [0_u8; 4096];
+                let _ = stream.read(&mut buf);
+                *hits_for_thread.lock().unwrap() += 1;
+                let body = json!({
+                    "choices": [{
+                        "message": {
+                            "content": null,
+                            "tool_calls": [{
+                                "id": "call_loop",
+                                "type": "function",
+                                "function": {"name": "missingTool", "arguments": "{}"}
+                            }]
+                        }
+                    }]
+                })
+                .to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                if *hits_for_thread.lock().unwrap() >= 20 {
+                    break;
+                }
+            }
+        });
+        let base = format!("http://{}", addr);
+        let response = run_tool_loop(
+            AgentRunRequest {
+                spec_id: "spec".to_string(),
+                model_base_url: format!("{}/v1", base),
+                model_api_key: Some("model-token".to_string()),
+                model: "mock".to_string(),
+                temperature: Some(0.0),
+                system_prompt: "system".to_string(),
+                user_message: "hello".to_string(),
+                max_rounds: Some(99),
+                max_run_secs: Some(10),
+            },
+            AgentSpecRecord {
+                id: "spec".to_string(),
+                name: "demo".to_string(),
+                base_url: base,
+                auth_token: "action-token".to_string(),
+                openapi_json: demo_openapi(),
+                created_at: 1,
+                updated_at: 1,
+            },
+            "model-token".to_string(),
+        );
+        let _ = TcpStream::connect(addr);
+        handle.join().unwrap();
+        assert!(!response.success);
+        assert_eq!(response.rounds, 20);
+        assert_eq!(response.stopped_reason, "max_rounds_exceeded");
+        assert_eq!(*hits.lock().unwrap(), 20);
     }
 }
