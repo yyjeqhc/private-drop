@@ -246,6 +246,12 @@ pub struct JobOpRequest {
     /// Omit or set to 0 to use tail-based reading (last tail_lines lines).
     #[serde(default)]
     pub since_line: Option<usize>,
+    /// For op=status: response detail level. "basic" (default, lightweight, no logs,
+    /// no OOM detection, minimal SSH) or "logs" (basic + include log tails).
+    /// If tail_lines > 0 and detail is not explicitly set, detail defaults to "logs"
+    /// for backward compatibility (方案A).
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,6 +324,16 @@ pub struct JobOpResponse {
     /// For op=log: the next since_line value to use for incremental polling.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<usize>,
+    /// For op=recover: always true. Indicates only metadata was read, no log files,
+    /// no process checks, no OOM detection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_only: Option<bool>,
+    /// For op=status: true when log tails are included in the response (detail=logs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logs_included: Option<bool>,
+    /// Operational warnings (e.g., compatibility hints).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 fn default_channel() -> String {
@@ -346,6 +362,9 @@ pub(super) fn job_response(op: &str, success: bool, error: Option<String>) -> Jo
         error,
         log_total_lines: None,
         next_cursor: None,
+        metadata_only: None,
+        logs_included: None,
+        warnings: Vec::new(),
     }
 }
 
@@ -730,7 +749,7 @@ pub struct ProjectsResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::EditResponse;
+    use super::{EditResponse, JobOpRequest, JobOpResponse};
 
     #[test]
     fn edit_response_deserializes_without_diff_truncated_field() {
@@ -746,5 +765,101 @@ mod tests {
         .unwrap();
         assert!(!response.diff_truncated);
         assert_eq!(response.changed_files, vec!["a.txt"]);
+    }
+
+    #[test]
+    fn job_op_request_deserializes_without_detail_field() {
+        // Old requests without detail should still deserialize (backward compat)
+        let request: JobOpRequest = serde_json::from_str(
+            r#"{
+                "op": "status",
+                "project": "myproj",
+                "job_id": "abc-123"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(request.op, "status");
+        assert_eq!(request.project, Some("myproj".to_string()));
+        assert_eq!(request.job_id, Some("abc-123".to_string()));
+        assert!(request.detail.is_none());
+    }
+
+    #[test]
+    fn job_op_request_deserializes_with_detail_basic() {
+        let request: JobOpRequest = serde_json::from_str(
+            r#"{
+                "op": "status",
+                "project": "myproj",
+                "job_id": "abc-123",
+                "detail": "basic"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(request.detail, Some("basic".to_string()));
+    }
+
+    #[test]
+    fn job_op_request_deserializes_with_detail_logs() {
+        let request: JobOpRequest = serde_json::from_str(
+            r#"{
+                "op": "status",
+                "project": "myproj",
+                "job_id": "abc-123",
+                "detail": "logs"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(request.detail, Some("logs".to_string()));
+    }
+
+    #[test]
+    fn job_op_response_serializes_with_metadata_only() {
+        let response = JobOpResponse {
+            success: true,
+            op: "recover".to_string(),
+            job_id: Some("job-1".to_string()),
+            job_ids: vec!["job-1".to_string()],
+            job: None,
+            jobs: Vec::new(),
+            stdout_tail: None,
+            stderr_tail: None,
+            summary_markdown: None,
+            error: None,
+            log_total_lines: None,
+            next_cursor: None,
+            metadata_only: Some(true),
+            logs_included: Some(false),
+            warnings: Vec::new(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"metadata_only\":true"));
+        assert!(json.contains("\"logs_included\":false"));
+        // warnings is empty so should be skipped
+        assert!(!json.contains("\"warnings\""));
+    }
+
+    #[test]
+    fn job_op_response_omits_metadata_only_when_none() {
+        let response = JobOpResponse {
+            success: true,
+            op: "status".to_string(),
+            job_id: None,
+            job_ids: Vec::new(),
+            job: None,
+            jobs: Vec::new(),
+            stdout_tail: None,
+            stderr_tail: None,
+            summary_markdown: None,
+            error: None,
+            log_total_lines: None,
+            next_cursor: None,
+            metadata_only: None,
+            logs_included: None,
+            warnings: Vec::new(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(!json.contains("metadata_only"));
+        assert!(!json.contains("logs_included"));
+        assert!(!json.contains("warnings"));
     }
 }

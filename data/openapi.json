@@ -1831,9 +1831,10 @@
               "status",
               "log",
               "stop",
-              "summarize"
+              "summarize",
+              "recover"
             ],
-            "description": "Job operation: create=launch async job (requires active goal); create_batch=launch multiple jobs; check=run configured suite as async job; status=get job status+elapsed_secs+oom_hint (use instead of ps/pgrep); log=get stdout/stderr tail with log_total_lines+next_cursor for incremental polling; stop=kill job; list=list jobs; summarize=Markdown summary with log tails."
+            "description": "Job operation: create=launch async job (requires active goal); create_batch=launch multiple jobs; check=run configured suite as async job; status=get job status+elapsed_secs (detail=basic: lightweight, no OOM; detail=logs: include log tails); log=get stdout/stderr tail with log_total_lines+next_cursor for incremental polling; stop=kill job; list=list jobs; summarize=Markdown summary with log tails; recover=metadata-only recovery after 504, no logs/process checks."
           },
           "project": {
             "type": "string",
@@ -1930,6 +1931,11 @@
             "type": "integer",
             "minimum": 1,
             "description": "For op=log: start reading stdout.log from this line number (1-based, inclusive). Omit or set to 0 to use tail-based reading (last tail_lines lines). Use next_cursor from the previous log response for incremental polling."
+          },
+          "detail": {
+            "type": "string",
+            "enum": ["basic", "logs"],
+            "description": "For op=status: response detail level. basic (default)=lightweight status, no OOM detection, minimal SSH; logs=basic+include stdout/stderr tails. If tail_lines>0 and detail is not set, auto-upgrades to logs."
           }
         },
         "required": [
@@ -2087,6 +2093,23 @@
           "next_cursor": {
             "type": "integer",
             "description": "For op=log: the since_line value to use in the next incremental log request to read only new output. Equal to log_total_lines + 1. Null if no lines were read."
+          },
+          "metadata_only": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "For op=recover: always true. Indicates only metadata was read, no log files, no process checks, no OOM detection."
+          },
+          "logs_included": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "For op=status: true when log tails are included (detail=logs), false when not (detail=basic). For op=recover: always false."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Operational warnings (e.g., compatibility hints)."
           }
         },
         "required": [
@@ -3644,7 +3667,7 @@
       "post": {
         "operationId": "runJobOp",
         "summary": "Run or manage trusted active-goal async shell jobs",
-        "description": "Active-goal scoped async shell jobs for trusted experiment/training/reproduction workflows. Preferred interface for long-running checks, experiments, training/eval jobs, multiline scripts, or any command that may exceed HTTP/Action/nginx timeouts. Use client_request_id for idempotent retry and 504 recovery. create/create_batch require an active, unexpired goal for the same project and audit all commands under .codex/jobs/. For op=log, use since_line (from prev next_cursor) for incremental polling; response includes log_total_lines and next_cursor. For op=status, response JobInfo includes elapsed_secs and oom_hint.",
+        "description": "Active-goal scoped async shell jobs. Use client_request_id for idempotent retry. If create/status times out, do not rerun the job; first call recover with the same client_request_id. Use status detail=basic for cheap state checks; use detail=logs or log op only when logs are needed. create/create_batch require an active goal. For op=log, use since_line for incremental polling. For op=status, default detail=basic returns lightweight status without OOM detection; detail=logs includes log tails.",
         "tags": [
           "codex"
         ],

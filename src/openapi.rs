@@ -51,10 +51,22 @@ fn apply_edit_timeout_guidance(spec: &mut serde_json::Value) {
     spec["paths"]["/api/codex/edit"]["post"]["description"] = serde_json::json!(
         "Apply structured file edits. For larger or multi-file edits, prefer response_mode=summary. If this times out, do not retry immediately; first check git_status or read the target file to confirm whether the edit was applied."
     );
-    spec["components"]["schemas"]["EditRequest"]["properties"]["response_mode"]["description"] =
-        serde_json::json!(
-            "Response detail. For larger or multi-file edits, use summary to reduce timeout risk."
-        );
+    spec["components"]["schemas"]["EditRequest"]["properties"]["response_mode"]["description"] = serde_json::json!(
+        "Response detail. For larger or multi-file edits, use summary to reduce timeout risk."
+    );
+}
+
+fn apply_job_recovery_guidance(spec: &mut serde_json::Value) {
+    // The description is already set in data/openapi.json; this function
+    // adds the detail field description programmatically in case the static
+    // schema is missing it.
+    if spec["components"]["schemas"]["JobOpRequest"]["properties"]["detail"].is_null() {
+        spec["components"]["schemas"]["JobOpRequest"]["properties"]["detail"] = serde_json::json!({
+            "type": "string",
+            "enum": ["basic", "logs"],
+            "description": "For op=status: basic (default, lightweight) or logs (include log tails). If tail_lines>0 and detail is not set, auto-upgrades to logs."
+        });
+    }
 }
 
 #[handler]
@@ -170,6 +182,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
         ],
     );
     apply_edit_timeout_guidance(&mut spec);
+    apply_job_recovery_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -299,6 +312,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         ],
     );
     apply_edit_timeout_guidance(&mut spec);
+    apply_job_recovery_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));

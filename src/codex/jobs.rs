@@ -856,6 +856,311 @@ pub(super) fn summarize_jobs_markdown(jobs: &[JobInfo], log_tails: &[(String, St
     md
 }
 
+// --- recover / status detail=basic helpers ---
+
+/// Lightweight metadata-only job info for local jobs.
+/// Reads metadata.json + status/exit_code/finished_at files only.
+/// No kill -0, no OOM detection, no log reading.
+fn recover_local_job_info(root: &Path, job_id: &str) -> Result<JobInfo, String> {
+    let meta = read_job_metadata_local(root, job_id)?;
+    let dir = local_job_dir(root, job_id);
+    let status = read_file_to_string(&dir.join("status")).unwrap_or_else(|| meta.status.clone());
+    let exit_code = read_file_to_string(&dir.join("exit_code")).and_then(|s| s.parse::<i32>().ok());
+    let pid = read_file_to_string(&dir.join("pid")).and_then(|s| s.parse::<i64>().ok());
+    let finished_at = read_finished_at_file(&dir).or(meta.finished_at);
+    let now = chrono::Utc::now().timestamp();
+    let elapsed_secs = meta.started_at.map(|s| finished_at.unwrap_or(now) - s);
+    Ok(JobInfo {
+        job_id: meta.job_id,
+        client_request_id: meta.client_request_id,
+        project: meta.project,
+        goal_id: meta.goal_id,
+        command: meta.command,
+        kind: meta.kind,
+        suite: meta.suite,
+        script_path: meta.script_path,
+        reason: meta.reason,
+        status,
+        created_at: meta.created_at,
+        started_at: meta.started_at,
+        finished_at,
+        max_runtime_secs: meta.max_runtime_secs,
+        executor: meta.executor,
+        pid,
+        exit_code,
+        elapsed_secs,
+        oom_hint: None, // No OOM detection in recover
+    })
+}
+
+/// Lightweight metadata-only job info for SSH jobs.
+/// Single SSH call: reads metadata.json + status/pid/exit_code/finished_at.
+/// No kill -0, no kill_tree, no OOM detection, no log reading.
+fn recover_ssh_job_info(
+    proj: &ProjectConfig,
+    job_id: &str,
+    ssh_config: Option<&SshConfig>,
+) -> Result<JobInfo, String> {
+    validate_job_id(job_id)?;
+    let dir = shell_escape(&job_dir_rel(job_id));
+    // Combined single SSH call to read metadata + status files
+    let cmd = format!(
+        "cat {dir}/metadata.json; printf '\\n__RECOVER_STATUS__\\n'; cat {dir}/status 2>/dev/null || true; \
+         printf '\\n__RECOVER_PID__\\n'; cat {dir}/pid 2>/dev/null || true; \
+         printf '\\n__RECOVER_EXIT__\\n'; cat {dir}/exit_code 2>/dev/null || true; \
+         printf '\\n__RECOVER_FINISHED__\\n'; cat {dir}/finished_at 2>/dev/null || true",
+        dir = dir
+    );
+    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    if code != 0 {
+        return Err(format!("Failed to read job info: {}", stderr.trim()));
+    }
+    let mut section = "meta";
+    let mut meta_json = String::new();
+    let mut status_val: Option<String> = None;
+    let mut pid: Option<i64> = None;
+    let mut exit_code: Option<i32> = None;
+    let mut finished_at: Option<i64> = None;
+    for line in stdout.lines() {
+        match line {
+            "__RECOVER_STATUS__" => section = "status",
+            "__RECOVER_PID__" => section = "pid",
+            "__RECOVER_EXIT__" => section = "exit",
+            "__RECOVER_FINISHED__" => section = "finished",
+            _ => match section {
+                "meta" => {
+                    meta_json.push_str(line);
+                    meta_json.push('\n');
+                }
+                "status" => {
+                    if !line.trim().is_empty() {
+                        status_val = Some(line.trim().to_string());
+                    }
+                }
+                "pid" => {
+                    pid = line.trim().parse::<i64>().ok();
+                }
+                "exit" => {
+                    exit_code = line.trim().parse::<i32>().ok();
+                }
+                "finished" => {
+                    finished_at = line.trim().parse::<i64>().ok();
+                }
+                _ => {}
+            },
+        }
+    }
+    let meta: JobMetadata = serde_json::from_str(meta_json.trim())
+        .map_err(|e| format!("Failed to parse job metadata: {}", e))?;
+    let status = status_val.unwrap_or_else(|| meta.status.clone());
+    let resolved_finished_at = finished_at.or(meta.finished_at);
+    let now = chrono::Utc::now().timestamp();
+    let elapsed_secs = meta
+        .started_at
+        .map(|s| resolved_finished_at.unwrap_or(now) - s);
+    Ok(JobInfo {
+        job_id: meta.job_id,
+        client_request_id: meta.client_request_id,
+        project: meta.project,
+        goal_id: meta.goal_id,
+        command: meta.command,
+        kind: meta.kind,
+        suite: meta.suite,
+        script_path: meta.script_path,
+        reason: meta.reason,
+        status,
+        created_at: meta.created_at,
+        started_at: meta.started_at,
+        finished_at: resolved_finished_at,
+        max_runtime_secs: meta.max_runtime_secs,
+        executor: meta.executor,
+        pid,
+        exit_code,
+        elapsed_secs,
+        oom_hint: None, // No OOM detection in recover
+    })
+}
+
+/// Find a local job ID by client_request_id. Only reads metadata.json (no status update).
+fn find_local_job_id_by_client_request_id(
+    root: &Path,
+    client_request_id: &str,
+    goal_id: Option<&str>,
+) -> Option<String> {
+    let jobs_dir = root.join(".codex/jobs");
+    let mut candidates: Vec<(i64, String)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&jobs_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if validate_job_id(&name).is_ok() {
+                if let Ok(meta) = read_job_metadata_local(root, &name) {
+                    if meta.client_request_id.as_deref() == Some(client_request_id) {
+                        if goal_id.map(|g| g == meta.goal_id).unwrap_or(true) {
+                            candidates.push((meta.created_at, name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.first().map(|(_, id)| id.clone())
+}
+
+/// Find an SSH job ID by client_request_id using a single grep-based SSH command.
+fn find_ssh_job_id_by_client_request_id(
+    proj: &ProjectConfig,
+    client_request_id: &str,
+    goal_id: Option<&str>,
+    ssh_config: Option<&SshConfig>,
+) -> Option<String> {
+    // Single SSH call: scan recent job dirs, grep metadata for client_request_id
+    let rid_escaped = shell_escape(&format!("\"client_request_id\": \"{}\"", client_request_id));
+    let cmd = format!(
+        "for d in $(find .codex/jobs -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | sort -r | head -100); do \
+         if grep -qF {rid} \".codex/jobs/$d/metadata.json\" 2>/dev/null; then \
+         printf '%s' \"$d\"; break; fi; done",
+        rid = rid_escaped
+    );
+    let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    if code != 0 || stdout.trim().is_empty() {
+        return None;
+    }
+    let job_id = stdout.trim().to_string();
+    if validate_job_id(&job_id).is_err() {
+        return None;
+    }
+    // Verify goal_id if specified
+    if let Some(goal_id) = goal_id {
+        if let Ok(meta) = remote_read_job_metadata(proj, &job_id, ssh_config) {
+            if meta.goal_id != goal_id {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    Some(job_id)
+}
+
+/// Lightweight status update for local jobs (skip OOM detection).
+fn update_job_status_local_basic(root: &Path, meta: &JobMetadata) -> JobInfo {
+    let dir = local_job_dir(root, &meta.job_id);
+    let now = chrono::Utc::now().timestamp();
+    let pid = read_file_to_string(&dir.join("pid")).and_then(|s| s.parse::<i64>().ok());
+    let exit_code = read_file_to_string(&dir.join("exit_code")).and_then(|s| s.parse::<i32>().ok());
+    let mut status =
+        read_file_to_string(&dir.join("status")).unwrap_or_else(|| meta.status.clone());
+    if status == "running" {
+        if let Some(pid) = pid {
+            if meta.started_at.unwrap_or(meta.created_at) + meta.max_runtime_secs < now {
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .status();
+                status = "timeout".to_string();
+                write_status_file(&dir, &status);
+                write_finished_at_file(&dir, now);
+            } else if !pid_running_local(pid) {
+                status = if exit_code.unwrap_or(1) == 0 {
+                    "completed".to_string()
+                } else {
+                    "failed".to_string()
+                };
+                write_status_file(&dir, &status);
+                if read_finished_at_file(&dir).is_none() {
+                    write_finished_at_file(&dir, now);
+                }
+            }
+        }
+    }
+    let finished_at = read_finished_at_file(&dir).or(meta.finished_at);
+    let elapsed_secs = meta.started_at.map(|s| finished_at.unwrap_or(now) - s);
+    // Skip OOM detection (no stderr read) for basic detail
+    JobInfo {
+        job_id: meta.job_id.clone(),
+        client_request_id: meta.client_request_id.clone(),
+        project: meta.project.clone(),
+        goal_id: meta.goal_id.clone(),
+        command: meta.command.clone(),
+        kind: meta.kind.clone(),
+        suite: meta.suite.clone(),
+        script_path: meta.script_path.clone(),
+        reason: meta.reason.clone(),
+        status,
+        created_at: meta.created_at,
+        started_at: meta.started_at,
+        finished_at,
+        max_runtime_secs: meta.max_runtime_secs,
+        executor: meta.executor.clone(),
+        pid,
+        exit_code,
+        elapsed_secs,
+        oom_hint: None,
+    }
+}
+
+/// Lightweight local job info (basic detail, no OOM detection).
+fn local_job_info_basic(root: &Path, job_id: &str) -> Result<JobInfo, String> {
+    let meta = read_job_metadata_local(root, job_id)?;
+    Ok(update_job_status_local_basic(root, &meta))
+}
+
+/// Lightweight status update for SSH jobs (skip kill -0, kill_tree, OOM detection).
+fn update_job_status_ssh_basic(
+    proj: &ProjectConfig,
+    meta: &JobMetadata,
+    ssh_config: Option<&SshConfig>,
+) -> JobInfo {
+    let now = chrono::Utc::now().timestamp();
+    // Single SSH call to read status files (no kill -0, no process tree walk)
+    let (mut status, pid, exit_code, mut finished_at) =
+        remote_job_status_string(proj, &meta.job_id, ssh_config);
+    let status_value = status.take().unwrap_or_else(|| meta.status.clone());
+    // For basic detail, skip kill -0 / kill_tree / timeout checks entirely.
+    // Status is taken at face value from the status file.
+    if status_value == "timeout" && finished_at.is_none() {
+        let (_, _, _, refreshed_finished_at) =
+            remote_job_status_string(proj, &meta.job_id, ssh_config);
+        finished_at = refreshed_finished_at;
+    }
+    let resolved_finished_at = finished_at.or(meta.finished_at);
+    let elapsed_secs = meta
+        .started_at
+        .map(|s| resolved_finished_at.unwrap_or(now) - s);
+    // Skip OOM detection (no stderr read) for basic detail
+    JobInfo {
+        job_id: meta.job_id.clone(),
+        client_request_id: meta.client_request_id.clone(),
+        project: meta.project.clone(),
+        goal_id: meta.goal_id.clone(),
+        command: meta.command.clone(),
+        kind: meta.kind.clone(),
+        suite: meta.suite.clone(),
+        script_path: meta.script_path.clone(),
+        reason: meta.reason.clone(),
+        status: status_value,
+        created_at: meta.created_at,
+        started_at: meta.started_at,
+        finished_at: resolved_finished_at,
+        max_runtime_secs: meta.max_runtime_secs,
+        executor: meta.executor.clone(),
+        pid,
+        exit_code,
+        elapsed_secs,
+        oom_hint: None,
+    }
+}
+
+/// Lightweight SSH job info (basic detail, no kill -0, no OOM detection).
+fn ssh_job_info_basic(
+    proj: &ProjectConfig,
+    job_id: &str,
+    ssh_config: Option<&SshConfig>,
+) -> Result<JobInfo, String> {
+    let meta = remote_read_job_metadata(proj, job_id, ssh_config)?;
+    Ok(update_job_status_ssh_basic(proj, &meta, ssh_config))
+}
+
 #[handler]
 pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(projects) = get_projects(depot) else {
@@ -992,6 +1297,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         error: None,
                         log_total_lines: None,
                         next_cursor: None,
+                        metadata_only: None,
+                        logs_included: None,
+                        warnings: Vec::new(),
                     }));
                     return;
                 }
@@ -1042,6 +1350,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     error: None,
                     log_total_lines: None,
                     next_cursor: None,
+                    metadata_only: None,
+                    logs_included: None,
+                    warnings: Vec::new(),
                 })),
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
@@ -1123,6 +1434,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         error: None,
                         log_total_lines: None,
                         next_cursor: None,
+                        metadata_only: None,
+                        logs_included: None,
+                        warnings: Vec::new(),
                     }));
                     return;
                 }
@@ -1175,6 +1489,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     error: None,
                     log_total_lines: None,
                     next_cursor: None,
+                    metadata_only: None,
+                    logs_included: None,
+                    warnings: Vec::new(),
                 })),
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
@@ -1253,6 +1570,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         error: None,
                         log_total_lines: None,
                         next_cursor: None,
+                        metadata_only: None,
+                        logs_included: None,
+                        warnings: Vec::new(),
                     }));
                     return;
                 }
@@ -1313,6 +1633,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 error: None,
                 log_total_lines: None,
                 next_cursor: None,
+                metadata_only: None,
+                logs_included: None,
+                warnings: Vec::new(),
             }));
         }
         "list" => {
@@ -1351,6 +1674,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 error: None,
                 log_total_lines: None,
                 next_cursor: None,
+                metadata_only: None,
+                logs_included: None,
+                warnings: Vec::new(),
             }));
         }
         "status" => {
@@ -1388,26 +1714,98 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 )));
                 return;
             };
-            let result = if proj.is_ssh() {
-                ssh_job_info(proj, job_id, ssh_config)
+
+            // Determine detail level:
+            // - Default (None) → "basic" (lightweight, no OOM, no logs)
+            // - Explicit "basic" → same as default
+            // - Explicit "logs" → basic + include log tails in response
+            // - If tail_lines > 0 and detail is not explicitly set → auto "logs"
+            //   (方案A: backward-compatible with callers who pass tail_lines)
+            let detail_str = body.detail.as_deref().unwrap_or("basic");
+            let effective_detail = if detail_str == "logs"
+                || (detail_str == "basic" && body.tail_lines > 0 && body.detail.is_none())
+            {
+                "logs"
             } else {
-                local_job_info(&proj.root(), job_id)
+                "basic"
             };
-            match result {
-                Ok(job) => res.render(Json(JobOpResponse {
-                    success: true,
-                    op,
-                    job_id: Some(job.job_id.clone()),
-                    job_ids: vec![job.job_id.clone()],
-                    job: Some(job),
-                    jobs: Vec::new(),
-                    stdout_tail: None,
-                    stderr_tail: None,
-                    summary_markdown: None,
-                    error: None,
-                    log_total_lines: None,
-                    next_cursor: None,
-                })),
+
+            let job_result = if proj.is_ssh() {
+                if effective_detail == "basic" {
+                    ssh_job_info_basic(proj, job_id, ssh_config)
+                } else {
+                    // detail=logs: use basic status + read log tails
+                    ssh_job_info_basic(proj, job_id, ssh_config)
+                }
+            } else if effective_detail == "basic" {
+                local_job_info_basic(&proj.root(), job_id)
+            } else {
+                // detail=logs: use basic status + read log tails
+                local_job_info_basic(&proj.root(), job_id)
+            };
+
+            match job_result {
+                Ok(job) => {
+                    if effective_detail == "logs" {
+                        // Read log tails
+                        let tail_lines = body.tail_lines.clamp(1, 1000);
+                        let (stdout_tail, stderr_tail, log_total_lines) = if proj.is_ssh() {
+                            match ssh_job_log_with_count(
+                                proj,
+                                job_id,
+                                tail_lines,
+                                body.since_line,
+                                ssh_config,
+                            ) {
+                                Ok((out, err, total)) => (Some(out), Some(err), Some(total)),
+                                Err(_) => (None, None, None),
+                            }
+                        } else {
+                            match local_job_log(&proj.root(), job_id, tail_lines, body.since_line) {
+                                Ok((out, err, total)) => (Some(out), Some(err), Some(total)),
+                                Err(_) => (None, None, None),
+                            }
+                        };
+                        let next_cursor =
+                            log_total_lines.and_then(|t| if t > 0 { Some(t + 1) } else { None });
+                        res.render(Json(JobOpResponse {
+                            success: true,
+                            op,
+                            job_id: Some(job.job_id.clone()),
+                            job_ids: vec![job.job_id.clone()],
+                            job: Some(job),
+                            jobs: Vec::new(),
+                            stdout_tail,
+                            stderr_tail,
+                            summary_markdown: None,
+                            error: None,
+                            log_total_lines,
+                            next_cursor,
+                            metadata_only: Some(false),
+                            logs_included: Some(true),
+                            warnings: Vec::new(),
+                        }))
+                    } else {
+                        // basic: no logs
+                        res.render(Json(JobOpResponse {
+                            success: true,
+                            op,
+                            job_id: Some(job.job_id.clone()),
+                            job_ids: vec![job.job_id.clone()],
+                            job: Some(job),
+                            jobs: Vec::new(),
+                            stdout_tail: None,
+                            stderr_tail: None,
+                            summary_markdown: None,
+                            error: None,
+                            log_total_lines: None,
+                            next_cursor: None,
+                            metadata_only: Some(false),
+                            logs_included: Some(false),
+                            warnings: Vec::new(),
+                        }))
+                    }
+                }
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
         }
@@ -1474,6 +1872,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         error: None,
                         log_total_lines: Some(total_lines),
                         next_cursor,
+                        metadata_only: None,
+                        logs_included: None,
+                        warnings: Vec::new(),
                     }))
                 }
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
@@ -1533,6 +1934,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     error: None,
                     log_total_lines: None,
                     next_cursor: None,
+                    metadata_only: None,
+                    logs_included: None,
+                    warnings: Vec::new(),
                 })),
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
@@ -1595,7 +1999,121 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 error: None,
                 log_total_lines: None,
                 next_cursor: None,
+                metadata_only: None,
+                logs_included: None,
+                warnings: Vec::new(),
             }));
+        }
+        "recover" => {
+            // Metadata-only recovery: no log reading, no process checks, no OOM detection.
+            // Priority: job_id takes precedence over client_request_id when both provided.
+            let job_id_owned;
+            let resolved_job_id = if let Some(jid) = body.job_id.as_deref() {
+                jid
+            } else if let Some(crid) = client_request_id {
+                let found = if proj.is_ssh() {
+                    find_ssh_job_id_by_client_request_id(
+                        proj,
+                        crid,
+                        body.goal_id.as_deref(),
+                        ssh_config,
+                    )
+                } else {
+                    find_local_job_id_by_client_request_id(
+                        &proj.root(),
+                        crid,
+                        body.goal_id.as_deref(),
+                    )
+                };
+                match found {
+                    Some(id) => {
+                        job_id_owned = id;
+                        &job_id_owned
+                    }
+                    None => {
+                        res.status_code(StatusCode::NOT_FOUND);
+                        res.render(Json(JobOpResponse {
+                            success: false,
+                            op: op.clone(),
+                            job_id: None,
+                            job_ids: Vec::new(),
+                            job: None,
+                            jobs: Vec::new(),
+                            stdout_tail: None,
+                            stderr_tail: None,
+                            summary_markdown: None,
+                            error: Some("job not found for client_request_id".to_string()),
+                            log_total_lines: None,
+                            next_cursor: None,
+                            metadata_only: Some(true),
+                            logs_included: None,
+                            warnings: Vec::new(),
+                        }));
+                        return;
+                    }
+                }
+            } else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(JobOpResponse {
+                    success: false,
+                    op: op.clone(),
+                    job_id: None,
+                    job_ids: Vec::new(),
+                    job: None,
+                    jobs: Vec::new(),
+                    stdout_tail: None,
+                    stderr_tail: None,
+                    summary_markdown: None,
+                    error: Some("job_id or client_request_id is required for recover".to_string()),
+                    log_total_lines: None,
+                    next_cursor: None,
+                    metadata_only: None,
+                    logs_included: None,
+                    warnings: Vec::new(),
+                }));
+                return;
+            };
+            let result = if proj.is_ssh() {
+                recover_ssh_job_info(proj, resolved_job_id, ssh_config)
+            } else {
+                recover_local_job_info(&proj.root(), resolved_job_id)
+            };
+            match result {
+                Ok(job) => res.render(Json(JobOpResponse {
+                    success: true,
+                    op,
+                    job_id: Some(job.job_id.clone()),
+                    job_ids: vec![job.job_id.clone()],
+                    job: Some(job),
+                    jobs: Vec::new(),
+                    stdout_tail: None,
+                    stderr_tail: None,
+                    summary_markdown: None,
+                    error: None,
+                    log_total_lines: None,
+                    next_cursor: None,
+                    metadata_only: Some(true),
+                    logs_included: Some(false),
+                    warnings: Vec::new(),
+                })),
+                Err(e) => res.render(Json(JobOpResponse {
+                    success: false,
+                    op,
+                    job_id: None,
+                    job_ids: Vec::new(),
+                    job: None,
+                    jobs: Vec::new(),
+                    stdout_tail: None,
+                    stderr_tail: None,
+                    summary_markdown: None,
+                    error: Some(e),
+                    log_total_lines: None,
+                    next_cursor: None,
+                    metadata_only: Some(true),
+                    logs_included: None,
+                    warnings: Vec::new(),
+                })),
+            }
         }
         _ => {
             res.status_code(StatusCode::BAD_REQUEST);
@@ -1605,5 +2123,229 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 Some("unsupported job op".to_string()),
             )));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Create a minimal local job directory for testing.
+    fn create_test_job_dir(root: &Path, job_id: &str, client_request_id: Option<&str>) -> PathBuf {
+        let dir = local_job_dir(root, job_id);
+        fs::create_dir_all(&dir).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let meta = JobMetadata {
+            job_id: job_id.to_string(),
+            client_request_id: client_request_id.map(|s| s.to_string()),
+            project: "testproj".to_string(),
+            goal_id: "goal-1".to_string(),
+            command: "echo hello".to_string(),
+            kind: Some("command".to_string()),
+            suite: None,
+            script_path: None,
+            reason: None,
+            status: "completed".to_string(),
+            created_at: now - 100,
+            started_at: Some(now - 100),
+            finished_at: Some(now - 50),
+            max_runtime_secs: 3600,
+            executor: "local".to_string(),
+            host: None,
+            path: root.to_string_lossy().to_string(),
+        };
+        fs::write(
+            dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+        fs::write(dir.join("status"), "completed").unwrap();
+        fs::write(dir.join("exit_code"), "0").unwrap();
+        fs::write(dir.join("pid"), "12345").unwrap();
+        fs::write(dir.join("finished_at"), (now - 50).to_string()).unwrap();
+        fs::write(dir.join("stdout.log"), "line1\nline2\nline3\n").unwrap();
+        fs::write(dir.join("stderr.log"), "some error output\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn recover_local_job_reads_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let job_id = "test-recover-job-1";
+        create_test_job_dir(root, job_id, Some("crid-001"));
+
+        let info = recover_local_job_info(root, job_id).unwrap();
+        assert_eq!(info.job_id, job_id);
+        assert_eq!(info.client_request_id, Some("crid-001".to_string()));
+        assert_eq!(info.status, "completed");
+        assert_eq!(info.exit_code, Some(0));
+        // recover does NOT read logs, so oom_hint is None
+        assert!(info.oom_hint.is_none());
+    }
+
+    #[test]
+    fn recover_local_job_does_not_read_logs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let job_id = "test-recover-no-logs";
+        let dir = create_test_job_dir(root, job_id, None);
+
+        // Write OOM-like content to stderr - recover should NOT detect it
+        fs::write(dir.join("stderr.log"), "Out of memory\nKilled\n").unwrap();
+
+        let info = recover_local_job_info(root, job_id).unwrap();
+        // recover returns None for oom_hint (no OOM detection)
+        assert!(info.oom_hint.is_none());
+    }
+
+    #[test]
+    fn recover_missing_job_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let result = recover_local_job_info(root, "nonexistent-job");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn find_local_job_by_client_request_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join(".codex/jobs")).unwrap();
+
+        create_test_job_dir(root, "job-a", Some("crid-match"));
+        create_test_job_dir(root, "job-b", Some("crid-other"));
+        create_test_job_dir(root, "job-c", None);
+
+        let found = find_local_job_id_by_client_request_id(root, "crid-match", None);
+        assert_eq!(found, Some("job-a".to_string()));
+
+        let found = find_local_job_id_by_client_request_id(root, "crid-other", None);
+        assert_eq!(found, Some("job-b".to_string()));
+
+        let not_found = find_local_job_id_by_client_request_id(root, "crid-missing", None);
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn find_local_job_by_client_request_id_with_goal_filter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join(".codex/jobs")).unwrap();
+
+        create_test_job_dir(root, "job-x", Some("crid-goal"));
+
+        let found = find_local_job_id_by_client_request_id(root, "crid-goal", Some("goal-1"));
+        assert_eq!(found, Some("job-x".to_string()));
+
+        let not_found =
+            find_local_job_id_by_client_request_id(root, "crid-goal", Some("wrong-goal"));
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn local_job_info_basic_skips_oom_detection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let job_id = "test-basic-no-oom";
+        let dir = create_test_job_dir(root, job_id, None);
+
+        // Write OOM-like content to stderr - basic should NOT detect it
+        fs::write(dir.join("stderr.log"), "CUDA out of memory\n").unwrap();
+        // Make sure status shows the job is no longer running
+        fs::write(dir.join("status"), "completed").unwrap();
+        fs::write(dir.join("exit_code"), "1").unwrap();
+
+        let info = local_job_info_basic(root, job_id).unwrap();
+        // basic detail returns None for oom_hint (no OOM detection)
+        assert!(info.oom_hint.is_none());
+    }
+
+    #[test]
+    fn local_job_info_basic_returns_status_and_exit_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let job_id = "test-basic-status";
+        create_test_job_dir(root, job_id, None);
+
+        let info = local_job_info_basic(root, job_id).unwrap();
+        assert_eq!(info.status, "completed");
+        assert_eq!(info.exit_code, Some(0));
+    }
+
+    #[test]
+    fn local_job_log_reads_logs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let job_id = "test-log-read";
+        let dir = create_test_job_dir(root, job_id, None);
+
+        fs::write(dir.join("stdout.log"), "line1\nline2\nline3\n").unwrap();
+        fs::write(dir.join("stderr.log"), "err1\nerr2\n").unwrap();
+
+        let (stdout, stderr, total) = local_job_log(root, job_id, 10, None).unwrap();
+        assert!(stdout.contains("line1"));
+        assert!(stderr.contains("err1"));
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn openapi_schema_includes_recover_and_detail() {
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../../data/openapi.json")).unwrap();
+
+        // Check "recover" is in op enum
+        let op_enum: Vec<String> = spec["components"]["schemas"]["JobOpRequest"]["properties"]
+            ["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            op_enum.contains(&"recover".to_string()),
+            "op enum should contain 'recover', got: {:?}",
+            op_enum
+        );
+
+        // Check "detail" field exists
+        let detail = &spec["components"]["schemas"]["JobOpRequest"]["properties"]["detail"];
+        assert!(
+            !detail.is_null(),
+            "detail field should exist in JobOpRequest"
+        );
+
+        // Check "metadata_only" and "logs_included" in JobOpResponse
+        let resp_props = &spec["components"]["schemas"]["JobOpResponse"]["properties"];
+        assert!(
+            !resp_props["metadata_only"].is_null(),
+            "metadata_only should exist in JobOpResponse"
+        );
+        assert!(
+            !resp_props["logs_included"].is_null(),
+            "logs_included should exist in JobOpResponse"
+        );
+        assert!(
+            !resp_props["warnings"].is_null(),
+            "warnings should exist in JobOpResponse"
+        );
+    }
+
+    #[test]
+    fn old_status_request_without_detail_deserializes() {
+        // Simulate an old client sending a request without the detail field
+        let request: JobOpRequest = serde_json::from_str(
+            r#"{
+                "op": "status",
+                "project": "myproj",
+                "job_id": "abc-123",
+                "tail_lines": 80
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(request.op, "status");
+        assert!(request.detail.is_none());
+        assert_eq!(request.tail_lines, 80);
     }
 }
