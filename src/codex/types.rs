@@ -727,3 +727,24 @@ pub struct ProjectsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::EditResponse;
+
+    #[test]
+    fn edit_response_deserializes_without_diff_truncated_field() {
+        let response: EditResponse = serde_json::from_str(
+            r#"{
+                "success": true,
+                "changed_files": ["a.txt"],
+                "diff": "@@",
+                "warnings": [],
+                "error": null
+            }"#,
+        )
+        .unwrap();
+        assert!(!response.diff_truncated);
+        assert_eq!(response.changed_files, vec!["a.txt"]);
+    }
+}

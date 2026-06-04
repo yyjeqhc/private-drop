@@ -47,6 +47,16 @@ fn apply_project_description_to_schema(spec: &mut serde_json::Value, schema_name
     }
 }
 
+fn apply_edit_timeout_guidance(spec: &mut serde_json::Value) {
+    spec["paths"]["/api/codex/edit"]["post"]["description"] = serde_json::json!(
+        "Apply structured file edits. For larger or multi-file edits, prefer response_mode=summary. If this times out, do not retry immediately; first check git_status or read the target file to confirm whether the edit was applied."
+    );
+    spec["components"]["schemas"]["EditRequest"]["properties"]["response_mode"]["description"] =
+        serde_json::json!(
+            "Response detail. For larger or multi-file edits, use summary to reduce timeout risk."
+        );
+}
+
 #[handler]
 pub async fn codex_openapi_json(res: &mut Response) {
     let mut spec =
@@ -159,6 +169,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
             "ReportRequest",
         ],
     );
+    apply_edit_timeout_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -166,6 +177,8 @@ pub async fn codex_openapi_json(res: &mut Response) {
 
 #[cfg(test)]
 mod tests {
+    use super::apply_edit_timeout_guidance;
+
     #[test]
     fn apply_project_edit_description_stays_under_300_chars() {
         let spec: serde_json::Value =
@@ -174,6 +187,25 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(description.len() <= 300, "{}", description.len());
+    }
+
+    #[test]
+    fn compact_schema_prefers_summary_for_large_edits() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_edit_timeout_guidance(&mut spec);
+        let description = spec["paths"]["/api/codex/edit"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        let response_mode_description = spec["components"]["schemas"]["EditRequest"]["properties"]
+            ["response_mode"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.len() <= 300, "{}", description.len());
+        assert!(description.contains("response_mode=summary"));
+        assert!(description.contains("check git_status"));
+        assert!(response_mode_description.contains("multi-file edits"));
+        assert!(response_mode_description.contains("use summary"));
     }
 }
 
@@ -266,6 +298,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
             "ReportRequest",
         ],
     );
+    apply_edit_timeout_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
