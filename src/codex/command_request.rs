@@ -1283,37 +1283,25 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 }));
                 return;
             }
-            // If not approving immediately, just create the record and return
+            // If not approving immediately, reject: create_trusted_raw (non-approve)
+            // is currently unsupported because the approve workflow does not know
+            // how to re-execute trusted raw commands. Use create_trusted_raw_and_approve
+            // for short trusted commands, or runJobOp create with trusted=true +
+            // script_text for async jobs.
             if !approve_immediately {
-                let record = build_command_audit_record(
-                    project.clone(),
-                    "trusted_raw".to_string(),
-                    script.trim().to_string(),
-                    body.reason.clone(),
-                    chrono::Utc::now().timestamp(),
-                );
-                if let Err(e) = db.insert_command_request(&record) {
-                    res.render(Json(op_response(
-                        &body.op,
-                        false,
-                        Vec::new(),
-                        Some(format!(
-                            "Failed to create trusted raw command request: {}",
-                            e
-                        )),
-                    )));
-                    return;
-                }
+                res.status_code(StatusCode::BAD_REQUEST);
                 res.render(Json(CommandRequestOpResponse {
-                    success: true,
-                    op: body.op.clone(),
-                    records: vec![record],
+                    success: false,
+                    op: body.op,
+                    records: Vec::new(),
                     goals: Vec::new(),
                     request_id: None,
                     record: None,
                     goal_id: None,
                     goal: None,
-                    error: None,
+                    error: Some(
+                        "create_trusted_raw currently supports only create_trusted_raw_and_approve; use create_trusted_raw_and_approve for short trusted commands or runJobOp create trusted=true + script_text for async jobs".to_string()
+                    ),
                     trusted_result: None,
                 }));
                 return;

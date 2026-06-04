@@ -92,7 +92,7 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         .map_or(true, |s| !s.contains("create_trusted_raw"))
     {
         *cr_op_desc = serde_json::json!(
-            "Command request operations with goal-based approval. Trusted raw mode: use create_trusted_raw_and_approve for short multi-line shell commands (timeout default 120s, max 1800s). For long-running scripts use runJobOp create with trusted=true + script_text. Use response_mode=summary for large output. If timeout, recover with runJobOp recover/status first."
+            "Command request operations with goal-based approval. Trusted raw mode: use create_trusted_raw_and_approve for short multi-line shell commands (timeout default 120s, max 1800s). create_trusted_raw (non-approve) is currently unsupported; use create_trusted_raw_and_approve or runJobOp create with trusted=true + script_text instead. For long-running scripts use runJobOp create with trusted=true + script_text (local executor only; SSH not yet supported). Use response_mode=summary for large output. If timeout, recover with runJobOp recover/status first."
         );
     }
 
@@ -103,7 +103,7 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         .map_or(true, |s| !s.contains("script_text"))
     {
         *job_desc = serde_json::json!(
-            "Job operations. create: use command, script_path, or trusted=true with script_text for multi-line scripts. recover/status first if timeout. detail=basic (default) or detail=logs."
+            "Job operations. create: use command, script_path, or trusted=true with script_text for multi-line scripts (local executor only; SSH not yet supported for script_text). Script is written to .codex/jobs/<job_id>/script.sh with shebang and set -euo pipefail. recover/status first if timeout. detail=basic (default) or detail=logs."
         );
     }
 
@@ -113,20 +113,20 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         if cr_props["script_text"].is_null() {
             cr_props["script_text"] = serde_json::json!({
                 "type": "string",
-                "description": "For create_trusted_raw: multi-line shell script content. Supports grep, python one-liners, file stats."
+                "description": "For create_trusted_raw_and_approve: multi-line shell script content. Supports grep, python one-liners, file stats. create_trusted_raw (non-approve) is currently unsupported."
             });
         }
         if cr_props["timeout_secs"].is_null() {
             cr_props["timeout_secs"] = serde_json::json!({
                 "type": "integer",
-                "description": "For create_trusted_raw: timeout in seconds. Default 120, max 1800."
+                "description": "For create_trusted_raw_and_approve: timeout in seconds. Default 120, max 1800."
             });
         }
         if cr_props["response_mode"].is_null() {
             cr_props["response_mode"] = serde_json::json!({
                 "type": "string",
                 "enum": ["summary", "full", "minimal"],
-                "description": "For create_trusted_raw: summary (default, tail only), full (more output, still truncated), minimal (success/exit_code/cwd only)."
+                "description": "For create_trusted_raw_and_approve: summary (default, tail only), full (more output, still truncated), minimal (success/exit_code/cwd only)."
             });
         }
         // Add create_trusted_raw and create_trusted_raw_and_approve to op enum
@@ -150,13 +150,13 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         if job_props["script_text"].is_null() {
             job_props["script_text"] = serde_json::json!({
                 "type": "string",
-                "description": "For trusted job creation: multi-line script content. Requires trusted=true."
+                "description": "For trusted job creation: multi-line script content. Requires trusted=true. Script is written to .codex/jobs/<job_id>/script.sh. Local executor only; SSH not yet supported for script_text."
             });
         }
         if job_props["trusted"].is_null() {
             job_props["trusted"] = serde_json::json!({
                 "type": "boolean",
-                "description": "For trusted job creation: must be true when script_text is provided."
+                "description": "For trusted job creation: must be true when script_text is provided. SSH executor does not yet support trusted script_text."
             });
         }
     }
@@ -168,7 +168,7 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         if cr_resp_props["trusted_result"].is_null() {
             cr_resp_props["trusted_result"] = serde_json::json!({
                 "type": "object",
-                "description": "For create_trusted_raw / create_trusted_raw_and_approve: structured execution result.",
+                "description": "For create_trusted_raw_and_approve: structured execution result.",
                 "properties": {
                     "exit_code": { "type": "integer" },
                     "duration_ms": { "type": "integer" },

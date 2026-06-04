@@ -104,6 +104,27 @@ pub(super) fn validate_job_script_args(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Build the command that executes a trusted script file in a job directory.
+/// The script is written to `.codex/jobs/<job_id>/script.sh` and the command
+/// simply runs `bash .codex/jobs/<job_id>/script.sh`.
+pub(super) fn build_trusted_script_job_command(job_id: &str) -> String {
+    let script_rel = format!(".codex/jobs/{}/script.sh", job_id);
+    let script_q = shell_escape(&script_rel);
+    format!(
+        "test -f {script} || {{ echo 'trusted script not found' >&2; exit 127; }}; bash {script}",
+        script = script_q
+    )
+}
+
+/// Build the content for a trusted script.sh file.
+/// Includes shebang, `set -euo pipefail`, and the user script.
+pub(super) fn build_trusted_script_content(script_text: &str) -> String {
+    format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\n{}\n",
+        script_text.trim()
+    )
+}
+
 pub(super) fn build_script_job_command(
     script_path: &str,
     script_args: &[String],
@@ -327,19 +348,36 @@ pub(super) fn create_local_job(
     script_path: Option<String>,
     reason: Option<String>,
     max_runtime_secs: i64,
+    trusted_script_text: Option<&str>,
 ) -> Result<JobInfo, String> {
-    validate_job_command(command)?;
+    // For trusted_script_text, the command is a placeholder that will be
+    // replaced with the actual script.sh path after generating job_id.
+    let is_trusted_script = trusted_script_text.is_some();
+    if !is_trusted_script {
+        validate_job_command(command)?;
+    }
     let root = proj.root();
     let job_id = uuid::Uuid::new_v4().to_string();
     let dir = local_job_dir(&root, &job_id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create job dir: {}", e))?;
+    // Determine the actual command to run
+    let actual_command = if is_trusted_script {
+        // Write script.sh BEFORE spawning the job
+        let script_text = trusted_script_text.unwrap();
+        let script_content = build_trusted_script_content(script_text);
+        std::fs::write(dir.join("script.sh"), &script_content)
+            .map_err(|e| format!("Failed to write trusted script.sh: {}", e))?;
+        build_trusted_script_job_command(&job_id)
+    } else {
+        command.to_string()
+    };
     let now = chrono::Utc::now().timestamp();
     let meta = JobMetadata {
         job_id: job_id.clone(),
         client_request_id,
         project: project.to_string(),
         goal_id: goal_id.to_string(),
-        command: command.to_string(),
+        command: actual_command.clone(),
         kind,
         suite,
         script_path,
@@ -360,7 +398,7 @@ pub(super) fn create_local_job(
     .map_err(|e| format!("Failed to write metadata: {}", e))?;
     std::fs::write(
         dir.join("command.sh"),
-        format!("#!/usr/bin/env bash\n{}\n", command),
+        format!("#!/usr/bin/env bash\n{}\n", actual_command),
     )
     .map_err(|e| format!("Failed to write command.sh: {}", e))?;
     std::fs::write(dir.join("status"), "running")
@@ -540,7 +578,13 @@ pub(super) fn create_ssh_job(
     reason: Option<String>,
     max_runtime_secs: i64,
     ssh_config: Option<&SshConfig>,
+    trusted_script_text: Option<&str>,
 ) -> Result<JobInfo, String> {
+    if trusted_script_text.is_some() {
+        return Err(
+            "trusted script_text jobs are currently supported only for local executor; use script_path or create a script file in project for SSH jobs".to_string()
+        );
+    }
     validate_job_command(command)?;
     let job_id = uuid::Uuid::new_v4().to_string();
     let dir = job_dir_rel(&job_id);
@@ -1338,6 +1382,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     reason,
                     max_runtime_secs,
                     ssh_config,
+                    None,
                 )
             } else {
                 create_local_job(
@@ -1351,6 +1396,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     None,
                     reason,
                     max_runtime_secs,
+                    None,
                 )
             };
             match result {
@@ -1420,12 +1466,23 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         res.render(Json(job_response(&op, false, Some(err))));
                         return;
                     }
-                    // Build command that wraps the script with set -euo pipefail
-                    // We embed the script in a heredoc-like fashion for bash -c
-                    let escaped = script_text.replace("'", "'\\''");
-                    let command = format!("set -euo pipefail; '{}'", escaped);
+                    // Reject SSH for now
+                    if proj.is_ssh() {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(job_response(
+                            &op,
+                            false,
+                            Some("trusted script_text jobs are currently supported only for local executor; use script_path or create a script file in project for SSH jobs".to_string()),
+                        )));
+                        return;
+                    }
+                    // We need a job_id to build the script path command, but we don't
+                    // have it yet. Use a placeholder: we'll generate the job_id inside
+                    // create_local_job and write script.sh before spawning.
+                    // For now, pass the raw script_text through and let create_local_job
+                    // handle the script.sh writing and command construction.
                     (
-                        command,
+                        String::new(), // placeholder; will be replaced inside create_local_job
                         "trusted_script".to_string(),
                         None,
                         Some(script_text.to_string()),
@@ -1546,6 +1603,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     body.reason.clone(),
                     max_runtime_secs,
                     ssh_config,
+                    trusted_script_text.as_deref(),
                 )
             } else {
                 create_local_job(
@@ -1559,6 +1617,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     job_script_path.clone(),
                     body.reason.clone(),
                     max_runtime_secs,
+                    trusted_script_text.as_deref(),
                 )
             };
             let job = match result {
@@ -1568,20 +1627,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     return;
                 }
             };
-            // If trusted script_text was provided, write the script file in the job directory
-            // for audit/reference purposes
-            if let Some(ref script_text) = trusted_script_text {
-                let job_dir = local_job_dir(&proj.root(), &job.job_id);
-                let script_path = job_dir.join("script.sh");
-                let script_content = format!(
-                    "#!/usr/bin/env bash\nset -euo pipefail\n{}\n",
-                    script_text.trim()
-                );
-                if let Err(e) = std::fs::write(&script_path, &script_content) {
-                    // Non-fatal: the job is already running, just log the error
-                    tracing::warn!("Failed to write trusted job script audit file: {}", e);
-                }
-            }
             res.render(Json(JobOpResponse {
                 success: true,
                 op,
@@ -1698,6 +1743,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         body.reason.clone(),
                         max_runtime_secs,
                         ssh_config,
+                        None,
                     )
                 } else {
                     create_local_job(
@@ -1713,6 +1759,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         None,
                         body.reason.clone(),
                         max_runtime_secs,
+                        None,
                     )
                 };
                 match result {
@@ -2225,6 +2272,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projects::ProjectConfig;
+    use std::collections::HashMap;
     use std::fs;
 
     /// Create a minimal local job directory for testing.
@@ -2530,5 +2579,154 @@ mod tests {
         assert!(request.detail.is_none());
         // effective_status_detail must return "basic" even though tail_lines > 0
         assert_eq!(effective_status_detail(request.detail.as_deref()), "basic");
+    }
+
+    #[test]
+    fn build_trusted_script_job_command_points_to_script() {
+        let cmd = build_trusted_script_job_command("abc-123");
+        assert!(
+            cmd.contains(".codex/jobs/abc-123/script.sh"),
+            "command should point to script.sh in job dir, got: {}",
+            cmd
+        );
+        assert!(
+            cmd.contains("bash"),
+            "command should use bash, got: {}",
+            cmd
+        );
+        // Must NOT contain the old broken pattern
+        assert!(
+            !cmd.contains("set -euo pipefail; '"),
+            "command should NOT use the old single-quote-wrapped pattern, got: {}",
+            cmd
+        );
+    }
+
+    #[test]
+    fn build_trusted_script_content_includes_all_parts() {
+        let content = build_trusted_script_content("echo hello\necho world");
+        assert!(content.starts_with("#!/usr/bin/env bash\n"));
+        assert!(content.contains("set -euo pipefail"));
+        assert!(content.contains("echo hello"));
+        assert!(content.contains("echo world"));
+    }
+
+    #[test]
+    fn create_local_job_with_trusted_script_text_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = ProjectConfig {
+            path: tmp.path().to_string_lossy().to_string(),
+            executor: crate::projects::Executor::Local,
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            allow_patch: true,
+            allow_command_requests: true,
+            allow_raw_command_requests: true,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+        };
+        std::fs::create_dir_all(tmp.path().join(".codex/jobs")).unwrap();
+
+        let script_text = "echo trusted_job_output";
+        let result = create_local_job(
+            &proj,
+            "test-project",
+            "goal-test",
+            "", // placeholder for trusted_script_text mode
+            None,
+            Some("trusted_script".to_string()),
+            None,
+            None,
+            Some("test reason".to_string()),
+            60,
+            Some(script_text),
+        );
+        assert!(
+            result.is_ok(),
+            "trusted script job creation should succeed: {:?}",
+            result
+        );
+        let job = result.unwrap();
+
+        // Verify script.sh was written before the job spawned
+        let dir = tmp.path().join(".codex/jobs").join(&job.job_id);
+        let script_content = std::fs::read_to_string(dir.join("script.sh")).unwrap();
+        assert!(script_content.contains("#!/usr/bin/env bash"));
+        assert!(script_content.contains("set -euo pipefail"));
+        assert!(script_content.contains("echo trusted_job_output"));
+
+        // Verify command points to script.sh
+        assert!(job.command.contains("script.sh"));
+
+        // Wait for job to complete
+        let mut attempts = 0;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let status =
+                std::fs::read_to_string(dir.join("status")).unwrap_or_else(|_| "running".into());
+            if status != "running" || attempts > 50 {
+                break;
+            }
+            attempts += 1;
+        }
+
+        // Verify output
+        let stdout = std::fs::read_to_string(dir.join("stdout.log")).unwrap_or_default();
+        assert!(
+            stdout.contains("trusted_job_output"),
+            "stdout should contain script output, got: {}",
+            stdout
+        );
+    }
+
+    #[test]
+    fn create_local_job_without_trusted_script_works_normally() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = ProjectConfig {
+            path: tmp.path().to_string_lossy().to_string(),
+            executor: crate::projects::Executor::Local,
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            allow_patch: true,
+            allow_command_requests: true,
+            allow_raw_command_requests: true,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+        };
+        std::fs::create_dir_all(tmp.path().join(".codex/jobs")).unwrap();
+
+        let result = create_local_job(
+            &proj,
+            "test-project",
+            "goal-test",
+            "echo normal_job_output",
+            None,
+            Some("command".to_string()),
+            None,
+            None,
+            Some("test reason".to_string()),
+            60,
+            None,
+        );
+        assert!(
+            result.is_ok(),
+            "normal job creation should succeed: {:?}",
+            result
+        );
+        let job = result.unwrap();
+        assert_eq!(job.command, "echo normal_job_output");
+
+        // No script.sh should exist for non-trusted jobs
+        let dir = tmp.path().join(".codex/jobs").join(&job.job_id);
+        assert!(
+            !dir.join("script.sh").exists(),
+            "script.sh should NOT exist for non-trusted jobs"
+        );
     }
 }
