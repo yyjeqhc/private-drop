@@ -138,3 +138,25 @@ pub struct DesktopTaskOpRequest {
     #[serde(default)]
     pub screenshot_url: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSpecRecord {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub auth_token: String,
+    pub openapi_json: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentModelProfileRecord {
+    pub id: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub temperature: Option<f64>,
+    pub max_rounds: Option<usize>,
+    pub updated_at: i64,
+}

@@ -16,7 +16,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 toml = "0.8"
 base64 = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [dev-dependencies]
 tempfile = "3"

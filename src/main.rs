@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 #[cfg(test)]
 use uuid::Uuid;
 
+mod agent;
 mod auth;
 mod codex;
 mod config;
@@ -35,14 +36,14 @@ pub(crate) use drop_api::{
     list_messages, upload_file,
 };
 pub use models::{
-    Channel, CodexGoalRecord, CommandAuditRecord, CreateDesktopTaskRequest, CreateMessageRequest,
-    DesktopTask, DesktopTaskClaimRequest, DesktopTaskEvent, DesktopTaskEventRequest,
-    DesktopTaskOpRequest, Message, MessageKind,
+    AgentModelProfileRecord, AgentSpecRecord, Channel, CodexGoalRecord, CommandAuditRecord,
+    CreateDesktopTaskRequest, CreateMessageRequest, DesktopTask, DesktopTaskClaimRequest,
+    DesktopTaskEvent, DesktopTaskEventRequest, DesktopTaskOpRequest, Message, MessageKind,
 };
 pub(crate) use openapi::{codex_openapi_compact_json, codex_openapi_json, openapi_json};
 pub(crate) use web::{
-    channel_page, channels_page, desktop_page, desktop_task_page, frontend_app_js,
-    frontend_styles_css, home_page, login_page, message_page, send_page,
+    agent_playground_page, channel_page, channels_page, desktop_page, desktop_task_page,
+    frontend_app_js, frontend_styles_css, home_page, login_page, message_page, send_page,
 };
 
 // ============================================================================
@@ -131,8 +132,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("desktop/tasks/claim_next").post(claim_next_desktop_task))
                 .push(Router::with_path("desktop/tasks/{id}").get(get_desktop_task_detail))
                 .push(Router::with_path("desktop/tasks/{id}/claim").post(claim_desktop_task))
+                .push(Router::with_path("desktop/tasks/{id}/event").post(append_desktop_task_event))
+                .push(Router::with_path("agent/run").post(agent::run_agent))
                 .push(
-                    Router::with_path("desktop/tasks/{id}/event").post(append_desktop_task_event),
+                    Router::with_path("agent/specs")
+                        .get(agent::list_agent_specs)
+                        .post(agent::save_agent_spec),
+                )
+                .push(
+                    Router::with_path("agent/specs/{id}")
+                        .get(agent::get_agent_spec)
+                        .delete(agent::delete_agent_spec),
                 ),
         );
 
@@ -145,6 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(Router::with_path("channels").get(channels_page))
         .push(Router::with_path("send").get(send_page))
         .push(Router::with_path("desktop").get(desktop_page))
+        .push(Router::with_path("agent/playground").get(agent_playground_page))
         .push(Router::with_path("c/{channel}").get(channel_page))
         .push(Router::with_path("m/{id}").get(message_page))
         .push(Router::with_path("desktop/tasks/{id}").get(desktop_task_page))

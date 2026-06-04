@@ -25,7 +25,7 @@ fn app_shell(title: &str, page_js: &str) -> String {
 <body>
 <div class="container">
 <div class="header"><h1>Private Drop</h1></div>
-<div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a><a href="/desktop">Desktop</a></div>
+<div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a><a href="/desktop">Desktop</a><a href="/agent/playground">Agent</a></div>
 <div id="app"><div class="loading">Loading...</div></div>
 </div>
 <script defer>
@@ -339,6 +339,186 @@ pub async fn desktop_task_page(req: &mut Request, _depot: &mut Depot, res: &mut 
         id_json = serde_json::to_string(&id).unwrap()
     );
     res.render(Text::Html(app_shell("Desktop Task", &page_js)));
+}
+
+#[handler]
+pub async fn agent_playground_page(_req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+    let page_js = r#"
+(async function(){
+    if(!requireToken())return;
+    var app=document.getElementById('app');
+    var specs=[];
+    var selectedSpec=null;
+    function pretty(v){try{return JSON.stringify(v,null,2)}catch(e){return String(v)}}
+    function toolList(tools){
+        if(!tools||tools.length===0)return '<div class="card"><p>No tools parsed yet</p></div>';
+        return tools.map(function(t){
+            return '<div class="card" style="margin-bottom:8px">'+
+                '<div class="card-title">'+escapeHtml(t.name)+'</div>'+
+                '<div class="card-meta">'+escapeHtml(t.method+' '+t.path)+'</div>'+
+                '<div class="card-text">'+escapeHtml(t.description||'')+'</div>'+
+            '</div>';
+        }).join('');
+    }
+    function renderTimeline(events){
+        if(!events||events.length===0)return '<div class="card"><p>No run yet</p></div>';
+        return events.map(function(ev){
+            if(ev.type==='assistant_message'){
+                return '<div class="card"><div class="card-header"><div><div class="card-title">Assistant</div><div class="card-meta">round '+ev.round+' · '+ev.latency_ms+'ms</div></div></div>'+
+                    '<div class="card-text" style="max-height:none;white-space:pre-wrap">'+escapeHtml(ev.content||'')+'</div></div>';
+            }
+            if(ev.type==='tool_call'){
+                return '<div class="card"><div class="card-header"><div><div class="card-title">Tool call: '+escapeHtml(ev.name)+'</div><div class="card-meta">round '+ev.round+' · '+escapeHtml(ev.tool_call_id)+'</div></div></div>'+
+                    '<pre class="card-text" style="max-height:none;white-space:pre-wrap">'+escapeHtml(pretty(ev.arguments))+'</pre></div>';
+            }
+            if(ev.type==='tool_response'){
+                return '<div class="card"><div class="card-header"><div><div class="card-title">Tool response: '+escapeHtml(ev.name)+'</div><div class="card-meta">status '+escapeHtml(ev.status||'n/a')+' · '+ev.duration_ms+'ms</div></div></div>'+
+                    (ev.error?'<div class="alert alert-error">'+escapeHtml(ev.error)+'</div>':'')+
+                    '<pre class="card-text" style="max-height:none;white-space:pre-wrap">'+escapeHtml(ev.response_preview||'')+'</pre></div>';
+            }
+            return '<div class="alert alert-error">'+escapeHtml(ev.message||'Unknown error')+'</div>';
+        }).join('');
+    }
+    function renderShell(){
+        app.innerHTML=
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2>Tool Calling Playground</h2><button id="reload" class="btn btn-sm btn-primary">Reload</button></div>'+
+            '<div id="msg"></div>'+
+            '<div class="card"><h3 style="margin-bottom:12px">Model profile</h3>'+
+                '<div class="form-group"><label for="modelBase">base_url</label><input id="modelBase" placeholder="https://api.openai.com/v1"></div>'+
+                '<div class="form-group"><label for="modelKey">api_key</label><input id="modelKey" type="password" placeholder="Stored on server; leave blank to reuse saved key"></div>'+
+                '<div class="form-group"><label for="modelName">model</label><input id="modelName" placeholder="gpt-4.1-mini"></div>'+
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+                    '<div class="form-group"><label for="temp">temperature</label><input id="temp" type="number" min="0" max="2" step="0.1" value="0.2"></div>'+
+                    '<div class="form-group"><label for="rounds">max_rounds</label><input id="rounds" type="number" min="1" max="20" value="6"></div>'+
+                '</div>'+
+            '</div>'+
+            '<div class="card"><h3 style="margin-bottom:12px">Action spec</h3>'+
+                '<div class="form-group"><label for="specSelect">Saved spec</label><select id="specSelect"><option value="">Select spec</option></select></div>'+
+                '<div id="selectedMeta" class="card-meta" style="margin-bottom:12px"></div>'+
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+
+                    '<div class="form-group"><label for="specName">name</label><input id="specName" placeholder="private-drop compact"></div>'+
+                    '<div class="form-group"><label for="actionBase">base_url</label><input id="actionBase" placeholder="https://drop.example.com"></div>'+
+                '</div>'+
+                '<div class="form-group"><label for="actionToken">bearer token</label><input id="actionToken" type="password" placeholder="Stored on server after save"></div>'+
+                '<div class="form-group"><label for="openapiJson">OpenAPI JSON</label><textarea id="openapiJson" rows="12" spellcheck="false" placeholder="{...}"></textarea></div>'+
+                '<div class="form-actions"><button id="saveSpec" class="btn btn-primary">Save spec</button><button id="deleteSpec" class="btn btn-danger" type="button">Delete selected</button></div>'+
+            '</div>'+
+            '<h3 style="margin:20px 0 12px">Parsed tools</h3><div id="tools"></div>'+
+            '<div class="card"><h3 style="margin-bottom:12px">Chat</h3>'+
+                '<div class="form-group"><label for="systemPrompt">system prompt</label><textarea id="systemPrompt" rows="5">You are a tool-calling debugging agent. Use the available actions when needed, then explain the result briefly.</textarea></div>'+
+                '<div class="form-group"><label for="userMessage">user message</label><textarea id="userMessage" rows="5" placeholder="Ask the model to inspect or run something..."></textarea></div>'+
+                '<div class="form-actions"><button id="sendRun" class="btn btn-success">Send</button></div>'+
+            '</div>'+
+            '<h3 style="margin:20px 0 12px">Timeline</h3><div id="timeline"><div class="card"><p>No run yet</p></div></div>';
+        document.getElementById('reload').addEventListener('click',loadSpecs);
+        document.getElementById('saveSpec').addEventListener('click',saveSpec);
+        document.getElementById('deleteSpec').addEventListener('click',deleteSpec);
+        document.getElementById('sendRun').addEventListener('click',runAgent);
+        document.getElementById('specSelect').addEventListener('change',selectSpec);
+    }
+    function fillProfile(profile){
+        profile=profile||{};
+        document.getElementById('modelBase').value=profile.base_url||'';
+        document.getElementById('modelName').value=profile.model||'';
+        document.getElementById('temp').value=profile.temperature==null?'0.2':String(profile.temperature);
+        document.getElementById('rounds').value=profile.max_rounds||6;
+        var key=document.getElementById('modelKey');
+        key.value='';
+        key.placeholder=profile.api_key_masked?('Saved: '+profile.api_key_masked):'Stored on server; leave blank to reuse saved key';
+    }
+    function selectSpec(){
+        var id=document.getElementById('specSelect').value;
+        selectedSpec=specs.find(function(s){return s.id===id})||null;
+        if(!selectedSpec){
+            document.getElementById('selectedMeta').textContent='';
+            document.getElementById('tools').innerHTML='';
+            return;
+        }
+        document.getElementById('specName').value=selectedSpec.name;
+        document.getElementById('actionBase').value=selectedSpec.base_url;
+        document.getElementById('actionToken').value='';
+        document.getElementById('actionToken').placeholder=selectedSpec.auth_token_masked?('Saved: '+selectedSpec.auth_token_masked):'No token saved';
+        document.getElementById('selectedMeta').textContent='id '+selectedSpec.id+' · token '+(selectedSpec.auth_token_masked||'empty');
+        document.getElementById('tools').innerHTML=toolList(selectedSpec.tools);
+        loadSpecDetail(selectedSpec.id);
+    }
+    async function loadSpecDetail(id){
+        var r=await apiCall('/api/agent/specs/'+encodeURIComponent(id));
+        if(!r||!r.ok)return;
+        var d=await r.json();
+        if(document.getElementById('specSelect').value===id){
+            selectedSpec=d;
+            document.getElementById('openapiJson').value=d.openapi_json||'';
+            document.getElementById('tools').innerHTML=toolList(d.tools);
+        }
+    }
+    async function loadSpecs(){
+        var msg=document.getElementById('msg');
+        msg.innerHTML='';
+        var r=await apiCall('/api/agent/specs');
+        if(!r)return;
+        var d=await r.json();
+        if(!r.ok){msg.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to load specs')+'</div>';return}
+        specs=d.specs||[];
+        fillProfile(d.model_profile);
+        var sel=document.getElementById('specSelect');
+        sel.innerHTML='<option value="">Select spec</option>'+specs.map(function(s){return '<option value="'+escapeHtml(s.id)+'">'+escapeHtml(s.name)+'</option>'}).join('');
+        if(specs[0]){sel.value=specs[0].id;selectSpec()}else{document.getElementById('tools').innerHTML='<div class="card"><p>No saved specs yet</p></div>'}
+    }
+    async function saveSpec(){
+        var msg=document.getElementById('msg');
+        msg.innerHTML='';
+        var payload={
+            name:document.getElementById('specName').value.trim(),
+            base_url:document.getElementById('actionBase').value.trim(),
+            auth_token:document.getElementById('actionToken').value,
+            openapi_json:document.getElementById('openapiJson').value
+        };
+        var r=await apiCall('/api/agent/specs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(!r)return;
+        var d=await r.json();
+        if(!r.ok){msg.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to save spec')+'</div>';return}
+        msg.innerHTML='<div class="alert alert-success">Spec saved</div>';
+        await loadSpecs();
+        document.getElementById('specSelect').value=d.id;
+        selectSpec();
+    }
+    async function deleteSpec(){
+        if(!selectedSpec)return;
+        if(!confirm('Delete selected spec?'))return;
+        var r=await apiCall('/api/agent/specs/'+encodeURIComponent(selectedSpec.id),{method:'DELETE'});
+        if(!r)return;
+        await loadSpecs();
+    }
+    async function runAgent(){
+        var msg=document.getElementById('msg');
+        msg.innerHTML='';
+        if(!selectedSpec){msg.innerHTML='<div class="alert alert-error">Select a saved spec first</div>';return}
+        document.getElementById('timeline').innerHTML='<div class="loading">Running...</div>';
+        var payload={
+            spec_id:selectedSpec.id,
+            model_base_url:document.getElementById('modelBase').value.trim(),
+            model_api_key:document.getElementById('modelKey').value,
+            model:document.getElementById('modelName').value.trim(),
+            temperature:Number(document.getElementById('temp').value||0.2),
+            max_rounds:Number(document.getElementById('rounds').value||6),
+            system_prompt:document.getElementById('systemPrompt').value,
+            user_message:document.getElementById('userMessage').value
+        };
+        var r=await apiCall('/api/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(!r)return;
+        var d=await r.json();
+        if(!r.ok){document.getElementById('timeline').innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Run failed')+'</div>';return}
+        var final=d.final_response?'<div class="card"><div class="card-title">Final</div><div class="card-text" style="max-height:none;white-space:pre-wrap">'+escapeHtml(d.final_response)+'</div><div class="card-meta">'+escapeHtml(d.stopped_reason||'')+'</div></div>':'';
+        document.getElementById('timeline').innerHTML=final+renderTimeline(d.timeline||[]);
+        document.getElementById('modelKey').value='';
+        await loadSpecs();
+    }
+    renderShell();
+    await loadSpecs();
+})()
+"#;
+    res.render(Text::Html(app_shell("Agent Playground", page_js)));
 }
 
 #[handler]
