@@ -15,6 +15,7 @@ struct McpServer {
     http: Client,
     base_url: String,
     token: Option<String>,
+    default_action_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +81,7 @@ fn handle_cli_flag() -> bool {
     }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!(
-            "{SERVER_NAME} {}\n\nMCP stdio bridge for Private Drop.\n\nEnvironment:\n  PRIVATE_DROP_MCP_HTTP_BASE  Private Drop base URL (default: {DEFAULT_BASE_URL})\n  PRIVATE_DROP_MCP_TOKEN      Bearer token override\n  DROP_TOKEN                  Bearer token fallback\n  PRIVATE_DROP_MCP_TIMEOUT_SECS HTTP timeout (default: {DEFAULT_TIMEOUT_SECS})",
+            "{SERVER_NAME} {}\n\nMCP stdio bridge for Private Drop.\n\nEnvironment:\n  PRIVATE_DROP_MCP_HTTP_BASE        Private Drop base URL (default: {DEFAULT_BASE_URL})\n  PRIVATE_DROP_MCP_TOKEN            Bearer token override\n  DROP_TOKEN                        Bearer token fallback\n  PRIVATE_DROP_MCP_ACTION_SESSION_ID Optional default audit session id\n  PRIVATE_DROP_MCP_TIMEOUT_SECS     HTTP timeout (default: {DEFAULT_TIMEOUT_SECS})",
             env!("CARGO_PKG_VERSION")
         );
         return true;
@@ -101,6 +102,7 @@ impl McpServer {
             .filter(|secs| *secs > 0)
             .unwrap_or(DEFAULT_TIMEOUT_SECS);
         let token = env_first(["PRIVATE_DROP_MCP_TOKEN", "DROP_TOKEN"]);
+        let default_action_session_id = env_first(["PRIVATE_DROP_MCP_ACTION_SESSION_ID"]);
         let http = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .build()
@@ -109,6 +111,7 @@ impl McpServer {
             http,
             base_url,
             token,
+            default_action_session_id,
         })
     }
 
@@ -232,7 +235,8 @@ impl McpServer {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let mut body = object_from_value(arguments)?;
-        let session_id = remove_optional_string(&mut body, "action_session_id");
+        let session_id = remove_optional_string(&mut body, "action_session_id")
+            .or_else(|| self.default_action_session_id.clone());
         let path = match name {
             "list_projects" => "/api/codex/projects",
             "get_project_context_batch" => "/api/codex/context_batch",
@@ -260,7 +264,11 @@ impl McpServer {
         let (mime_type, text) = match uri {
             "private-drop://projects" => (
                 "application/json",
-                self.http_post_text("/api/codex/projects", &json!({}), None)?,
+                self.http_post_text(
+                    "/api/codex/projects",
+                    &json!({}),
+                    self.default_action_session_id.as_deref(),
+                )?,
             ),
             "private-drop://schema/gpt" => (
                 "application/json",

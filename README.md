@@ -192,7 +192,8 @@ Example MCP client config:
       "command": "/path/to/private-drop/target/release/private-drop-mcp",
       "env": {
         "PRIVATE_DROP_MCP_HTTP_BASE": "http://127.0.0.1:8080",
-        "DROP_TOKEN": "your-secret-token"
+        "DROP_TOKEN": "your-secret-token",
+        "PRIVATE_DROP_MCP_ACTION_SESSION_ID": "work-session-optional"
       }
     }
   }
@@ -200,6 +201,8 @@ Example MCP client config:
 ```
 
 The bridge calls the existing HTTP API, so GPT Actions and MCP share the same project config, auth, safety checks, and action-session audit trail. It exposes tools for project discovery, batched context reads, structured edits, artifacts, git, command requests, jobs, checks, reports, and action sessions.
+
+Set `PRIVATE_DROP_MCP_ACTION_SESSION_ID` to group all MCP calls under one default audit session. Individual tool calls can still override it with `action_session_id`.
 
 Protocol smoke test:
 
