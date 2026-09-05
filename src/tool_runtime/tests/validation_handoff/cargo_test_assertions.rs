@@ -118,7 +118,8 @@ async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_s
 }
 
 #[tokio::test]
-async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_session_validation() {
+async fn handoff_cargo_test_count_gap_preserves_completed_job_and_inconclusive_session_validation()
+{
     let client_id = "vhandoff-test-count";
     let runtime = runtime_with_agent_project(client_id)
         .with_validation_sync_wait(std::time::Duration::from_millis(50));

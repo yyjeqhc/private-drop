@@ -676,7 +676,7 @@ fn validation_evidence_schema() -> Value {
                 "description": "Bounded validation history only; never raw session events."
             },
             "parser": validation_parser_metadata_schema(),
-            "cargo_test_zero_tests_run": schema_type("boolean", "True when a successful cargo_test event explicitly reported zero tests run."),
+            "cargo_test_zero_tests_run": schema_type("boolean", "True when a completed, validator-successful cargo_test execution explicitly reported zero tests run, even if a request-scoped count assertion made the raw ToolResult fail."),
             "skipped": schema_type("boolean", "True only when validation summary generation was explicitly skipped by a closeout caller.")
         },
         "required": [

@@ -223,13 +223,21 @@ See also [`TESTING.md`](../TESTING.md).
   purpose, bounded command summary, project-relative cwd, shell/executor,
   execution state, exit code, detected summary, bounded output metadata,
   timestamps, and failure classification. Full unbounded logs are not ledger
-  evidence.
-- Retry resolution is exact by stable identity. A later success resolves only
-  failures for that identity; it never deletes or rewrites the historical
-  failure and cannot resolve a different assertion.
-- Closeout and review expose `historical_failures`, `resolved_failures`, and
-  `unresolved_failures`. Resolved history is advisory; unresolved command/test
-  failure is a hard blocker.
+  evidence. The projection distinguishes immutable raw ToolResult success from
+  validator/correctness success and request-scoped evidence gaps.
+- Structured validation target identity describes what was executed. Cargo test
+  count assertions such as `require_tests` / `min_tests` are invocation-scoped
+  evidence requirements, not part of that target identity and not durable task
+  obligations.
+- Retry resolution for real validation failures is exact by stable target
+  identity. A later successful validation can resolve only failures for that
+  identity; it never deletes or rewrites historical events. Request-scoped
+  evidence assertion failures remain visible as evidence gaps rather than
+  correctness failures.
+- Closeout and review expose `historical_failures`, `resolved_failures`,
+  `unresolved_failures`, and separate evidence-gap facts. Resolved or stale
+  history is advisory; only current actionable command/test failures are hard
+  blockers.
 - `validation_summary` is a read of existing ledger evidence; it does not
   re-run Cargo/shell or replace `finish_coding_task`. Handoff and finish reuse
   this projection instead of building independent validation truth.

@@ -128,7 +128,6 @@ fn sample_field_value(field: &str) -> Value {
         "expected_head" => json!("a".repeat(40)),
         "expected_generation" => json!(1),
         "expected_revision" => json!(format!("sha256:{}", "a".repeat(64))),
-        "expected_generation" => json!(1),
         "name" => json!("Private Drop"),
         "kind" => json!("note"),
         "message" => json!("hello"),

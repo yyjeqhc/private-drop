@@ -79,7 +79,7 @@ The exact matching metadata and transactional protocol are maintainer details; s
 
 Prefer structured validation such as `cargo_test`, `cargo_check`, or `go_test` when available. Use the smallest check that can detect the regression, and broaden only when the affected boundary requires it.
 
-When a test invocation must prove that tests actually ran, use `require_tests: true` or `min_tests: N`. Otherwise, an exit-zero command that legitimately runs zero tests remains an execution result rather than proof of test coverage.
+When a test invocation must prove that tests actually ran, use `require_tests: true` or `min_tests: N`. These are request-scoped evidence assertions, not persistent Workflow Session requirements. If validator execution succeeds but the requested count cannot be satisfied or proven, closeout retains that invocation as an evidence gap rather than a code/test correctness failure. Otherwise, an exit-zero command that legitimately runs zero tests remains an execution result rather than proof of test coverage.
 
 Use shell/process escape hatches only when the structured validation surface cannot express the check.
 

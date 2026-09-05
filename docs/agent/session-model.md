@@ -467,13 +467,18 @@ a `finish_coding_task` verdict.
   zero-test success never resolves a prior test failure.
 - **Async terminal validation evidence:** structured validation Job metadata carries the same opaque `validation_target_id` as the originating validation attempt. When an authorized validation-summary or Runtime Console Session read observes a retained terminal Job, WebCodex idempotently materializes one bounded `validation_job_terminal` event in that exact Workflow Session before projecting validation state. Idempotence does not depend on that event remaining in the 200-event Session FIFO: the version-1 ledger also persists a serde-defaulted exact Job-id marker set bounded to the Runner authoritative terminal inventory limit (64), and a new materialization evicts only markers absent from the current terminal-candidate snapshot. The marker check, marker insertion, and event append commit under one Session-store mutation, so concurrent reconcilers append at most once and restart restoration keeps the same suppression identity. Terminal reconciliation also serializes authoritative candidate-snapshot acquisition through marker/event materialization within one runtime: a later snapshot cannot commit first, so an older snapshot never gains eviction authority over a marker established from newer inventory. Synthetic evidence uses the authoritative Job `finished_at`; reconciliation never advances Session activity to the wall-clock read time. This is recovery/materialization only: it never re-runs validation, never treats acceptance/handoff as terminal success, and never exposes raw Job output. A later terminal success for the same structured target can therefore resolve an older retained failure even after the acceptance event is gone; the materialized terminal evidence then follows normal Session persistence/retention across Server restart.
 - **Cargo test-count postconditions:** a `cargo_test` caller may require a
-  bounded minimum count. The effective minimum and the structured validation
-  target identity are persisted in local and Runner Job metadata, so terminal
-  projection and reconciliation apply the same contract after handoff or
-  restart. An exit-zero Job remains raw lifecycle `completed`, but its
-  validation projection and Session event are failed when the known count is
-  below the minimum or when bounded output cannot prove a complete count.
-  Omitted assertions preserve zero-test execution compatibility.
+  bounded minimum count with `require_tests` / `min_tests`. These are
+  request-scoped evidence assertions: they are persisted with local and Runner
+  Job metadata so the same invocation is evaluated consistently after handoff
+  or restart, but they are deliberately excluded from the structured validation
+  target identity and do not become durable Workflow Session requirements. If
+  the validator exits successfully while the requested count is below the
+  minimum, or bounded output cannot prove the count, the immutable raw ToolCall
+  failure remains in history while validation projects the execution separately
+  as an evidence gap rather than a code/test correctness failure. A later
+  sufficient validation of the same execution target therefore need not inherit
+  the earlier assertion threshold. Omitted assertions preserve zero-test
+  execution compatibility.
 - **Opaque scope identity:** `comparison.scope_identity` is a domain-separated,
   opaque stable identity (`validation_scope:v1:<sha256>`) over the normalized
   *structured* scope. It never returns a raw command, absolute path, or test
