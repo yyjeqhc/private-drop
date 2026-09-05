@@ -1,12 +1,13 @@
 use crate::{
     continuation_feedback_value, validation_delta_value, CodingSessionRequest,
-    ContinuationFeedbackInput, ContinuationProjectionHooks, ContinuationValidationSnapshot,
-    ListSessionMessagesFilter, PostSessionMessageInput, SessionDiscussionCounts,
-    SessionDiscussionSummary, SessionGuards, SessionMessageKind, SessionMessagePriority,
-    SessionPathHint, SessionStore, SessionToolContract, SessionTransport, ToolCallRecorderMetadata,
-    TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT,
+    ContinuationFeedbackInput, ContinuationProjectionHooks, ContinuationToolFailureSnapshot,
+    ContinuationValidationSnapshot, ListSessionMessagesFilter, PostSessionMessageInput,
+    SessionDiscussionCounts, SessionDiscussionSummary, SessionGuards, SessionMessageKind,
+    SessionMessagePriority, SessionPathHint, SessionStore, SessionToolContract, SessionTransport,
+    ToolCallRecorderMetadata, TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT,
 };
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use webcodex_core::workflow_session_contract::SessionMode;
 
 const PROJECT: &str = "test-project";
@@ -141,6 +142,14 @@ fn empty_discussion() -> SessionDiscussionSummary {
     }
 }
 
+fn raw_failed_event_ids(summary: &crate::SessionSummary) -> HashSet<String> {
+    crate::canonical_tool_call_finished_events(&summary.events)
+        .into_iter()
+        .filter(|event| event.status.as_deref() == Some("failed"))
+        .map(|event| event.event_id.clone())
+        .collect()
+}
+
 fn feedback_for(store: &SessionStore, session_id: &str) -> Value {
     let summary = store.summary(session_id, Some(200)).unwrap();
     let validation = not_run_validation();
@@ -150,6 +159,7 @@ fn feedback_for(store: &SessionStore, session_id: &str) -> Value {
     let discussion = store
         .discussion_summary(session_id, Some(20))
         .unwrap_or_else(|_| empty_discussion());
+    let actionable = raw_failed_event_ids(&summary);
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: &validation,
@@ -160,6 +170,7 @@ fn feedback_for(store: &SessionStore, session_id: &str) -> Value {
         workspace_conflicts: false,
         hooks: meaningful_hooks(),
         current_validation: ContinuationValidationSnapshot::new(&evidence, &current),
+        tool_failures: ContinuationToolFailureSnapshot::new(&actionable),
     })
 }
 
@@ -169,6 +180,7 @@ fn feedback_with_jobs(store: &SessionStore, session_id: &str, jobs: &Value) -> V
     let evidence = validation["current_evidence"].clone();
     let current = empty_current_validation();
     let discussion = empty_discussion();
+    let actionable = raw_failed_event_ids(&summary);
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: &validation,
@@ -179,6 +191,7 @@ fn feedback_with_jobs(store: &SessionStore, session_id: &str, jobs: &Value) -> V
         workspace_conflicts: false,
         hooks: meaningful_hooks(),
         current_validation: ContinuationValidationSnapshot::new(&evidence, &current),
+        tool_failures: ContinuationToolFailureSnapshot::new(&actionable),
     })
 }
 

@@ -1693,7 +1693,7 @@ async fn finish_coding_task_historical_unresolved_current_pass_does_not_request_
     assert_eq!(result.output["validation"]["stale_failure_count"], 1);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         1
     );
     assert_eq!(
@@ -1779,7 +1779,7 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
     assert_eq!(result.output["hygiene_clean"], true);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         1
     );
     assert_eq!(
@@ -1833,7 +1833,7 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
     for key in [
         "expected_count",
         "unexpected_count",
-        "historical_non_actionable_count",
+        "non_actionable_unexpected_count",
         "actionable_unexpected_count",
         "expectation_mismatch_count",
         "unexpected_success_count",
@@ -1955,7 +1955,7 @@ async fn handoff_display_limit_does_not_change_canonical_started_shell_failure_c
         for key in [
             "expected_count",
             "unexpected_count",
-            "historical_non_actionable_count",
+            "non_actionable_unexpected_count",
             "actionable_unexpected_count",
             "expectation_mismatch_count",
             "unexpected_success_count",
@@ -1982,7 +1982,7 @@ async fn handoff_display_limit_does_not_change_canonical_started_shell_failure_c
 
     assert_eq!(finish.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        finish.output["tool_failures"]["historical_non_actionable_count"],
+        finish.output["tool_failures"]["non_actionable_unexpected_count"],
         0
     );
     assert_eq!(
@@ -2055,6 +2055,161 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_c
         &result.output["task_outcome"],
         "blocking_reasons",
         "unexpected_tool_failures",
+    );
+}
+
+#[tokio::test]
+async fn finish_coding_task_combined_early_fmt_and_test_failures_resolve_without_erasing_history() {
+    let fixture = finish_summary_fixture("coding-finish-combined-resolved-validation").await;
+
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        false,
+        json!({"exit_code": 1, "failure_kind": "validation_failed"}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "apply_text_edits",
+        json!({
+            "project": fixture.project.clone(),
+            "changes": [{"kind": "edit", "path": "src/lib.rs"}]
+        }),
+        true,
+        json!({"state_changed": true}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_fmt",
+        json!({"project": fixture.project.clone(), "check": true}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let test_target = json!({
+        "project": fixture.project.clone(),
+        "package": "webcodex",
+        "filter": "focused",
+    });
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        test_target.clone(),
+        false,
+        json!({
+            "exit_code": 101,
+            "failure_kind": "validation_failed",
+            "stdout_tail": "running 1 test\ntest focused ... FAILED\ntest result: FAILED. 0 passed; 1 failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "tests_passed": 0,
+            "tests_failed": 1,
+            "zero_tests_run": false
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "apply_text_edits",
+        json!({
+            "project": fixture.project.clone(),
+            "changes": [{"kind": "edit", "path": "src/lib.rs"}]
+        }),
+        true,
+        json!({"state_changed": true}),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_test",
+        test_target,
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "running 1 test\ntest focused ... ok\ntest result: ok. 1 passed; 0 failed\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "tests_passed": 1,
+            "tests_failed": 0,
+            "zero_tests_run": false
+        }),
+    );
+    record_coding_task_tool_event(
+        &fixture.runtime,
+        &fixture.session_id,
+        "cargo_check",
+        json!({"project": fixture.project.clone()}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let immutable = fixture
+        .runtime
+        .sessions
+        .summary(&fixture.session_id, Some(100))
+        .unwrap();
+    assert_eq!(
+        immutable
+            .events
+            .iter()
+            .filter(|event| event.kind == "tool_call_finished"
+                && event.status.as_deref() == Some("failed"))
+            .count(),
+        2
+    );
+
+    let result = finish_coding_task_summary_only_with_agent(
+        &fixture.runtime,
+        fixture.client_id,
+        fixture.project,
+        fixture.session_id,
+        fixture.auth,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["jobs"]["blocking_active_count"], 0);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 2);
+    assert_eq!(
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
+        2
+    );
+    assert_eq!(
+        result.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(result.output["validation"]["status"], "mixed");
+    assert_eq!(result.output["validation"]["resolved_failure_count"], 2);
+    assert_eq!(result.output["validation"]["unresolved_failure_count"], 0);
+    assert_eq!(result.output["validation"]["current_status"], "passed");
+    assert_eq!(
+        result.output["validation"]["current_unresolved_failure_count"],
+        0
+    );
+    assert_eq!(result.output["task_outcome"]["status"], "pass");
+    assert_eq!(result.output["task_outcome"]["blocking"], false);
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "unexpected_tool_failures",
+    );
+    assert_reason_list_not_contains(
+        &result.output["task_outcome"],
+        "blocking_reasons",
+        "validation_failed",
     );
 }
 
@@ -2249,7 +2404,7 @@ async fn failure_history_fail_closed_attempts_do_not_block_clean_finish() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 3);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         3
     );
     assert_eq!(
@@ -2276,11 +2431,11 @@ async fn failure_history_fail_closed_attempts_do_not_block_clean_finish() {
         .iter()
         .any(|note| note.as_str()
             == Some(
-                "historical fail-closed tool failures are retained as non-actionable evidence"
+                "non-actionable failed tool calls are retained as historical/process evidence"
             )));
     for field in [
         "unexpected_count",
-        "historical_non_actionable_count",
+        "non_actionable_unexpected_count",
         "actionable_unexpected_count",
     ] {
         assert_eq!(
@@ -2347,7 +2502,7 @@ async fn failure_history_started_diagnostic_process_failure_remains_actionable()
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         0
     );
     assert_eq!(
@@ -2414,7 +2569,7 @@ async fn failure_history_started_shell_failure_remains_actionable() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         0
     );
     assert_eq!(
@@ -2522,7 +2677,7 @@ async fn failure_history_missing_effect_proof_remains_actionable() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         0
     );
     assert_eq!(
@@ -2850,7 +3005,7 @@ async fn finish_coding_task_summary_only_treats_read_failure_as_historical_non_a
     assert_eq!(result.output["hygiene_clean"], true);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         1
     );
     assert_eq!(

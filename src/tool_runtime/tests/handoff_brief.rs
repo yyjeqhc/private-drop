@@ -3,7 +3,7 @@
 use super::support::*;
 use crate::tool_runtime::continuation_feedback::{
     continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
-    ContinuationFeedbackInput,
+    ContinuationFeedbackInput, ContinuationToolFailureSnapshot,
 };
 use crate::tool_runtime::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use crate::tool_runtime::sessions::{
@@ -16,6 +16,7 @@ use crate::tool_runtime::validation_events::{
 };
 use crate::tool_runtime::{registered_tool_specs, SessionMode, ToolCall, ToolRuntime};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 const PROJECT: &str = "test-project";
 
@@ -93,6 +94,16 @@ fn discussion(store: &SessionStore, session_id: &str) -> SessionDiscussionSummar
     store.discussion_summary(session_id, Some(20)).unwrap()
 }
 
+fn raw_failed_event_ids(
+    summary: &crate::tool_runtime::sessions::SessionSummary,
+) -> HashSet<String> {
+    crate::tool_runtime::sessions::canonical_tool_call_finished_events(&summary.events)
+        .into_iter()
+        .filter(|event| event.status.as_deref() == Some("failed"))
+        .map(|event| event.event_id.clone())
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn brief_for(
     store: &SessionStore,
@@ -120,6 +131,7 @@ fn brief_for(
     let discussion = discussion(store, session_id);
     let null_jobs = Value::Null;
     let feedback_jobs = jobs.unwrap_or(&null_jobs);
+    let actionable = raw_failed_event_ids(&summary);
     let continuation = continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: feedback_validation,
@@ -134,6 +146,7 @@ fn brief_for(
             > 0,
         hooks: continuation_projection_hooks(),
         current_validation: continuation_validation_snapshot(&current_validation),
+        tool_failures: ContinuationToolFailureSnapshot::new(&actionable),
     });
     build_handoff_brief(HandoffBriefInput {
         session_summary: &summary,

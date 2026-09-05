@@ -2394,7 +2394,7 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
         &json!({}),
     )
     .tool_failures;
-    assert_eq!(projected["historical_non_actionable_count"], 0);
+    assert_eq!(projected["non_actionable_unexpected_count"], 0);
     assert_eq!(projected["actionable_unexpected_count"], 1);
 }
 

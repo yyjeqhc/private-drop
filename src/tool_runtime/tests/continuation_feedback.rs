@@ -10,10 +10,12 @@
 use super::support::*;
 use crate::tool_runtime::continuation_feedback::{
     continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
-    root_tool_is_meaningful, ContinuationFeedbackInput,
+    root_tool_is_meaningful, ContinuationFeedbackInput, ContinuationToolFailureSnapshot,
 };
+use crate::tool_runtime::handoff::reconcile_closeout_evidence;
 use crate::tool_runtime::sessions::{
-    self, SessionDiscussionCounts, SessionGuards, SessionTransport,
+    self, tool_failure_summary_from_events, SessionDiscussionCounts, SessionGuards,
+    SessionTransport,
 };
 use crate::tool_runtime::tool_definition::{
     runtime_tool_captures_validation_output, runtime_tool_is_git_like, runtime_tool_is_shell_like,
@@ -195,6 +197,12 @@ fn exploration_continuity_suggestion_is_lower_priority_than_blocking_evidence() 
     let conflict_validation = validation_summary_from_events(&conflict_summary.events, 20);
     let conflict_current_validation =
         current_validation_evidence_for_session(&conflict_summary, 20);
+    let conflict_tool_failures = tool_failure_summary_from_events(&conflict_summary.events, 20);
+    let conflict_reconciliation = reconcile_closeout_evidence(
+        &conflict_tool_failures,
+        &conflict_summary,
+        &conflict_validation,
+    );
     let conflict_discussion = empty_discussion();
     let conflict_feedback = continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &conflict_summary,
@@ -206,6 +214,9 @@ fn exploration_continuity_suggestion_is_lower_priority_than_blocking_evidence() 
         workspace_conflicts: true,
         hooks: continuation_projection_hooks(),
         current_validation: continuation_validation_snapshot(&conflict_current_validation),
+        tool_failures: ContinuationToolFailureSnapshot::new(
+            &conflict_reconciliation.actionable_unexpected_event_ids,
+        ),
     });
     assert!(!has_exploration_action(&conflict_feedback));
 }
@@ -1101,6 +1112,8 @@ fn feedback_for_with_discussion(
 ) -> Value {
     let validation = validation_summary_from_events(&summary.events, 20);
     let current_validation = current_validation_evidence_for_session(summary, 20);
+    let tool_failures = tool_failure_summary_from_events(&summary.events, 20);
+    let reconciliation = reconcile_closeout_evidence(&tool_failures, summary, &validation);
     let jobs = json!({"active_count": 0, "terminal_pending_count": 0, "recent": []});
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: summary,
@@ -1112,6 +1125,9 @@ fn feedback_for_with_discussion(
         workspace_conflicts: false,
         hooks: continuation_projection_hooks(),
         current_validation: continuation_validation_snapshot(&current_validation),
+        tool_failures: ContinuationToolFailureSnapshot::new(
+            &reconciliation.actionable_unexpected_event_ids,
+        ),
     })
 }
 
@@ -1123,6 +1139,8 @@ fn feedback_for_with_jobs(
 ) -> Value {
     let validation = validation_summary_from_events(&summary.events, 20);
     let current_validation = current_validation_evidence_for_session(summary, 20);
+    let tool_failures = tool_failure_summary_from_events(&summary.events, 20);
+    let reconciliation = reconcile_closeout_evidence(&tool_failures, summary, &validation);
     let discussion = empty_discussion();
     continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: summary,
@@ -1134,5 +1152,8 @@ fn feedback_for_with_jobs(
         workspace_conflicts: false,
         hooks: continuation_projection_hooks(),
         current_validation: continuation_validation_snapshot(&current_validation),
+        tool_failures: ContinuationToolFailureSnapshot::new(
+            &reconciliation.actionable_unexpected_event_ids,
+        ),
     })
 }

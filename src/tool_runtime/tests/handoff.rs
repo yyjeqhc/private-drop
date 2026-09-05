@@ -402,7 +402,7 @@ async fn failure_history_read_only_failure_is_non_actionable_in_handoff() {
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        handoff.output["tool_failures"]["historical_non_actionable_count"],
+        handoff.output["tool_failures"]["non_actionable_unexpected_count"],
         1
     );
     assert_eq!(
@@ -452,7 +452,7 @@ async fn failure_history_started_diagnostic_process_failure_remains_actionable_i
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        handoff.output["tool_failures"]["historical_non_actionable_count"],
+        handoff.output["tool_failures"]["non_actionable_unexpected_count"],
         0
     );
     assert_eq!(
@@ -915,7 +915,7 @@ async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
     assert_eq!(handoff.output["tool_failures"]["expected_count"], 0);
     assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        handoff.output["tool_failures"]["historical_non_actionable_count"],
+        handoff.output["tool_failures"]["non_actionable_unexpected_count"],
         1
     );
     assert_eq!(
@@ -2554,7 +2554,7 @@ async fn session_handoff_historical_mixed_current_pass_does_not_block_closeout()
     );
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         1
     );
     assert_eq!(
@@ -2827,7 +2827,7 @@ async fn session_handoff_keeps_real_proof_after_later_zero_test_event() {
     assert_eq!(result.output["hygiene_clean"], true);
     assert_eq!(result.output["tool_failures"]["unexpected_count"], 1);
     assert_eq!(
-        result.output["tool_failures"]["historical_non_actionable_count"],
+        result.output["tool_failures"]["non_actionable_unexpected_count"],
         1
     );
     assert_eq!(
@@ -2911,7 +2911,7 @@ async fn session_handoff_keeps_real_proof_after_later_zero_test_event() {
     for key in [
         "expected_count",
         "unexpected_count",
-        "historical_non_actionable_count",
+        "non_actionable_unexpected_count",
         "actionable_unexpected_count",
         "expectation_mismatch_count",
         "unexpected_success_count",

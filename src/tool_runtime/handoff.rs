@@ -12,7 +12,7 @@
 
 use super::continuation_feedback::{
     continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
-    ContinuationFeedbackInput,
+    ContinuationFeedbackInput, ContinuationToolFailureSnapshot,
 };
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
 use super::permissions::permission_summary_from_events;
@@ -26,6 +26,7 @@ use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 pub(crate) use webcodex_workflow_session::closeout_work_projection;
 
@@ -302,6 +303,11 @@ impl ToolRuntime {
         let (work_performed, changed_paths) = closeout_work_projection(&summary.events);
         output["work_performed"] = work_performed;
         output["changed_paths"] = changed_paths;
+        let reconciliation = reconcile_closeout_evidence(
+            output.get("tool_failures").unwrap_or(&Value::Null),
+            &closeout_session,
+            &feedback_validation,
+        );
 
         // Continuation feedback: a read-only attempt-summary + validation-delta
         // projection reused across handoff, finish, and start. Built from the
@@ -322,12 +328,10 @@ impl ToolRuntime {
                 > 0,
             hooks: continuation_projection_hooks(),
             current_validation: continuation_validation_snapshot(&continuation_current_validation),
+            tool_failures: ContinuationToolFailureSnapshot::new(
+                &reconciliation.actionable_unexpected_event_ids,
+            ),
         });
-        let reconciliation = reconcile_closeout_evidence(
-            output.get("tool_failures").unwrap_or(&Value::Null),
-            &closeout_session,
-            &feedback_validation,
-        );
         output["tool_failures"] = reconciliation.tool_failures;
         if include_validation {
             output["validation"] = reconciliation.validation;
@@ -678,7 +682,7 @@ pub(crate) fn compact_tool_failures(tool_failures: &Value) -> Value {
     json!({
         "expected_count": tool_failures.get("expected_count").and_then(Value::as_u64).unwrap_or(0),
         "unexpected_count": tool_failures.get("unexpected_count").and_then(Value::as_u64).unwrap_or(0),
-        "historical_non_actionable_count": tool_failures.get("historical_non_actionable_count").and_then(Value::as_u64).unwrap_or(0),
+        "non_actionable_unexpected_count": tool_failures.get("non_actionable_unexpected_count").and_then(Value::as_u64).unwrap_or(0),
         "actionable_unexpected_count": actionable_unexpected_failure_count(tool_failures),
         "expectation_mismatch_count": tool_failures.get("expectation_mismatch_count").and_then(Value::as_u64).unwrap_or(0),
         "unexpected_success_count": tool_failures.get("unexpected_success_count").and_then(Value::as_u64).unwrap_or(0),
@@ -973,10 +977,21 @@ fn compact_workflow_outcomes(
             "declared result expectations matched",
         );
     }
-    if count_field(tool_failures, "historical_non_actionable_count") > 0 {
+    if count_field(tool_failures, "non_actionable_unexpected_count") > 0 {
         push_unique(
             &mut informational_notes,
-            "historical fail-closed tool failures are retained as non-actionable evidence",
+            "non-actionable failed tool calls are retained as historical/process evidence",
+        );
+    }
+    if validation
+        .pointer("/evidence_gaps/count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        push_unique(
+            &mut informational_notes,
+            "validation evidence gaps are retained separately from correctness failures",
         );
     }
 
@@ -1183,6 +1198,7 @@ pub(crate) fn actionable_unexpected_failure_count(tool_failures: &Value) -> u64 
 pub(crate) struct CloseoutEvidenceReconciliation {
     pub(crate) validation: Value,
     pub(crate) tool_failures: Value,
+    pub(crate) actionable_unexpected_event_ids: HashSet<String>,
 }
 
 /// Reconcile immutable ledger history into the single current closeout view used
@@ -1197,24 +1213,35 @@ pub(crate) fn reconcile_closeout_evidence(
     let current = super::validation_events::current_validation_evidence_for_session(summary, 100);
     let mut projected = tool_failures.clone();
     let raw_unexpected = count_field(tool_failures, "unexpected_count");
-    let historical_non_actionable = canonical_tool_call_finished_events(&summary.events)
+    let unexpected_events = canonical_tool_call_finished_events(&summary.events)
         .into_iter()
         .filter(|event| unexpected_failure_event(event))
+        .collect::<Vec<_>>();
+    let non_actionable_event_ids = unexpected_events
+        .iter()
+        .copied()
         .filter(|event| {
-            is_resolved_unexpected_validation_failure(event, &validation)
-                || current
-                    .non_current_failure_event_ids
-                    .contains(&event.event_id)
+            current
+                .non_actionable_tool_failure_event_ids
+                .contains(&event.event_id)
                 || unexpected_failure_is_proven_non_actionable(event)
         })
-        .count() as u64;
-    let historical_non_actionable = historical_non_actionable.min(raw_unexpected);
-    projected["historical_non_actionable_count"] = json!(historical_non_actionable);
+        .map(|event| event.event_id.clone())
+        .collect::<HashSet<_>>();
+    let non_actionable_unexpected = non_actionable_event_ids.len() as u64;
+    let non_actionable_unexpected = non_actionable_unexpected.min(raw_unexpected);
+    let actionable_unexpected_event_ids = unexpected_events
+        .into_iter()
+        .filter(|event| !non_actionable_event_ids.contains(&event.event_id))
+        .map(|event| event.event_id.clone())
+        .collect::<HashSet<_>>();
+    projected["non_actionable_unexpected_count"] = json!(non_actionable_unexpected);
     projected["actionable_unexpected_count"] =
-        json!(raw_unexpected.saturating_sub(historical_non_actionable));
+        json!(raw_unexpected.saturating_sub(non_actionable_unexpected));
     CloseoutEvidenceReconciliation {
         validation,
         tool_failures: projected,
+        actionable_unexpected_event_ids,
     }
 }
 
@@ -1226,38 +1253,6 @@ fn unexpected_failure_event(event: &SessionEvent) -> bool {
             .as_deref()
             .unwrap_or(TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE)
             == TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
-}
-
-fn is_resolved_unexpected_validation_failure(event: &SessionEvent, validation: &Value) -> bool {
-    if !unexpected_failure_event(event) {
-        return false;
-    }
-    let event_project = event
-        .resolved_project
-        .as_deref()
-        .or(event.project.as_deref());
-    validation
-        .pointer("/resolved_failures/events")
-        .and_then(Value::as_array)
-        .is_some_and(|resolved| {
-            resolved.iter().any(|resolved| {
-                // Membership in resolved_failures is decided upstream by the
-                // canonical validation identity. The remaining fields only
-                // correlate that already-resolved validation fact back to its
-                // immutable source Session event; they never infer resolution.
-                resolved
-                    .get("identity")
-                    .and_then(Value::as_str)
-                    .is_some_and(|identity| !identity.is_empty())
-                    && resolved.get("success").and_then(Value::as_bool) == Some(false)
-                    && resolved.get("tool_name").and_then(Value::as_str)
-                        == Some(event.tool_name.as_str())
-                    && resolved.get("session_id").and_then(Value::as_str)
-                        == Some(event.session_id.as_str())
-                    && resolved.get("project").and_then(Value::as_str) == event_project
-                    && resolved.get("completed_at").and_then(Value::as_i64) == event.finished_at
-            })
-        })
 }
 
 fn unexpected_failure_is_proven_non_actionable(event: &SessionEvent) -> bool {

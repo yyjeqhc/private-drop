@@ -102,8 +102,14 @@ async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_s
         .unwrap();
     let validation = validation_summary_for_session(&summary);
     assert_eq!(validation["events_total"], 1);
-    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["status"], "inconclusive");
+    assert_eq!(validation["historical_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    assert_eq!(validation["evidence_gaps"]["count"], 1);
     assert_eq!(validation["latest"]["success"], false);
+    assert_eq!(validation["latest"]["execution_success"], true);
+    assert_eq!(validation["latest"]["validation_passed"], true);
+    assert_eq!(validation["latest"]["failure_class"], "evidence_assertion");
     assert_eq!(validation["latest"]["exit_code"], 0);
     assert_eq!(
         validation["latest"]["test_count_assertion"]["reason_code"],
@@ -234,13 +240,206 @@ async fn handoff_cargo_test_count_failure_preserves_completed_job_and_failed_ses
     let validation = runtime
         .validation_summary_for_session_with_jobs(&summary, 50, Some(&auth))
         .await;
-    assert_eq!(validation["status"], "failed");
+    assert_eq!(validation["status"], "inconclusive");
+    assert_eq!(validation["historical_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    assert_eq!(validation["evidence_gaps"]["count"], 1);
     assert_eq!(validation["latest"]["success"], false);
+    assert_eq!(validation["latest"]["execution_success"], true);
+    assert_eq!(validation["latest"]["validation_passed"], true);
+    assert_eq!(validation["latest"]["failure_class"], "evidence_assertion");
     assert_eq!(validation["latest"]["exit_code"], 0);
     assert_eq!(
         validation["latest"]["test_count_assertion"]["reason_code"],
         "minimum_not_met"
     );
+}
+
+#[tokio::test]
+async fn cargo_test_minimum_misassertion_then_sufficient_same_target_is_non_blocking_at_handoff() {
+    let client_id = "vhandoff-minimum-misassertion-closeout";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_validation_sync_wait(std::time::Duration::from_millis(300));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            structured_cargo_test_count_assertion: true,
+            structured_cargo_test_execution_policy: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
+
+    for (minimum, expect_success) in [(2, false), (1, true)] {
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let auth = auth.clone();
+            let project = project.clone();
+            let session_id = session_id.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::CargoTest {
+                            project,
+                            session_id: Some(session_id),
+                            cwd: None,
+                            filter: Some("focused".to_string()),
+                            all_targets: None,
+                            all_features: None,
+                            no_default_features: None,
+                            features: None,
+                            package: None,
+                            no_run: None,
+                            require_tests: None,
+                            min_tests: Some(minimum),
+                            timeout_secs: Some(600),
+                        },
+                        Some(&auth),
+                    )
+                    .await
+            }
+        });
+        let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
+        runtime
+            .runner_registry
+            .update_job(cargo_test_update(
+                client_id,
+                &request.request_id,
+                &job_id,
+                "completed",
+                "running 1 test\n\ntest focused ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored\n",
+                "",
+                Some(0),
+                completed_progress(),
+                true,
+            ))
+            .await
+            .unwrap();
+
+        let result = task.await.unwrap();
+        assert_eq!(
+            result.success, expect_success,
+            "minimum={minimum}: {result:?}"
+        );
+        assert_eq!(result.output["exit_code"], 0);
+        assert_eq!(result.output["tests_run_count"], 1);
+        assert_eq!(result.output["tests_failed"], 0);
+        assert_eq!(
+            result.output["test_count_assertion"]["reason_code"],
+            if expect_success {
+                "minimum_satisfied"
+            } else {
+                "minimum_not_met"
+            }
+        );
+    }
+
+    let summary = runtime.sessions.summary(&session_id, Some(50)).unwrap();
+    let raw_finished = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_finished" && event.tool_name == "cargo_test")
+        .collect::<Vec<_>>();
+    assert_eq!(raw_finished.len(), 2);
+    assert_eq!(raw_finished[0].status.as_deref(), Some("failed"));
+    assert_eq!(raw_finished[1].status.as_deref(), Some("succeeded"));
+    assert_eq!(
+        raw_finished[0]
+            .validation_output_summary
+            .as_ref()
+            .and_then(|value| value.pointer("/test_count_assertion/reason_code"))
+            .and_then(|value| value.as_str()),
+        Some("minimum_not_met")
+    );
+
+    let validation = validation_summary_for_session(&summary);
+    assert_eq!(validation["status"], "passed");
+    assert_eq!(validation["historical_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 0);
+    assert_eq!(validation["evidence_gaps"]["count"], 1);
+    assert_eq!(validation["events"][0]["success"], false);
+    assert_eq!(validation["events"][0]["validation_passed"], true);
+    assert_eq!(
+        validation["events"][0]["failure_class"],
+        "evidence_assertion"
+    );
+    assert_eq!(
+        validation["events"][0]["identity"],
+        validation["events"][1]["identity"]
+    );
+
+    let handoff = runtime
+        .dispatch_with_auth(
+            ToolCall::SessionHandoffSummary {
+                session_id,
+                project: Some(project),
+                include_workspace: Some(false),
+                include_checkpoints: Some(false),
+                include_validation: Some(true),
+                summary_only: true,
+                limit: Some(50),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["validation"]["status"], "passed");
+    assert_eq!(
+        handoff.output["validation"]["current_evidence"]["status"],
+        "passed"
+    );
+    assert_eq!(
+        handoff.output["validation"]["current_evidence"]["evidence_gap_event_count"],
+        1
+    );
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        handoff.output["tool_failures"]["non_actionable_unexpected_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+    assert_eq!(
+        handoff.output["continuation_feedback"]["attempt"]["activity"]["failed_tool_calls"],
+        1
+    );
+    assert_eq!(
+        handoff.output["continuation_feedback"]["attempt"]["activity"]
+            ["actionable_failed_tool_calls"],
+        0
+    );
+    assert_eq!(
+        handoff.output["continuation_feedback"]["attempt"]["validation"]
+            ["evidence_gap_event_count"],
+        1
+    );
+    let continuation_reasons = handoff.output["continuation_feedback"]["attempt"]["outcome"]
+        ["reason_codes"]
+        .as_array()
+        .expect("continuation reason_codes");
+    assert!(!continuation_reasons
+        .iter()
+        .any(|reason| reason == "actionable_failed_tool_calls"));
+    assert_eq!(handoff.output["task_outcome"]["blocking"], false);
+    let blocking_reasons = handoff.output["task_outcome"]["blocking_reasons"]
+        .as_array()
+        .expect("blocking_reasons");
+    assert!(!blocking_reasons
+        .iter()
+        .any(|reason| reason == "unexpected_tool_failures"));
+    assert!(!blocking_reasons
+        .iter()
+        .any(|reason| reason == "validation_failed"));
 }
 
 #[tokio::test]

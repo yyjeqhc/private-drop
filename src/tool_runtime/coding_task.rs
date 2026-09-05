@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use super::continuation_feedback::{
     continuation_feedback_value, continuation_projection_hooks, continuation_validation_snapshot,
     not_applicable_continuation_feedback_value, ContinuationFeedbackInput,
+    ContinuationToolFailureSnapshot,
 };
 use super::handoff::{
     actionable_unexpected_failure_count, apply_compact_workflow_outcomes, closeout_work_projection,
@@ -1397,6 +1398,10 @@ impl ToolRuntime {
                 &closeout_session_summary,
                 20,
             );
+        let raw_tool_failures =
+            tool_failure_summary_from_events(&closeout_session_summary.events, 10);
+        let reconciliation =
+            reconcile_closeout_evidence(&raw_tool_failures, &closeout_session_summary, &validation);
         let continuation_feedback = if closeout_session_summary.events.is_empty() {
             not_applicable_continuation_feedback_value("empty_session")
         } else {
@@ -1416,6 +1421,9 @@ impl ToolRuntime {
                 current_validation: continuation_validation_snapshot(
                     &continuation_current_validation,
                 ),
+                tool_failures: ContinuationToolFailureSnapshot::new(
+                    &reconciliation.actionable_unexpected_event_ids,
+                ),
             })
         };
 
@@ -1431,10 +1439,10 @@ impl ToolRuntime {
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
             },
-            "validation": validation,
+            "validation": reconciliation.validation,
             "continuation_feedback": continuation_feedback,
             "permissions": permissions,
-            "tool_failures": tool_failure_summary_from_events(&closeout_session_summary.events, 10),
+            "tool_failures": reconciliation.tool_failures,
             "review_evidence": review_evidence,
             "work_performed": work_performed,
             "changed_paths": changed_paths,
@@ -1445,13 +1453,6 @@ impl ToolRuntime {
             "llm_summary": false,
             "final_warnings": final_warnings,
         });
-        let reconciliation = reconcile_closeout_evidence(
-            output.get("tool_failures").unwrap_or(&Value::Null),
-            &closeout_session_summary,
-            output.get("validation").unwrap_or(&Value::Null),
-        );
-        output["tool_failures"] = reconciliation.tool_failures;
-        output["validation"] = reconciliation.validation;
         output["suggested_next_actions"] = json!(finish_suggested_next_actions(&output));
         output["handoff_brief"] = build_handoff_brief(HandoffBriefInput {
             session_summary: &closeout_session_summary,
@@ -1521,6 +1522,9 @@ impl ToolRuntime {
             projection_summary,
             20,
         );
+        let raw_tool_failures = tool_failure_summary_from_events(&projection_summary.events, 10);
+        let reconciliation =
+            reconcile_closeout_evidence(&raw_tool_failures, projection_summary, &validation);
         let (discussion, _) = self.discussion_snapshot(&summary.session_id);
         continuation_feedback_value(ContinuationFeedbackInput {
             session_summary: projection_summary,
@@ -1532,6 +1536,9 @@ impl ToolRuntime {
             workspace_conflicts,
             hooks: continuation_projection_hooks(),
             current_validation: continuation_validation_snapshot(&current_validation),
+            tool_failures: ContinuationToolFailureSnapshot::new(
+                &reconciliation.actionable_unexpected_event_ids,
+            ),
         })
     }
 
@@ -2472,6 +2479,7 @@ fn compact_finish_validation(validation: &Value) -> Value {
         "failures": validation.get("failures").and_then(Value::as_u64).unwrap_or(0),
         "resolved_failure_count": validation.pointer("/resolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
         "unresolved_failure_count": validation.pointer("/unresolved_failures/count").and_then(Value::as_u64).unwrap_or(0),
+        "evidence_gap_count": validation.pointer("/evidence_gaps/count").and_then(Value::as_u64).unwrap_or(0),
         "current_status": current.get("status").cloned().unwrap_or_else(|| json!("unknown")),
         "current_reason": current.get("reason").cloned().unwrap_or(Value::Null),
         "current_validation_events": current.get("events_total").and_then(Value::as_u64).unwrap_or(0),
@@ -2479,6 +2487,7 @@ fn compact_finish_validation(validation: &Value) -> Value {
         "current_failures": current.get("failures").and_then(Value::as_u64).unwrap_or(0),
         "current_resolved_failure_count": current.get("resolved_failure_count").and_then(Value::as_u64).unwrap_or(0),
         "current_unresolved_failure_count": current.get("unresolved_failure_count").and_then(Value::as_u64).unwrap_or(0),
+        "current_evidence_gap_event_count": current.get("evidence_gap_event_count").and_then(Value::as_u64).unwrap_or(0),
         "stale_failure_count": current.get("stale_failure_count").and_then(Value::as_u64).unwrap_or(0),
         "cargo_test_zero_tests_run": validation_has_cargo_test_zero_tests(validation),
     })

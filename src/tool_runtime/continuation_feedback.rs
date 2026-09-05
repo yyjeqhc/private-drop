@@ -9,7 +9,7 @@ use super::validation_events::CurrentValidationEvidenceProjection;
 pub(crate) use webcodex_workflow_session::{
     continuation_feedback_value, not_applicable_continuation_feedback_value,
     validation_delta_value, ContinuationFeedbackInput, ContinuationProjectionHooks,
-    ContinuationValidationSnapshot, EXPLORATION_CONTINUITY_ACTION,
+    ContinuationToolFailureSnapshot, ContinuationValidationSnapshot, EXPLORATION_CONTINUITY_ACTION,
 };
 
 pub(crate) fn continuation_projection_hooks() -> ContinuationProjectionHooks {

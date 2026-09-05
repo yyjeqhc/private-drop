@@ -1,13 +1,15 @@
 use crate::{
     build_handoff_brief, continuation_feedback_value, handoff_brief_size, CodingSessionRequest,
-    ContinuationFeedbackInput, ContinuationProjectionHooks, ContinuationValidationSnapshot,
-    HandoffBriefInput, PostSessionMessageInput, SessionDiscussionSummary, SessionGuards,
-    SessionMessageKind, SessionMessagePriority, SessionPathHint, SessionStore, SessionToolContract,
-    SessionTransport, HANDOFF_BRIEF_HARD_MAX_BYTES, HANDOFF_CHANGED_PATHS_MAX_ITEMS,
-    HANDOFF_INSTRUCTION_MAX_CHARS, HANDOFF_NEXT_ACTIONS_MAX_ITEMS, HANDOFF_OPEN_FAILURES_MAX_ITEMS,
+    ContinuationFeedbackInput, ContinuationProjectionHooks, ContinuationToolFailureSnapshot,
+    ContinuationValidationSnapshot, HandoffBriefInput, PostSessionMessageInput,
+    SessionDiscussionSummary, SessionGuards, SessionMessageKind, SessionMessagePriority,
+    SessionPathHint, SessionStore, SessionToolContract, SessionTransport,
+    HANDOFF_BRIEF_HARD_MAX_BYTES, HANDOFF_CHANGED_PATHS_MAX_ITEMS, HANDOFF_INSTRUCTION_MAX_CHARS,
+    HANDOFF_NEXT_ACTIONS_MAX_ITEMS, HANDOFF_OPEN_FAILURES_MAX_ITEMS,
     HANDOFF_RECENT_FILES_MAX_ITEMS, TEST_ONLY_PROJECT_SESSION_AUTHORITY_FINGERPRINT,
 };
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use webcodex_core::workflow_session_contract::SessionMode;
 
 const PROJECT: &str = "test-project";
@@ -186,6 +188,14 @@ fn discussion(store: &SessionStore, session_id: &str) -> SessionDiscussionSummar
     store.discussion_summary(session_id, Some(20)).unwrap()
 }
 
+fn raw_failed_event_ids(summary: &crate::SessionSummary) -> HashSet<String> {
+    crate::canonical_tool_call_finished_events(&summary.events)
+        .into_iter()
+        .filter(|event| event.status.as_deref() == Some("failed"))
+        .map(|event| event.event_id.clone())
+        .collect()
+}
+
 fn current_snapshot_values(validation: &Value) -> (Value, Value) {
     let evidence = validation
         .get("current_evidence")
@@ -228,6 +238,7 @@ fn brief_for(
     let discussion = discussion(store, session_id);
     let null_jobs = Value::Null;
     let feedback_jobs = jobs.unwrap_or(&null_jobs);
+    let actionable = raw_failed_event_ids(&summary);
     let continuation = continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: feedback_validation,
@@ -245,6 +256,7 @@ fn brief_for(
             &current_evidence,
             &current_validation,
         ),
+        tool_failures: ContinuationToolFailureSnapshot::new(&actionable),
     });
     build_handoff_brief(HandoffBriefInput {
         session_summary: &summary,
@@ -716,6 +728,7 @@ fn handoff_brief_hard_limit_uses_actual_escaped_json_bytes() {
     let (current_evidence, current_validation) = current_snapshot_values(&validation);
     let discussion = discussion(&store, &session_id);
     let jobs = empty_jobs();
+    let actionable = raw_failed_event_ids(&summary);
     let mut feedback = continuation_feedback_value(ContinuationFeedbackInput {
         session_summary: &summary,
         validation: &validation,
@@ -729,6 +742,7 @@ fn handoff_brief_hard_limit_uses_actual_escaped_json_bytes() {
             &current_evidence,
             &current_validation,
         ),
+        tool_failures: ContinuationToolFailureSnapshot::new(&actionable),
     });
     mutate_feedback_to_worst_case(&mut feedback);
     let mut workspace = dirty_workspace(0);

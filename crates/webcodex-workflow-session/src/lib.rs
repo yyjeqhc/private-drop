@@ -39,7 +39,7 @@ pub use console::{
 pub use continuation::{
     continuation_feedback_value, not_applicable_continuation_feedback_value,
     validation_delta_value, ContinuationFeedbackInput, ContinuationProjectionHooks,
-    ContinuationValidationSnapshot, EXPLORATION_CONTINUITY_ACTION,
+    ContinuationToolFailureSnapshot, ContinuationValidationSnapshot, EXPLORATION_CONTINUITY_ACTION,
 };
 pub use events::{
     canonical_tool_call_finished_events, current_attempt_event_view, exploration_tool_kind,
