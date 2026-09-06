@@ -11,6 +11,31 @@ use crate::runner_protocol::{
 };
 use serde_json::json;
 
+fn run_jobs_test_in_large_stack_thread<F, Fut>(test: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
+    // Some end-to-end Job fixtures retain several auth identities, Job handles,
+    // and the generic dispatch future across many awaits. Keep that integration
+    // stack local to the fixture instead of raising RUST_MIN_STACK for the suite.
+    let result = std::thread::Builder::new()
+        .name("runtime-job-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build isolated runtime Job test runtime")
+                .block_on(test());
+        })
+        .expect("spawn isolated runtime Job test thread")
+        .join();
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 #[tokio::test]
 async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     let runtime = runtime_with_agent_project("telemetry-shell");
@@ -1813,8 +1838,14 @@ async fn managed_user_job_inventory_and_counts_do_not_cross_owner() {
     assert_eq!(bootstrap_ids, expected);
 }
 
-#[tokio::test]
-async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
+#[test]
+fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group() {
+    run_jobs_test_in_large_stack_thread(
+        shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group_body,
+    );
+}
+
+async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group_body() {
     let runtime = test_runtime();
     let shared_a = shared_key_auth_context("hash-a");
     let shared_b = shared_key_auth_context("hash-b");

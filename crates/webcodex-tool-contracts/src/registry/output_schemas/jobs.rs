@@ -649,14 +649,14 @@ fn observe_jobs_output_schema() -> Value {
         "required": ["items", "wait"]
     });
     let successful_output = json!({
-        "anyOf": [batch_output.clone(), sparse_success_output]
+        "anyOf": [batch_output.clone(), sparse_success_output.clone()]
     });
     json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
             "success": {"type": "boolean"},
-            "output": {"anyOf": [successful_output.clone(), {"type": "object", "additionalProperties": true}, {"type": "null"}]},
+            "output": {"anyOf": [batch_output.clone(), sparse_success_output, {"type": "object", "additionalProperties": true}, {"type": "null"}]},
             "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
         },
         "required": ["success", "output"],

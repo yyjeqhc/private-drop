@@ -378,9 +378,8 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         spec.input_schema["properties"]["items"]["items"]["additionalProperties"],
         false
     );
-    let successful_output = &spec.output_schema["properties"]["output"]["anyOf"][0];
-    let output = &successful_output["anyOf"][0];
-    let sparse_output = &successful_output["anyOf"][1];
+    let output = &spec.output_schema["properties"]["output"]["anyOf"][0];
+    let sparse_output = &spec.output_schema["properties"]["output"]["anyOf"][1];
     assert_eq!(
         output["properties"]["wait"]["properties"]["outcome"]["enum"],
         json!(["immediate", "updated", "terminal", "item_error", "timeout"])
