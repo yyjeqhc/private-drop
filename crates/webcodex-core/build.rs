@@ -3,6 +3,11 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
+    // The same target directory may be reused by multiple Git worktrees. Track
+    // the runtime manifest location so Cargo reruns this build script when the
+    // active worktree changes instead of retaining another worktree's Git
+    // metadata paths and embedded build identity.
+    println!("cargo:rerun-if-env-changed=CARGO_MANIFEST_DIR");
     let repo_root = repository_root();
     println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_COMMIT");
     println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_DIRTY");
@@ -48,10 +53,16 @@ fn env_value(name: &str) -> Option<String> {
 }
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    // Read this at build-script runtime. `env!("CARGO_MANIFEST_DIR")` bakes the
+    // path into the build-script executable, which is unsafe when Cargo reuses
+    // that executable from a shared target directory in another worktree.
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    manifest_dir
         .join("../..")
         .canonicalize()
-        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .unwrap_or_else(|_| manifest_dir.join("../.."))
 }
 
 fn git_commit_from_git(repo_root: &Path) -> String {
