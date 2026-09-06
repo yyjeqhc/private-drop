@@ -259,7 +259,7 @@ pub fn read_files_input_schema() -> Value {
         (
             "max_result_bytes",
             "integer",
-            "Optional primary model-facing batch projection budget in bytes. Defaults to 64 KiB; raise only for explicit broad/deep reads, up to 256 KiB. Independently bounded Session/continuity protocol overlays are preserved outside this budget.",
+            "Optional primary model-facing batch projection budget in bytes. Defaults to 64 KiB; raise only for explicit broad/deep reads, up to 256 KiB. If the current budget cannot return any part of the first remaining item, the result supplies a bounded increase_result_budget suggested call; otherwise batch continuation reuses the current budget. Independently bounded Session/continuity protocol overlays are preserved outside this budget.",
             false,
         ),
     ]));

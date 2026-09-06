@@ -816,6 +816,7 @@ impl ToolRuntime {
 
         let project = tool_project(&call);
         let deferred_search_projection = super::dispatch::SearchModelProjection::capture(&call);
+        let deferred_read_projection = super::read_files::ReadModelProjection::capture(&call);
         let defer_batch_model_projection = context.session_id.is_some()
             && matches!(
                 &call,
@@ -878,7 +879,10 @@ impl ToolRuntime {
         if defer_batch_model_projection {
             match request.tool_name.as_str() {
                 "read_files" => {
-                    super::read_files::enforce_final_model_facing_hard_cap(&mut result);
+                    super::read_files::enforce_final_model_facing_hard_cap(
+                        &mut result,
+                        &deferred_read_projection,
+                    );
                 }
                 "search_project_texts" => {
                     let default_timeouts = match &deferred_search_projection {
@@ -902,7 +906,19 @@ impl ToolRuntime {
                 &deferred_search_projection,
                 &mut result,
             );
+            if request.tool_name == "read_files" {
+                super::read_files::add_actionable_read_continuations(
+                    &deferred_read_projection,
+                    &mut result,
+                );
+            }
             super::dispatch::sparsify_complete_read_success(&request.tool_name, &mut result);
+        }
+        if context.session_id.is_some() && request.tool_name == "read_file" {
+            super::read_files::add_actionable_read_continuations(
+                &deferred_read_projection,
+                &mut result,
+            );
         }
         if request.tool_name == "tool_manifest" {
             super::surface::sparsify_tool_manifest_model_result(&mut result);

@@ -3365,7 +3365,11 @@ fn batch_budget_preserves_recorder_overlay_for_no_ack_read_batch() {
                 &recorded,
             )
         );
-        super::super::read_files::apply_model_facing_output_budget(&mut response, None);
+        super::super::read_files::apply_model_facing_output_budget(
+            &mut response,
+            None,
+            &super::super::read_files::ReadModelProjection::None,
+        );
         super::super::dispatch::sparsify_complete_read_success("read_files", &mut response);
         assert!(response.output.get("session_recorded").is_none());
         assert!(response.output.get("session_event_id").is_none());

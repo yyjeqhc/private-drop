@@ -257,6 +257,7 @@ async fn read_file_dispatch_complete_success_is_sparse_after_session_recording()
         "end_line",
         "has_more",
         "next_start_line",
+        "continuation",
     ] {
         assert!(
             result.output.get(omitted).is_none(),
@@ -339,11 +340,95 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
     assert_eq!(result.output["end_line"], 2);
     assert_eq!(result.output["has_more"], true);
     assert_eq!(result.output["next_start_line"], 3);
+    let continuation = &result.output["continuation"];
+    assert_eq!(continuation["kind"], "read_range");
+    assert_eq!(continuation["safe_cursor"], true);
+    assert_eq!(continuation["snapshot_stable"], false);
+    assert_eq!(
+        continuation["source_sha256"],
+        format!("{:x}", Sha256::digest(content.as_bytes()))
+    );
+    assert_eq!(continuation["suggested_call"]["tool"], "read_file");
+    let next_call = ToolCall::from_tool_name(
+        continuation["suggested_call"]["tool"].as_str().unwrap(),
+        continuation["suggested_call"]["arguments"].clone(),
+    )
+    .expect("read_file continuation suggested_call must parse");
+    assert!(matches!(
+        next_call,
+        ToolCall::ReadFile {
+            project: ref next_project,
+            path: ref next_path,
+            start_line: Some(3),
+            limit: Some(1),
+            ..
+        } if next_project == &project && next_path == "src/lib.rs"
+    ));
 
     let schema = crate::tool_runtime::registry::output_schema_for_tool("read_file");
     let serialized = serde_json::to_value(&result).unwrap();
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
         .unwrap_or_else(|error| panic!("partial read_file success must match schema: {error}"));
+}
+
+#[tokio::test]
+async fn read_file_continuation_is_positional_not_snapshot_stable() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "read-source-change";
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let first_content = "one\ntwo\nthree";
+
+    let first = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project,
+                        path: "src/lib.rs".to_string(),
+                        session_id: None,
+                        start_line: Some(1),
+                        limit: Some(1),
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    complete_read(&runtime, client_id, &request, first_content).await;
+    let first = first.await.unwrap();
+    let first_sha = first.output["sha256"].as_str().unwrap().to_string();
+    let suggested = &first.output["continuation"]["suggested_call"];
+    let next_call = ToolCall::from_tool_name(
+        suggested["tool"].as_str().unwrap(),
+        suggested["arguments"].clone(),
+    )
+    .expect("positional continuation must parse");
+
+    // Insert a line before the cursor between calls. The next read is still a
+    // deterministic absolute line read, but it is intentionally not frozen to
+    // the first file snapshot.
+    let changed_content = "zero\none\ntwo\nthree";
+    let second = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move { runtime.dispatch_with_auth(next_call, Some(&auth)).await }
+    });
+    let request = next_read_request(&runtime, client_id).await;
+    assert_eq!(request.start_line, Some(2));
+    complete_read(&runtime, client_id, &request, changed_content).await;
+    let second = second.await.unwrap();
+    assert!(second.success, "{:?}", second.error);
+    assert_eq!(second.output["text"], "one");
+    assert_ne!(second.output["sha256"], first_sha);
+    assert_eq!(first.output["continuation"]["source_sha256"], first_sha);
+    assert_eq!(first.output["continuation"]["snapshot_stable"], false);
 }
 
 #[tokio::test]
@@ -390,6 +475,7 @@ async fn read_file_dispatch_complete_explicit_range_keeps_full_range_metadata() 
     assert_eq!(result.output["end_line"], 2);
     assert_eq!(result.output["has_more"], false);
     assert!(result.output["next_start_line"].is_null());
+    assert!(result.output.get("continuation").is_none());
 
     let schema = crate::tool_runtime::registry::output_schema_for_tool("read_file");
     let serialized = serde_json::to_value(&result).unwrap();
@@ -496,6 +582,80 @@ async fn read_files_dispatch_complete_batch_is_sparse_and_schema_valid() {
 }
 
 #[tokio::test]
+async fn read_files_partial_item_has_actionable_item_continuation() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "read-batch-item-continuation";
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let auth = auth_context(None, true);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFiles {
+                        project,
+                        items: vec![
+                            item("src/lib.rs", Some(2), Some(1)),
+                            item("src/main.rs", None, None),
+                        ],
+                        session_id: None,
+                        with_line_numbers: Some(true),
+                        max_result_bytes: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    for _ in 0..2 {
+        let request = next_read_request(&runtime, client_id).await;
+        let content = match request.path.as_deref() {
+            Some("src/lib.rs") => "one\ntwo\nthree",
+            Some("src/main.rs") => "main",
+            other => panic!("unexpected read path: {other:?}"),
+        };
+        complete_read(&runtime, client_id, &request, content).await;
+    }
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["output_truncated"], false);
+    assert!(result.output.get("continuation").is_none());
+    let items = result.output["items"].as_array().unwrap();
+    let continuation = &items[0]["continuation"];
+    assert_eq!(continuation["kind"], "read_range");
+    assert_eq!(continuation["safe_cursor"], true);
+    assert_eq!(continuation["snapshot_stable"], false);
+    let suggested = &continuation["suggested_call"];
+    let next_call = ToolCall::from_tool_name(
+        suggested["tool"].as_str().unwrap(),
+        suggested["arguments"].clone(),
+    )
+    .expect("item continuation must parse");
+    assert!(matches!(
+        next_call,
+        ToolCall::ReadFile {
+            project: ref next_project,
+            path: ref next_path,
+            start_line: Some(3),
+            limit: Some(1),
+            with_line_numbers: Some(true),
+            ..
+        } if next_project == &project && next_path == "src/lib.rs"
+    ));
+    assert!(items[1].get("continuation").is_none());
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_files");
+    let serialized = serde_json::to_value(&result).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| panic!("partial read_files item must match schema: {error}"));
+}
+
+#[tokio::test]
 async fn read_files_dispatch_large_default_batch_uses_sparse_fit_before_budget() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
@@ -571,7 +731,7 @@ async fn read_files_dispatch_mixed_batch_keeps_outer_and_failure_semantics() {
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
                         project,
-                        items: vec![item("good.txt", None, None), item(".env", None, None)],
+                        items: vec![item("good.txt", None, Some(1)), item(".env", None, None)],
                         session_id: None,
                         with_line_numbers: None,
                         max_result_bytes: None,
@@ -583,7 +743,7 @@ async fn read_files_dispatch_mixed_batch_keeps_outer_and_failure_semantics() {
     });
     let request = next_read_request(&runtime, client_id).await;
     assert_eq!(request.path.as_deref(), Some("good.txt"));
-    complete_read(&runtime, client_id, &request, "ok").await;
+    complete_read(&runtime, client_id, &request, "ok\nmore").await;
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
@@ -599,9 +759,15 @@ async fn read_files_dispatch_mixed_batch_keeps_outer_and_failure_semantics() {
     assert_eq!(items[0]["success"], true);
     assert_eq!(items[0]["path"], "good.txt");
     assert_eq!(items[0]["output"]["text"], "ok");
-    assert!(items[0]["output"].get("path").is_none());
-    assert!(items[0]["output"].get("format").is_none());
-    assert!(items[0]["output"].get("has_more").is_none());
+    assert_eq!(items[0]["output"]["has_more"], true);
+    assert_eq!(items[0]["output"]["next_start_line"], 2);
+    assert_eq!(items[0]["continuation"]["kind"], "read_range");
+    let suggested = &items[0]["continuation"]["suggested_call"];
+    ToolCall::from_tool_name(
+        suggested["tool"].as_str().unwrap(),
+        suggested["arguments"].clone(),
+    )
+    .expect("successful mixed-batch item continuation must remain parseable");
     assert_eq!(items[1]["success"], false);
     assert_eq!(items[1]["path"], ".env");
     assert_eq!(items[1]["output"]["error_kind"], "read_file_failed");

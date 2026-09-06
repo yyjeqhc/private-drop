@@ -11,10 +11,29 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "default inspect tool",
         "targeted source reading",
         "line numbers",
+        "read_range",
+        "not snapshot-stable",
+        "sha256",
     ] {
         assert!(
             read_file_desc.contains(phrase),
             "read_file description should mention {phrase}: {read_file_desc}"
+        );
+    }
+
+    let read_files_desc = desc("read_files");
+    for phrase in [
+        "read_range",
+        "batch_items",
+        "next_index",
+        "not a read_files input",
+        "increase_result_budget",
+        "complete a current partial item",
+        "256 kib",
+    ] {
+        assert!(
+            read_files_desc.contains(phrase),
+            "read_files description should mention {phrase}: {read_files_desc}"
         );
     }
 

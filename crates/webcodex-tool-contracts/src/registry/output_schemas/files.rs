@@ -561,6 +561,131 @@ fn search_project_texts_output_schema() -> Value {
     })
 }
 
+fn read_suggested_call_schema(tool: &'static str, arguments: Value) -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "tool": {"type": "string", "const": tool},
+            "arguments": arguments
+        },
+        "required": ["tool", "arguments"]
+    })
+}
+
+fn suggested_read_file_arguments_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "project": schema_type("string", "Same accepted project argument used by the current read."),
+            "path": schema_type("string", "Same project-relative file path."),
+            "start_line": {"type": "integer", "minimum": 1},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 2000},
+            "with_line_numbers": {"type": "boolean"}
+        },
+        "required": ["project", "path", "start_line", "limit"]
+    })
+}
+
+fn read_range_continuation_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Actionable positional continuation for unread lines in one file. The cursor is deterministic for the observed file position, but it is not a frozen snapshot: compare the next call's full-file sha256 with source_sha256 before concatenating ranges as one unchanged source.",
+        "properties": {
+            "kind": {"type": "string", "const": "read_range"},
+            "safe_cursor": {"type": "boolean", "const": true},
+            "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "snapshot_stable": {"type": "boolean", "const": false},
+            "suggested_call": read_suggested_call_schema(
+                "read_file",
+                suggested_read_file_arguments_schema(),
+            )
+        },
+        "required": [
+            "kind", "safe_cursor", "source_sha256", "snapshot_stable", "suggested_call"
+        ]
+    })
+}
+
+fn suggested_read_files_arguments_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "project": schema_type("string", "Same accepted project argument used by the current batch."),
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "path": schema_type("string", "Original project-relative path."),
+                        "start_line": schema_type("integer", "Original optional line offset, preserved exactly as accepted by read_files input normalization."),
+                        "limit": schema_type("integer", "Original optional line limit, preserved exactly as accepted by read_files input normalization.")
+                    },
+                    "required": ["path"]
+                }
+            },
+            "with_line_numbers": {"type": "boolean"},
+            "max_result_bytes": {
+                "type": "integer",
+                "minimum": webcodex_core::runtime_contract::MIN_READ_FILES_RESULT_BYTES,
+                "maximum": webcodex_core::runtime_contract::FILE_READ_MAX_SERIALIZED_OUTPUT_BYTES
+            }
+        },
+        "required": ["project", "items"]
+    })
+}
+
+fn read_batch_continuation_schema() -> Value {
+    let suggested_call =
+        read_suggested_call_schema("read_files", suggested_read_files_arguments_schema());
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Safe continuation for original batch items that were not returned. next_index is their original request index; suggested_call already slices the original items, so next_index is not passed as an input cursor.",
+                "properties": {
+                    "kind": {"type": "string", "const": "batch_items"},
+                    "safe_cursor": {"type": "boolean", "const": true},
+                    "next_index": {"type": "integer", "minimum": 0, "maximum": 7},
+                    "recommended_order": {
+                        "type": "string",
+                        "enum": ["next", "after_partial_item"]
+                    },
+                    "suggested_call": suggested_call.clone()
+                },
+                "required": [
+                    "kind", "safe_cursor", "next_index", "recommended_order", "suggested_call"
+                ]
+            },
+            {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Budget refinement used only when the current primary result budget could not return any part of the first remaining item. This is not a cursor; the suggested budget is bounded by the existing 256 KiB hard cap.",
+                "properties": {
+                    "kind": {"type": "string", "const": "increase_result_budget"},
+                    "safe_cursor": {"type": "boolean", "const": false},
+                    "next_index": {"type": "integer", "const": 0},
+                    "suggested_max_result_bytes": {
+                        "type": "integer",
+                        "const": webcodex_core::runtime_contract::FILE_READ_MAX_SERIALIZED_OUTPUT_BYTES
+                    },
+                    "suggested_call": suggested_call
+                },
+                "required": [
+                    "kind", "safe_cursor", "next_index", "suggested_max_result_bytes", "suggested_call"
+                ]
+            }
+        ]
+    })
+}
+
 fn read_file_output_schema() -> Value {
     let default_limit = webcodex_core::runtime_contract::FILE_READ_DEFAULT_LIMIT;
     let success_properties = json!({
@@ -598,6 +723,7 @@ fn read_file_output_schema() -> Value {
                 {"type": "null"}
             ]
         },
+        "continuation": read_range_continuation_schema(),
         "session_hint": session_hint_schema(),
         "permission": permission_decision_schema()
     });
@@ -636,6 +762,7 @@ fn read_file_output_schema() -> Value {
         "end_line",
         "has_more",
         "next_start_line",
+        "continuation",
     ] {
         sparse_success_properties.remove(key);
     }
@@ -840,7 +967,8 @@ fn read_files_output_schema() -> Value {
             "path": schema_type("string", "Project-relative input path."),
             "success": {"type": "boolean"},
             "output": {"anyOf": [read_success.clone(), read_failure.clone()]},
-            "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+            "error": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "continuation": read_range_continuation_schema()
         },
         "required": ["index", "path", "success", "output", "error"],
         "allOf": [{
@@ -862,6 +990,7 @@ fn read_files_output_schema() -> Value {
             "output_truncated": {"type": "boolean"},
             "next_index": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 7}, {"type": "null"}]},
             "truncation_reason": {"type": "string", "enum": ["batch_response_budget", "hard_result_cap"]},
+            "continuation": read_batch_continuation_schema(),
             "session_hint": session_hint_schema(),
             "permission": permission_decision_schema()
         },

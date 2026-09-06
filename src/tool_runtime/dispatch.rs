@@ -1312,6 +1312,7 @@ impl ToolRuntime {
         let activity_context =
             Self::capture_workspace_activity_context(&call, activity_project.as_deref());
         let search_projection = SearchModelProjection::capture(&call);
+        let read_projection = super::read_files::ReadModelProjection::capture(&call);
         let batch_budget_projection = BatchResponseBudgetProjection::capture(&call);
         let validation_assertion_name = recorder_metadata.expectation.assertion_name.as_deref();
         let tool_name = call.tool_name();
@@ -1408,13 +1409,20 @@ impl ToolRuntime {
         match &batch_budget_projection {
             BatchResponseBudgetProjection::None => {}
             BatchResponseBudgetProjection::ReadFiles { max_result_bytes } => {
-                super::read_files::apply_model_facing_output_budget(&mut result, *max_result_bytes);
+                super::read_files::apply_model_facing_output_budget(
+                    &mut result,
+                    *max_result_bytes,
+                    &read_projection,
+                );
                 // Direct/business-Session dispatch has already added every
                 // model-facing Session overlay. Enforce the true final ceiling
                 // against that decorated result before sparse projection. Outer
                 // kernel recording defers sparsification and repeats this exact
                 // hard-cap pass after its own overlays are attached.
-                super::read_files::enforce_final_model_facing_hard_cap(&mut result);
+                super::read_files::enforce_final_model_facing_hard_cap(
+                    &mut result,
+                    &read_projection,
+                );
             }
             BatchResponseBudgetProjection::SearchProjectTexts { max_result_bytes } => {
                 let default_timeouts = match &search_projection {
@@ -1437,6 +1445,9 @@ impl ToolRuntime {
         sparsify_terminal_structured_execution_success(tool_name, &mut result);
         if !defer_batch_sparsification {
             sparsify_search_success_for_model(&search_projection, &mut result);
+            if inner_model_facing_recording {
+                super::read_files::add_actionable_read_continuations(&read_projection, &mut result);
+            }
             sparsify_complete_read_success(tool_name, &mut result);
         }
         result

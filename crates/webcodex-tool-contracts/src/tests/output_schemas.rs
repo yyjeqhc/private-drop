@@ -276,6 +276,153 @@ fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
 }
 
 #[test]
+fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
+    let read_file = output_schema_for_tool("read_file");
+    test_support::validate_schema_instance(
+        &json!({
+            "success": true,
+            "output": {
+                "text": "two",
+                "format": "plain",
+                "path": "src/lib.rs",
+                "sha256": "a".repeat(64),
+                "start_line": 2,
+                "limit": 1,
+                "total_lines": 3,
+                "returned_lines": 1,
+                "end_line": 2,
+                "has_more": true,
+                "next_start_line": 3,
+                "continuation": {
+                    "kind": "read_range",
+                    "safe_cursor": true,
+                    "source_sha256": "a".repeat(64),
+                    "snapshot_stable": false,
+                    "suggested_call": {
+                        "tool": "read_file",
+                        "arguments": {
+                            "project": "agent:oe:demo",
+                            "path": "src/lib.rs",
+                            "start_line": 3,
+                            "limit": 1
+                        }
+                    }
+                }
+            },
+            "error": null
+        }),
+        &read_file,
+    )
+    .unwrap();
+
+    let read_files = output_schema_for_tool("read_files");
+    test_support::validate_schema_instance(
+        &json!({
+            "success": true,
+            "output": {
+                "project": "agent:oe:demo",
+                "requested_count": 3,
+                "returned_count": 1,
+                "succeeded_count": 1,
+                "failed_count": 0,
+                "items": [{
+                    "index": 0,
+                    "path": "src/0.rs",
+                    "success": true,
+                    "output": {
+                        "text": "first",
+                        "format": "plain",
+                        "path": "src/0.rs",
+                        "sha256": "b".repeat(64),
+                        "start_line": 1,
+                        "limit": 100,
+                        "total_lines": 200,
+                        "returned_lines": 50,
+                        "end_line": 50,
+                        "has_more": true,
+                        "next_start_line": 51,
+                        "budget_truncated": true,
+                        "budget_next_limit": 50
+                    },
+                    "error": null,
+                    "continuation": {
+                        "kind": "read_range",
+                        "safe_cursor": true,
+                        "source_sha256": "b".repeat(64),
+                        "snapshot_stable": false,
+                        "suggested_call": {
+                            "tool": "read_file",
+                            "arguments": {
+                                "project": "agent:oe:demo",
+                                "path": "src/0.rs",
+                                "start_line": 51,
+                                "limit": 50
+                            }
+                        }
+                    }
+                }],
+                "output_truncated": true,
+                "next_index": 0,
+                "truncation_reason": "batch_response_budget",
+                "continuation": {
+                    "kind": "batch_items",
+                    "safe_cursor": true,
+                    "next_index": 1,
+                    "recommended_order": "after_partial_item",
+                    "suggested_call": {
+                        "tool": "read_files",
+                        "arguments": {
+                            "project": "agent:oe:demo",
+                            "items": [
+                                {"path": "src/1.rs"},
+                                {"path": "src/2.rs", "start_line": 4, "limit": 20}
+                            ]
+                        }
+                    }
+                }
+            },
+            "error": null
+        }),
+        &read_files,
+    )
+    .unwrap();
+
+    test_support::validate_schema_instance(
+        &json!({
+            "success": true,
+            "output": {
+                "project": "agent:oe:demo",
+                "requested_count": 1,
+                "returned_count": 0,
+                "succeeded_count": 0,
+                "failed_count": 0,
+                "items": [],
+                "output_truncated": true,
+                "next_index": 0,
+                "truncation_reason": "batch_response_budget",
+                "continuation": {
+                    "kind": "increase_result_budget",
+                    "safe_cursor": false,
+                    "next_index": 0,
+                    "suggested_max_result_bytes": 262144,
+                    "suggested_call": {
+                        "tool": "read_files",
+                        "arguments": {
+                            "project": "agent:oe:demo",
+                            "items": [{"path": "src/0.rs"}],
+                            "max_result_bytes": 262144
+                        }
+                    }
+                }
+            },
+            "error": null
+        }),
+        &read_files,
+    )
+    .unwrap();
+}
+
+#[test]
 fn model_visible_tool_definitions_have_explicit_output_schema_coverage() {
     let specs = registered_tool_specs();
     let default_fields = default_output_schema_field_names();
@@ -887,6 +1034,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         "has_more",
         "next_start_line",
         "sha256",
+        "continuation",
     ] {
         assert!(
             has_output_field("read_file", field),
