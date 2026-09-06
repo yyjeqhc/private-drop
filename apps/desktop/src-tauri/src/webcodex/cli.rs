@@ -1120,7 +1120,7 @@ mod tests {
         ));
         let escaped_marker = marker.to_string_lossy().replace('\'', "''");
         let script = format!(
-            "$child = Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30' -PassThru; Set-Content -LiteralPath '{escaped_marker}' -Value \"$PID $($child.Id)\" -NoNewline; Start-Sleep -Seconds 30"
+            "$child = Start-Process ping.exe -ArgumentList '-n','31','127.0.0.1' -PassThru; Set-Content -LiteralPath '{escaped_marker}' -Value \"$PID $($child.Id)\" -NoNewline; Start-Sleep -Seconds 30"
         );
         let args = vec![
             "-NoProfile".to_string(),
@@ -1143,13 +1143,24 @@ mod tests {
             .await
         });
         let marker_deadline = Instant::now() + Duration::from_secs(6);
-        while !marker.is_file() {
+        let pids = loop {
+            if let Ok(contents) = std::fs::read_to_string(&marker) {
+                let parsed = contents
+                    .split_whitespace()
+                    .map(str::parse::<u32>)
+                    .collect::<Result<Vec<_>, _>>();
+                if let Ok(pids) = parsed {
+                    if pids.len() == 2 {
+                        break pids;
+                    }
+                }
+            }
             assert!(
                 Instant::now() < marker_deadline,
                 "blocked-stdin fixture must publish owned pids before timeout"
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        };
         let error = tokio::time::timeout(Duration::from_secs(12), command)
             .await
             .expect("blocked-stdin command must finish within its bounded cleanup")
@@ -1157,11 +1168,6 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "webcodex_command_timeout");
         assert!(started.elapsed() < Duration::from_secs(12));
-        let pids = std::fs::read_to_string(&marker)
-            .expect("fixture must publish owned pids")
-            .split_whitespace()
-            .map(|value| value.parse::<u32>().expect("fixture pid"))
-            .collect::<Vec<_>>();
         for pid in pids {
             assert!(
                 !windows_process_exists(pid),
