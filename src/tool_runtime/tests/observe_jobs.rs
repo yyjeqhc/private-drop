@@ -6,7 +6,7 @@ use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerRequest, ShellJobActivity,
     ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 fn item(job_id: &str, token: Option<String>) -> ObserveJobsItem {
@@ -113,6 +113,111 @@ fn assert_item_has_no_wait_metadata(item: &serde_json::Value) {
     let output = item["output"].as_object().expect("successful Job snapshot");
     assert!(!output.contains_key("wait_outcome"));
     assert!(!output.contains_key("waited_ms"));
+}
+
+fn canonical_observation(
+    job_id: &str,
+    status: &str,
+    log_delta_status: &str,
+    stdout_tail: &str,
+    stderr_tail: &str,
+    changed: bool,
+    terminal: bool,
+) -> Value {
+    json!({
+        "job_id": job_id,
+        "status": status,
+        "exit_code": null,
+        "command_execution_state": null,
+        "structured_execution": null,
+        "activity": null,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+        "stdout_lines": 4,
+        "stderr_lines": 2,
+        "stdout_returned_lines": stdout_tail.lines().count(),
+        "stderr_returned_lines": stderr_tail.lines().count(),
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "stdout_retained_from_line": null,
+        "stderr_retained_from_line": null,
+        "earlier_stdout_unavailable": false,
+        "earlier_stderr_unavailable": false,
+        "recovery_state": null,
+        "recovery_reason_code": null,
+        "recovery_reason": null,
+        "observation_token": format!("wjob1:a:{job_id}:fixture_epoch:7"),
+        "log_delta_status": log_delta_status,
+        "stdout_delta_reset": false,
+        "stderr_delta_reset": false,
+        "last_update_seq": 7,
+        "cursor": {"stdout": 5, "stderr": 3},
+        "changed": changed,
+        "terminal": terminal,
+        "executor": "agent",
+        "session_id": null,
+        "ssh_resource": null,
+        "cwd": ".",
+        "shell": "direct_argv",
+        "purpose": "build",
+        "command_summary": "cargo check -p webcodex --lib",
+        "detected_summary": {
+            "kind": "check",
+            "outcome": if terminal { "passed" } else { "in_progress" }
+        },
+        "validation": null
+    })
+}
+
+fn canonical_success_item(index: usize, observation: Value) -> Value {
+    let job_id = observation["job_id"].as_str().unwrap().to_string();
+    json!({
+        "index": index,
+        "job_id": job_id,
+        "success": true,
+        "output": observation,
+        "error_kind": null,
+        "error": null
+    })
+}
+
+fn canonical_batch(items: Vec<Value>, wait_outcome: &str, waited_ms: u64) -> ToolResult {
+    let returned_count = items.len();
+    let succeeded_count = items.iter().filter(|item| item["success"] == true).count();
+    let changed_count = items
+        .iter()
+        .filter(|item| item["success"] == true && item["output"]["changed"] == true)
+        .count();
+    let terminal_count = items
+        .iter()
+        .filter(|item| item["success"] == true && item["output"]["terminal"] == true)
+        .count();
+    ToolResult::ok(json!({
+        "requested_count": returned_count,
+        "returned_count": returned_count,
+        "succeeded_count": succeeded_count,
+        "failed_count": returned_count - succeeded_count,
+        "items": items,
+        "wait": {"outcome": wait_outcome, "waited_ms": waited_ms},
+        "changed_count": changed_count,
+        "terminal_count": terminal_count,
+        "output_truncated": false,
+        "next_index": null
+    }))
+}
+
+fn compact_projection(canonical: &ToolResult) -> ToolResult {
+    let mut projected = ToolResult {
+        success: canonical.success,
+        output: canonical.output.clone(),
+        error: canonical.error.clone(),
+    };
+    super::super::observe_jobs::sparsify_observe_jobs_model_result(&mut projected);
+    projected
+}
+
+fn serialized_result_bytes(result: &ToolResult) -> usize {
+    serde_json::to_vec(result).unwrap().len()
 }
 
 async fn start_owned_agent_job(
@@ -273,7 +378,9 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         spec.input_schema["properties"]["items"]["items"]["additionalProperties"],
         false
     );
-    let output = &spec.output_schema["properties"]["output"]["anyOf"][0];
+    let successful_output = &spec.output_schema["properties"]["output"]["anyOf"][0];
+    let output = &successful_output["anyOf"][0];
+    let sparse_output = &successful_output["anyOf"][1];
     assert_eq!(
         output["properties"]["wait"]["properties"]["outcome"]["enum"],
         json!(["immediate", "updated", "terminal", "item_error", "timeout"])
@@ -311,6 +418,29 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         .unwrap()
         .iter()
         .any(|schema| schema["type"] == "null"));
+    let sparse_observation = &sparse_output["properties"]["items"]["items"];
+    for required in [
+        "job_id",
+        "status",
+        "terminal",
+        "changed",
+        "log_delta_status",
+        "observation_token",
+    ] {
+        assert!(sparse_observation["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == required));
+    }
+    assert_eq!(
+        sparse_observation["properties"]["observation_token"]["maxLength"],
+        crate::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
+    );
+    assert_eq!(
+        sparse_output["properties"]["wait"]["required"],
+        json!(["outcome"])
+    );
 
     let definition = super::super::tool_definition::lookup_tool_definition("observe_jobs").unwrap();
     assert!(definition.visibility.is_model_visible());
@@ -367,6 +497,388 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         }),
     );
     assert!(!serde_json::to_string(&defensive).unwrap().contains(opaque));
+}
+
+#[test]
+fn observe_jobs_compact_projection_single_running_unchanged_keeps_actionable_state() {
+    let mut observation = canonical_observation(
+        "job-unchanged",
+        "running",
+        "unchanged",
+        "",
+        "",
+        false,
+        false,
+    );
+    observation["activity"] = serde_json::to_value(process_activity()).unwrap();
+    let token = observation["observation_token"].clone();
+    let canonical = canonical_batch(vec![canonical_success_item(0, observation)], "immediate", 0);
+    assert_eq!(
+        super::super::tool_audit::session_log_result_for_tool("observe_jobs", &canonical.output),
+        canonical.output,
+        "Session/audit must consume the full canonical observe_jobs result"
+    );
+
+    let projected = compact_projection(&canonical);
+    let output = projected.output.as_object().unwrap();
+    for omitted in [
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "changed_count",
+        "terminal_count",
+        "output_truncated",
+        "next_index",
+    ] {
+        assert!(output.get(omitted).is_none(), "mechanical {omitted} leaked");
+    }
+    assert_eq!(projected.output["wait"]["outcome"], "immediate");
+    assert!(projected.output["wait"].get("waited_ms").is_none());
+    let item = &projected.output["items"][0];
+    assert_eq!(item["job_id"], "job-unchanged");
+    assert_eq!(item["status"], "running");
+    assert_eq!(item["terminal"], false);
+    assert_eq!(item["changed"], false);
+    assert_eq!(item["log_delta_status"], "unchanged");
+    assert_eq!(item["observation_token"], token);
+    assert_eq!(
+        item["activity"],
+        serde_json::to_value(process_activity()).unwrap()
+    );
+    for omitted in [
+        "index",
+        "success",
+        "output",
+        "error_kind",
+        "error",
+        "executor",
+        "cursor",
+        "last_update_seq",
+        "stdout_lines",
+        "stderr_lines",
+        "stdout_tail",
+        "stderr_tail",
+    ] {
+        assert!(item.get(omitted).is_none(), "mechanical {omitted} leaked");
+    }
+}
+
+#[test]
+fn observe_jobs_compact_projection_delta_keeps_bodies_and_token() {
+    let observation = canonical_observation(
+        "job-delta",
+        "running",
+        "delta",
+        "new stdout\n",
+        "new stderr\n",
+        true,
+        false,
+    );
+    let token = observation["observation_token"].clone();
+    let canonical = canonical_batch(vec![canonical_success_item(0, observation)], "updated", 84);
+    let projected = compact_projection(&canonical);
+    let item = &projected.output["items"][0];
+    assert_eq!(item["log_delta_status"], "delta");
+    assert_eq!(item["stdout_tail"], "new stdout\n");
+    assert_eq!(item["stderr_tail"], "new stderr\n");
+    assert_eq!(item["observation_token"], token);
+    assert_eq!(projected.output["wait"]["outcome"], "updated");
+    assert_eq!(projected.output["wait"]["waited_ms"], 84);
+    assert!(item.get("stdout_lines").is_none());
+    assert!(item.get("cursor").is_none());
+}
+
+#[test]
+fn observe_jobs_compact_projection_terminal_keeps_validation_evidence() {
+    let mut observation = canonical_observation(
+        "job-terminal",
+        "completed",
+        "delta",
+        "test result: ok\n",
+        "",
+        true,
+        true,
+    );
+    observation["exit_code"] = json!(0);
+    observation["command_execution_state"] = json!("completed");
+    observation["detected_summary"] = json!({
+        "kind": "test",
+        "outcome": "passed",
+        "tests_passed": 28,
+        "tests_failed": 0
+    });
+    observation["validation"] = json!({
+        "tool": "cargo_test",
+        "kind": "test",
+        "state": "completed",
+        "passed": true,
+        "truncated": false
+    });
+    let token = observation["observation_token"].clone();
+    let canonical = canonical_batch(vec![canonical_success_item(0, observation)], "terminal", 91);
+    let projected = compact_projection(&canonical);
+    let item = &projected.output["items"][0];
+    assert_eq!(item["terminal"], true);
+    assert_eq!(item["status"], "completed");
+    assert_eq!(item["exit_code"], 0);
+    assert_eq!(item["command_execution_state"], "completed");
+    assert_eq!(item["detected_summary"]["outcome"], "passed");
+    assert_eq!(item["validation"]["passed"], true);
+    assert_eq!(item["observation_token"], token);
+}
+
+#[test]
+fn observe_jobs_compact_projection_reset_keeps_recovery_and_loss_evidence() {
+    let mut observation = canonical_observation(
+        "job-reset",
+        "running",
+        "reset",
+        "bounded recovery stdout\n",
+        "bounded recovery stderr\n",
+        true,
+        false,
+    );
+    observation["stdout_delta_reset"] = json!(true);
+    observation["stderr_delta_reset"] = json!(true);
+    observation["stderr_truncated"] = json!(true);
+    observation["earlier_stdout_unavailable"] = json!(true);
+    observation["stdout_retained_from_line"] = json!(41);
+    observation["stderr_retained_from_line"] = json!(22);
+    observation["recovery_state"] = json!("recovered");
+    observation["recovery_reason_code"] = json!("server_epoch_changed");
+    observation["recovery_reason"] = json!("Exact delta history was unavailable.");
+    let token = observation["observation_token"].clone();
+    let canonical = canonical_batch(vec![canonical_success_item(0, observation)], "updated", 12);
+    let projected = compact_projection(&canonical);
+    let item = &projected.output["items"][0];
+    assert_eq!(item["log_delta_status"], "reset");
+    assert_eq!(item["stdout_delta_reset"], true);
+    assert_eq!(item["stderr_delta_reset"], true);
+    assert_eq!(item["stderr_truncated"], true);
+    assert_eq!(item["earlier_stdout_unavailable"], true);
+    assert_eq!(item["stdout_retained_from_line"], 41);
+    assert_eq!(item["cursor"], json!({"stdout": 5, "stderr": 3}));
+    assert_eq!(item["recovery_reason_code"], "server_epoch_changed");
+    assert_eq!(item["observation_token"], token);
+    assert_eq!(item["command_summary"], "cargo check -p webcodex --lib");
+    assert_eq!(item["purpose"], "build");
+}
+
+#[test]
+fn observe_jobs_compact_projection_multi_success_preserves_order_and_one_wait() {
+    let items = (0..4)
+        .map(|index| {
+            canonical_success_item(
+                index,
+                canonical_observation(
+                    &format!("job-{index}"),
+                    "running",
+                    "unchanged",
+                    "",
+                    "",
+                    false,
+                    false,
+                ),
+            )
+        })
+        .collect();
+    let canonical = canonical_batch(items, "timeout", 1_002);
+    let projected = compact_projection(&canonical);
+    let items = projected.output["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["job_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["job-0", "job-1", "job-2", "job-3"]
+    );
+    assert_eq!(projected.output["wait"]["outcome"], "timeout");
+    assert_eq!(projected.output["wait"]["waited_ms"], 1_002);
+    assert!(projected.output.get("terminal_count").is_none());
+}
+
+#[test]
+fn observe_jobs_compact_projection_preserves_mixed_failure_and_budget_recovery() {
+    let success = canonical_success_item(
+        0,
+        canonical_observation("job-ok", "running", "unchanged", "", "", false, false),
+    );
+    let failure = json!({
+        "index": 1,
+        "job_id": "missing-job",
+        "success": false,
+        "output": null,
+        "error_kind": "unknown_job",
+        "recovery_kind": "reobserve",
+        "recovery_tool": "list_jobs",
+        "error": "unknown job: missing-job"
+    });
+    let mixed = canonical_batch(vec![success.clone(), failure], "item_error", 0);
+    assert_eq!(
+        serde_json::to_value(compact_projection(&mixed)).unwrap(),
+        serde_json::to_value(&mixed).unwrap()
+    );
+    assert_eq!(mixed.output["items"][1]["recovery_tool"], "list_jobs");
+
+    let mut truncated = canonical_batch(vec![success], "immediate", 0);
+    truncated.output["output_truncated"] = json!(true);
+    truncated.output["next_index"] = json!(1);
+    assert_eq!(
+        serde_json::to_value(compact_projection(&truncated)).unwrap(),
+        serde_json::to_value(&truncated).unwrap()
+    );
+    assert_eq!(truncated.output["next_index"], 1);
+}
+
+#[test]
+fn observe_jobs_canonical_and_compact_success_both_match_output_schema() {
+    let canonical = canonical_batch(
+        vec![canonical_success_item(
+            0,
+            canonical_observation("job-schema", "running", "unchanged", "", "", false, false),
+        )],
+        "immediate",
+        0,
+    );
+    let projected = compact_projection(&canonical);
+    let schema = super::super::registry::output_schema_for_tool("observe_jobs");
+    for (label, result) in [("canonical", canonical), ("compact", projected)] {
+        let value = serde_json::to_value(&result).unwrap();
+        assert!(
+            super::super::startup_brief::validate_schema_instance_for_test(&value, &schema).is_ok(),
+            "{label} observe_jobs result did not satisfy output schema: {value}"
+        );
+    }
+}
+
+#[test]
+fn observe_jobs_projection_reports_deterministic_byte_measurements() {
+    let unchanged = canonical_batch(
+        vec![canonical_success_item(
+            0,
+            canonical_observation(
+                "job-measure-u",
+                "running",
+                "unchanged",
+                "",
+                "",
+                false,
+                false,
+            ),
+        )],
+        "immediate",
+        0,
+    );
+    let delta = canonical_batch(
+        vec![canonical_success_item(
+            0,
+            canonical_observation(
+                "job-measure-d",
+                "running",
+                "delta",
+                &format!("{}\n", "stdout".repeat(20)),
+                &format!("{}\n", "stderr".repeat(6)),
+                true,
+                false,
+            ),
+        )],
+        "updated",
+        75,
+    );
+    let mut terminal_observation = canonical_observation(
+        "job-measure-t",
+        "completed",
+        "delta",
+        "28 passed\n",
+        "",
+        true,
+        true,
+    );
+    terminal_observation["exit_code"] = json!(0);
+    terminal_observation["validation"] = json!({
+        "tool": "cargo_test", "kind": "test", "state": "completed",
+        "passed": true, "truncated": false, "tests_passed": 28, "tests_failed": 0
+    });
+    let terminal = canonical_batch(
+        vec![canonical_success_item(0, terminal_observation)],
+        "terminal",
+        88,
+    );
+    let four = canonical_batch(
+        (0..4)
+            .map(|index| {
+                canonical_success_item(
+                    index,
+                    canonical_observation(
+                        &format!("job-measure-{index}"),
+                        "running",
+                        "unchanged",
+                        "",
+                        "",
+                        false,
+                        false,
+                    ),
+                )
+            })
+            .collect(),
+        "timeout",
+        1_000,
+    );
+    let mixed = canonical_batch(
+        vec![
+            canonical_success_item(
+                0,
+                canonical_observation(
+                    "job-measure-ok",
+                    "running",
+                    "unchanged",
+                    "",
+                    "",
+                    false,
+                    false,
+                ),
+            ),
+            json!({
+                "index": 1, "job_id": "missing-measure", "success": false,
+                "output": null, "error_kind": "unknown_job", "recovery_kind": "reobserve",
+                "recovery_tool": "list_jobs", "error": "unknown job: missing-measure"
+            }),
+        ],
+        "item_error",
+        0,
+    );
+
+    for (name, canonical) in [
+        ("one_running_unchanged", unchanged),
+        ("one_delta", delta),
+        ("one_terminal_validation", terminal),
+        ("four_running", four),
+        ("mixed_success_unknown", mixed),
+    ] {
+        let projected = compact_projection(&canonical);
+        let canonical_bytes = serialized_result_bytes(&canonical);
+        let projected_bytes = serialized_result_bytes(&projected);
+        let reduction = if canonical_bytes == 0 {
+            0.0
+        } else {
+            100.0 * (canonical_bytes.saturating_sub(projected_bytes)) as f64
+                / canonical_bytes as f64
+        };
+        println!(
+            "OBSERVE_JOBS_PROJECTION_BYTES {name} canonical={canonical_bytes} projected={projected_bytes} reduction_pct={reduction:.1}"
+        );
+        assert!(projected_bytes <= canonical_bytes);
+        if name != "mixed_success_unknown" {
+            assert!(projected_bytes < canonical_bytes);
+        } else {
+            assert_eq!(
+                serde_json::to_value(&projected).unwrap(),
+                serde_json::to_value(&canonical).unwrap()
+            );
+        }
+    }
 }
 
 #[tokio::test]

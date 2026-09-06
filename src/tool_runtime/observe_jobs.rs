@@ -269,6 +269,251 @@ fn apply_output_budget(
     ))
 }
 
+fn copy_non_null(
+    source: &serde_json::Map<String, Value>,
+    target: &mut serde_json::Map<String, Value>,
+    key: &str,
+) {
+    if let Some(value) = source.get(key).filter(|value| !value.is_null()) {
+        target.insert(key.to_string(), value.clone());
+    }
+}
+
+fn copy_present(
+    source: &serde_json::Map<String, Value>,
+    target: &mut serde_json::Map<String, Value>,
+    key: &str,
+) {
+    if let Some(value) = source.get(key) {
+        target.insert(key.to_string(), value.clone());
+    }
+}
+
+fn sparse_success_item(item: &Value) -> Option<Value> {
+    let item = item.as_object()?;
+    if item.get("success").and_then(Value::as_bool) != Some(true)
+        || !item.get("error_kind").is_some_and(Value::is_null)
+        || !item.get("error").is_some_and(Value::is_null)
+        || item.get("recovery_kind").is_some()
+        || item.get("recovery_tool").is_some()
+    {
+        return None;
+    }
+    let job_id = item.get("job_id")?.as_str()?.to_string();
+    let observation = item.get("output")?.as_object()?;
+    if observation.get("job_id")?.as_str()? != job_id {
+        return None;
+    }
+    let status = observation.get("status")?.as_str()?.to_string();
+    let terminal = observation.get("terminal")?.as_bool()?;
+    let changed = observation.get("changed")?.as_bool()?;
+    let log_delta_status = observation.get("log_delta_status")?.as_str()?;
+    if !matches!(
+        log_delta_status,
+        "baseline" | "delta" | "unchanged" | "reset"
+    ) {
+        return None;
+    }
+    let observation_token = observation.get("observation_token")?.as_str()?;
+    if observation_token.is_empty() {
+        return None;
+    }
+    let stdout_tail = observation.get("stdout_tail")?.as_str()?;
+    let stderr_tail = observation.get("stderr_tail")?.as_str()?;
+    let stdout_truncated = observation.get("stdout_truncated")?.as_bool()?;
+    let stderr_truncated = observation.get("stderr_truncated")?.as_bool()?;
+    let stdout_delta_reset = observation.get("stdout_delta_reset")?.as_bool()?;
+    let stderr_delta_reset = observation.get("stderr_delta_reset")?.as_bool()?;
+    let earlier_stdout_unavailable = observation
+        .get("earlier_stdout_unavailable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let earlier_stderr_unavailable = observation
+        .get("earlier_stderr_unavailable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut sparse = serde_json::Map::new();
+    sparse.insert("job_id".to_string(), json!(job_id));
+    sparse.insert("status".to_string(), json!(status));
+    sparse.insert("terminal".to_string(), json!(terminal));
+    sparse.insert("changed".to_string(), json!(changed));
+    sparse.insert("log_delta_status".to_string(), json!(log_delta_status));
+    sparse.insert("observation_token".to_string(), json!(observation_token));
+
+    for key in [
+        "exit_code",
+        "command_execution_state",
+        "activity",
+        "detected_summary",
+        "validation",
+        "ssh_resource",
+    ] {
+        copy_non_null(observation, &mut sparse, key);
+    }
+
+    if log_delta_status != "unchanged" {
+        copy_present(observation, &mut sparse, "stdout_tail");
+        copy_present(observation, &mut sparse, "stderr_tail");
+    } else {
+        if !stdout_tail.is_empty() {
+            copy_present(observation, &mut sparse, "stdout_tail");
+        }
+        if !stderr_tail.is_empty() {
+            copy_present(observation, &mut sparse, "stderr_tail");
+        }
+    }
+
+    for (key, present) in [
+        ("stdout_truncated", stdout_truncated),
+        ("stderr_truncated", stderr_truncated),
+        ("stdout_delta_reset", stdout_delta_reset),
+        ("stderr_delta_reset", stderr_delta_reset),
+        ("earlier_stdout_unavailable", earlier_stdout_unavailable),
+        ("earlier_stderr_unavailable", earlier_stderr_unavailable),
+    ] {
+        if present {
+            copy_present(observation, &mut sparse, key);
+        }
+    }
+    for key in ["recovery_state", "recovery_reason_code", "recovery_reason"] {
+        copy_non_null(observation, &mut sparse, key);
+    }
+
+    let exceptional_log_evidence = log_delta_status == "reset"
+        || stdout_truncated
+        || stderr_truncated
+        || stdout_delta_reset
+        || stderr_delta_reset
+        || earlier_stdout_unavailable
+        || earlier_stderr_unavailable
+        || observation
+            .get("recovery_state")
+            .is_some_and(|value| !value.is_null())
+        || observation
+            .get("recovery_reason_code")
+            .is_some_and(|value| !value.is_null())
+        || observation
+            .get("recovery_reason")
+            .is_some_and(|value| !value.is_null());
+    if exceptional_log_evidence {
+        for key in [
+            "stdout_lines",
+            "stderr_lines",
+            "stdout_returned_lines",
+            "stderr_returned_lines",
+            "stdout_retained_from_line",
+            "stderr_retained_from_line",
+            "cursor",
+            "last_update_seq",
+        ] {
+            copy_non_null(observation, &mut sparse, key);
+        }
+        if log_delta_status == "reset" {
+            for key in [
+                "stdout_truncated",
+                "stderr_truncated",
+                "stdout_delta_reset",
+                "stderr_delta_reset",
+                "earlier_stdout_unavailable",
+                "earlier_stderr_unavailable",
+            ] {
+                copy_present(observation, &mut sparse, key);
+            }
+        }
+    }
+
+    if matches!(log_delta_status, "baseline" | "reset") {
+        for key in ["purpose", "command_summary"] {
+            copy_non_null(observation, &mut sparse, key);
+        }
+    }
+    Some(Value::Object(sparse))
+}
+
+/// Final model-facing projection for ordinary successful Job observations.
+/// The canonical batch and canonical single-Job snapshots remain unchanged for
+/// budgeting, Session/audit recording, operator diagnostics, and internal use.
+pub(crate) fn sparsify_observe_jobs_model_result(result: &mut ToolResult) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    if output.get("output_truncated").and_then(Value::as_bool) != Some(false)
+        || !output.get("next_index").is_some_and(Value::is_null)
+    {
+        return;
+    }
+    let Some(items) = output.get("items").and_then(Value::as_array) else {
+        return;
+    };
+    if items.is_empty() || items.len() > MAX_OBSERVE_JOBS_ITEMS {
+        return;
+    }
+    let count = items.len() as u64;
+    if output.get("requested_count").and_then(Value::as_u64) != Some(count)
+        || output.get("returned_count").and_then(Value::as_u64) != Some(count)
+        || output.get("succeeded_count").and_then(Value::as_u64) != Some(count)
+        || output.get("failed_count").and_then(Value::as_u64) != Some(0)
+    {
+        return;
+    }
+    let Some(wait) = output.get("wait").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(wait_outcome) = wait.get("outcome").and_then(Value::as_str) else {
+        return;
+    };
+    if !matches!(
+        wait_outcome,
+        "immediate" | "updated" | "terminal" | "timeout"
+    ) {
+        // item_error is intentionally kept in the canonical batch shape.
+        return;
+    }
+    let Some(waited_ms) = wait.get("waited_ms").and_then(Value::as_u64) else {
+        return;
+    };
+
+    let mut sparse_items = Vec::with_capacity(items.len());
+    let mut changed_count = 0u64;
+    let mut terminal_count = 0u64;
+    for item in items {
+        let Some(sparse) = sparse_success_item(item) else {
+            return;
+        };
+        changed_count += u64::from(sparse.get("changed").and_then(Value::as_bool) == Some(true));
+        terminal_count += u64::from(sparse.get("terminal").and_then(Value::as_bool) == Some(true));
+        sparse_items.push(sparse);
+    }
+    if output.get("changed_count").and_then(Value::as_u64) != Some(changed_count)
+        || output.get("terminal_count").and_then(Value::as_u64) != Some(terminal_count)
+    {
+        return;
+    }
+
+    output.insert("items".to_string(), Value::Array(sparse_items));
+    for key in [
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "changed_count",
+        "terminal_count",
+        "output_truncated",
+        "next_index",
+    ] {
+        output.remove(key);
+    }
+    if waited_ms == 0 {
+        if let Some(wait) = output.get_mut("wait").and_then(Value::as_object_mut) {
+            wait.remove("waited_ms");
+        }
+    }
+}
+
 impl ToolRuntime {
     fn validate_observe_jobs_input(
         items: &[ObserveJobsItem],

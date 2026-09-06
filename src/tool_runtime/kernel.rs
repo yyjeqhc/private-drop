@@ -940,6 +940,9 @@ impl ToolRuntime {
             }
         }
         super::dispatch::sparsify_success_model_result_metadata(&request.tool_name, &mut result);
+        if request.tool_name == "observe_jobs" {
+            super::observe_jobs::sparsify_observe_jobs_model_result(&mut result);
+        }
         ToolCallOutcome {
             success: result.success,
             result: Some(result),

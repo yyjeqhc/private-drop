@@ -488,6 +488,64 @@ fn observe_jobs_output_schema() -> Value {
             "activity", "detected_summary", "validation"
         ]
     });
+    let sparse_job_observation = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "job_id": schema_type("string", "Runtime Job id."),
+            "status": schema_type("string", "Canonical current Job status."),
+            "terminal": schema_type("boolean", "Canonical terminal classification; never inferred from batch counts."),
+            "changed": schema_type("boolean", "Whether lifecycle revision or Server epoch differs from the supplied observation token."),
+            "log_delta_status": {
+                "type": "string",
+                "enum": ["baseline", "delta", "unchanged", "reset"],
+                "description": "Exact canonical log projection class. reset remains an explicit bounded recovery tail, never ordinary delta."
+            },
+            "observation_token": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN,
+                "description": "Opaque authoritative token copied unchanged from the canonical Job observation for the next after_observation_token."
+            },
+            "exit_code": schema_type("integer", "Terminal process exit code when available and meaningful."),
+            "command_execution_state": job_command_execution_state_schema(),
+            "activity": job_activity_schema(),
+            "stdout_tail": schema_type("string", "Bounded stdout baseline/delta/reset body. Omitted only when no stdout body needs presenting."),
+            "stderr_tail": schema_type("string", "Bounded stderr baseline/delta/reset body. Omitted only when no stderr body needs presenting."),
+            "stdout_lines": schema_type("integer", "Total observed stdout lines retained when exceptional reset/truncation diagnostics matter."),
+            "stderr_lines": schema_type("integer", "Total observed stderr lines retained when exceptional reset/truncation diagnostics matter."),
+            "stdout_returned_lines": schema_type("integer", "Returned stdout line count retained for exceptional reset/truncation diagnostics."),
+            "stderr_returned_lines": schema_type("integer", "Returned stderr line count retained for exceptional reset/truncation diagnostics."),
+            "stdout_truncated": schema_type("boolean", "True when stdout was bounded or unavailable; reset may retain false explicitly."),
+            "stderr_truncated": schema_type("boolean", "True when stderr was bounded or unavailable; reset may retain false explicitly."),
+            "stdout_delta_reset": schema_type("boolean", "True when stdout exact delta continuity reset; reset may retain false explicitly."),
+            "stderr_delta_reset": schema_type("boolean", "True when stderr exact delta continuity reset; reset may retain false explicitly."),
+            "stdout_retained_from_line": nullable_schema("integer", "First retained absolute stdout line when exceptional recovery evidence matters."),
+            "stderr_retained_from_line": nullable_schema("integer", "First retained absolute stderr line when exceptional recovery evidence matters."),
+            "earlier_stdout_unavailable": schema_type("boolean", "Whether earlier stdout is outside retained bounded logs; reset may retain false explicitly."),
+            "earlier_stderr_unavailable": schema_type("boolean", "Whether earlier stderr is outside retained bounded logs; reset may retain false explicitly."),
+            "recovery_state": nullable_schema("string", "Canonical bounded recovery state when present."),
+            "recovery_reason_code": nullable_schema("string", "Canonical bounded recovery reason code when present."),
+            "recovery_reason": nullable_schema("string", "Canonical bounded recovery explanation when present."),
+            "last_update_seq": nullable_schema("integer", "Protocol diagnostic retained only with exceptional reset/truncation evidence."),
+            "cursor": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "stdout": {"type": "integer", "minimum": 1},
+                    "stderr": {"type": "integer", "minimum": 1}
+                },
+                "required": ["stdout", "stderr"],
+                "description": "Diagnostic absolute cursor retained only with exceptional reset/truncation evidence; observation_token remains authoritative."
+            },
+            "ssh_resource": nullable_schema("string", "Named SSH resource when present on the observed Job."),
+            "purpose": nullable_schema("string", "Declared purpose retained on baseline/reset observations for disambiguation."),
+            "command_summary": nullable_schema("string", "Bounded safe command summary retained on baseline/reset observations for disambiguation."),
+            "detected_summary": {"type": "object", "additionalProperties": true},
+            "validation": validation_job_projection_schema()
+        },
+        "required": ["job_id", "status", "terminal", "changed", "log_delta_status", "observation_token"]
+    });
     let item = json!({
         "type": "object",
         "additionalProperties": false,
@@ -558,18 +616,53 @@ fn observe_jobs_output_schema() -> Value {
             "output_truncated", "next_index"
         ]
     });
+    let sparse_success_output = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": sparse_job_observation
+            },
+            "wait": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["immediate", "updated", "terminal", "timeout"]
+                    },
+                    "waited_ms": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Non-zero shared wait duration; omitted when the canonical value is zero."
+                    }
+                },
+                "required": ["outcome"],
+                "description": "The one shared-wait fact for an ordinary all-success, non-truncated compact batch."
+            },
+            "session_hint": session_hint_schema(),
+            "permission": permission_decision_schema()
+        },
+        "required": ["items", "wait"]
+    });
+    let successful_output = json!({
+        "anyOf": [batch_output.clone(), sparse_success_output]
+    });
     json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
             "success": {"type": "boolean"},
-            "output": {"anyOf": [batch_output.clone(), {"type": "object", "additionalProperties": true}, {"type": "null"}]},
+            "output": {"anyOf": [successful_output.clone(), {"type": "object", "additionalProperties": true}, {"type": "null"}]},
             "error": {"anyOf": [{"type": "string"}, {"type": "null"}]}
         },
         "required": ["success", "output"],
         "allOf": [{
             "if": {"properties": {"success": {"const": true}}, "required": ["success"]},
-            "then": {"properties": {"output": batch_output, "error": {"type": "null"}}},
+            "then": {"properties": {"output": successful_output, "error": {"type": "null"}}},
             "else": {"required": ["error"], "properties": {"error": {"type": "string"}}}
         }]
     })

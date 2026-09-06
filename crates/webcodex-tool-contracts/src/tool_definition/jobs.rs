@@ -326,7 +326,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Observe 1 to 8 existing Jobs with bounded baseline/delta logs and isolated item errors. Optionally performs one shared wait for the batch and returns when any relevant Job changes; final items are non-waiting snapshots. Return each opaque observation token unchanged on follow-up. unknown_job exposes recovery_tool=list_jobs for direct caller-visible Job re-observation. Never launches, retries, stops, or subscribes.",
+            "Observe 1 to 8 existing Jobs with bounded baseline/delta logs and isolated item errors. Optionally performs one shared wait for the batch and returns when any relevant Job changes; final items are non-waiting snapshots. Ordinary all-success observations may use a compact result projection; each opaque observation token is returned unchanged. reset remains explicit bounded recovery rather than exact delta. unknown_job exposes recovery_tool=list_jobs for direct caller-visible Job re-observation. Never launches, retries, stops, or subscribes.",
             observe_jobs_input_schema,
         ),
         80,
