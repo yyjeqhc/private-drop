@@ -583,7 +583,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                                 "enum": [
                                     "diff_hunk_count_limit",
                                     "diff_hunk_line_limit",
-                                    "diff_byte_budget"
+                                    "diff_byte_budget",
+                                    "diff_hunk_byte_budget"
                                 ]
                             }
                         },

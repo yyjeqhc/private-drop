@@ -3060,6 +3060,7 @@ fn show_changes_command_emits_bounded_metadata_frames() {
         "diff_trunc_hunk_count=",
         "diff_trunc_hunk_lines=",
         "diff_trunc_bytes=",
+        "diff_trunc_bytes_in_hunk=",
         "diff_bytes=",
     ] {
         assert!(stdout.contains(field), "missing {field}: {stdout}");
@@ -3447,6 +3448,12 @@ fn show_changes_transport_safe_requires_every_modern_metadata_frame() {
     let mut missing_diff = frames.clone();
     missing_diff.diff_trunc_bytes = None;
     variants.push(("diff", missing_diff));
+    let mut missing_diff_hunk_byte_provenance = frames.clone();
+    missing_diff_hunk_byte_provenance.diff_trunc_bytes_in_hunk = None;
+    variants.push((
+        "diff_hunk_byte_provenance",
+        missing_diff_hunk_byte_provenance,
+    ));
 
     for (label, incomplete) in variants {
         let output =
@@ -3915,7 +3922,8 @@ fn show_changes_schema_covers_truncation_and_transport_fields() {
         json!([
             "diff_hunk_count_limit",
             "diff_hunk_line_limit",
-            "diff_byte_budget"
+            "diff_byte_budget",
+            "diff_hunk_byte_budget"
         ])
     );
     assert_eq!(
@@ -6609,6 +6617,7 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
     assert_eq!(frames.diff_trunc_bytes, Some(true));
     assert_eq!(frames.diff_trunc_hunk_count, Some(false));
     assert_eq!(frames.diff_trunc_hunk_lines, Some(false));
+    assert_eq!(frames.diff_trunc_bytes_in_hunk, Some(false));
     assert_eq!(frames.diff_bytes, Some(frames.diff.len()));
 
     let output =
@@ -7215,6 +7224,8 @@ fn show_changes_single_overlong_diff_line_stays_within_budget() {
     let frames = split_show_changes_stdout(&stdout, true);
     assert_eq!(frames.diff_exit, Some(0));
     assert_eq!(frames.diff_hunks_truncated, Some(true));
+    assert_eq!(frames.diff_trunc_bytes, Some(true));
+    assert_eq!(frames.diff_trunc_bytes_in_hunk, Some(true));
     let output =
         bounded_show_changes_output_from_frames(&frames, tmp.path(), true, 20, 80, &stderr);
     let reasons = output["truncation_reasons"].as_array().unwrap();
@@ -7224,6 +7235,12 @@ fn show_changes_single_overlong_diff_line_stays_within_budget() {
             Some("diff_hunk_line_limit") | Some("diff_byte_budget")
         )),
         "expected a diff line/byte budget reason: {reasons:?}"
+    );
+    assert!(reasons.iter().any(|r| r == "diff_hunk_byte_budget"));
+    assert_eq!(output["diff_review_handoff"]["recovery"]["kind"], "mixed");
+    assert_eq!(
+        output["diff_review_handoff"]["recovery"]["safe_continuation_for_omitted_lines"],
+        false
     );
     assert_show_changes_envelope_value_matches_schema(&output, "overlong diff line");
     // The giant line must not appear in full in the structured output.

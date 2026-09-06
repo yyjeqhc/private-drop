@@ -473,7 +473,7 @@ pub(crate) fn show_changes_command(
                git diff --unified=80; printf 'diff_exit=%s\n' "$?";
              } | {
                hc=0; in_hunk=0; lc=0; diff_exit_raw=; diff_bytes=0; file_buf=; stop_emit=0;
-               trunc_count=0; trunc_lines=0; trunc_bytes=0; have=0; pending=;
+               trunc_count=0; trunc_lines=0; trunc_bytes=0; trunc_bytes_in_hunk=0; have=0; pending=;
                while IFS= read -r dl; do
                  next=$dl; dl=$pending; pending=$next;
                  if [ "$have" = 0 ]; then have=1; continue; fi;
@@ -501,7 +501,7 @@ pub(crate) fn show_changes_command(
                        if [ "$lc" -ge __LINE_LIMIT__ ]; then trunc_lines=1;
                        else
                          line_len=$((${#dl}+1));
-                         if [ "$((diff_bytes + line_len))" -gt __DIFF_BYTE_BUDGET__ ]; then trunc_bytes=1; stop_emit=1;
+                         if [ "$((diff_bytes + line_len))" -gt __DIFF_BYTE_BUDGET__ ]; then trunc_bytes=1; trunc_bytes_in_hunk=1; stop_emit=1;
                          else printf '%s\n' "$dl"; lc=$((lc+1)); diff_bytes=$((diff_bytes+line_len)); fi;
                        fi;
                      elif [ "$stop_emit" = 0 ]; then
@@ -516,8 +516,8 @@ pub(crate) fn show_changes_command(
                if [ "$stop_emit" = 0 ] && [ -n "$file_buf" ]; then printf '%s' "$file_buf"; diff_bytes=$((diff_bytes+${#file_buf})); fi;
                diff_wire_bytes=$diff_bytes; diff_frame_bytes=$diff_wire_bytes;
                if [ "$diff_frame_bytes" -gt 0 ]; then diff_frame_bytes=$((diff_frame_bytes-1)); fi;
-               dm=$(printf 'diff_exit=%s\ndiff_hunks_returned=%s\ndiff_hunks_truncated=%s\ndiff_trunc_hunk_count=%s\ndiff_trunc_hunk_lines=%s\ndiff_trunc_bytes=%s\ndiff_bytes=%s' \
-                 "$diff_exit_raw" "$hc" "$((trunc_count || trunc_lines || trunc_bytes))" "$trunc_count" "$trunc_lines" "$trunc_bytes" "$diff_frame_bytes");
+               dm=$(printf 'diff_exit=%s\ndiff_hunks_returned=%s\ndiff_hunks_truncated=%s\ndiff_trunc_hunk_count=%s\ndiff_trunc_hunk_lines=%s\ndiff_trunc_bytes=%s\ndiff_trunc_bytes_in_hunk=%s\ndiff_bytes=%s' \
+                 "$diff_exit_raw" "$hc" "$((trunc_count || trunc_lines || trunc_bytes))" "$trunc_count" "$trunc_lines" "$trunc_bytes" "$trunc_bytes_in_hunk" "$diff_frame_bytes");
                printf '%s\n' "$dm"; printf 'WCSF1:D:%010d:%010d\n' "$diff_wire_bytes" "$(( ${#dm}+1 ))";
              }"#
         .replace("__HUNK_LIMIT__", &max_hunks.to_string())
@@ -685,6 +685,10 @@ pub(crate) struct ShowChangesStdout {
     pub(crate) diff_trunc_hunk_count: Option<bool>,
     pub(crate) diff_trunc_hunk_lines: Option<bool>,
     pub(crate) diff_trunc_bytes: Option<bool>,
+    /// Whether the diff byte budget fired while emitting the body of an
+    /// already-returned hunk. This distinguishes omitted current-hunk lines
+    /// from a page boundary that only omitted later file/hunk records.
+    pub(crate) diff_trunc_bytes_in_hunk: Option<bool>,
     /// Real full `git diff` exit code parsed from the diff metadata frame.
     pub(crate) diff_exit: Option<i32>,
     /// Bytes emitted in the bounded diff segment, parsed from the diff metadata
@@ -779,7 +783,7 @@ pub(crate) fn framed_clean_show_changes_test_stdout(subject: &str, include_diff:
         stdout.push_str(&framed_show_changes_test_block(
             'D',
             "",
-            "diff_exit=0\ndiff_hunks_returned=0\ndiff_hunks_truncated=0\ndiff_trunc_hunk_count=0\ndiff_trunc_hunk_lines=0\ndiff_trunc_bytes=0\ndiff_bytes=0\n",
+            "diff_exit=0\ndiff_hunks_returned=0\ndiff_hunks_truncated=0\ndiff_trunc_hunk_count=0\ndiff_trunc_hunk_lines=0\ndiff_trunc_bytes=0\ndiff_trunc_bytes_in_hunk=0\ndiff_bytes=0\n",
         ));
     }
     stdout
@@ -840,6 +844,7 @@ fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<
         diff_trunc_hunk_count: parse_optional_bool(&diff_meta, "diff_trunc_hunk_count"),
         diff_trunc_hunk_lines: parse_optional_bool(&diff_meta, "diff_trunc_hunk_lines"),
         diff_trunc_bytes: parse_optional_bool(&diff_meta, "diff_trunc_bytes"),
+        diff_trunc_bytes_in_hunk: parse_optional_bool(&diff_meta, "diff_trunc_bytes_in_hunk"),
         diff_exit: parse_status_result_field(&diff_meta, "diff_exit")
             .and_then(|value| value.parse().ok()),
         diff_bytes: parse_optional_usize(&diff_meta, "diff_bytes"),
@@ -1090,6 +1095,7 @@ fn show_changes_transport_safe(
             Some(trunc_count),
             Some(trunc_lines),
             Some(trunc_bytes),
+            Some(trunc_bytes_in_hunk),
         ) = (
             frames.diff_exit,
             frames.diff_hunks_returned,
@@ -1097,6 +1103,7 @@ fn show_changes_transport_safe(
             frames.diff_trunc_hunk_count,
             frames.diff_trunc_hunk_lines,
             frames.diff_trunc_bytes,
+            frames.diff_trunc_bytes_in_hunk,
         )
         else {
             return false;
@@ -1110,6 +1117,7 @@ fn show_changes_transport_safe(
             && hunks_returned == actual_hunks
             && hunks_returned <= max_hunks
             && hunks_truncated == (trunc_count || trunc_lines || trunc_bytes)
+            && (!trunc_bytes_in_hunk || trunc_bytes)
     } else {
         true
     };
@@ -1509,6 +1517,9 @@ pub(crate) fn parse_show_changes_output_with_observation(
     }
     if frames.diff_trunc_bytes == Some(true) {
         truncation_reasons.push("diff_byte_budget");
+    }
+    if frames.diff_trunc_bytes_in_hunk == Some(true) {
+        truncation_reasons.push("diff_hunk_byte_budget");
     }
     let output_truncated = !truncation_reasons.is_empty();
     // Every segment must fit its independent production budget and match its
@@ -2077,6 +2088,7 @@ fn set_show_changes_verdict(output: &mut Value) {
                 Some("diff_hunk_count_limit") => Some("diff_hunk_count_limit"),
                 Some("diff_hunk_line_limit") => Some("diff_hunk_line_limit"),
                 Some("diff_byte_budget") => Some("diff_byte_budget"),
+                Some("diff_hunk_byte_budget") => Some("diff_hunk_byte_budget"),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -2086,6 +2098,10 @@ fn set_show_changes_verdict(output: &mut Value) {
         let hunk_line_truncated = diff_truncation_reasons
             .iter()
             .any(|reason| *reason == "diff_hunk_line_limit");
+        let current_hunk_omitted = hunk_line_truncated
+            || diff_truncation_reasons
+                .iter()
+                .any(|reason| *reason == "diff_hunk_byte_budget");
         // show_changes currently reports line truncation at the aggregate diff
         // level, not as authoritative per-hunk provenance. Keep whole-worktree
         // scope rather than guessing which returned path owns the omitted lines.
@@ -2099,7 +2115,7 @@ fn set_show_changes_verdict(output: &mut Value) {
             .get("project")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let recovery_kind = match (page_truncated, hunk_line_truncated) {
+        let recovery_kind = match (page_truncated, current_hunk_omitted) {
             (true, true) => "mixed",
             (true, false) => "page",
             (false, true) => "hunk_lines",
@@ -2121,7 +2137,7 @@ fn set_show_changes_verdict(output: &mut Value) {
                 "kind": recovery_kind,
                 "tool": "git_diff_hunks",
                 "arguments": suggested_call.clone(),
-                "safe_continuation_for_omitted_lines": if hunk_line_truncated {
+                "safe_continuation_for_omitted_lines": if current_hunk_omitted {
                     Value::Bool(false)
                 } else {
                     Value::Null
