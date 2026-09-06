@@ -12,7 +12,7 @@
 
 如果你准备让 ChatGPT 长期使用自己的开发环境，推荐从 **普通 Server + Runner** 开始。这是 WebCodex 的完整开发体验：可以长期连接多个项目，并使用项目探索、编辑、Git、命令、测试、长任务和代码导航能力。公网 HTTPS、Cloudflare Tunnel 或 OpenAI Secure MCP Tunnel 只是 ChatGPT 到 Server 的连接方式，不会把你切换到另一套受限体验。
 
-按照[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)完成安装、一次性登录、项目选择、Runner 启动和 ChatGPT 连接即可。第一次成功使用前，不需要理解内部身份、注册表或令牌细节。
+Windows / macOS Desktop 用户建议直接从带截图的 [Desktop 安装与连接指南](docs/desktop-install.md)开始；CLI、自托管或高级配置再看[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。第一次成功使用前，不需要理解内部身份、注册表或令牌细节。
 
 ### 只想先试几分钟：临时分享
 
@@ -62,8 +62,8 @@ WebCodex
 ## 平台支持
 
 - **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。
-- **macOS x64/arm64** —— 支持本机 `share` 和 Runner 工作流。
-- **Windows x64/arm64** —— 支持 CLI、Runner、本地前台 Server，以及显式 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 可自动管理固定版本的 Cloudflare Quick Tunnel；OpenAI `tunnel-client` 在 x64/arm64 都支持 managed 获取。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 Windows ARM64 使用 Cloudflare 时需要提供受信任的显式/`PATH` `cloudflared`。WebCodex 托管的 Windows Server service 仍不支持。
+- **macOS x64/arm64** —— 支持 Desktop 本机 Server + Runner、OpenAI Secure Tunnel、本机 `share` 和独立 Runner 工作流。
+- **Windows x64/arm64** —— 支持 Desktop 本机 Server + Runner、OpenAI Secure Tunnel、CLI、Runner、本地前台 Server，以及显式 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 可自动管理固定版本的 Cloudflare Quick Tunnel；OpenAI `tunnel-client` 在 x64/arm64 都支持 managed 获取。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 Windows ARM64 使用 Cloudflare 时需要提供受信任的显式/`PATH` `cloudflared`。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
 
 Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
 
@@ -75,6 +75,7 @@ Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP
 
 ## 文档
 
+- [Desktop 安装与连接](docs/desktop-install.md) —— Windows / macOS Desktop + OpenAI Secure Tunnel 推荐入口
 - [完整使用指南](docs/PERSONAL_SETUP.zh-CN.md) —— 日常使用推荐：普通 Server + Runner + 你的项目
 - [快速试用](docs/QUICK_START.zh-CN.md) —— 用 `share` 临时体验一个仓库
 - [MCP](docs/MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和 MCP 参考

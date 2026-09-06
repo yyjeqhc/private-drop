@@ -12,7 +12,7 @@ Ask your assistant to inspect a repository, modify code, run tests, use Git, or 
 
 If you want ChatGPT to keep using your real development environment, start with a **regular Server + Runner**. This is the full development experience: durable access to multiple projects plus project exploration, editing, Git, commands, tests, long-running work, and code navigation. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are only ways for ChatGPT to reach the Server; they do not switch you into a different restricted experience.
 
-Follow the [Full Setup guide](docs/PERSONAL_SETUP.md) for installation, one-time login, project selection, Runner startup, and ChatGPT connection. You do not need to learn internal identity, registry, or token details before the first successful setup.
+For Windows or macOS Desktop, start with the screenshot-based [Desktop installation guide](docs/desktop-install.md). For CLI, self-hosted, or advanced setups, follow the [Full Setup guide](docs/PERSONAL_SETUP.md). You do not need to learn internal identity, registry, or token details before the first successful setup.
 
 ### Just trying it for a few minutes: temporary share
 
@@ -62,8 +62,8 @@ For the internal Server/Runner architecture, protocol surfaces, and authority bo
 ## Platforms
 
 - **Linux x64/arm64** — local `share`, Server, and Runner workflows.
-- **macOS x64/arm64** — local `share` and Runner workflows.
-- **Windows x64/arm64** — CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`. Windows x64 can auto-manage the pinned Cloudflare Quick Tunnel binary; OpenAI `tunnel-client` is managed on both x64 and arm64. Cloudflare does not publish a Windows ARM64 artifact for the pinned release, so Windows ARM64 Cloudflare sharing requires a trusted explicit/PATH `cloudflared`. WebCodex-managed Windows Server services remain unsupported.
+- **macOS x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, local `share`, and standalone Runner workflows.
+- **Windows x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`. Windows x64 can auto-manage the pinned Cloudflare Quick Tunnel binary; OpenAI `tunnel-client` is managed on both x64 and arm64. Cloudflare does not publish a Windows ARM64 artifact for the pinned release, so Windows ARM64 Cloudflare sharing requires a trusted explicit/PATH `cloudflared`. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
 
 Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
 
@@ -75,6 +75,7 @@ Those are follow-up operating concerns, not concepts a first-time user should ha
 
 ## Documentation
 
+- [Desktop installation](docs/desktop-install.md) — recommended first path for Windows/macOS Desktop + OpenAI Secure Tunnel
 - [Full Setup](docs/PERSONAL_SETUP.md) — recommended daily use: a regular Server + Runner + your projects
 - [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
 - [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference
