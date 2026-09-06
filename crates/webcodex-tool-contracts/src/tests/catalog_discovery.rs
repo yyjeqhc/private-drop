@@ -139,6 +139,37 @@ fn edit_recommended_flow_prefers_apply_patch_before_exact_edits() {
 }
 
 #[test]
+fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
+    let flow = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "execution_lifetime")
+        .expect("execution_lifetime recommended flow");
+    assert_eq!(
+        flow.tools,
+        &[
+            "run_process",
+            "run_job",
+            "run_detached_process",
+            "observe_jobs",
+            "stop_job",
+        ]
+    );
+    let text = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_ascii_lowercase();
+    for phrase in [
+        "runner-owned",
+        "outlive the current runner process",
+        "run_detached_process",
+        "supervisor-owned",
+        "replacement runner",
+    ] {
+        assert!(
+            text.contains(phrase),
+            "execution_lifetime flow should mention {phrase}: {text}"
+        );
+    }
+}
+
+#[test]
 fn tool_categories_and_recommended_flows_are_well_formed() {
     let categories = registered_tool_categories();
     let names = registered_tool_names();
@@ -224,6 +255,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "restart runner, list again",
         "bind with update_session_context",
         "explicit one-shot/no-persistence ssh",
+        "execution lifetime: run_process/run_job stay runner-owned",
+        "outlive the current runner process",
+        "discover run_detached_process",
+        "supervisor-owned job",
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
         "edit: prefer apply_patch for model-generated contextual",

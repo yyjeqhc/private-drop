@@ -311,6 +311,19 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         ],
     },
     ToolRecommendedFlow {
+        name: "execution_lifetime",
+        summary: "Execution lifetime: run_process/run_job stay Runner-owned. If accepted native work must outlive the current Runner process across exit, restart, upgrade, or replacement, discover run_detached_process and observe its supervisor-owned Job; never use an expired detached key as a retry token.",
+        manifest_purpose:
+            "Choose execution by lifetime ownership: ordinary process/shell Jobs remain owned by the current Runner, while run_detached_process explicitly hands accepted native argv work to a narrow supervisor so it can outlive the initiating Runner and be recovered by a replacement Runner only under the detached reconciliation contract.",
+        tools: &[
+            "run_process",
+            "run_job",
+            "run_detached_process",
+            "observe_jobs",
+            "stop_job",
+        ],
+    },
+    ToolRecommendedFlow {
         name: "inspect",
         summary: "Inspect: use search_project_text and read_file before editing. Prefer run_process for native argv and run_script for typed scripts; run_shell with rg or git grep is the diagnostic escape hatch; show_changes reviews.",
         manifest_purpose:

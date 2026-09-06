@@ -216,6 +216,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "persistent shell",
         "ssh_resource",
         "runner restart",
+        "runner-owned",
+        "outlive the current runner process",
+        "run_detached_process",
     ] {
         assert!(
             run_shell_desc.contains(phrase),
@@ -230,10 +233,56 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "persistent shell",
         "ssh_resource",
         "one-shot/no-persistence ssh",
+        "owned by the current runner",
+        "outlive the current runner process",
+        "run_detached_process",
     ] {
         assert!(
             run_process_desc.contains(phrase),
             "run_process description should mention {phrase}: {run_process_desc}"
+        );
+    }
+
+    let run_script_desc = desc("run_script");
+    for phrase in [
+        "owned by the current runner",
+        "outlive the current runner process",
+        "run_detached_process",
+    ] {
+        assert!(
+            run_script_desc.contains(phrase),
+            "run_script description should mention {phrase}: {run_script_desc}"
+        );
+    }
+
+    let run_job_desc = desc("run_job");
+    for phrase in [
+        "runner-owned",
+        "server disconnect/restart",
+        "replacement runner does not inherit",
+        "outlive the current runner process",
+        "run_detached_process",
+    ] {
+        assert!(
+            run_job_desc.contains(phrase),
+            "run_job description should mention {phrase}: {run_job_desc}"
+        );
+    }
+
+    let detached_desc = desc("run_detached_process");
+    for phrase in [
+        "supervisor-owned",
+        "outlive the initiating runner process",
+        "runner exit",
+        "restart",
+        "upgrade",
+        "replacement",
+        "ownership is handed off before payload start",
+        "expired keys are not retry tokens",
+    ] {
+        assert!(
+            detached_desc.contains(phrase),
+            "run_detached_process description should mention {phrase}: {detached_desc}"
         );
     }
 
