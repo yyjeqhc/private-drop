@@ -2,7 +2,7 @@
 
 [English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
 
-This guide covers **production and advanced self-hosting**: building and installing the binaries, bootstrapping the Server, enrolling Runner machines, connecting MCP/GPT clients, and running smoke checks. For ordinary personal/daily use, start with the [Full Setup guide](PERSONAL_SETUP.md). If you only want a few-minute one-repository trial, use the [Quick Trial](QUICK_START.md).
+This guide is for **production and advanced self-hosting**: long-lived Servers, multiple machines/users, system services, reverse proxies, Docker, and operator-managed networking. If you are installing WebCodex on a normal Windows or macOS workstation, **do not start here**; the recommended path is [WebCodex Desktop + the official OpenAI Secure Tunnel](desktop-install.md). For CLI or an existing Server, use the [Full Setup guide](PERSONAL_SETUP.md). For a few-minute one-repository trial, use the [Quick Trial](QUICK_START.md).
 
 ## Components
 

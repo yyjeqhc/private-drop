@@ -1,58 +1,81 @@
-# WebCodex Desktop 快速安装与 ChatGPT 连接
+# WebCodex Desktop: quick install and ChatGPT connection
 
-这份指南适用于 Windows / macOS Desktop。目标是：安装 Desktop → 启动本机 Server + Runner → 通过 OpenAI Secure Tunnel 连接 ChatGPT → 添加你真正要让 AI 使用的项目。
+[English](desktop-install.md) | [简体中文](desktop-install.zh-CN.md)
 
-## 1. 准备 OpenAI Tunnel
+For normal Windows or macOS personal use, **WebCodex Desktop + the official OpenAI Secure Tunnel is the recommended path**. It keeps the Server and Runner local, gives ChatGPT a private Tunnel connection, and avoids making first-time users configure reverse proxies, OAuth, system services, or a public WebCodex endpoint.
 
-在 OpenAI 平台创建一个 Tunnel，并准备一个可用于该 Tunnel 的 API key：
+The normal path is:
+
+```text
+install Desktop
+→ start the local Server + Runner
+→ start the official OpenAI Secure Tunnel
+→ connect ChatGPT with the Tunnel ID
+→ add the real project you want the AI to use
+```
+
+For CLI, an existing remote Server, production hosting, or advanced networking, use the [Full Setup](PERSONAL_SETUP.md) or [Deployment](DEPLOYMENT.md) guides instead.
+
+## 1. Install WebCodex Desktop
+
+Download the matching Desktop artifact from the [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases) page:
+
+- **Windows:** use the Windows x64 installer.
+- **macOS:** use the DMG matching your Mac architecture, Intel or Apple Silicon.
+
+Current macOS builds are ad-hoc signed and are not notarized. If Gatekeeper blocks the first launch of a newly downloaded build, open **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**. Do not disable Gatekeeper globally.
+
+Launch WebCodex Desktop after installation.
+
+## 2. Prepare an OpenAI Tunnel
+
+Create a Tunnel in the OpenAI Platform and prepare an API key that can use that Tunnel:
 
 - [Tunnels - OpenAI API](https://platform.openai.com/settings/organization/tunnels)
 - [API keys - OpenAI API](https://platform.openai.com/settings/organization/api-keys)
 
-Tunnel 名称可以自定义；记录自己的 Tunnel ID。API key 建议使用 Restricted key，只授予 Tunnels 所需的 **Read + Use** 权限。
+The Tunnel name is up to you. Record the Tunnel ID. A Restricted API key with only the Tunnel permissions you need is recommended.
 
-![OpenAI Tunnels 页面](desktop-install/image-20260906171606559.png)
+![OpenAI Tunnels page](desktop-install/image-20260906171606559.png)
 
-![OpenAI API Keys 页面](desktop-install/image-20260906171633208.png)
+![OpenAI API Keys page](desktop-install/image-20260906171633208.png)
 
-不要把真实 API key、WebCodex token 或 authorization 内容提交到 Git、issue、截图或聊天记录中。
+Do not commit or share real API keys, WebCodex tokens, or authorization values.
 
-## 2. 配置 Desktop 所需环境变量
+## 3. Give Desktop the Tunnel settings
 
-Desktop 普通 Tunnel 只需要：
+The normal Desktop Tunnel path needs only:
 
 ```text
 CONTROL_PLANE_TUNNEL_ID
 CONTROL_PLANE_API_KEY
 ```
 
-不需要额外配置 `OPENAI_ADMIN_KEY` 或 `OPENAI_API_KEY`。Desktop 安装包当前不把 `tunnel-client` 直接塞进安装目录；首次需要 OpenAI Secure Tunnel 时，WebCodex 会自动下载并校验固定版本，所以普通用户仍然不需要手动安装。若自动下载失败，再检查网络 / 代理，或高级用户显式设置 `WEBCODEX_TUNNEL_CLIENT_BIN`。
+You do not need `OPENAI_ADMIN_KEY` or `OPENAI_API_KEY` for this path. The Desktop package does not bundle `tunnel-client`; when the official OpenAI Secure Tunnel is first needed, WebCodex downloads and verifies the pinned client automatically. Most users therefore do not install it manually. If managed download fails, check the network/proxy first; `WEBCODEX_TUNNEL_CLIENT_BIN` is an advanced override.
 
 ### Windows
 
-建议设置为当前用户的持久环境变量，然后完全退出并重新打开 WebCodex Desktop：
+Set the values as persistent variables for the current user, then fully quit and reopen WebCodex Desktop:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("CONTROL_PLANE_TUNNEL_ID", "tunnel_...", "User")
 [Environment]::SetEnvironmentVariable("CONTROL_PLANE_API_KEY", "<restricted-tunnel-key>", "User")
 ```
 
-![Windows Desktop 示例](desktop-install/image-20260906171812348.png)
+![Windows Desktop example](desktop-install/image-20260906171812348.png)
 
 ### macOS
 
-假设你的默认shell是zshrc，如果是其他的，请自行调整
+Apps launched from Finder or the Dock do **not** read `~/.zshrc`. If you keep the values in your shell setup, Terminal may see them while Desktop does not.
 
-从 Finder / Dock 启动的 App **不会执行 `~/.zshrc`**。仅把变量写进 `.zshrc`，Terminal 能看到，但 Desktop 不一定能看到。
-
-临时测试可以从已经加载变量的 Terminal 启动：
+For a temporary test, launch Desktop from a Terminal that already has the variables:
 
 ```bash
 source ~/.zshrc
 "/Applications/WebCodex Desktop.app/Contents/MacOS/WebCodex"
 ```
 
-如果希望仍从 Finder / Dock 打开，可先把当前 shell 中的值写入当前登录会话的 launchd 环境，再重新打开 Desktop：
+To keep launching from Finder or the Dock, copy the current values into the login session's launchd environment, then reopen Desktop:
 
 ```bash
 source ~/.zshrc
@@ -60,70 +83,70 @@ launchctl setenv CONTROL_PLANE_TUNNEL_ID "$CONTROL_PLANE_TUNNEL_ID"
 launchctl setenv CONTROL_PLANE_API_KEY "$CONTROL_PLANE_API_KEY"
 ```
 
-如果要使用截图、窗口观察、键盘鼠标等 Computer Use 能力，还需要在 **系统设置 → 隐私与安全性** 中为实际运行 WebCodex Runner / Desktop 的进程授予 macOS 要求的权限：至少包括 **屏幕与系统音频录制（Screen Recording）**，涉及界面控制时还需要 **辅助功能（Accessibility）**。授权后通常需要重新启动相关进程才能生效；WebCodex 不会绕过或替代系统权限确认。
+If you want Computer Use features such as screenshots, window observation, keyboard, or pointer control, grant the permissions required by macOS to the process actually running WebCodex Runner/Desktop. At minimum this may include **Screen & System Audio Recording**; UI control also requires **Accessibility**. Restart the affected process after changing these permissions when macOS requires it.
 
-## 3. 启动本机运行环境
+## 4. Start the local runtime and add your project
 
-首次启动后，Desktop 会准备本机 Server + Runner。Windows 会先把 Desktop 安装目录注册为默认项目；macOS 使用 Desktop 自己的 workspace。真正开发时，请在“项目”页面**显式添加你的代码仓库目录**。
+On first use, Desktop prepares its local Server + Runner. Windows initially has a Desktop-owned default project; macOS uses Desktop's own workspace. For real development, open **Projects** and explicitly add the repository directory you want the AI to use.
 
-这是有意的安全边界：默认项目不会自动获得其他目录或整块磁盘的访问权限。
+This is an intentional authority boundary: the default Desktop project does not grant access to unrelated directories or the whole disk.
 
-![本机运行环境示例](desktop-install/image-20260906171904811.png)
+![Local runtime example](desktop-install/image-20260906171904811.png)
 
-## 4. 配置 Tunnel 网络
+## 5. Configure Tunnel networking if needed
 
-进入 **设置 → OpenAI Tunnel 网络**：
+Open **Settings → OpenAI Tunnel network**:
 
-- **自动（推荐）**：优先使用 Desktop 进程继承的代理；Windows 还会检测系统代理。
-- **直接连接**：不使用代理。
-- **自定义 HTTP 代理**：例如 `http://127.0.0.1:7890`。
+- **Automatic (recommended):** use the proxy inherited by Desktop; Windows can also detect the system proxy.
+- **Direct:** do not use a proxy.
+- **Custom HTTP proxy:** for example `http://127.0.0.1:7890`.
 
-如果 Tunnel 已在运行，先停止 Tunnel，修改并保存代理设置，再重新启动 Tunnel。**不需要重启 Desktop**；每次启动 Tunnel 都会重新读取最新代理设置。
+If the Tunnel is already running, stop it, save the new network setting, and start it again. You do **not** need to restart Desktop; each Tunnel start reads the current setting.
 
-![连接页面示例](desktop-install/image-20260906172102174.png)
+![Connection page](desktop-install/image-20260906172102174.png)
 
-![Tunnel 网络设置示例](desktop-install/image-20260906173905826.png)
+![Tunnel network settings](desktop-install/image-20260906173905826.png)
 
-## 5. 启动 OpenAI Secure Tunnel
+## 6. Start the official OpenAI Secure Tunnel
 
-进入 **连接 → OpenAI Secure Tunnel**。运行成功后，Desktop 会显示 Tunnel 已建立，并把 Tunnel ID 复制到剪贴板（系统允许时）。
+Open **Connection → OpenAI Secure Tunnel** and start it. When the connection is ready, Desktop shows the established Tunnel and copies the Tunnel ID to the clipboard when the operating system allows it.
 
-![Tunnel 正常运行示例](desktop-install/image-20260906174123335.png)
+![OpenAI Secure Tunnel running](desktop-install/image-20260906174123335.png)
 
-## 6. 在 ChatGPT 创建连接
+## 7. Add WebCodex to ChatGPT
 
-在 ChatGPT 中创建自定义连接/应用时：
+When creating the custom connection/app in ChatGPT:
 
-1. 选择 **Tunnel** 连接方式。
-2. 填入刚才的 Tunnel ID。
-3. **Authentication 选择 None / No authentication**。
+1. Choose **Tunnel** as the connection method.
+2. Enter the Tunnel ID from Desktop/OpenAI.
+3. Set **Authentication** to **None / No authentication**.
 
-这里不需要 OAuth。WebCodex 会在本机保存 MCP authorization credential，并由 Tunnel client 注入；ChatGPT 侧不需要看到这份本机凭据。
+You do not configure OAuth in ChatGPT for this path. WebCodex keeps the MCP authorization credential locally and the Tunnel client injects it; ChatGPT does not need the local credential.
 
-![ChatGPT 创建连接示例](desktop-install/image-20260906174157920.png)
+![Create ChatGPT connection](desktop-install/image-20260906174157920.png)
 
-![Tunnel 配置示例](desktop-install/image-20260906174207352.png)
+![Tunnel configuration](desktop-install/image-20260906174207352.png)
 
-![连接完成示例](desktop-install/image-20260906174215647.png)
+![Connected](desktop-install/image-20260906174215647.png)
 
-## 7. 最小验收
+## 8. Minimal acceptance check
 
-连接后可以直接让 ChatGPT 做下面几件事：
+After connecting, ask ChatGPT to do a few small checks:
 
-- 列出 WebCodex 项目。
-- 读取一个文件。
-- 在明确注册的项目中创建并再读取一个临时文件，然后删除。
-- 执行 `git status`、`uname -a` / `ver` 等只读命令。
-- 需要 Computer Use 时，尝试列出窗口或截取浏览器窗口。
+- list the WebCodex projects;
+- read a file from the project you explicitly added;
+- create, read back, and remove one temporary file inside that project;
+- run a read-only command such as `git status`, `uname -a`, or `ver`;
+- if you enabled Computer Use, list windows or capture a browser window.
 
-如果这些都正常，说明 Tunnel、Server、Runner、项目权限和普通工具调用链已经打通。
+If these work, the Tunnel, Server, Runner, project authority, and ordinary tool path are connected correctly.
 
-## 常见问题
+## Troubleshooting
 
-**OpenAI Secure Tunnel 按钮不可用**：先确认 Desktop 新进程能看到 `CONTROL_PLANE_TUNNEL_ID` 和 `CONTROL_PLANE_API_KEY`。
+**OpenAI Secure Tunnel is disabled:** make sure the newly launched Desktop process can see `CONTROL_PLANE_TUNNEL_ID` and `CONTROL_PLANE_API_KEY`.
 
-**macOS `.zshrc` 已配置但 Desktop 仍检测不到**：这是 Finder / Dock 启动模型导致的，按上面的 Terminal 或 `launchctl setenv` 方式处理。
+**macOS Terminal sees the values but Desktop does not:** Finder/Dock apps do not load `~/.zshrc`; use the Terminal-launch or `launchctl setenv` path above.
 
-**Tunnel 启动失败或连接 ChatGPT 超时**：优先检查“设置 → OpenAI Tunnel 网络”的代理；修改后停止并重新启动 Tunnel 即可。
+**Tunnel startup or ChatGPT connection times out:** check **Settings → OpenAI Tunnel network** first, then stop and restart the Tunnel after changing the proxy mode.
 
-**项目目录无法访问**：到“项目”页面显式添加对应目录，不要通过扩大默认安装目录权限来绕过项目边界。
+**A repository is not accessible:** add that directory explicitly on the **Projects** page instead of broadening the default Desktop project's filesystem authority.

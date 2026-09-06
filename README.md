@@ -12,7 +12,7 @@ Ask your assistant to inspect a repository, modify code, run tests, use Git, or 
 
 If you want ChatGPT to keep using your real development environment, start with a **regular Server + Runner**. This is the full development experience: durable access to multiple projects plus project exploration, editing, Git, commands, tests, long-running work, and code navigation. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are only ways for ChatGPT to reach the Server; they do not switch you into a different restricted experience.
 
-For Windows or macOS Desktop, start with the screenshot-based [Desktop installation guide](docs/desktop-install.md). For CLI, self-hosted, or advanced setups, follow the [Full Setup guide](docs/PERSONAL_SETUP.md). You do not need to learn internal identity, registry, or token details before the first successful setup.
+For Windows or macOS, the recommended first path is **WebCodex Desktop + the official OpenAI Secure Tunnel**. Follow the screenshot-based [Desktop installation guide](docs/desktop-install.md). For CLI, an existing Server, self-hosting, or advanced setup, use the [Full Setup guide](docs/PERSONAL_SETUP.md).
 
 ### Just trying it for a few minutes: temporary share
 
@@ -63,20 +63,21 @@ For the internal Server/Runner architecture, protocol surfaces, and authority bo
 
 - **Linux x64/arm64** — local `share`, Server, and Runner workflows.
 - **macOS x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, local `share`, and standalone Runner workflows.
-- **Windows x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`. Windows x64 can auto-manage the pinned Cloudflare Quick Tunnel binary; OpenAI `tunnel-client` is managed on both x64 and arm64. Cloudflare does not publish a Windows ARM64 artifact for the pinned release, so Windows ARM64 Cloudflare sharing requires a trusted explicit/PATH `cloudflared`. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
+- **Windows x64** — Desktop local Server + Runner with the official OpenAI Secure Tunnel, plus CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`.
+- **Windows arm64** — CLI + Runner, local foreground Server, and `share`; managed OpenAI `tunnel-client` is supported. The pinned Cloudflare release has no official Windows ARM64 artifact, so Cloudflare requires a trusted explicit/PATH `cloudflared`. The 0.4.0 Desktop installer is Windows x64 only. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
 
 Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
 
 ## Existing Servers and advanced setup
 
-If someone already provides the WebCodex Server and connection credential, use that existing Server. For a normal personal installation, follow the [Full Setup guide](docs/PERSONAL_SETUP.md). Use [Deployment](docs/DEPLOYMENT.md) later for production hosting, multiple users, systemd/Docker, OAuth, proxies, and private CAs.
+If someone already provides the WebCodex Server and connection credential, use that existing Server and follow the [Full Setup guide](docs/PERSONAL_SETUP.md). For a normal Windows/macOS personal installation, use the [Desktop guide](docs/desktop-install.md). Use [Deployment](docs/DEPLOYMENT.md) only for production hosting, multiple users, systemd/Docker, OAuth, proxies, and private CAs.
 
 Those are follow-up operating concerns, not concepts a first-time user should have to learn before WebCodex works.
 
 ## Documentation
 
-- [Desktop installation](docs/desktop-install.md) — recommended first path for Windows/macOS Desktop + OpenAI Secure Tunnel
-- [Full Setup](docs/PERSONAL_SETUP.md) — recommended daily use: a regular Server + Runner + your projects
+- [Desktop installation](docs/desktop-install.md) — recommended Windows/macOS path: Desktop + official OpenAI Secure Tunnel
+- [Full Setup](docs/PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
 - [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
 - [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference
 - [Deployment](docs/DEPLOYMENT.md) — production, self-hosting, and advanced operations

@@ -2,7 +2,7 @@
 
 [English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
 
-本文档覆盖 WebCodex 的**生产与高级自托管**：构建与安装二进制、bootstrap Server、接入 Runner 机器、连接 MCP/GPT 客户端以及 smoke 检查。普通个人/日常使用先看[完整使用指南](PERSONAL_SETUP.zh-CN.md)；如果只想几分钟临时体验一个仓库，再看[快速试用](QUICK_START.zh-CN.md)。
+本文档只面向**生产与高级自托管**：长期 Server、多机器/多用户、systemd/Docker、反向代理和 operator 管理的网络配置。普通 Windows / macOS 工作站**不要从这里开始**；最推荐的路径是 [WebCodex Desktop + 官方 OpenAI Secure Tunnel](desktop-install.zh-CN.md)。CLI 或已有 Server 再看[完整使用指南](PERSONAL_SETUP.zh-CN.md)；如果只想几分钟临时体验一个仓库，再看[快速试用](QUICK_START.zh-CN.md)。
 
 ## 组件
 

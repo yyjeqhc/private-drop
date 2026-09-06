@@ -7,7 +7,8 @@ Start with the goal that matches what you are trying to do.
 ## I want to use WebCodex normally
 
 - [README](../README.md) — what WebCodex does and the difference between full use and a temporary trial
-- [Full Setup](PERSONAL_SETUP.md) — **recommended entry**: regular Server + Runner + projects + ChatGPT
+- [Desktop installation](desktop-install.md) — **recommended Windows/macOS entry**: Desktop + official OpenAI Secure Tunnel
+- [Full Setup](PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
 - [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent configure WebCodex using ordinary user language
 - [MCP](MCP.md) — ChatGPT, Claude, and other MCP clients
 

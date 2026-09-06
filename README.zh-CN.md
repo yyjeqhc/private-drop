@@ -12,7 +12,7 @@
 
 如果你准备让 ChatGPT 长期使用自己的开发环境，推荐从 **普通 Server + Runner** 开始。这是 WebCodex 的完整开发体验：可以长期连接多个项目，并使用项目探索、编辑、Git、命令、测试、长任务和代码导航能力。公网 HTTPS、Cloudflare Tunnel 或 OpenAI Secure MCP Tunnel 只是 ChatGPT 到 Server 的连接方式，不会把你切换到另一套受限体验。
 
-Windows / macOS Desktop 用户建议直接从带截图的 [Desktop 安装与连接指南](docs/desktop-install.md)开始；CLI、自托管或高级配置再看[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。第一次成功使用前，不需要理解内部身份、注册表或令牌细节。
+Windows / macOS 普通用户最推荐 **WebCodex Desktop + 官方 OpenAI Secure Tunnel**，直接按带截图的 [Desktop 安装与连接指南](docs/desktop-install.zh-CN.md)操作即可；CLI、已有 Server、自托管或高级配置再看[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。
 
 ### 只想先试几分钟：临时分享
 
@@ -63,20 +63,21 @@ WebCodex
 
 - **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。
 - **macOS x64/arm64** —— 支持 Desktop 本机 Server + Runner、OpenAI Secure Tunnel、本机 `share` 和独立 Runner 工作流。
-- **Windows x64/arm64** —— 支持 Desktop 本机 Server + Runner、OpenAI Secure Tunnel、CLI、Runner、本地前台 Server，以及显式 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 可自动管理固定版本的 Cloudflare Quick Tunnel；OpenAI `tunnel-client` 在 x64/arm64 都支持 managed 获取。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此 Windows ARM64 使用 Cloudflare 时需要提供受信任的显式/`PATH` `cloudflared`。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
+- **Windows x64** —— 推荐 Desktop 本机 Server + Runner + 官方 OpenAI Secure Tunnel；同时支持 CLI + Runner、本地前台 Server，以及显式 `webcodex share --tunnel cloudflare|openai|none`。
+- **Windows arm64** —— 支持 CLI + Runner、本地前台 Server 与 `share`，managed OpenAI `tunnel-client` 可用。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此使用 Cloudflare 时需要受信任的显式/`PATH` `cloudflared`。0.4.0 Desktop installer 仅提供 Windows x64。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
 
 Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
 
 ## 已有 Server 与高级配置
 
-如果已经有人为你提供 WebCodex Server 和接入凭据，可以直接使用已有 Server；普通个人完整安装见[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。生产环境、多用户、systemd/Docker、OAuth、代理/私有 CA 等运维内容再查看[部署指南](docs/DEPLOYMENT.zh-CN.md)。
+如果已经有人为你提供 WebCodex Server 和接入凭据，直接使用已有 Server 并看[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。普通 Windows / macOS 个人安装使用 [Desktop 指南](docs/desktop-install.zh-CN.md)。生产环境、多用户、systemd/Docker、OAuth、代理/私有 CA 等运维内容再查看[部署指南](docs/DEPLOYMENT.zh-CN.md)。
 
 这些是后续配置，不应该成为第一次使用 WebCodex 的概念负担。
 
 ## 文档
 
-- [Desktop 安装与连接](docs/desktop-install.md) —— Windows / macOS Desktop + OpenAI Secure Tunnel 推荐入口
-- [完整使用指南](docs/PERSONAL_SETUP.zh-CN.md) —— 日常使用推荐：普通 Server + Runner + 你的项目
+- [Desktop 安装与连接](docs/desktop-install.zh-CN.md) —— Windows / macOS 推荐路径：Desktop + 官方 OpenAI Secure Tunnel
+- [完整使用指南](docs/PERSONAL_SETUP.zh-CN.md) —— CLI、已有 Server、Linux 与高级普通 Server + Runner 配置
 - [快速试用](docs/QUICK_START.zh-CN.md) —— 用 `share` 临时体验一个仓库
 - [MCP](docs/MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和 MCP 参考
 - [部署指南](docs/DEPLOYMENT.zh-CN.md) —— 生产、自托管和高级运维

@@ -2,7 +2,7 @@
 
 [English](PERSONAL_SETUP.md) | [简体中文](PERSONAL_SETUP.zh-CN.md)
 
-Use this path when WebCodex is part of your normal development setup rather than a temporary repository share. The goal is simple: connect ChatGPT to a regular WebCodex Server, then let a persistent Runner use the real projects, Git checkout, compiler, and test tools on your machine.
+Use this path for CLI setup, an existing Server, or a setup that needs more control than Desktop provides. For a normal Windows or macOS personal installation, the recommended first path is [WebCodex Desktop + the official OpenAI Secure Tunnel](desktop-install.md). In either case, the full WebCodex model is the same: ChatGPT connects to a regular Server, and a persistent Runner uses the real projects, Git checkout, compiler, and test tools on your machine.
 
 If you only want to try WebCodex for a few minutes, use the [Quick Trial](QUICK_START.md) and `webcodex share` instead. `share` is a temporary, single-project, more restricted experience that ends when the command exits.
 
@@ -27,9 +27,9 @@ The Server may run on the repository machine or elsewhere. The Runner should run
 
 ## 1. Install WebCodex
 
-On Windows or macOS, you can install **WebCodex Desktop** from the matching [GitHub Release](https://github.com/yyjeqhc/webcodex/releases). Choose the Windows x64 installer or the macOS DMG for your Mac architecture (Intel or Apple Silicon). Current macOS builds are ad-hoc signed and not notarized, so Gatekeeper may block the first launch of a newly downloaded build. If that happens, use **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**; do not disable Gatekeeper globally. A separately downloaded update can be assessed again by macOS. The Desktop UI can set up the local Server, Runner, projects, and ChatGPT connection, including the regular OpenAI Secure MCP Tunnel path. The command-line setup below remains available for advanced configuration and troubleshooting.
+On Windows or macOS, prefer the dedicated [Desktop installation guide](desktop-install.md): install Desktop from the matching GitHub Release, let it manage the local Server + Runner, and connect ChatGPT through the official OpenAI Secure Tunnel. The command-line setup below is the alternative for Linux, existing Servers, advanced configuration, and troubleshooting.
 
-Install Node.js 18+ and Git, then:
+For the CLI path, install Node.js 18+ and Git, then:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
@@ -183,7 +183,8 @@ With the full setup, the AI should be able to explore and edit projects, use Git
 | Goal | Recommended entry | What it is |
 | --- | --- | --- |
 | Try one repository for a few minutes | `webcodex share` | One command, temporary, single-project, ends on exit, more restricted |
-| Use WebCodex for everyday development | regular Server + Runner (this guide) | Durable identity, multiple projects, full development tools, independent network choice |
+| Everyday use on Windows/macOS | [Desktop + official OpenAI Secure Tunnel](desktop-install.md) | Local Server + Runner, multiple projects, simplest recommended personal path |
+| CLI, Linux, or an existing Server | regular Server + Runner (this guide) | Durable identity, multiple projects, full development tools, independent network choice |
 | Operate a team/production deployment | [Deployment](DEPLOYMENT.md) | systemd, Docker, OAuth, multi-user and operator reference |
 
 A Tunnel is a network path, not a permission mode. Choosing a public hostname, Cloudflare, or OpenAI Tunnel should not determine whether you use the temporary-share or full-setup product experience.

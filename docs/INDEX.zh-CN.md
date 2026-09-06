@@ -7,7 +7,8 @@
 ## 我想正常使用 WebCodex
 
 - [README](../README.zh-CN.md) —— WebCodex 能做什么，以及完整使用和临时试用的区别
-- [完整使用指南](PERSONAL_SETUP.zh-CN.md) —— **推荐入口**：普通 Server + Runner + 项目 + ChatGPT
+- [Desktop 安装与连接](desktop-install.zh-CN.md) —— **Windows / macOS 推荐入口**：Desktop + 官方 OpenAI Secure Tunnel
+- [完整使用指南](PERSONAL_SETUP.zh-CN.md) —— CLI、已有 Server、Linux 与高级普通 Server + Runner 配置
 - [AI 辅助接入](AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你按普通用户语言完成配置
 - [MCP](MCP.zh-CN.md) —— ChatGPT、Claude 与其他 MCP 客户端
 
