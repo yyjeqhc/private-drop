@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn runtime_command_inherits_only_tunnel_authority_not_server_bootstrap_or_openai_admin_keys() {
+    let prerequisites = OpenAiTunnelPrerequisites {
+        binary: PathBuf::from("tunnel-client"),
+        tunnel_id: "tunnel_0123456789abcdef0123456789abcdef".to_string(),
+    };
+    let mut command = Command::new("tunnel-client");
+    configure_runtime_command(
+        &mut command,
+        &prerequisites,
+        "http://127.0.0.1:8080/mcp",
+        Path::new("authorization"),
+    );
+
+    let env = command.as_std().get_envs().collect::<Vec<_>>();
+    for key in ["WEBCODEX_TOKEN", "OPENAI_ADMIN_KEY", "OPENAI_API_KEY"] {
+        assert!(env
+            .iter()
+            .any(|(name, value)| { name.to_str() == Some(key) && value.is_none() }));
+    }
+    assert!(env.iter().any(|(name, value)| {
+        name.to_str() == Some("CONTROL_PLANE_TUNNEL_ID")
+            && value.and_then(|value| value.to_str()) == Some(prerequisites.tunnel_id.as_str())
+    }));
+}
+
+#[test]
 fn tunnel_ids_are_strict_and_runtime_key_never_part_of_the_id_contract() {
     assert!(valid_tunnel_id("tunnel_0123456789abcdef0123456789abcdef"));
     for invalid in [

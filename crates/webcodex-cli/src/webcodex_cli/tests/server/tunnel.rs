@@ -7,36 +7,46 @@ fn server_tunnel_parser_is_machine_owned_and_openai_only() {
         "openai",
         "--env-file",
         "local.env",
-        "--user-token-file",
-        "user-token",
         "--json",
         "--stop-on-stdin-eof",
     ]))
     .unwrap();
     assert_eq!(parsed.env_file, PathBuf::from("local.env"));
-    assert_eq!(parsed.user_token_file, PathBuf::from("user-token"));
 
     assert!(parse_server_tunnel(&args(&[
         "--provider",
         "cloudflare",
         "--env-file",
         "local.env",
-        "--user-token-file",
-        "user-token",
         "--json",
         "--stop-on-stdin-eof",
     ]))
     .unwrap_err()
     .contains("openai"));
-    assert!(parse_server_tunnel(&args(&[
-        "--provider",
-        "openai",
-        "--env-file",
-        "local.env",
-        "--user-token-file",
-        "user-token",
-    ]))
-    .is_err());
+    assert!(
+        parse_server_tunnel(&args(&["--provider", "openai", "--env-file", "local.env",])).is_err()
+    );
+}
+
+#[test]
+fn regular_tunnel_bootstrap_token_follows_server_env_precedence() {
+    let _guard = env_test_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let env_file = tmp.path().join("webcodex.env");
+    std::fs::write(&env_file, "WEBCODEX_TOKEN=file-bootstrap\n").unwrap();
+
+    let _env = EnvGuard::new().remove("WEBCODEX_TOKEN");
+    assert_eq!(
+        crate::webcodex_cli::server::derive_regular_tunnel_bootstrap_token(&env_file).unwrap(),
+        "file-bootstrap"
+    );
+    drop(_env);
+
+    let _env = EnvGuard::new().set("WEBCODEX_TOKEN", "process-bootstrap");
+    assert_eq!(
+        crate::webcodex_cli::server::derive_regular_tunnel_bootstrap_token(&env_file).unwrap(),
+        "process-bootstrap"
+    );
 }
 
 #[test]

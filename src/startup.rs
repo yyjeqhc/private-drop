@@ -4,13 +4,15 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegularServerTunnelOptions {
     pub local_server_url: String,
-    pub user_token_file: PathBuf,
+    pub bootstrap_token: String,
+    pub runtime_parent: PathBuf,
 }
 
 pub async fn run_regular_server_tunnel(options: RegularServerTunnelOptions) -> Result<(), String> {
     project_entry::run_regular_server_tunnel(&project_entry::RegularServerTunnelOptions {
         local_server_url: options.local_server_url,
-        user_token_file: options.user_token_file,
+        bootstrap_token: options.bootstrap_token,
+        runtime_parent: options.runtime_parent,
     })
     .await
     .map_err(|error| project_entry::render_error(&error, true))

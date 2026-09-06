@@ -12,7 +12,8 @@ const REGULAR_TUNNEL_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RegularServerTunnelOptions {
     pub(crate) local_server_url: String,
-    pub(crate) user_token_file: PathBuf,
+    pub(crate) bootstrap_token: String,
+    pub(crate) runtime_parent: PathBuf,
 }
 
 struct RegularTunnelSession {
@@ -20,19 +21,21 @@ struct RegularTunnelSession {
 }
 
 impl RegularTunnelSession {
-    fn create(user_token_file: &Path) -> Result<Self, ProductError> {
-        let parent = user_token_file.parent().ok_or_else(|| {
-            tunnel_auth_error("the WebCodex user token file has no parent directory")
-        })?;
-        let root = parent.join("regular-tunnel-runtime");
+    fn create(runtime_parent: &Path) -> Result<Self, ProductError> {
+        let root = runtime_parent.join("regular-tunnel-runtime");
         create_private_dir(&root)?;
         let directory = root.join(format!("openai-{}", uuid::Uuid::new_v4().simple()));
         create_private_dir(&directory)?;
         Ok(Self { directory })
     }
 
-    fn write_authorization_file(&self, user_token_file: &Path) -> Result<PathBuf, ProductError> {
-        let token = read_user_token(user_token_file)?;
+    fn write_authorization_file(&self, bootstrap_token: &str) -> Result<PathBuf, ProductError> {
+        let token = bootstrap_token.trim();
+        if token.is_empty() {
+            return Err(tunnel_auth_error(
+                "the local Server bootstrap credential is unavailable",
+            ));
+        }
         let path = self.directory.join("openai-mcp-authorization");
         write_new_private(&path, format!("Bearer {token}").as_bytes())?;
         Ok(path)
@@ -49,8 +52,8 @@ pub(crate) async fn run_regular_server_tunnel(
     options: &RegularServerTunnelOptions,
 ) -> Result<(), ProductError> {
     let local_server_url = validate_local_server_url(&options.local_server_url)?;
-    let session = RegularTunnelSession::create(&options.user_token_file)?;
-    let authorization_file = session.write_authorization_file(&options.user_token_file)?;
+    let session = RegularTunnelSession::create(&options.runtime_parent)?;
+    let authorization_file = session.write_authorization_file(&options.bootstrap_token)?;
     let prerequisites = prepare_openai_tunnel().await?;
     let deadline = Instant::now() + REGULAR_TUNNEL_STARTUP_TIMEOUT;
     let mut tunnel = start_openai_tunnel(
@@ -176,32 +179,8 @@ fn tunnel_auth_error(message: &str) -> ProductError {
     ProductError::new(
         "tunnel_auth_invalid",
         message,
-        Some("Restore the Desktop-managed WebCodex user token file, then retry."),
+        Some("Restore the local Server bootstrap configuration, then retry."),
     )
-}
-
-fn read_user_token(path: &Path) -> Result<String, ProductError> {
-    #[cfg(windows)]
-    let value = super::windows_private_state::read_private_bytes(path)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok());
-    #[cfg(not(windows))]
-    let value = crate::auth::read_protected_secret(path).ok();
-    let value = value
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            tunnel_auth_error("the WebCodex user token file is unreadable or not protected")
-        })?;
-    if !value
-        .strip_prefix("wc_pat_")
-        .is_some_and(|suffix| !suffix.is_empty())
-    {
-        return Err(tunnel_auth_error(
-            "the selected credential is not a WebCodex user API token",
-        ));
-    }
-    Ok(value)
 }
 
 #[cfg(test)]
@@ -218,6 +197,7 @@ mod tests {
         assert!(!encoded.contains("Authorization"));
         assert!(!encoded.contains("Bearer"));
         assert!(!encoded.contains("wc_pat_"));
+        assert!(!encoded.contains("wc_boot_"));
     }
 
     #[test]
@@ -231,67 +211,31 @@ mod tests {
     #[test]
     fn authorization_file_is_private_distinct_and_cleaned_up() {
         let temp = tempfile::tempdir().unwrap();
-        let token_file = temp.path().join("webcodex-user-token");
-        let user_pat = "wc_pat_test_secret";
-        super::super::setup_service::write_new_private(
-            &token_file,
-            format!("{user_pat}\n").as_bytes(),
-        )
-        .unwrap();
-        let session = RegularTunnelSession::create(&token_file).unwrap();
+        let bootstrap_token = "wc_boot_test_secret";
+        let session = RegularTunnelSession::create(temp.path()).unwrap();
         let session_dir = session.directory.clone();
-        let authorization_file = session.write_authorization_file(&token_file).unwrap();
+        let authorization_file = session.write_authorization_file(bootstrap_token).unwrap();
         assert_eq!(
             std::fs::read_to_string(&authorization_file).unwrap(),
-            format!("Bearer {user_pat}")
-        );
-        assert_ne!(authorization_file, token_file);
-        assert_eq!(
-            std::fs::read_to_string(&token_file).unwrap(),
-            format!("{user_pat}\n")
+            format!("Bearer {bootstrap_token}")
         );
         drop(session);
         assert!(!session_dir.exists());
         assert!(!authorization_file.exists());
-        assert!(token_file.is_file());
-        assert_eq!(
-            std::fs::read_to_string(&token_file).unwrap(),
-            format!("{user_pat}\n")
-        );
     }
 
     #[test]
-    fn authorization_file_rejects_non_user_pat_credentials_without_echoing_them() {
+    fn authorization_file_rejects_empty_bootstrap_credentials() {
         let temp = tempfile::tempdir().unwrap();
-        for (index, secret) in [
-            "wc_agent_do_not_echo_regular_tunnel_0123456789",
-            "wc_boot_do_not_echo_regular_tunnel_0123456789",
-            "wc_acct_do_not_echo_regular_tunnel_0123456789",
-            "wc_oat_do_not_echo_regular_tunnel_0123456789",
-            "arbitrary-do-not-echo-regular-tunnel-secret",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let token_file = temp.path().join(format!("webcodex-user-token-{index}"));
-            super::super::setup_service::write_new_private(
-                &token_file,
-                format!("{secret}\n").as_bytes(),
-            )
-            .unwrap();
-            let session = RegularTunnelSession::create(&token_file).unwrap();
-            let session_dir = session.directory.clone();
-            let error = session.write_authorization_file(&token_file).unwrap_err();
+        for value in ["", "   "] {
+            let session = RegularTunnelSession::create(temp.path()).unwrap();
+            let error = session.write_authorization_file(value).unwrap_err();
             assert_eq!(error.code, "tunnel_auth_invalid");
             assert_eq!(
                 error.message,
-                "the selected credential is not a WebCodex user API token"
+                "the local Server bootstrap credential is unavailable"
             );
-            let encoded = serde_json::to_string(&error).unwrap();
-            assert!(!encoded.contains(secret));
-            assert!(token_file.is_file());
             drop(session);
-            assert!(!session_dir.exists());
         }
     }
 }

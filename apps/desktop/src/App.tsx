@@ -29,6 +29,7 @@ export default function App() {
   const [error, setError] = useState<DesktopError | null>(null);
   const [cancelSubmittingId, setCancelSubmittingId] = useState<string | null>(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const stateVersionRef = useRef(0);
   const hasRegularTunnel = Boolean(state?.regular_tunnel);
   const hasCurrentOperation = Boolean(state?.current_operation);
@@ -78,7 +79,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [commitState]);
+  }, [commitState, startupAttempt]);
 
   useEffect(() => {
     if (!hasLoadedState) return;
@@ -171,7 +172,29 @@ export default function App() {
   };
 
   if (!state) {
-    return <div className="splash" role="status"><div className="brand-mark" aria-hidden="true">W</div><span>{t("app.loading")}</span></div>;
+    return (
+      <main className="splash">
+        <div className="brand-mark" aria-hidden="true">W</div>
+        {error ? (
+          <section className="startup-error" aria-label="WebCodex">
+            <AppError error={error} />
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                setError(null);
+                setStartupAttempt((attempt) => attempt + 1);
+              }}
+              data-webcodex-action="retry-desktop-startup"
+            >
+              {t("common.retry")}
+            </button>
+          </section>
+        ) : (
+          <span role="status">{t("app.loading")}</span>
+        )}
+      </main>
+    );
   }
 
   const needsSetup = !state.topology || showSetup;

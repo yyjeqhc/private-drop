@@ -19,19 +19,52 @@ fn unique_marker(name: &str) -> PathBuf {
     ))
 }
 
-async fn wait_for_file(path: &Path) {
+async fn wait_for_pid(path: &Path) -> u32 {
     let deadline = tokio::time::Instant::now() + TEST_TIMEOUT;
     loop {
-        if path.is_file() {
-            return;
+        // Shell redirection creates the file before printf writes the PID.
+        // Require the complete newline-terminated record, not mere existence.
+        if let Some(pid) = std::fs::read_to_string(path)
+            .ok()
+            .filter(|contents| contents.ends_with('\n'))
+            .and_then(|contents| contents.trim().parse::<u32>().ok())
+            .filter(|pid| *pid > 1 && i32::try_from(*pid).is_ok())
+        {
+            return pid;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "timed out waiting for {}",
+            "timed out waiting for a complete PID record in {}",
             path.display()
         );
         tokio::time::sleep(POLL_INTERVAL).await;
     }
+}
+
+#[tokio::test]
+async fn pid_marker_waits_for_the_complete_record() {
+    let marker = unique_marker("partial-pid-record");
+    let waiting = wait_for_pid(&marker);
+    tokio::pin!(waiting);
+
+    for incomplete in ["", "12"] {
+        std::fs::write(&marker, incomplete).expect("write partial PID fixture");
+        assert!(
+            tokio::time::timeout(POLL_INTERVAL * 2, &mut waiting)
+                .await
+                .is_err(),
+            "an empty or partial PID record must not be treated as ready"
+        );
+    }
+
+    std::fs::write(&marker, "123\n").expect("complete PID fixture");
+    assert_eq!(
+        tokio::time::timeout(TEST_TIMEOUT, waiting)
+            .await
+            .expect("observe completed PID fixture"),
+        123
+    );
+    let _ = std::fs::remove_file(&marker);
 }
 
 fn process_exists(pid: u32) -> bool {
@@ -101,12 +134,7 @@ async fn desktop_owned_group_kills_descendant_without_touching_unrelated_process
         "spawn contract must establish pgid == root pid"
     );
 
-    wait_for_file(&marker).await;
-    let descendant_pid: u32 = std::fs::read_to_string(&marker)
-        .expect("read descendant pid")
-        .trim()
-        .parse()
-        .expect("parse descendant pid");
+    let descendant_pid = wait_for_pid(&marker).await;
     assert!(process_exists(descendant_pid));
     assert!(process_exists(control_pid));
 
@@ -140,12 +168,7 @@ async fn respawn_reclaims_descendants_from_a_terminal_previous_generation() {
         .spawn_owned(ProcessKind::LocalServer, previous, false)
         .await
         .expect("spawn previous Desktop-owned generation");
-    wait_for_file(&marker).await;
-    let descendant_pid: u32 = std::fs::read_to_string(&marker)
-        .expect("read previous descendant pid")
-        .trim()
-        .parse()
-        .expect("parse previous descendant pid");
+    let descendant_pid = wait_for_pid(&marker).await;
     assert!(process_exists(descendant_pid));
 
     let deadline = tokio::time::Instant::now() + TEST_TIMEOUT;

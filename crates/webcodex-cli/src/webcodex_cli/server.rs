@@ -33,11 +33,34 @@ pub(crate) struct ServerStatusOptions {
 
 pub(crate) async fn run_server_tunnel(opts: ServerTunnelOptions) -> Result<(), String> {
     let local_server_url = derive_regular_tunnel_server_url(&opts.env_file)?;
+    let bootstrap_token = derive_regular_tunnel_bootstrap_token(&opts.env_file)?;
+    let runtime_parent = opts
+        .env_file
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     webcodex::run_regular_server_tunnel(webcodex::RegularServerTunnelOptions {
         local_server_url,
-        user_token_file: opts.user_token_file,
+        bootstrap_token,
+        runtime_parent,
     })
     .await
+}
+
+pub(crate) fn derive_regular_tunnel_bootstrap_token(env_file: &Path) -> Result<String, String> {
+    let value = match std::env::var("WEBCODEX_TOKEN") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => read_env_file_value(env_file, "WEBCODEX_TOKEN")?,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err("WEBCODEX_TOKEN is not valid UTF-8".to_string())
+        }
+    };
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "regular Server Tunnel requires the effective local Server WEBCODEX_TOKEN".to_string()
+        })
 }
 
 pub(crate) fn derive_regular_tunnel_server_url(env_file: &Path) -> Result<String, String> {

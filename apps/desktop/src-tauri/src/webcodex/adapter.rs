@@ -266,7 +266,6 @@ impl WebCodexAdapter {
     pub fn regular_tunnel_command(
         &self,
         env_file: &Path,
-        user_token_file: &Path,
         tunnel_proxy: Option<&str>,
     ) -> DesktopResult<Command> {
         let binaries = self.binaries()?;
@@ -278,8 +277,6 @@ impl WebCodexAdapter {
             .arg("openai")
             .arg("--env-file")
             .arg(env_file)
-            .arg("--user-token-file")
-            .arg(user_token_file)
             .arg("--json")
             .arg("--stop-on-stdin-eof")
             .env_remove("OPENAI_ADMIN_KEY")
@@ -742,7 +739,7 @@ mod tests {
     }
 
     #[test]
-    fn regular_tunnel_uses_file_auth_and_only_inherits_control_plane_credentials() {
+    fn regular_tunnel_uses_local_server_bootstrap_auth_and_only_inherits_control_plane_credentials() {
         let binaries = ResolvedBinaries {
             directory: PathBuf::from("bin"),
             webcodex: PathBuf::from("webcodex"),
@@ -759,7 +756,6 @@ mod tests {
         let command = adapter
             .regular_tunnel_command(
                 Path::new("server.env"),
-                Path::new("user-token"),
                 Some("http://127.0.0.1:7890"),
             )
             .unwrap();
@@ -776,8 +772,6 @@ mod tests {
                 "openai",
                 "--env-file",
                 "server.env",
-                "--user-token-file",
-                "user-token",
                 "--json",
                 "--stop-on-stdin-eof",
             ]

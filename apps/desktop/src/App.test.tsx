@@ -208,6 +208,57 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
   });
 
+  it("shows an initial status failure and retries the complete fresh-start bootstrap", async () => {
+    const retryState = deferred<DesktopState>();
+    api.getState
+      .mockRejectedValueOnce({
+        code: "desktop_state_unavailable",
+        message: "Desktop status is temporarily unavailable",
+        next_action: "Retry reading the Desktop status.",
+      })
+      .mockReturnValueOnce(retryState.promise)
+      .mockResolvedValue(readyState);
+    api.configureLocal.mockResolvedValue(readyState);
+    renderApp();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("desktop_state_unavailable");
+    expect(screen.queryByText("正在加载 WebCodex…")).not.toBeInTheDocument();
+    expect(api.configureLocal).not.toHaveBeenCalled();
+    expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("正在加载 WebCodex…");
+    expect(screen.queryByRole("button", { name: "重试" })).not.toBeInTheDocument();
+    await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      retryState.resolve(firstRunState);
+    });
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith(null));
+    expect(await screen.findByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
+    expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps repeated initial status failures visible without automatically retrying", async () => {
+    api.getState.mockRejectedValue({
+      code: "desktop_state_unavailable",
+      message: "Desktop status is unavailable",
+      next_action: "Retry reading the Desktop status.",
+    });
+    renderApp();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("desktop_state_unavailable");
+    expect(api.getState).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("desktop_state_unavailable");
+    expect(screen.getByRole("button", { name: "重试" })).toBeEnabled();
+    expect(api.getState).toHaveBeenCalledTimes(2);
+    expect(api.configureLocal).not.toHaveBeenCalled();
+    expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
+  });
+
   it("renders localized failures as an alert while keeping safe diagnostics available", async () => {
     const setupState: DesktopState = {
       ...readyState,

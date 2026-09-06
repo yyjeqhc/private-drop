@@ -190,7 +190,6 @@ struct ServerInitOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ServerTunnelOptions {
     env_file: PathBuf,
-    user_token_file: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1618,7 +1617,6 @@ fn parse_server_run(args: &[String]) -> Result<InternalRunOptions, String> {
 fn parse_server_tunnel(args: &[String]) -> Result<ServerTunnelOptions, String> {
     let mut provider: Option<String> = None;
     let mut env_file: Option<PathBuf> = None;
-    let mut user_token_file: Option<PathBuf> = None;
     let mut json = false;
     let mut stop_on_stdin_eof = false;
     let mut iter = args.iter();
@@ -1626,9 +1624,6 @@ fn parse_server_tunnel(args: &[String]) -> Result<ServerTunnelOptions, String> {
         match arg.as_str() {
             "--provider" => provider = Some(next_value(&mut iter, arg)?),
             "--env-file" => env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--user-token-file" => {
-                user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?));
-            }
             "--json" => json = true,
             "--stop-on-stdin-eof" => stop_on_stdin_eof = true,
             other => return Err(format!("unknown server tunnel option: {other}")),
@@ -1638,18 +1633,13 @@ fn parse_server_tunnel(args: &[String]) -> Result<ServerTunnelOptions, String> {
         return Err("--provider openai is required for regular Server Tunnel".to_string());
     }
     let env_file = env_file.ok_or_else(|| "--env-file is required".to_string())?;
-    let user_token_file =
-        user_token_file.ok_or_else(|| "--user-token-file is required".to_string())?;
     if !json {
         return Err("server tunnel currently requires --json".to_string());
     }
     if !stop_on_stdin_eof {
         return Err("server tunnel currently requires --stop-on-stdin-eof".to_string());
     }
-    Ok(ServerTunnelOptions {
-        env_file,
-        user_token_file,
-    })
+    Ok(ServerTunnelOptions { env_file })
 }
 
 fn parse_runner_run(args: &[String]) -> Result<InternalRunOptions, String> {

@@ -134,6 +134,10 @@ fn configure_runtime_command(
         // broader OpenAI authority out of the long-lived tunnel daemon.
         .env_remove("OPENAI_ADMIN_KEY")
         .env_remove("OPENAI_API_KEY")
+        // The local Server bootstrap key may be a process-environment override.
+        // The daemon receives only the generated Authorization file, never the
+        // bootstrap credential as inherited environment state.
+        .env_remove("WEBCODEX_TOKEN")
         .arg("--mcp.server-url")
         .arg(format!("url={mcp_url},channel=main"))
         .arg("--mcp.extra-headers")

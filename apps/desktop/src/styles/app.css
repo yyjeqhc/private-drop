@@ -171,6 +171,8 @@ button:disabled { opacity: .48; cursor: default; }
 .activity-row span { font-size: 9px; color: #8a9195; text-transform: capitalize; }
 
 .splash { height: 100vh; display: grid; place-items: center; align-content: center; gap: 10px; color: #7e868b; font-size: 11px; background: #f5f7f8; }
+.startup-error { width: min(480px, calc(100% - 48px)); display: grid; gap: 16px; }
+.startup-error .app-error { margin: 0; }
 
 @media (max-width: 1050px) {
   .main-content { padding-left: 38px; padding-right: 38px; }

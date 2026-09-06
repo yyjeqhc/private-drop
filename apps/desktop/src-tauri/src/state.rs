@@ -1449,24 +1449,11 @@ impl DesktopCore {
                     "Run Local Setup again.",
                 )
             })?;
-        let user_token_file = runtime
-            .user_token_file
-            .filter(|path| path.is_file())
-            .ok_or_else(|| {
-                DesktopError::new(
-                    "tunnel_auth_invalid",
-                    "Desktop-managed WebCodex user authentication is unavailable",
-                    "Run Local Setup again to restore the managed connection.",
-                )
-            })?;
-
         let deadline = Deadline::after(REGULAR_TUNNEL_READY_TIMEOUT);
         let tunnel_proxy = effective_tunnel_proxy(&self.config.tunnel_proxy)?;
-        let command = self.adapter.regular_tunnel_command(
-            &env_file,
-            &user_token_file,
-            tunnel_proxy.url.as_deref(),
-        )?;
+        let command = self
+            .adapter
+            .regular_tunnel_command(&env_file, tunnel_proxy.url.as_deref())?;
         if deadline.is_elapsed() {
             return Err(readiness_timeout_error(
                 "tunnel_unavailable",
@@ -3136,13 +3123,15 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires current-source dogfood binaries and a temporary project"]
-    async fn windows_local_full_dogfood_reuses_enrollment_and_stops_owned_runtime() {
-        if !cfg!(windows) {
-            return;
-        }
+    async fn native_local_full_dogfood_reuses_enrollment_and_stops_owned_runtime() {
         let project = std::env::var("WEBCODEX_DESKTOP_DOGFOOD_PROJECT")
             .expect("WEBCODEX_DESKTOP_DOGFOOD_PROJECT must point to the temporary fixture");
-        let data_dir = std::env::temp_dir().join(format!(
+        // macOS exposes its temporary root through /var -> /private/var.
+        // Resolve the fixture root, not the credential-store security checks.
+        let temporary_root = std::env::temp_dir()
+            .canonicalize()
+            .expect("resolve the native temporary fixture root");
+        let data_dir = temporary_root.join(format!(
             "webcodex-desktop-local-dogfood-{}",
             std::process::id()
         ));
@@ -3156,9 +3145,19 @@ mod tests {
         let snapshot = match setup {
             Ok(snapshot) => snapshot,
             Err(error) => {
+                let stages: Vec<_> = core
+                    .activity
+                    .snapshot()
+                    .into_iter()
+                    .map(|entry| entry.event_kind)
+                    .collect();
+                let readiness = core.snapshot.readiness.clone();
+                let initialized = data_dir.join("runtime/local/webcodex.env").is_file();
                 core.supervisor.lock().await.stop_all().await;
                 let _ = std::fs::remove_dir_all(&data_dir);
-                panic!("local full setup failed: {error:?}");
+                panic!(
+                    "local full setup failed: {error:?}; initialized={initialized}; readiness={readiness:?}; stages={stages:?}"
+                );
             }
         };
         assert_eq!(snapshot.readiness.server, ServerReadiness::Ready);
