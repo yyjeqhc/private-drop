@@ -560,21 +560,30 @@ fn manifest_route_projection(availability: Option<&str>, gateway_tool: Option<&V
 
 fn selection_description(description: &str) -> String {
     let description = description.trim();
-    if description.chars().count() <= TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS {
-        return description.to_string();
-    }
     if let Some(end) = description.char_indices().find_map(|(index, ch)| {
         let end = index + ch.len_utf8();
-        (matches!(ch, '.' | '!' | '?')
-            && description[..end].chars().count() <= TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS)
+        if !matches!(ch, '.' | '!' | '?')
+            || description[..end].chars().count() > TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS
+        {
+            return None;
+        }
+        description[end..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
             .then_some(end)
     }) {
         return description[..end].trim().to_string();
     }
 
+    if description.chars().count() <= TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS {
+        return description.to_string();
+    }
+
+    let content_limit = TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS - 1;
     let byte_end = description
         .char_indices()
-        .nth(TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS - 1)
+        .nth(content_limit - 1)
         .map(|(index, ch)| index + ch.len_utf8())
         .unwrap_or(description.len());
     let prefix = &description[..byte_end];
@@ -585,6 +594,60 @@ fn selection_description(description: &str) -> String {
         .filter(|index| *index > TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS / 2)
         .unwrap_or(byte_end);
     format!("{}…", description[..cut].trim_end())
+}
+
+#[cfg(test)]
+mod selection_description_tests {
+    use super::*;
+
+    #[test]
+    fn selection_description_ignores_periods_inside_technical_tokens() {
+        assert_eq!(
+            selection_description(
+                "Inspect startup-bound runner.toml path. This never changes authority."
+            ),
+            "Inspect startup-bound runner.toml path."
+        );
+        assert_eq!(
+            selection_description("Read foo.rs safely. Then continue."),
+            "Read foo.rs safely."
+        );
+        assert_eq!(
+            selection_description("Supports v0.4.0 clients. Newer versions are also accepted."),
+            "Supports v0.4.0 clients."
+        );
+    }
+
+    #[test]
+    fn selection_description_prefers_real_sentence_boundary() {
+        assert_eq!(
+            selection_description("First sentence. Second sentence."),
+            "First sentence."
+        );
+    }
+
+    #[test]
+    fn selection_description_fallback_is_bounded_and_unicode_safe() {
+        let ascii = "selection token ".repeat(30);
+        let ascii_summary = selection_description(&ascii);
+        assert!(ascii_summary.ends_with('…'));
+        assert!(
+            ascii_summary.chars().count() <= TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS,
+            "{ascii_summary}"
+        );
+
+        let unicode = "界".repeat(240);
+        let unicode_summary = selection_description(&unicode);
+        assert!(unicode_summary.ends_with('…'));
+        assert!(
+            unicode_summary.chars().count() <= TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS,
+            "{unicode_summary}"
+        );
+        assert!(unicode_summary
+            .trim_end_matches('…')
+            .chars()
+            .all(|ch| ch == '界'));
+    }
 }
 
 /// Project the canonical manifest only after Session/audit consumers have seen
@@ -686,7 +749,7 @@ pub(super) fn sparsify_tool_manifest_model_result(result: &mut ToolResult) {
             })
             .unwrap_or_default();
         projected.insert("tools".to_string(), Value::Array(tools));
-        for key in ["intent", "category", "categories_requested"] {
+        for key in ["intent", "category"] {
             if let Some(value) = canonical.get(key).filter(|value| !value.is_null()) {
                 projected.insert(key.to_string(), value.clone());
             }

@@ -57,7 +57,7 @@ pub fn tool_manifest_input_schema() -> Value {
             },
             "include_risk_summary": {
                 "type": "boolean",
-                "description": "Include risk_summary in the output (default true)."
+                "description": "Request aggregate risk_summary where the selected projection exposes it (default true). Unfiltered/full discovery can return the aggregate; sparse filtered discovery omits it and carries per-tool risk only when needed for selection. This flag does not change authority, permission, or tool behavior."
             }
         },
         "required": [],

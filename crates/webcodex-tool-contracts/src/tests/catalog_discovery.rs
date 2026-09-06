@@ -87,6 +87,15 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
         "tool_manifest input schema",
         present: ["category", "intent", "include_recommended_flows", "include_risk_summary"]
     );
+    let risk_summary_description = props["include_risk_summary"]["description"]
+        .as_str()
+        .expect("include_risk_summary description");
+    assert!(risk_summary_description.contains("where the selected projection exposes it"));
+    assert!(risk_summary_description.contains("Unfiltered/full discovery can return the aggregate"));
+    assert!(risk_summary_description.contains("sparse filtered discovery omits it"));
+    assert!(risk_summary_description
+        .contains("does not change authority, permission, or tool behavior"));
+    assert!(!risk_summary_description.contains("Include risk_summary in the output"));
     let output = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();

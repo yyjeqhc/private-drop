@@ -913,10 +913,103 @@ async fn adaptive_runtime_tool_manifest_unfiltered_keeps_global_category_discove
     assert!(output["available_intents"]
         .as_array()
         .is_some_and(|intents| !intents.is_empty()));
+    assert!(output["risk_summary"]
+        .as_object()
+        .is_some_and(|summary| !summary.is_empty()));
     assert!(
         output.get("tools").is_none(),
         "unfiltered discovery should not duplicate all category names"
     );
+
+    let without_risk_summary = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(72431)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"include_risk_summary": false}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(without_risk_summary) = without_risk_summary else {
+        panic!("unfiltered tool_manifest without risk summary must succeed");
+    };
+    assert!(
+        without_risk_summary["result"]["structuredContent"]["output"]
+            .get("risk_summary")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn adaptive_runtime_tool_manifest_category_projection_avoids_duplicate_filter_metadata() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let canonical = runtime
+        .dispatch(crate::tool_runtime::ToolCall::ToolManifest {
+            tool_name: None,
+            category: Some("file".to_string()),
+            intent: None,
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    assert_eq!(canonical.output["category"], "file");
+    assert_eq!(canonical.output["categories_requested"], json!(["file"]));
+
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(72432)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"category": "file"}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("category-filtered tool_manifest must succeed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(output["category"], "file");
+    assert!(output.get("categories_requested").is_none());
+    assert!(output.get("categories").is_none());
+    assert!(output.get("risk_summary").is_none());
+
+    let tools = output["tools"].as_array().expect("category sparse tools");
+    let canonical_tools = canonical.output["tools"]
+        .as_array()
+        .expect("canonical category tools");
+    assert_eq!(
+        tools
+            .iter()
+            .map(|tool| tool["name"].clone())
+            .collect::<Vec<_>>(),
+        canonical_tools
+            .iter()
+            .map(|tool| tool["name"].clone())
+            .collect::<Vec<_>>(),
+        "category filtering must preserve canonical tool order"
+    );
+    for tool in tools {
+        assert!(tool["description"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+        assert!(matches!(
+            tool["route"]["mode"].as_str(),
+            Some("direct" | "gateway")
+        ));
+        assert!(tool["requires_project"].is_boolean());
+        assert!(tool["effect"].is_string());
+        if tool["effect"] != "observe" {
+            assert!(tool["risk"].is_string());
+        }
+    }
 }
 
 #[tokio::test]
