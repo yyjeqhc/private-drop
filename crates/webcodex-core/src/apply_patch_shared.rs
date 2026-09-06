@@ -168,10 +168,10 @@ pub struct CodexPatchChunkMatch {
     /// Number of candidates at the selected match mode for match_source.
     /// Append operations do not perform text matching and report None.
     pub candidate_count: Option<usize>,
-    /// True when the final match source is unique at its selected tier.
-    /// `match_rejection` remains authoritative for the requested matching mode:
-    /// a replacement can have unique old_lines while an earlier change_context
-    /// positioning decision is still ambiguous and therefore rejected.
+    /// True when the actual mutation target is unique at its selected tier.
+    /// For replacement chunks, a repeated change_context does not by itself
+    /// make the target ambiguous when old_lines resolves to one target.
+    /// Anchored pure additions still require a unique change_context.
     /// Unanchored append is unique-safe.
     pub unique_match: bool,
     /// True only when every text match used to position this chunk was exact
@@ -928,20 +928,25 @@ pub fn derive_codex_patch_update_with_matching_mode(
         };
         let start = found.index;
         replacements.push((start, pattern.len(), replacement.to_vec()));
-        // Every textual positioning decision that participates in locating the
-        // mutation must satisfy the requested matching policy. In particular,
-        // Unique must not silently first-match a repeated change_context and
-        // then treat a unique old_lines match below that chosen anchor as proof
-        // that the whole positioning chain was unambiguous.
-        let context_rejection = context_match.as_ref().and_then(|matched| {
-            match_rejection_fact(
-                matched,
-                matching_mode,
-                CodexPatchMatchSource::ChangeContext,
-                original_lines.len(),
-                1,
-            )
-        });
+        // `change_context` narrows where old_lines search begins, but when a
+        // replacement has old_lines the mutation target is the old_lines
+        // candidate itself. Under the normal Unique mode, repeated anchors do
+        // not constitute real target ambiguity if that final candidate is
+        // unique. ExactUnique deliberately keeps the stronger requirement that
+        // every textual positioning decision be exact and unique.
+        let context_rejection = if matching_mode == ApplyPatchMatchingMode::ExactUnique {
+            context_match.as_ref().and_then(|matched| {
+                match_rejection_fact(
+                    matched,
+                    matching_mode,
+                    CodexPatchMatchSource::ChangeContext,
+                    original_lines.len(),
+                    1,
+                )
+            })
+        } else {
+            None
+        };
         let old_lines_rejection = match_rejection_fact(
             &found,
             matching_mode,
@@ -1375,7 +1380,7 @@ mod tests {
     }
 
     #[test]
-    fn unique_rejects_repeated_change_context_even_when_old_lines_target_is_unique() {
+    fn unique_accepts_repeated_change_context_when_old_lines_target_is_unique() {
         let update = derive_codex_patch_update_with_matching_mode(
             "ctx\nold\nctx\nother\n",
             "file.txt",
@@ -1393,11 +1398,7 @@ mod tests {
         assert_eq!(update.chunk_matches[0].candidate_count, Some(1));
         assert!(update.chunk_matches[0].unique_match);
         assert!(!update.chunk_matches[0].strict_match);
-        let rejection = update.chunk_matches[0].match_rejection.as_ref().unwrap();
-        assert_eq!(rejection.match_source, CodexPatchMatchSource::ChangeContext);
-        assert_eq!(rejection.match_mode, CodexPatchMatchMode::Exact);
-        assert_eq!(rejection.candidate_count, 2);
-        assert_eq!(rejection.candidate_start_lines, vec![1, 3]);
+        assert!(update.chunk_matches[0].match_rejection.is_none());
     }
 
     #[test]

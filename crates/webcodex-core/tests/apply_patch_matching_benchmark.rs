@@ -459,7 +459,7 @@ fn corpus() -> Vec<Case> {
                 "ctx\nnew\nctx\nother\n",
             ),
             false,
-            false,
+            true,
         ),
         case(
             "context_mismatch",
