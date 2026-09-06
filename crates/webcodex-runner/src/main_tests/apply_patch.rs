@@ -131,7 +131,7 @@ fn file_apply_patch_exact_unique_rejects_fuzzy_and_ambiguous_before_write() {
 }
 
 #[test]
-fn file_apply_patch_unique_accepts_repeated_context_with_one_mutation_target() {
+fn file_apply_patch_unique_rejects_repeated_context_before_write() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());
     let original = "ctx\n foo \nctx\nother\n";
@@ -143,19 +143,20 @@ fn file_apply_patch_unique_accepts_repeated_context_with_one_mutation_target() {
         &apply_patch_request_with_mode(tmp.path(), patch, false, "unique"),
     ));
 
-    assert_eq!(out["changed"], true);
-    assert_eq!(out["execution_state"], "completed");
+    assert_eq!(out["changed"], false);
+    assert_eq!(out["state_changed"], false);
+    assert_eq!(out["execution_state"], "not_started");
+    assert_eq!(out["error_kind"], "matching_mode_rejected");
     assert_eq!(out["requested_matching_mode"], "unique");
-    let edit = &out["files"][0]["edits"][0];
-    assert_eq!(edit["match_source"], "old_lines");
-    assert_eq!(edit["match_mode"], "trim");
-    assert_eq!(edit["matched_start_line"], 2);
-    assert_eq!(edit["candidate_count"], 1);
-    assert_eq!(edit["unique_match"], true);
-    assert_eq!(edit["strict_match"], false);
+    assert_eq!(out["match_source"], "change_context");
+    assert_eq!(out["match_mode"], "exact");
+    assert_eq!(out["candidate_count"], 2);
+    assert_eq!(out["candidate_start_lines"], serde_json::json!([1, 3]));
+    assert_eq!(out["matching_mode_satisfied"], false);
+    assert_eq!(out["recovery_action"], "refine_patch_context");
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
-        "ctx\nnew\nctx\nother\n"
+        original
     );
 }
 

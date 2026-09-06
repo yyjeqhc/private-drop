@@ -67,7 +67,7 @@ For branch/PR review, start with the bounded review/change-summary tools exposed
 
 ## Editing
 
-Use `apply_patch` as the default model-generated editing path. Its default `matching_mode=unique` tolerates bounded whitespace/Unicode drift but writes only when the actual mutation target is unique; a repeated `@@` anchor alone is not an ambiguity when the old lines still identify one target. Use `matching_mode=exact_unique` only as an explicit stale-context/concurrency fence after reading exact current source. Use `apply_text_edits` for small exact SHA-guarded edits and `apply_unified_diff` when the input is already a unified diff.
+Use `apply_patch` as the default model-generated editing path. Its default `matching_mode=unique` tolerates bounded whitespace/Unicode drift but requires each textual positioning decision used to locate the mutation, including `@@` context and old lines, to be unique at its selected tier. Use `matching_mode=exact_unique` only as an explicit stale-context/concurrency fence after reading exact current source. Use `apply_text_edits` for small exact SHA-guarded edits and `apply_unified_diff` when the input is already a unified diff.
 
 Guard failures are **zero-write conflicts**, not reasons to weaken the guard. Re-read the current source and regenerate the intended edit against that state.
 
