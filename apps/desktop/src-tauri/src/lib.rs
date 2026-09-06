@@ -24,6 +24,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_desktop_state,
             commands::refresh_runtime_status,
+            commands::resume_saved_runtime,
+            commands::update_tunnel_proxy,
             commands::inspect_project,
             commands::configure_local_setup,
             commands::configure_remote_setup,

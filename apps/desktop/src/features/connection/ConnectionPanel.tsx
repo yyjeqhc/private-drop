@@ -18,7 +18,7 @@ export function ConnectionPanel({
 }) {
   const { t } = useLocale();
   const [provider, setProvider] = useState<RegularProvider>(
-    state.regular_tunnel ? "openai" : "local",
+    state.regular_tunnel || state.preferred_connection === "open_ai_tunnel" ? "openai" : "local",
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
@@ -35,6 +35,15 @@ export function ConnectionPanel({
       setError(normalizeDesktopError(value));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const chooseProvider = (value: RegularProvider) => {
+    setProvider(value);
+    if (value === "openai" && !state.regular_tunnel && state.readiness.runtime_ready && state.openai_tunnel_configured) {
+      void run(desktopApi.startRegularTunnel);
+    } else if (value === "local" && state.regular_tunnel) {
+      void run(desktopApi.stopRegularTunnel);
     }
   };
 
@@ -107,12 +116,8 @@ export function ConnectionPanel({
           </button>
         </article>
       ) : (
-        <form
+        <div
           className="connection-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (canStart) void run(desktopApi.startRegularTunnel);
-          }}
         >
           <fieldset className="provider-row provider-fieldset" role="radiogroup" aria-labelledby="regular-provider-legend">
             <legend id="regular-provider-legend">{t("connection.methods")}</legend>
@@ -120,8 +125,8 @@ export function ConnectionPanel({
               id="regular-provider-local"
               value="local"
               checked={provider === "local"}
-              onChange={setProvider}
-              title={t("common.localOnly")}
+              onChange={chooseProvider}
+              title={t("common.noChatGpt")}
               description={t("connection.localDescription")}
               disabled={mutationBusy}
             />
@@ -129,7 +134,7 @@ export function ConnectionPanel({
               id="regular-provider-openai"
               value="openai"
               checked={provider === "openai"}
-              onChange={setProvider}
+              onChange={chooseProvider}
               title="OpenAI Secure Tunnel"
               description={state.openai_tunnel_configured ? t("connection.openaiDescription") : t("connection.openaiNotConfigured")}
               disabled={mutationBusy || !state.openai_tunnel_configured}
@@ -138,7 +143,7 @@ export function ConnectionPanel({
               id="regular-provider-cloudflare"
               value="cloudflare"
               checked={provider === "cloudflare"}
-              onChange={setProvider}
+              onChange={chooseProvider}
               title="Cloudflare"
               description={t("connection.cloudflareQuickOnly")}
               disabled
@@ -148,29 +153,10 @@ export function ConnectionPanel({
           {!state.readiness.runtime_ready && <p className="inline-note">{t("connection.runtimeRequired")}</p>}
 
           {error && <LocalizedError error={error} />}
-
-          {provider === "openai" && (
-            <button
-              className="primary-button"
-              type="submit"
-              disabled={mutationBusy || !canStart}
-              data-webcodex-action="start-regular-tunnel"
-            >
-              {mutationBusy ? t("connection.tunnelStarting") : t("connection.startTunnel")}
-            </button>
+          {provider === "openai" && canStart && (
+            <p className="inline-note">{mutationBusy ? t("connection.tunnelStarting") : t("connection.openaiSelectHint")}</p>
           )}
-          {provider === "local" && state.regular_tunnel && (
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={mutationBusy}
-              onClick={() => void run(desktopApi.stopRegularTunnel)}
-              data-webcodex-action="stop-regular-tunnel"
-            >
-              {mutationBusy ? t("common.checking") : t("connection.useLocalOnly")}
-            </button>
-          )}
-        </form>
+        </div>
       )}
     </section>
   );
@@ -244,7 +230,7 @@ function LocalizedError({ error }: { error: DesktopError }) {
 function currentConnection(state: DesktopState, t: ReturnType<typeof useLocale>["t"]) {
   if (state.regular_tunnel) return "OpenAI Secure Tunnel";
   const exposure = state.topology?.exposure;
-  if (!exposure || exposure.kind === "none") return t("common.localOnly");
+  if (!exposure || exposure.kind === "none") return t("common.noChatGpt");
   if (exposure.kind === "existing_https") return `Existing HTTPS · ${exposure.url}`;
   if (exposure.kind === "cloudflare") return "Cloudflare Quick Share";
   return "OpenAI Secure Tunnel";

@@ -118,6 +118,17 @@ export interface RegularTunnelState {
   ready_for_chatgpt: boolean;
 }
 
+export type RegularConnectionPreference = "no_chat_gpt" | "open_ai_tunnel";
+export type TunnelProxyMode = "auto" | "direct" | "custom";
+
+export interface TunnelProxySnapshot {
+  mode: TunnelProxyMode;
+  custom_url?: string | null;
+  effective_source: string;
+  effective_url?: string | null;
+  detected_url?: string | null;
+}
+
 export type DesktopOperationKind =
   | "local_setup"
   | "remote_setup"
@@ -126,7 +137,9 @@ export type DesktopOperationKind =
   | "regular_tunnel_start"
   | "regular_tunnel_stop"
   | "local_runtime_stop"
-  | "runtime_refresh";
+  | "runtime_refresh"
+  | "runtime_resume"
+  | "tunnel_proxy_update";
 
 export type DesktopOperationPhase = "running" | "cancelling";
 
@@ -149,6 +162,9 @@ export interface DesktopState {
   activity_sequence: number;
   openai_tunnel_configured: boolean;
   regular_tunnel_available: boolean;
+  runtime_autostart: boolean;
+  preferred_connection: RegularConnectionPreference;
+  tunnel_proxy: TunnelProxySnapshot;
 }
 
 export interface DesktopError {

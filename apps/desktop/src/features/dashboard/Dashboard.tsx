@@ -12,6 +12,9 @@ interface DashboardProps {
   state: DesktopState;
   refreshing: boolean;
   onRefresh: () => void;
+  onResumeRuntime: () => void;
+  onConnectChatGpt: () => void;
+  onChangeSetup: () => void;
   onStopQuickShare: () => void;
   onStopRuntime: () => void;
 }
@@ -20,12 +23,21 @@ export function Dashboard({
   state,
   refreshing,
   onRefresh,
+  onResumeRuntime,
+  onConnectChatGpt,
+  onChangeSetup,
   onStopQuickShare,
   onStopRuntime,
 }: DashboardProps) {
   const { t } = useLocale();
   const isQuickShare = state.topology?.experience === "quick_share";
   const operationBusy = Boolean(state.current_operation);
+  const canResumeRuntime = !isQuickShare && Boolean(state.topology) && !state.readiness.runtime_ready;
+  const canConnectChatGpt = !isQuickShare &&
+    state.topology?.server.kind === "local" &&
+    state.readiness.runtime_ready &&
+    state.openai_tunnel_configured &&
+    !state.regular_tunnel;
   const summary = readinessSummary(state.readiness.summary_kind, state.readiness.summary, t);
   const nextAction = readinessNextAction(
     state.readiness.next_action_kind,
@@ -92,7 +104,19 @@ export function Dashboard({
           <span className="section-kicker">{t("home.overall")}</span>
           <strong>{state.readiness.ready_for_chatgpt ? t("home.readyToUse") : summary}</strong>
         </div>
-        {nextAction && <span>{nextAction}</span>}
+        <div className="readiness-actions">
+          {canResumeRuntime && (
+            <button className="primary-button" onClick={onResumeRuntime} disabled={operationBusy || refreshing} data-webcodex-action="resume-runtime">
+              {t("home.resumeRuntime")}
+            </button>
+          )}
+          {canConnectChatGpt && (
+            <button className="primary-button" onClick={onConnectChatGpt} disabled={operationBusy} data-webcodex-action="connect-chatgpt">
+              {t("home.connectChatGpt")}
+            </button>
+          )}
+          {nextAction && !canResumeRuntime && !canConnectChatGpt && <span>{nextAction}</span>}
+        </div>
       </div>
 
       {state.quick_share && (
@@ -110,7 +134,12 @@ export function Dashboard({
       {!isQuickShare && state.topology && (
         <div className="runtime-actions">
           <span>{t("home.runtimeOwnership")}</span>
-          <button className="secondary-button" onClick={onStopRuntime} disabled={operationBusy} data-webcodex-action="stop-runtime">{t("home.stopRuntime")}</button>
+          <div className="runtime-action-buttons">
+            <button className="secondary-button" onClick={onChangeSetup} disabled={operationBusy} data-webcodex-action="change-runtime-setup">{t("home.changeSetup")}</button>
+            {state.readiness.runtime_ready && (
+              <button className="secondary-button" onClick={onStopRuntime} disabled={operationBusy} data-webcodex-action="stop-runtime">{t("home.stopRuntime")}</button>
+            )}
+          </div>
         </div>
       )}
     </section>
@@ -160,7 +189,7 @@ function quickShareClipboardLabel(state: string, contains: string, t: Translate)
 
 function connectionLabel(state: DesktopState, t: Translate) {
   const exposure = state.topology?.exposure;
-  if (!exposure || exposure.kind === "none") return t("common.localOnly");
+  if (!exposure || exposure.kind === "none") return t("common.noChatGpt");
   if (exposure.kind === "cloudflare") return "Cloudflare";
   if (exposure.kind === "open_ai_tunnel") return "OpenAI Secure Tunnel";
   return "Existing HTTPS";

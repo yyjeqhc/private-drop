@@ -3,11 +3,17 @@ import type {
   ActivityEntry,
   DesktopState,
   ProjectSelection,
+  TunnelProxyMode,
 } from "../models/topology";
 
 export const desktopApi = {
   getState: () => invoke<DesktopState>("get_desktop_state"),
   refresh: () => invoke<DesktopState>("refresh_runtime_status"),
+  resumeSavedRuntime: () => invoke<DesktopState>("resume_saved_runtime"),
+  updateTunnelProxy: (mode: TunnelProxyMode, customUrl?: string | null) =>
+    invoke<DesktopState>("update_tunnel_proxy", {
+      request: { mode, customUrl: customUrl ?? null },
+    }),
   inspectProject: (projectPath: string) =>
     invoke<ProjectSelection>("inspect_project", {
       request: { projectPath },

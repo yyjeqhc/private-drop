@@ -4,9 +4,10 @@ use crate::error::{DesktopError, DesktopResult};
 use crate::models::{
     aggregate_readiness, DesktopOperationKind, DesktopStateSnapshot, Enrollment, Experience,
     Exposure, ExposureReadiness, ProjectReadiness, ProjectSelection, QuickShareState,
-    ReadinessNextActionKind, ReadinessSummaryKind, RegularTunnelState, RegularTunnelStatus,
-    RunnerReadiness, RunnerTopology, RuntimeTopology, ServerReadiness, ServerTopology,
-    StoredDesktopConfig, StoredRuntime,
+    ReadinessNextActionKind, ReadinessSummaryKind, RegularConnectionPreference, RegularTunnelState,
+    RegularTunnelStatus, RunnerReadiness, RunnerTopology, RuntimeTopology, ServerReadiness,
+    ServerTopology, StoredDesktopConfig, StoredRuntime, TunnelProxyConfig, TunnelProxyMode,
+    TunnelProxySnapshot,
 };
 use crate::operation::{
     cancelled_error, CancellationContext, CancellationSignal, OperationAdmission,
@@ -120,6 +121,30 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RuntimeRefresh, true)
             .await?;
         let result = core.refresh_runtime_status(&cancellation).await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
+    }
+
+    pub async fn resume_saved_runtime(&self) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::RuntimeResume, true)
+            .await?;
+        let result = core.resume_saved_runtime(&cancellation).await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
+    }
+
+    pub async fn update_tunnel_proxy(
+        &self,
+        mode: TunnelProxyMode,
+        custom_url: Option<&str>,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::TunnelProxyUpdate, false)
+            .await?;
+        let result = core
+            .update_tunnel_proxy(mode, custom_url, &cancellation)
+            .await;
         self.finish_operation(operation, cancellation, core, baseline, result)
             .await
     }
@@ -421,6 +446,7 @@ impl DesktopCore {
         snapshot.project = project_snapshot(&config);
         snapshot.openai_tunnel_configured = openai_tunnel_is_configured();
         snapshot.regular_tunnel_available = true;
+        apply_config_projection(&mut snapshot, &config);
         let published = Arc::new(RwLock::new(snapshot.clone()));
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
         Ok(Self {
@@ -438,6 +464,7 @@ impl DesktopCore {
     pub async fn get_state(&mut self) -> DesktopResult<DesktopStateSnapshot> {
         self.snapshot.openai_tunnel_configured = openai_tunnel_is_configured();
         self.snapshot.regular_tunnel_available = true;
+        apply_config_projection(&mut self.snapshot, &self.config);
         if self.snapshot.regular_tunnel.is_some() {
             let active = self
                 .process_snapshot(ProcessKind::RegularTunnel)
@@ -575,6 +602,7 @@ impl DesktopCore {
         self.snapshot.activity_sequence = self.activity.latest_sequence();
         self.snapshot.openai_tunnel_configured = openai_tunnel_is_configured();
         self.snapshot.regular_tunnel_available = true;
+        apply_config_projection(&mut self.snapshot, &self.config);
         let snapshot = self.snapshot.clone();
         *self
             .published
@@ -592,6 +620,13 @@ impl DesktopCore {
     ) {
         let observed_binaries = self.snapshot.binaries.clone();
         match kind {
+            DesktopOperationKind::RuntimeResume => {
+                // Resume is a desired-state replay of an already committed setup.
+                // If any step fails or is cancelled, newly owned processes have
+                // already been reclaimed above; restore the last published view
+                // rather than leaving a synthetic "starting" state behind.
+                self.snapshot = baseline.snapshot.clone();
+            }
             DesktopOperationKind::QuickShareStart => {
                 // Quick Share is intentionally ephemeral. Any failed start has
                 // already stopped (or will have cleanup stop) the newly owned
@@ -672,6 +707,57 @@ impl DesktopCore {
         }
     }
 
+    pub async fn resume_saved_runtime(
+        &mut self,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        cancellation.check()?;
+        let Some(topology) = self.config.topology.clone() else {
+            return self.get_state().await;
+        };
+        if topology.experience != Experience::Full {
+            return self.get_state().await;
+        }
+        let project_path = self
+            .config
+            .project
+            .as_ref()
+            .map(|project| project.path.clone())
+            .ok_or_else(|| {
+                DesktopError::new(
+                    "project_not_ready",
+                    "The saved Desktop runtime no longer has a project selection",
+                    "Choose a project or change the Desktop runtime setup.",
+                )
+            })?;
+        match topology.server {
+            ServerTopology::Local => {
+                self.configure_local_setup(&project_path, cancellation)
+                    .await
+            }
+            ServerTopology::Remote { url } => {
+                self.configure_remote_setup(&url, "", &project_path, cancellation)
+                    .await
+            }
+        }
+    }
+
+    pub async fn update_tunnel_proxy(
+        &mut self,
+        mode: TunnelProxyMode,
+        custom_url: Option<&str>,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        cancellation.check()?;
+        let custom_url = match mode {
+            TunnelProxyMode::Custom => Some(validate_tunnel_proxy_url(custom_url.unwrap_or(""))?),
+            TunnelProxyMode::Auto | TunnelProxyMode::Direct => None,
+        };
+        self.config.tunnel_proxy = TunnelProxyConfig { mode, custom_url };
+        self.save_config().await?;
+        self.get_state().await
+    }
+
     pub async fn configure_local_setup(
         &mut self,
         project_path: &str,
@@ -734,6 +820,7 @@ impl DesktopCore {
         });
         self.config.topology = self.snapshot.topology.clone();
         self.config.project = Some(project.clone());
+        self.config.runtime_autostart = Some(true);
         self.config.runtime = Some(match reusable_identity.as_ref() {
             Some(identity) => StoredRuntime {
                 server_url: server_url.clone(),
@@ -898,6 +985,8 @@ impl DesktopCore {
         self.snapshot.topology = Some(topology.clone());
         self.snapshot.project = Some(project.clone());
         self.config.topology = Some(topology.clone());
+        self.config.runtime_autostart = Some(true);
+        self.config.preferred_connection = Some(RegularConnectionPreference::NoChatGpt);
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Starting,
             RunnerReadiness::Connecting,
@@ -1058,9 +1147,12 @@ impl DesktopCore {
             ));
         }
         let deadline = Deadline::after(QUICK_SHARE_READY_TIMEOUT);
-        let command = self
-            .adapter
-            .quick_share_command(Path::new(&project.path), provider)?;
+        let tunnel_proxy = effective_tunnel_proxy(&self.config.tunnel_proxy)?;
+        let command = self.adapter.quick_share_command(
+            Path::new(&project.path),
+            provider,
+            tunnel_proxy.url.as_deref(),
+        )?;
         if deadline.is_elapsed() {
             return Err(readiness_timeout_error(
                 "quick_share_not_ready",
@@ -1324,9 +1416,12 @@ impl DesktopCore {
             })?;
 
         let deadline = Deadline::after(REGULAR_TUNNEL_READY_TIMEOUT);
-        let command = self
-            .adapter
-            .regular_tunnel_command(&env_file, &user_token_file)?;
+        let tunnel_proxy = effective_tunnel_proxy(&self.config.tunnel_proxy)?;
+        let command = self.adapter.regular_tunnel_command(
+            &env_file,
+            &user_token_file,
+            tunnel_proxy.url.as_deref(),
+        )?;
         if deadline.is_elapsed() {
             return Err(readiness_timeout_error(
                 "tunnel_unavailable",
@@ -1460,13 +1555,29 @@ impl DesktopCore {
             clipboard_contains: event.connection.clipboard_contains,
             ready_for_chatgpt: event.ready_for_chatgpt && handoff_available,
         });
+        self.config.preferred_connection = Some(RegularConnectionPreference::OpenAiTunnel);
+        self.save_config().await?;
+        let exposure = if handoff_available {
+            ExposureReadiness::RemoteReady
+        } else {
+            ExposureReadiness::Degraded
+        };
+        self.snapshot.readiness = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            exposure.clone(),
+            ProjectReadiness::Ready,
+        );
+        apply_regular_tunnel_next_action(&mut self.snapshot, &exposure);
+        self.snapshot.topology = effective_topology(self.config.topology.as_ref(), true);
+        self.snapshot.project = project_snapshot(&self.config);
         self.activity.push(
             ActivityEventKind::RegularTunnelReady,
             "regular_tunnel",
             ActivityLevel::Info,
             "Regular OpenAI Secure Tunnel reached verified readiness",
         );
-        self.refresh_runtime_status(cancellation).await
+        self.get_state().await
     }
 
     pub async fn stop_regular_tunnel(
@@ -1476,6 +1587,8 @@ impl DesktopCore {
         self.stop_process(ProcessKind::RegularTunnel).await;
         self.snapshot.regular_tunnel = None;
         self.snapshot.topology = self.config.topology.clone();
+        self.config.preferred_connection = Some(RegularConnectionPreference::NoChatGpt);
+        self.save_config().await?;
         self.activity.push(
             ActivityEventKind::RegularTunnelStopped,
             "regular_tunnel",
@@ -1496,6 +1609,8 @@ impl DesktopCore {
         self.stop_process(ProcessKind::RegularTunnel).await;
         self.snapshot.regular_tunnel = None;
         self.stop_process(ProcessKind::LocalRunner).await;
+        self.config.runtime_autostart = Some(false);
+        self.save_config().await?;
         self.stop_process(ProcessKind::LocalServer).await;
         self.snapshot.topology = self.config.topology.clone();
         let exposure = exposure_readiness(self.config.topology.as_ref());
@@ -2186,6 +2301,115 @@ fn exposure_readiness(topology: Option<&RuntimeTopology>) -> ExposureReadiness {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveTunnelProxy {
+    url: Option<String>,
+    source: &'static str,
+    detected_url: Option<String>,
+}
+
+fn validate_tunnel_proxy_url(value: &str) -> DesktopResult<String> {
+    crate::platform::normalize_proxy_server(value).ok_or_else(|| {
+        DesktopError::new(
+            "tunnel_proxy_invalid",
+            "The Tunnel proxy must be an HTTP or HTTPS proxy URL without embedded credentials",
+            "Use a value such as http://127.0.0.1:7890, or choose automatic proxy detection.",
+        )
+    })
+}
+
+fn environment_tunnel_proxy() -> Option<String> {
+    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
+        .iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .and_then(|value| crate::platform::normalize_proxy_server(&value))
+        })
+}
+
+fn effective_tunnel_proxy(config: &TunnelProxyConfig) -> DesktopResult<EffectiveTunnelProxy> {
+    let system = crate::platform::system_http_proxy_candidate();
+    let detected_url = system.as_ref().map(|candidate| candidate.url.clone());
+    match config.mode {
+        TunnelProxyMode::Direct => Ok(EffectiveTunnelProxy {
+            url: None,
+            source: "direct",
+            detected_url,
+        }),
+        TunnelProxyMode::Custom => Ok(EffectiveTunnelProxy {
+            url: Some(validate_tunnel_proxy_url(
+                config.custom_url.as_deref().unwrap_or(""),
+            )?),
+            source: "custom",
+            detected_url,
+        }),
+        TunnelProxyMode::Auto => {
+            if let Some(url) = environment_tunnel_proxy() {
+                return Ok(EffectiveTunnelProxy {
+                    url: Some(url),
+                    source: "environment",
+                    detected_url,
+                });
+            }
+            if let Some(candidate) = system {
+                if candidate.enabled || crate::platform::proxy_is_loopback(&candidate.url) {
+                    return Ok(EffectiveTunnelProxy {
+                        url: Some(candidate.url),
+                        source: if candidate.enabled {
+                            "windows_system"
+                        } else {
+                            "windows_loopback_candidate"
+                        },
+                        detected_url,
+                    });
+                }
+            }
+            Ok(EffectiveTunnelProxy {
+                url: None,
+                source: "direct",
+                detected_url,
+            })
+        }
+    }
+}
+
+fn runtime_autostart(config: &StoredDesktopConfig) -> bool {
+    config.runtime_autostart.unwrap_or_else(|| {
+        config.runtime.is_some()
+            && config
+                .topology
+                .as_ref()
+                .is_some_and(|topology| topology.experience == Experience::Full)
+    })
+}
+
+fn preferred_connection(config: &StoredDesktopConfig) -> RegularConnectionPreference {
+    config.preferred_connection.unwrap_or_default()
+}
+
+fn apply_config_projection(snapshot: &mut DesktopStateSnapshot, config: &StoredDesktopConfig) {
+    snapshot.runtime_autostart = runtime_autostart(config);
+    snapshot.preferred_connection = preferred_connection(config);
+    snapshot.tunnel_proxy = match effective_tunnel_proxy(&config.tunnel_proxy) {
+        Ok(proxy) => TunnelProxySnapshot {
+            mode: config.tunnel_proxy.mode,
+            custom_url: config.tunnel_proxy.custom_url.clone(),
+            effective_source: proxy.source.to_string(),
+            effective_url: proxy.url,
+            detected_url: proxy.detected_url,
+        },
+        Err(_) => TunnelProxySnapshot {
+            mode: config.tunnel_proxy.mode,
+            custom_url: config.tunnel_proxy.custom_url.clone(),
+            effective_source: "invalid_custom".to_string(),
+            effective_url: None,
+            detected_url: crate::platform::system_http_proxy_candidate()
+                .map(|candidate| candidate.url),
+        },
+    };
+}
+
 fn openai_tunnel_is_configured() -> bool {
     ["CONTROL_PLANE_TUNNEL_ID", "CONTROL_PLANE_API_KEY"]
         .iter()
@@ -2229,6 +2453,9 @@ mod tests {
                 is_git_repository: false,
                 runtime_project_id: None,
             }),
+            runtime_autostart: None,
+            preferred_connection: None,
+            tunnel_proxy: TunnelProxyConfig::default(),
             runtime: None,
         }
     }
@@ -2344,6 +2571,100 @@ mod tests {
     }
 
     #[test]
+    fn legacy_full_runtime_defaults_to_autostart_but_explicit_stop_is_preserved() {
+        let mut config = test_stored_config("resume");
+        config.topology = Some(RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Local,
+            runner: RunnerTopology::Local,
+            exposure: Exposure::None,
+            enrollment: Enrollment::ManagedPairing,
+        });
+        config.runtime = Some(StoredRuntime {
+            server_url: "http://127.0.0.1:58208".to_string(),
+            server_env_file: None,
+            runner_config: None,
+            user_token_file: None,
+            project_id: None,
+            runtime_project_id: None,
+        });
+        assert!(runtime_autostart(&config));
+
+        config.runtime_autostart = Some(false);
+        assert!(!runtime_autostart(&config));
+    }
+
+    #[test]
+    fn explicit_tunnel_proxy_is_bounded_and_direct_mode_clears_routing() {
+        let custom = TunnelProxyConfig {
+            mode: TunnelProxyMode::Custom,
+            custom_url: Some("http://127.0.0.1:7890".to_string()),
+        };
+        let effective = effective_tunnel_proxy(&custom).expect("valid custom proxy");
+        assert_eq!(effective.url.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(effective.source, "custom");
+
+        let direct = effective_tunnel_proxy(&TunnelProxyConfig {
+            mode: TunnelProxyMode::Direct,
+            custom_url: Some("http://ignored.example.test:8080".to_string()),
+        })
+        .expect("direct mode");
+        assert_eq!(direct.url, None);
+        assert_eq!(direct.source, "direct");
+
+        assert!(validate_tunnel_proxy_url("http://user:secret@127.0.0.1:7890").is_err());
+    }
+
+    #[test]
+    fn failed_runtime_resume_restores_the_last_published_state() {
+        let data_dir = unique_state_dir("resume-failure-reconcile");
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("resources"))
+            .expect("create Desktop core");
+        let mut baseline_snapshot = DesktopStateSnapshot::default();
+        baseline_snapshot.topology = Some(RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Local,
+            runner: RunnerTopology::Local,
+            exposure: Exposure::None,
+            enrollment: Enrollment::ManagedPairing,
+        });
+        baseline_snapshot.readiness = aggregate_readiness(
+            ServerReadiness::Stopped,
+            RunnerReadiness::Stopped,
+            ExposureReadiness::LocalReady,
+            ProjectReadiness::Configured,
+        );
+        let baseline = ProcessBaseline {
+            local_server: false,
+            local_runner: false,
+            quick_share: false,
+            regular_tunnel: false,
+            snapshot: baseline_snapshot.clone(),
+        };
+        core.snapshot.readiness = aggregate_readiness(
+            ServerReadiness::Starting,
+            RunnerReadiness::Connecting,
+            ExposureReadiness::LocalReady,
+            ProjectReadiness::Configured,
+        );
+
+        core.reconcile_after_operation_failure(
+            DesktopOperationKind::RuntimeResume,
+            &baseline,
+            ProcessCleanup {
+                local_server: true,
+                local_runner: true,
+                ..ProcessCleanup::default()
+            },
+            false,
+        );
+
+        assert_eq!(core.snapshot.readiness, baseline_snapshot.readiness);
+        assert_eq!(core.snapshot.topology, baseline_snapshot.topology);
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
     fn invalid_stored_identity_is_not_advertised_for_reuse() {
         let config = StoredDesktopConfig {
             topology: Some(RuntimeTopology {
@@ -2363,6 +2684,9 @@ mod tests {
                 is_git_repository: true,
                 runtime_project_id: Some("agent:desktop:repo".to_string()),
             }),
+            runtime_autostart: None,
+            preferred_connection: None,
+            tunnel_proxy: TunnelProxyConfig::default(),
             runtime: Some(StoredRuntime {
                 server_url: "https://example.test".to_string(),
                 server_env_file: None,

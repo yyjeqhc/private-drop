@@ -88,6 +88,11 @@ input:not([type="radio"]):focus, select:focus { border-color: #7e8b90; box-shado
 .project-picker-card > div { display: grid; gap: 5px; min-width: 0; }
 .project-picker-card strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .project-meta { color: #858c91; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+.setup-choice-card { margin: 0 0 14px; padding: 14px 16px; border: 1px solid #dce1e3; border-radius: 10px; background: #fff; display: flex; align-items: flex-start; gap: 11px; cursor: pointer; }
+.setup-choice-card input { margin-top: 3px; }
+.setup-choice-card span { display: grid; gap: 3px; }
+.setup-choice-card strong { font-size: 11px; }
+.setup-choice-card small { color: #7f878d; font-size: 10px; line-height: 1.45; }
 .setup-actions { margin-top: 18px; display: flex; align-items: center; gap: 14px; }
 .action-help { color: #81898e; font-size: 10px; }
 .primary-button, .secondary-button, .danger-button { border-radius: 7px; min-height: 36px; padding: 0 14px; cursor: pointer; font-size: 11px; font-weight: 650; }
@@ -127,6 +132,8 @@ button:disabled { opacity: .48; cursor: default; }
 .readiness-banner > div { display: grid; gap: 4px; }
 .readiness-banner strong { font-size: 13px; }
 .readiness-banner > span { color: #777f84; font-size: 10px; text-align: right; max-width: 380px; }
+.readiness-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.readiness-actions > span { color: #777f84; font-size: 10px; text-align: right; max-width: 380px; }
 .readiness-banner.ready { border-color: #c8d9d2; background: #f9fcfa; }
 .handoff-card { margin-top: 12px; padding: 17px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .handoff-card > div { min-width: 0; display: grid; gap: 6px; }
@@ -134,12 +141,16 @@ button:disabled { opacity: .48; cursor: default; }
 .handoff-card code { font-size: 10px; color: #50595e; overflow: hidden; text-overflow: ellipsis; }
 .handoff-card span:last-child { font-size: 9px; color: #81898e; }
 .runtime-actions { margin-top: 15px; display: flex; align-items: center; justify-content: space-between; gap: 18px; color: #838b90; font-size: 10px; }
+.runtime-action-buttons { display: flex; align-items: center; gap: 8px; }
 .connection-form { margin-top: 20px; }
 .inline-note { margin: 0 0 14px; color: #7f6c45; font-size: 10px; line-height: 1.5; }
 .handoff-title, .section-title { margin: 5px 0 0; font-size: 13px; line-height: 1.35; }
 .settings-section { margin-top: 28px; }
 .settings-section > h2 { margin-bottom: 8px; }
 .setting-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 280px); align-items: center; gap: 18px; }
+.tunnel-proxy-settings { display: grid; gap: 14px; }
+.tunnel-proxy-status { margin-top: 0; }
+.tunnel-proxy-save { justify-self: start; }
 
 .detail-card { padding: 18px; margin-top: 12px; }
 .detail-card > strong { display: block; margin-top: 7px; font-size: 13px; }
@@ -172,7 +183,8 @@ button:disabled { opacity: .48; cursor: default; }
   .main-content { padding: 34px 24px 56px; }
   .status-grid, .two-column-grid, .form-card, .provider-row { grid-template-columns: 1fr; }
   .readiness-banner, .runtime-actions, .handoff-card, .project-picker-card, .operation-status { align-items: flex-start; flex-direction: column; }
-  .readiness-banner > span { text-align: left; }
+  .readiness-actions, .runtime-action-buttons { flex-wrap: wrap; justify-content: flex-start; }
+  .readiness-actions > span { text-align: left; }
   .setting-row { grid-template-columns: 1fr; }
 }
 

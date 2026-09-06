@@ -261,6 +261,8 @@ pub enum DesktopOperationKind {
     RegularTunnelStop,
     LocalRuntimeStop,
     RuntimeRefresh,
+    RuntimeResume,
+    TunnelProxyUpdate,
 }
 
 impl DesktopOperationKind {
@@ -274,6 +276,8 @@ impl DesktopOperationKind {
             Self::RegularTunnelStop => "regular_tunnel_stop",
             Self::LocalRuntimeStop => "local_runtime_stop",
             Self::RuntimeRefresh => "runtime_refresh",
+            Self::RuntimeResume => "runtime_resume",
+            Self::TunnelProxyUpdate => "tunnel_proxy_update",
         }
     }
 }
@@ -294,6 +298,40 @@ pub struct DesktopOperationSnapshot {
     pub cancellable: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RegularConnectionPreference {
+    #[default]
+    NoChatGpt,
+    OpenAiTunnel,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelProxyMode {
+    #[default]
+    Auto,
+    Direct,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct TunnelProxyConfig {
+    #[serde(default)]
+    pub mode: TunnelProxyMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TunnelProxySnapshot {
+    pub mode: TunnelProxyMode,
+    pub custom_url: Option<String>,
+    pub effective_source: String,
+    pub effective_url: Option<String>,
+    pub detected_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
     pub topology: Option<RuntimeTopology>,
@@ -306,6 +344,9 @@ pub struct DesktopStateSnapshot {
     pub activity_sequence: u64,
     pub openai_tunnel_configured: bool,
     pub regular_tunnel_available: bool,
+    pub runtime_autostart: bool,
+    pub preferred_connection: RegularConnectionPreference,
+    pub tunnel_proxy: TunnelProxySnapshot,
 }
 
 impl Default for DesktopStateSnapshot {
@@ -321,6 +362,15 @@ impl Default for DesktopStateSnapshot {
             activity_sequence: 0,
             openai_tunnel_configured: false,
             regular_tunnel_available: false,
+            runtime_autostart: false,
+            preferred_connection: RegularConnectionPreference::NoChatGpt,
+            tunnel_proxy: TunnelProxySnapshot {
+                mode: TunnelProxyMode::Auto,
+                custom_url: None,
+                effective_source: "direct".to_string(),
+                effective_url: None,
+                detected_url: None,
+            },
         }
     }
 }
@@ -330,6 +380,12 @@ pub struct StoredDesktopConfig {
     pub topology: Option<RuntimeTopology>,
     pub project: Option<ProjectSelection>,
     pub runtime: Option<StoredRuntime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_autostart: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_connection: Option<RegularConnectionPreference>,
+    #[serde(default)]
+    pub tunnel_proxy: TunnelProxyConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
