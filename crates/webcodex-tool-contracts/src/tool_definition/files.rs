@@ -176,7 +176,7 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Read 1 to 8 UTF-8 ranges in request order with isolated failures. Partial items return positional read_range continuations; recovery binds the exact resolved Project id and preserves an explicit business session_id, so shorthand is never replayed. Compare sha256 before joining ranges because reads are not snapshot-stable. Budget omission returns batch_items with remaining original items; next_index is evidence, not a read_files input. If no part of the first item fits, increase_result_budget suggests bounded max_result_bytes. Complete a current partial item before later batch recovery. Primary batch budget defaults to ~64 KiB, capped at 256 KiB; Session overlays remain bounded.",
+            "Batch inspect tool for multiple known file ranges; use read_file for one targeted range. Reads 1 to 8 UTF-8 ranges in request order with isolated failures. Partial items return positional read_range continuations; recovery binds the exact resolved Project id and preserves an explicit business session_id, so shorthand is never replayed. Compare sha256 before joining ranges because reads are not snapshot-stable. Budget omission returns batch_items with remaining original items; next_index is evidence, not a read_files input. If no part of the first item fits, increase_result_budget suggests bounded max_result_bytes; zero progress at the hard cap exposes no fake continuation. Complete a current partial item before later batch recovery. Primary batch budget defaults to ~64 KiB, capped at 256 KiB; Session overlays remain bounded.",
             read_files_input_schema,
         )),
         50,

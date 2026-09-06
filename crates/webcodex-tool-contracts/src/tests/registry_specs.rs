@@ -25,11 +25,14 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let read_files_desc = desc("read_files");
     for phrase in [
+        "batch inspect tool",
+        "use read_file for one targeted range",
         "read_range",
         "batch_items",
         "next_index",
         "not a read_files input",
         "increase_result_budget",
+        "no fake continuation",
         "complete a current partial item",
         "256 kib",
         "exact resolved project",

@@ -425,6 +425,20 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
 }
 
 #[test]
+fn read_recovery_schemas_keep_transport_and_recorder_identifiers_private() {
+    for tool in ["read_file", "read_files"] {
+        let schema = output_schema_for_tool(tool);
+        let serialized = serde_json::to_string(&schema).unwrap();
+        for forbidden in ["window_id", "client_window", "recording_session_id"] {
+            assert!(
+                !serialized.contains(forbidden),
+                "{tool} recovery schema must not publish {forbidden}: {serialized}"
+            );
+        }
+    }
+}
+
+#[test]
 fn model_visible_tool_definitions_have_explicit_output_schema_coverage() {
     let specs = registered_tool_specs();
     let default_fields = default_output_schema_field_names();

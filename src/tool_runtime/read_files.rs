@@ -248,29 +248,31 @@ fn add_batch_read_continuation(
     // item, replaying the same request at the same budget cannot make progress.
     // This is parameter refinement rather than a safe cursor: recommend the
     // existing hard maximum, never a value above it.
-    if next_index == 0
-        && returned_items.is_some_and(Vec::is_empty)
-        && max_result_bytes.unwrap_or(DEFAULT_READ_FILES_RESULT_BYTES) < MAX_SERIALIZED_OUTPUT_BYTES
-    {
-        output.insert(
-            "continuation".to_string(),
-            json!({
-                "kind": "increase_result_budget",
-                "safe_cursor": false,
-                "next_index": 0,
-                "suggested_max_result_bytes": MAX_SERIALIZED_OUTPUT_BYTES,
-                "suggested_call": {
-                    "tool": "read_files",
-                    "arguments": read_files_suggested_arguments(
-                        project,
-                        original_items,
-                        session_id,
-                        with_line_numbers,
-                        Some(MAX_SERIALIZED_OUTPUT_BYTES),
-                    )
-                }
-            }),
-        );
+    if next_index == 0 && returned_items.is_some_and(Vec::is_empty) {
+        if max_result_bytes.unwrap_or(DEFAULT_READ_FILES_RESULT_BYTES) < MAX_SERIALIZED_OUTPUT_BYTES
+        {
+            output.insert(
+                "continuation".to_string(),
+                json!({
+                    "kind": "increase_result_budget",
+                    "safe_cursor": false,
+                    "next_index": 0,
+                    "suggested_max_result_bytes": MAX_SERIALIZED_OUTPUT_BYTES,
+                    "suggested_call": {
+                        "tool": "read_files",
+                        "arguments": read_files_suggested_arguments(
+                            project,
+                            original_items,
+                            session_id,
+                            with_line_numbers,
+                            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+                        )
+                    }
+                }),
+            );
+        }
+        // At the hard cap the same zero-progress replay cannot prove forward
+        // progress. Omit recovery instead of advertising a fake safe cursor.
         return;
     }
 
@@ -1261,6 +1263,31 @@ mod tests {
                 ..
             } if bytes == MAX_SERIALIZED_OUTPUT_BYTES
         ));
+    }
+
+    #[test]
+    fn zero_progress_hard_cap_does_not_advertise_fake_batch_replay() {
+        let oversized_single_line = vec!["x".repeat(MAX_SERIALIZED_OUTPUT_BYTES + 1024)];
+        let projection = batch_projection(1, Some(MAX_SERIALIZED_OUTPUT_BYTES));
+        let output = apply_output_budget(
+            "agent:oe:demo",
+            1,
+            vec![ranged_item(0, 1, &oversized_single_line)],
+            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+            &projection,
+        );
+        assert_eq!(output["output_truncated"], true);
+        assert_eq!(output["truncation_reason"], "hard_result_cap");
+        assert_eq!(output["next_index"], 0);
+        assert!(output["items"].as_array().unwrap().is_empty());
+
+        let mut model = ToolResult::ok(output);
+        add_actionable_read_continuations(&projection, &mut model);
+        assert!(
+            model.output.get("continuation").is_none(),
+            "a hard-cap zero-progress replay is not actionable: {}",
+            model.output
+        );
     }
 
     #[test]
