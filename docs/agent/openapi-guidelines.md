@@ -58,8 +58,10 @@ or implementation-only fields into the model-facing Action schema.
 - `listRuntimeTools` full detail discovery includes expanded schemas and may be
   too large for GPT Actions. Daily discovery should prefer
   `callRuntimeTool(tool="tool_manifest")`; once the exact target is known, pass
-  `tool_name=<exact-name>` to that manifest call to retrieve only its description,
-  input schema, and annotations. Full output schemas stay out of this exact view.
+  `tool_name=<exact-name>` to that manifest call to retrieve its description, input
+  schema, current invocation route, and decision-relevant effect/risk/authority
+  metadata. Full output schemas and duplicate inventory bookkeeping stay out of
+  this exact view.
   Focused `listRuntimeTools` calls should be reserved for schema/debug work and
   pass `summary_only=true` with `category`, `features`, or `limit`. Prefer
   `runtime_status` or the tool manifest for the current tool count; the
