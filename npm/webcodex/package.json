@@ -1,6 +1,6 @@
 {
   "name": "@yyjeqhc/webcodex",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "description": "Connect ChatGPT, Claude, and other AI agents to repositories and developer tools on your own machines.",
   "keywords": [
     "ai",

@@ -209,7 +209,7 @@ async function expectInstallFailure(action, destination, tempRoot, pattern) {
 }
 
 async function main() {
-  assert.strictEqual(packageJson.version, "0.3.9");
+  assert.strictEqual(packageJson.version, "0.4.0");
   assert.deepStrictEqual(packageJson.bin, { webcodex: "bin/webcodex.js" });
   assert.deepStrictEqual(install.RUNTIME_BINARIES, ["webcodex", "webcodex-server", "webcodex-runner"]);
   assert.deepStrictEqual(install.SUPPORTED_PLATFORM_KEYS, ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"]);
