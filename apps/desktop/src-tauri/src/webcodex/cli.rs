@@ -853,18 +853,59 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn process_exists(pid: u32) -> bool {
-        let Ok(pid) = i32::try_from(pid) else {
+    fn process_can_execute(pid: u32) -> bool {
+        // Match ManagedChild's tree-liveness contract: an unreaped zombie still
+        // occupies a PID, but it cannot execute code and must not make cleanup
+        // look incomplete. Keep unknown probe failures conservative.
+        #[cfg(target_os = "linux")]
+        let raw_pid = pid;
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
             return false;
         };
-        let result = unsafe { libc::kill(pid, 0) };
-        if result == 0 {
-            return true;
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return !matches!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
         }
-        !matches!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        )
+        #[cfg(target_os = "linux")]
+        {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{raw_pid}/stat")) else {
+                return true;
+            };
+            let Some((_, rest)) = stat.rsplit_once(')') else {
+                return true;
+            };
+            let state = rest.split_whitespace().next().unwrap_or("");
+            state != "Z" && state != "X"
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+            let size = std::mem::size_of::<libc::proc_bsdinfo>();
+            let bytes = unsafe {
+                libc::proc_pidinfo(
+                    pid,
+                    libc::PROC_PIDTBSDINFO,
+                    0,
+                    info.as_mut_ptr().cast(),
+                    size as libc::c_int,
+                )
+            };
+            if bytes == size as libc::c_int {
+                return unsafe { info.assume_init() }.pbi_status != libc::SZOMB;
+            }
+            if bytes == 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                return false;
+            }
+            true
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            true
+        }
     }
 
     #[cfg(unix)]
@@ -915,7 +956,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(4));
         for pid in read_fixture_pids(&marker) {
             assert!(
-                !process_exists(pid),
+                !process_can_execute(pid),
                 "owned PID {pid} survived timeout cleanup"
             );
         }
@@ -948,7 +989,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(4));
         for pid in read_fixture_pids(&marker) {
             assert!(
-                !process_exists(pid),
+                !process_can_execute(pid),
                 "pipe-holding PID {pid} survived cleanup"
             );
         }
@@ -993,7 +1034,7 @@ mod tests {
         assert_eq!(error.code, "desktop_operation_cancelled");
         for pid in read_fixture_pids(&marker) {
             assert!(
-                !process_exists(pid),
+                !process_can_execute(pid),
                 "owned PID {pid} survived cancellation"
             );
         }
@@ -1088,7 +1129,7 @@ mod tests {
         assert_eq!(error.code, "desktop_operation_cancelled");
         for pid in read_fixture_pids(&marker) {
             assert!(
-                !process_exists(pid),
+                !process_can_execute(pid),
                 "pipe-holding PID {pid} survived output-drain cancellation"
             );
         }
