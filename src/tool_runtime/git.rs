@@ -2817,6 +2817,9 @@ fn git_diff_hunks_recovery_value(
     page_hunk_limit: bool,
     hunk_line_limit: bool,
     page_byte_budget: bool,
+    truncated_hunks: &[usize],
+    line_ceiling_hunks: &[usize],
+    line_recoverable_hunks: &[usize],
     next_continuation: Option<&str>,
 ) -> Option<Value> {
     let page_truncated = page_hunk_limit || page_byte_budget;
@@ -2854,7 +2857,46 @@ fn git_diff_hunks_recovery_value(
     } else {
         (Vec::new(), "none")
     };
-    let omitted_lines_call = omitted_lines_present.then(|| {
+    // The producer drains each returned hunk to its boundary even when its
+    // model-facing body is line-bounded. These bounded index lists therefore
+    // prove whether *all* omitted returned hunks fit both the 400-line ceiling
+    // and a fresh path-scoped 32 KiB page. Never infer future byte fit from the
+    // already-emitted prefix alone.
+    let omitted_lines_fit_line_ceiling = !truncated_hunks.is_empty()
+        && truncated_hunks
+            .iter()
+            .all(|index| line_ceiling_hunks.contains(index));
+    let omitted_lines_recovery_proven = !truncated_hunks.is_empty()
+        && truncated_hunks
+            .iter()
+            .all(|index| line_recoverable_hunks.contains(index));
+    let single_returned_hunk = git_diff_file_hunk_count(files) == Some(1);
+    let exact_single_hunk_recovery = path_provenance == "exact"
+        && omitted_line_paths.len() == 1
+        && truncated_hunks.len() == 1
+        && single_returned_hunk
+        && !page_truncated;
+    let omitted_lines_recoverable = omitted_lines_present
+        && hunk_line_limit
+        && max_hunk_lines < MAX_MAX_HUNK_LINES
+        && omitted_lines_recovery_proven
+        && exact_single_hunk_recovery;
+    let omitted_lines_reason = if !omitted_lines_present {
+        Value::Null
+    } else if !hunk_line_limit {
+        json!("page_byte_budget_prevents_proven_recovery")
+    } else if max_hunk_lines >= MAX_MAX_HUNK_LINES && !omitted_lines_fit_line_ceiling {
+        json!("max_hunk_lines_ceiling_reached")
+    } else if !omitted_lines_fit_line_ceiling {
+        json!("max_hunk_lines_ceiling_insufficient")
+    } else if !omitted_lines_recovery_proven {
+        json!("page_byte_budget_prevents_proven_recovery")
+    } else if exact_single_hunk_recovery && max_hunk_lines < MAX_MAX_HUNK_LINES {
+        json!("larger_max_hunk_lines_available")
+    } else {
+        json!("bounded_recovery_unavailable")
+    };
+    let omitted_lines_call = omitted_lines_recoverable.then(|| {
         json!({
             "tool": "git_diff_hunks",
             "arguments": git_diff_hunks_call_arguments(
@@ -2868,18 +2910,14 @@ fn git_diff_hunks_recovery_value(
             ),
         })
     });
-    let primary_call = if omitted_lines_present {
-        omitted_lines_call
-            .as_ref()
-            .expect("omitted-line recovery always has a bounded recovery call")
-    } else {
-        continuation_call.as_ref()?
-    };
+    let primary_call = omitted_lines_call.as_ref().or(continuation_call.as_ref());
 
     Some(json!({
         "kind": kind,
         "tool": "git_diff_hunks",
-        "arguments": primary_call["arguments"].clone(),
+        "arguments": primary_call
+            .map(|call| call["arguments"].clone())
+            .unwrap_or(Value::Null),
         "safe_continuation_for_omitted_lines": if omitted_lines_present {
             Value::Bool(false)
         } else {
@@ -2893,6 +2931,8 @@ fn git_diff_hunks_recovery_value(
         },
         "omitted_lines": {
             "present": omitted_lines_present,
+            "recoverable": omitted_lines_recoverable,
+            "reason_code": omitted_lines_reason,
             "path_provenance": path_provenance,
             "paths": omitted_line_paths,
             "next_call": omitted_lines_call,
@@ -3078,6 +3118,7 @@ LC_ALL=C; export LC_ALL
 page_budget=__PAGE_BUDGET__
 max_hunks=__MAX_HUNKS__
 max_hunk_lines=__MAX_HUNK_LINES__
+max_recovery_hunk_lines=__MAX_RECOVERY_HUNK_LINES__
 start_position=__START_POSITION__
 expected_fence=__EXPECTED_FENCE__
 pre_fence=$(__FINGERPRINT_COMMAND__ | git hash-object --stdin)
@@ -3088,10 +3129,10 @@ stale=0
 if [ -n "$expected_fence" ] && [ "$pre_fence" != "$expected_fence" ]; then stale=1; fi
 if [ "$pre_hash_exit" -eq 0 ] && [ "$pre_diff_exit" -eq 0 ] && [ "$stale" -eq 0 ]; then
   { __DIFF_COMMAND__; diff_exit=$?; printf '__WCDH_DIFF_EXIT__=%s\n' "$diff_exit"; } |
-  awk -v page_budget="$page_budget" -v max_hunks="$max_hunks" -v max_hunk_lines="$max_hunk_lines" -v start_position="$start_position" '
+  awk -v page_budget="$page_budget" -v max_hunks="$max_hunks" -v max_hunk_lines="$max_hunk_lines" -v max_recovery_hunk_lines="$max_recovery_hunk_lines" -v start_position="$start_position" '
 function reset_record() {
   record_kind=""; record_buf=""; record_bytes=0; record_byte_trunc=0; record_unreturnable=0;
-  hunk_line_count=0; hunk_line_trunc=0;
+  hunk_line_count=0; hunk_full_bytes=0; hunk_line_trunc=0;
 }
 function append_record(line,    line_bytes) {
   if (stopped) return;
@@ -3105,14 +3146,22 @@ function append_record(line,    line_bytes) {
     record_byte_trunc=1;
   }
 }
-function append_hunk_line(line) {
+function append_hunk_line(line,    line_bytes) {
+  line_bytes=length(line)+1;
+  hunk_full_bytes+=line_bytes;
   if (hunk_line_count<max_hunk_lines) append_record(line); else hunk_line_trunc=1;
   hunk_line_count++;
 }
 function note_truncated_hunk(idx) {
   if (truncated_hunks=="") truncated_hunks=idx; else truncated_hunks=truncated_hunks "," idx;
 }
-function flush_record(    need_context, combined_bytes, context_truncated, hunk_index) {
+function note_line_ceiling_hunk(idx) {
+  if (line_ceiling_hunks=="") line_ceiling_hunks=idx; else line_ceiling_hunks=line_ceiling_hunks "," idx;
+}
+function note_line_recoverable_hunk(idx) {
+  if (line_recoverable_hunks=="") line_recoverable_hunks=idx; else line_recoverable_hunks=line_recoverable_hunks "," idx;
+}
+function flush_record(    need_context, combined_bytes, context_truncated, hunk_index, line_ceiling_fit, line_recovery_safe) {
   if (record_kind=="") return;
   if (record_kind=="file") {
     file_ctx=record_buf; file_ctx_bytes=record_bytes; file_ctx_truncated=record_byte_trunc;
@@ -3148,6 +3197,11 @@ function flush_record(    need_context, combined_bytes, context_truncated, hunk_
     hunk_index=returned_hunks;
     returned_hunks++;
     if (hunk_line_trunc || record_byte_trunc) note_truncated_hunk(hunk_index);
+    line_ceiling_fit=(hunk_line_count<=max_recovery_hunk_lines);
+    if ((hunk_line_trunc || record_byte_trunc) && line_ceiling_fit)
+      note_line_ceiling_hunk(hunk_index);
+    line_recovery_safe=(hunk_line_trunc && !record_byte_trunc && line_ceiling_fit && !file_ctx_truncated && file_ctx_bytes+hunk_full_bytes<=page_budget);
+    if (line_recovery_safe) note_line_recoverable_hunk(hunk_index);
     if (hunk_line_trunc) hunk_line_limit=1;
     if (record_byte_trunc) page_byte_budget=1;
   }
@@ -3173,7 +3227,7 @@ function process_line(line) {
 BEGIN {
   record_count=0; next_position=start_position; page_bytes=0; returned_hunks=0; returned_file_records=0;
   has_more=0; stopped=0; page_hunk_limit=0; hunk_line_limit=0; page_byte_budget=0;
-  first_file_context_only=0; truncated_hunks=""; current_file_context_emitted=0; file_ctx_record=-1;
+  first_file_context_only=0; truncated_hunks=""; line_ceiling_hunks=""; line_recoverable_hunks=""; current_file_context_emitted=0; file_ctx_record=-1;
   reset_record(); have_pending=0; diff_exit=-1;
 }
 {
@@ -3187,14 +3241,14 @@ END {
     process_line(pending);
   }
   flush_record();
-  meta=sprintf("diff_exit=%d\nnext_position=%d\ntotal_records=%d\nhas_more=%d\nreturned_hunks=%d\nreturned_file_records=%d\nfirst_file_context_only=%d\npage_hunk_limit=%d\nhunk_line_limit=%d\npage_byte_budget=%d\npage_bytes=%d\ntruncated_hunks=%s", diff_exit, next_position, record_count, has_more, returned_hunks, returned_file_records, first_file_context_only, page_hunk_limit, hunk_line_limit, page_byte_budget, page_bytes, truncated_hunks);
+  meta=sprintf("diff_exit=%d\nnext_position=%d\ntotal_records=%d\nhas_more=%d\nreturned_hunks=%d\nreturned_file_records=%d\nfirst_file_context_only=%d\npage_hunk_limit=%d\nhunk_line_limit=%d\npage_byte_budget=%d\npage_bytes=%d\ntruncated_hunks=%s\nline_ceiling_hunks=%s\nline_recoverable_hunks=%s", diff_exit, next_position, record_count, has_more, returned_hunks, returned_file_records, first_file_context_only, page_hunk_limit, hunk_line_limit, page_byte_budget, page_bytes, truncated_hunks, line_ceiling_hunks, line_recoverable_hunks);
   printf "%s\n", meta;
   printf "WCDH1:P:%010d:%010d\n", page_bytes, length(meta)+1;
 }
 '
   page_filter_exit=$?
 else
-  page_meta=$(printf 'diff_exit=-1\nnext_position=%s\ntotal_records=0\nhas_more=0\nreturned_hunks=0\nreturned_file_records=0\nfirst_file_context_only=0\npage_hunk_limit=0\nhunk_line_limit=0\npage_byte_budget=0\npage_bytes=0\ntruncated_hunks=' "$start_position")
+  page_meta=$(printf 'diff_exit=-1\nnext_position=%s\ntotal_records=0\nhas_more=0\nreturned_hunks=0\nreturned_file_records=0\nfirst_file_context_only=0\npage_hunk_limit=0\nhunk_line_limit=0\npage_byte_budget=0\npage_bytes=0\ntruncated_hunks=\nline_ceiling_hunks=\nline_recoverable_hunks=' "$start_position")
   page_meta_bytes=${#page_meta}
   printf '%s\n' "$page_meta"
   printf 'WCDH1:P:%010d:%010d\n' 0 "$((page_meta_bytes+1))"
@@ -3218,6 +3272,10 @@ exit 1
         .replace("__PAGE_BUDGET__", &GIT_DIFF_HUNKS_PAGE_BYTES.to_string())
         .replace("__MAX_HUNKS__", &max_hunks.to_string())
         .replace("__MAX_HUNK_LINES__", &max_hunk_lines.to_string())
+        .replace(
+            "__MAX_RECOVERY_HUNK_LINES__",
+            &MAX_MAX_HUNK_LINES.to_string(),
+        )
         .replace("__START_POSITION__", &start_position.to_string())
         .replace("__EXPECTED_FENCE__", &expected_fence)
         .replace("__FINGERPRINT_COMMAND__", &fingerprint_command)
@@ -3239,6 +3297,8 @@ struct GitDiffHunksPageWire {
     page_byte_budget: bool,
     page_bytes: usize,
     truncated_hunks: Vec<usize>,
+    line_ceiling_hunks: Vec<usize>,
+    line_recoverable_hunks: Vec<usize>,
     pre_fence: String,
     post_fence: String,
     pre_hash_exit: i32,
@@ -3278,8 +3338,8 @@ fn parse_required_i32(meta: &str, key: &str) -> Option<i32> {
     parse_status_result_field(meta, key)?.parse().ok()
 }
 
-fn parse_truncated_hunk_indices(meta: &str, returned_hunks: usize) -> Option<Vec<usize>> {
-    let raw = parse_status_result_field(meta, "truncated_hunks")?;
+fn parse_hunk_indices(meta: &str, key: &str, returned_hunks: usize) -> Option<Vec<usize>> {
+    let raw = parse_status_result_field(meta, key)?;
     if raw.is_empty() {
         return Some(Vec::new());
     }
@@ -3313,7 +3373,10 @@ fn parse_framed_git_diff_hunks_stdout(stdout: &str) -> Option<GitDiffHunksPageWi
     }
     let returned_hunks = parse_optional_usize(&page_meta, "returned_hunks")?;
     let returned_file_records = parse_optional_usize(&page_meta, "returned_file_records")?;
-    let truncated_hunks = parse_truncated_hunk_indices(&page_meta, returned_hunks)?;
+    let truncated_hunks = parse_hunk_indices(&page_meta, "truncated_hunks", returned_hunks)?;
+    let line_ceiling_hunks = parse_hunk_indices(&page_meta, "line_ceiling_hunks", returned_hunks)?;
+    let line_recoverable_hunks =
+        parse_hunk_indices(&page_meta, "line_recoverable_hunks", returned_hunks)?;
     Some(GitDiffHunksPageWire {
         diff: strip_wire_lf(diff)?,
         diff_exit: parse_required_i32(&page_meta, "diff_exit")?,
@@ -3328,6 +3391,8 @@ fn parse_framed_git_diff_hunks_stdout(stdout: &str) -> Option<GitDiffHunksPageWi
         page_byte_budget: parse_optional_bool(&page_meta, "page_byte_budget")?,
         page_bytes,
         truncated_hunks,
+        line_ceiling_hunks,
+        line_recoverable_hunks,
         pre_fence: parse_status_result_field(&obs_meta, "pre_fence")?.to_string(),
         post_fence: parse_status_result_field(&obs_meta, "post_fence")?.to_string(),
         pre_hash_exit: parse_required_i32(&obs_meta, "pre_hash_exit")?,
@@ -4284,6 +4349,15 @@ impl ToolRuntime {
             || parsed_hunks != wire.returned_hunks
             || marked_hunks != wire.returned_hunks
             || files.len() != expected_files
+            || wire
+                .line_ceiling_hunks
+                .iter()
+                .any(|index| !wire.truncated_hunks.contains(index))
+            || wire
+                .line_recoverable_hunks
+                .iter()
+                .any(|index| !wire.line_ceiling_hunks.contains(index))
+            || (!wire.hunk_line_limit && !wire.line_recoverable_hunks.is_empty())
         {
             return git_diff_hunks_failure(
                 &project,
@@ -4342,6 +4416,9 @@ impl ToolRuntime {
             wire.page_hunk_limit,
             wire.hunk_line_limit,
             wire.page_byte_budget,
+            &wire.truncated_hunks,
+            &wire.line_ceiling_hunks,
+            &wire.line_recoverable_hunks,
             next_continuation.as_deref(),
         );
         let mut payload = json!({

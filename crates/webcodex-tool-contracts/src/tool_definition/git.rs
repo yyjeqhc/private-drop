@@ -177,7 +177,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Targeted/paged diff review for worktree/cached or exact base/head ranges, with paths and scope-bound opaque continuation. Replay scope and paging inputs unchanged for later records. Truncated results also include parser-ready recovery; hunk_line_limit needs a fresh call with larger max_hunk_lines and/or narrower paths because continuation cannot recover omitted lines. Read-only.",
+            "Targeted/paged diff review for worktree/cached or exact base/head ranges, with paths and scope-bound opaque continuation. Replay scope and paging inputs unchanged for later records. Truncated results separate later-hunk continuation from omitted_lines recoverability: hunk_line_limit can use larger max_hunk_lines and/or narrower paths only with bounded headroom; fixed byte/line ceilings never advertise fake recovery. Read-only.",
             git_diff_hunks_input_schema,
         )))),
         125,

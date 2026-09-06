@@ -41,16 +41,22 @@ fn nullable_git_diff_hunks_recovery_call_schema() -> Value {
     })
 }
 
+fn nullable_git_diff_hunks_recovery_arguments_schema() -> Value {
+    json!({
+        "anyOf": [git_diff_hunks_recovery_arguments_schema(), {"type": "null"}]
+    })
+}
+
 fn git_diff_hunks_recovery_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Actionable bounded recovery. Page continuation obtains later hunks only; omitted-line recovery is a fresh bounded call and never relies on continuation.",
+        "description": "Actionable bounded recovery. Page continuation obtains later hunks only. omitted_lines reports whether the current bounded git_diff_hunks contract can actually recover missing hunk content; fixed byte or line ceilings never receive a fake recovery call.",
         "additionalProperties": false,
         "properties": {
             "kind": {"type": "string", "enum": ["page", "hunk_lines", "mixed"]},
             "tool": {"type": "string", "const": "git_diff_hunks"},
-            "arguments": git_diff_hunks_recovery_arguments_schema(),
-            "safe_continuation_for_omitted_lines": nullable_schema("boolean", "False when current-hunk lines were omitted; null when no line truncation occurred."),
+            "arguments": nullable_git_diff_hunks_recovery_arguments_schema(),
+            "safe_continuation_for_omitted_lines": nullable_schema("boolean", "False when current-hunk content was omitted for any reason; null when no current hunk content was omitted."),
             "continuation": {
                 "type": "object",
                 "additionalProperties": false,
@@ -67,11 +73,28 @@ fn git_diff_hunks_recovery_schema() -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "present": {"type": "boolean"},
+                    "recoverable": {"type": "boolean"},
+                    "reason_code": {
+                        "anyOf": [
+                            {
+                                "type": "string",
+                                "enum": [
+                                    "larger_max_hunk_lines_available",
+                                    "page_byte_budget_prevents_proven_recovery",
+                                    "max_hunk_lines_ceiling_reached",
+                                    "max_hunk_lines_ceiling_insufficient",
+                                    "bounded_recovery_unavailable"
+                                ]
+                            },
+                            {"type": "null"}
+                        ],
+                        "description": "Stable reason why omitted hunk content is recoverable or unrecoverable within the current bounded git_diff_hunks contract."
+                    },
                     "path_provenance": {"type": "string", "enum": ["none", "scope", "exact"]},
                     "paths": {"type": "array", "items": {"type": "string"}},
                     "next_call": nullable_git_diff_hunks_recovery_call_schema()
                 },
-                "required": ["present", "path_provenance", "paths", "next_call"]
+                "required": ["present", "recoverable", "reason_code", "path_provenance", "paths", "next_call"]
             }
         },
         "required": [
