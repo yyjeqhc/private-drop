@@ -21,9 +21,7 @@ use crate::tool_runtime::specialized::SpecializedGovernanceDenial;
 use crate::tool_runtime::tool_definition::{
     is_adaptive_runtime_direct_tool, runtime_tool_accepts_context_ack, LOCAL_CODING_TOOL_NAMES,
 };
-#[cfg(test)]
-use crate::tool_runtime::ToolResult;
-use crate::tool_runtime::{registered_tool_specs, ToolCall, ToolRuntime, ToolSpec};
+use crate::tool_runtime::{registered_tool_specs, ToolCall, ToolResult, ToolRuntime, ToolSpec};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -143,18 +141,48 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     }
 }
 
-fn adaptive_runtime_gateway_target_allowed(target: &str, stateless_2026: bool) -> bool {
-    if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME || is_adaptive_runtime_direct_tool(target) {
-        return false;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdaptiveRuntimeGatewayTargetRoute {
+    Gateway,
+    Direct,
+    Recursive,
+    Unknown,
+}
+
+fn adaptive_runtime_gateway_target_route(
+    target: &str,
+    stateless_2026: bool,
+) -> AdaptiveRuntimeGatewayTargetRoute {
+    if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME {
+        return AdaptiveRuntimeGatewayTargetRoute::Recursive;
     }
+    match ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(target) {
+        (crate::model_surface::TOOL_SURFACE_AVAILABILITY_DIRECT, None) => {
+            return AdaptiveRuntimeGatewayTargetRoute::Direct;
+        }
+        (
+            crate::model_surface::TOOL_SURFACE_AVAILABILITY_GATEWAY,
+            Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME),
+        ) => {
+            return AdaptiveRuntimeGatewayTargetRoute::Gateway;
+        }
+        _ => {}
+    }
+    // MCP/SSH adapters and stateless operator extensions are intentionally not
+    // registered ToolDefinition routes. Preserve their existing gateway-only
+    // admission without teaching ordinary runtime tools a second route table.
     if target == crate::mcp_gateway::MCP_TOOL_NAME
         || target == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
     {
-        return true;
+        return AdaptiveRuntimeGatewayTargetRoute::Gateway;
     }
-    adaptive_runtime_gateway_target_specs(stateless_2026)
+    if adaptive_runtime_gateway_target_specs(stateless_2026)
         .iter()
         .any(|spec| spec.name == target)
+    {
+        return AdaptiveRuntimeGatewayTargetRoute::Gateway;
+    }
+    AdaptiveRuntimeGatewayTargetRoute::Unknown
 }
 
 fn unwrap_adaptive_runtime_gateway_arguments(
@@ -172,11 +200,6 @@ fn unwrap_adaptive_runtime_gateway_arguments(
         .ok_or_else(|| {
             "adaptive runtime gateway field 'tool' must be a non-empty string".to_string()
         })?;
-    if !adaptive_runtime_gateway_target_allowed(&target, stateless_2026) {
-        return Err(format!(
-            "tool '{target}' is not available through the adaptive runtime gateway"
-        ));
-    }
     let mut target_arguments = outer.remove("arguments").unwrap_or_else(|| json!({}));
     if target_arguments.is_null() {
         target_arguments = json!({});
@@ -208,6 +231,39 @@ fn unwrap_adaptive_runtime_gateway_arguments(
         }
     }
     Ok((target, target_arguments))
+}
+
+fn adaptive_runtime_gateway_route_failure(target: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        format!("tool '{target}' must be invoked directly on the adaptive runtime surface"),
+        json!({
+            "error_kind": "wrong_invocation_route",
+            "execution_state": "not_started",
+            "state_changed": false,
+            "target_tool": target,
+            "correct_route": {
+                "mode": "direct"
+            },
+            "recovery": {
+                "tool": target,
+                "route": {"mode": "direct"}
+            },
+            "recovery_kind": "fix_input"
+        }),
+    )
+}
+
+fn adaptive_runtime_gateway_unknown_target(target: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        format!("unknown adaptive runtime tool '{target}'"),
+        json!({
+            "error_kind": "unknown_tool",
+            "execution_state": "not_started",
+            "state_changed": false,
+            "target_tool": target,
+            "recovery_kind": "fix_input"
+        }),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -1188,8 +1244,72 @@ pub(super) async fn handle_call(
                     return McpOutcome::BadRequest(rpc_error(id, -32602, message));
                 }
             };
-        params.name = target;
-        params.arguments = arguments;
+        match adaptive_runtime_gateway_target_route(&target, stateless_2026) {
+            AdaptiveRuntimeGatewayTargetRoute::Gateway => {
+                params.name = target;
+                params.arguments = arguments;
+            }
+            AdaptiveRuntimeGatewayTargetRoute::Direct => {
+                if let Err(ToolCallErrorStatus::InsufficientScope {
+                    required_scope,
+                    description,
+                }) = check_runtime_tool_scope(auth, &target)
+                {
+                    if let Some(lc) = lifecycle.as_deref() {
+                        lc.dispatch_failed("forbidden");
+                        lc.dispatch_finished(false, Some(false), "forbidden");
+                    }
+                    return scope_forbidden(auth, required_scope, description);
+                }
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("wrong_invocation_route");
+                    lc.dispatch_finished(false, Some(false), "wrong_invocation_route");
+                }
+                let completion = ModelErgonomicsTimer::start(&target).map(|timer| timer.finish());
+                let rendered = mcp_runtime_tool_result_fallback(
+                    adaptive_runtime_gateway_route_failure(&target),
+                );
+                if let (Some(slot), Some(completion)) =
+                    (model_ergonomics_out.as_deref_mut(), completion.as_ref())
+                {
+                    *slot = rendered.get("structuredContent").and_then(|structured| {
+                        completion.record_for_structured_content(structured)
+                    });
+                }
+                return McpOutcome::Ok(rpc_result(
+                    id,
+                    if stateless_2026 {
+                        mcp_stateless_result(rendered, false)
+                    } else {
+                        rendered
+                    },
+                ));
+            }
+            AdaptiveRuntimeGatewayTargetRoute::Unknown => {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("unknown_tool");
+                    lc.dispatch_finished(false, Some(false), "unknown_tool");
+                }
+                let rendered = mcp_runtime_tool_result_fallback(
+                    adaptive_runtime_gateway_unknown_target(&target),
+                );
+                return McpOutcome::Ok(rpc_result(
+                    id,
+                    if stateless_2026 {
+                        mcp_stateless_result(rendered, false)
+                    } else {
+                        rendered
+                    },
+                ));
+            }
+            AdaptiveRuntimeGatewayTargetRoute::Recursive => {
+                return McpOutcome::BadRequest(rpc_error(
+                    id,
+                    -32602,
+                    "call_runtime_tool cannot target itself through the adaptive runtime gateway",
+                ));
+            }
+        }
     }
     if let Some(lc) = lifecycle.as_deref() {
         let audit = if params.name == crate::plugin_gateway::PLUGIN_TOOL_NAME {

@@ -19,6 +19,32 @@ use super::tool_spec::ToolSpec;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
+const TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS: usize = 180;
+const TOOL_MANIFEST_CANONICAL_KEYS: &[&str] = &[
+    "schema_version",
+    "tool_count",
+    "count",
+    "returned_count",
+    "total_count",
+    "filtered_count",
+    "tool_name",
+    "contract",
+    "category",
+    "intent",
+    "available_intents",
+    "filtered",
+    "categories_requested",
+    "limit",
+    "truncated",
+    "truncation_reason",
+    "limit_applied",
+    "requested_limit",
+    "categories",
+    "tools",
+    "risk_summary",
+    "recommended_flows",
+];
+
 pub(crate) fn registered_tool_categories() -> Value {
     let mut categories = serde_json::Map::new();
     for group in TOOL_DISCOVERY_GROUPS {
@@ -518,6 +544,194 @@ fn manifest_authority(policy: ToolAuthorityPolicy) -> Value {
             "scopes": [],
         }),
     }
+}
+
+fn manifest_route_projection(availability: Option<&str>, gateway_tool: Option<&Value>) -> Value {
+    let mode = availability.unwrap_or("unavailable");
+    let mut route = serde_json::Map::new();
+    route.insert("mode".to_string(), Value::String(mode.to_string()));
+    if mode == "gateway" {
+        if let Some(via) = gateway_tool.and_then(Value::as_str) {
+            route.insert("via".to_string(), Value::String(via.to_string()));
+        }
+    }
+    Value::Object(route)
+}
+
+fn selection_description(description: &str) -> String {
+    let description = description.trim();
+    if description.chars().count() <= TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS {
+        return description.to_string();
+    }
+    if let Some(end) = description.char_indices().find_map(|(index, ch)| {
+        let end = index + ch.len_utf8();
+        (matches!(ch, '.' | '!' | '?')
+            && description[..end].chars().count() <= TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS)
+            .then_some(end)
+    }) {
+        return description[..end].trim().to_string();
+    }
+
+    let byte_end = description
+        .char_indices()
+        .nth(TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS - 1)
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(description.len());
+    let prefix = &description[..byte_end];
+    let cut = prefix
+        .char_indices()
+        .rev()
+        .find_map(|(index, ch)| ch.is_whitespace().then_some(index))
+        .filter(|index| *index > TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS / 2)
+        .unwrap_or(byte_end);
+    format!("{}…", description[..cut].trim_end())
+}
+
+/// Project the canonical manifest only after Session/audit consumers have seen
+/// it. This preserves the compatibility/full diagnostic result internally while
+/// making ordinary model discovery answer only the next selection/call decision.
+/// Unknown output sidecars are preserved verbatim.
+pub(super) fn sparsify_tool_manifest_model_result(result: &mut ToolResult) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object() else {
+        return;
+    };
+    let canonical = output.clone();
+    let mut projected = serde_json::Map::new();
+
+    if let Some(contract) = canonical.get("contract").and_then(Value::as_object) {
+        for key in [
+            "name",
+            "description",
+            "input_schema",
+            "effect",
+            "risk",
+            "approval",
+            "idempotency",
+            "annotations",
+        ] {
+            if let Some(value) = contract.get(key) {
+                projected.insert(key.to_string(), value.clone());
+            }
+        }
+        projected.insert(
+            "route".to_string(),
+            manifest_route_projection(
+                contract.get("availability").and_then(Value::as_str),
+                contract.get("gateway_tool"),
+            ),
+        );
+        if let Some(authority) = canonical
+            .get("tools")
+            .and_then(Value::as_array)
+            .and_then(|tools| tools.first())
+            .and_then(|tool| tool.get("authority"))
+        {
+            projected.insert("authority".to_string(), authority.clone());
+        }
+        if let Some(flows) = canonical
+            .get("recommended_flows")
+            .and_then(Value::as_array)
+            .filter(|flows| !flows.is_empty())
+        {
+            projected.insert("recommended_flows".to_string(), Value::Array(flows.clone()));
+        }
+    } else if canonical.get("filtered").and_then(Value::as_bool) == Some(true) {
+        let specs = registered_tool_specs();
+        let descriptions: HashMap<&str, &str> = specs
+            .iter()
+            .map(|spec| (spec.name.as_str(), spec.description.as_str()))
+            .collect();
+        let tools = canonical
+            .get("tools")
+            .and_then(Value::as_array)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(Value::as_object)
+                    .map(|tool| {
+                        let mut entry = serde_json::Map::new();
+                        if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                            entry.insert("name".to_string(), Value::String(name.to_string()));
+                            if let Some(description) = descriptions.get(name) {
+                                entry.insert(
+                                    "description".to_string(),
+                                    Value::String(selection_description(description)),
+                                );
+                            }
+                        }
+                        entry.insert(
+                            "route".to_string(),
+                            manifest_route_projection(
+                                tool.get("availability").and_then(Value::as_str),
+                                tool.get("gateway_tool"),
+                            ),
+                        );
+                        if let Some(requires_project) = tool.get("requires_project") {
+                            entry.insert("requires_project".to_string(), requires_project.clone());
+                        }
+                        if let Some(effect) = tool.get("effect") {
+                            entry.insert("effect".to_string(), effect.clone());
+                        }
+                        if tool.get("effect").and_then(Value::as_str) != Some("observe") {
+                            if let Some(risk) = tool.get("risk") {
+                                entry.insert("risk".to_string(), risk.clone());
+                            }
+                        }
+                        Value::Object(entry)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        projected.insert("tools".to_string(), Value::Array(tools));
+        for key in ["intent", "category", "categories_requested"] {
+            if let Some(value) = canonical.get(key).filter(|value| !value.is_null()) {
+                projected.insert(key.to_string(), value.clone());
+            }
+        }
+        if canonical.get("truncated").and_then(Value::as_bool) == Some(true) {
+            for key in [
+                "truncated",
+                "truncation_reason",
+                "returned_count",
+                "filtered_count",
+                "limit",
+            ] {
+                if let Some(value) = canonical.get(key) {
+                    projected.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+        if let Some(flows) = canonical
+            .get("recommended_flows")
+            .and_then(Value::as_array)
+            .filter(|flows| !flows.is_empty())
+        {
+            projected.insert("recommended_flows".to_string(), Value::Array(flows.clone()));
+        }
+    } else {
+        for key in [
+            "schema_version",
+            "tool_count",
+            "categories",
+            "available_intents",
+            "risk_summary",
+            "recommended_flows",
+        ] {
+            if let Some(value) = canonical.get(key) {
+                projected.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+
+    for (key, value) in canonical {
+        if !TOOL_MANIFEST_CANONICAL_KEYS.contains(&key.as_str()) {
+            projected.insert(key, value);
+        }
+    }
+    result.output = Value::Object(projected);
 }
 
 pub(super) fn compact_manifest_tool_entry(

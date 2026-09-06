@@ -545,16 +545,9 @@ async fn adaptive_runtime_gateway_uses_long_tail_target_checkpoint_policy_once()
 }
 
 #[tokio::test]
-async fn adaptive_runtime_gateway_rejects_recursive_and_unknown_targets() {
+async fn adaptive_runtime_gateway_returns_exact_route_recovery_without_dispatching_direct_tools() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
-    for target in [
-        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
-        "runtime_status",
-        "read_files",
-        "work_on_project",
-        "start_coding_task",
-        "not_a_real_webcodex_tool",
-    ] {
+    for target in ["runtime_status", "read_files", "work_on_project"] {
         let outcome = handle_mcp_request(
             &runtime,
             rpc(
@@ -568,30 +561,200 @@ async fn adaptive_runtime_gateway_rejects_recursive_and_unknown_targets() {
             None,
         )
         .await;
-        match outcome {
-            McpOutcome::BadRequest(value) => {
-                assert_eq!(value["error"]["code"], -32602);
-                assert_eq!(
-                    value["error"]["message"],
-                    format!(
-                        "tool '{target}' is not available through the adaptive runtime gateway"
-                    )
-                );
-            }
-            other => panic!("target {target} must fail closed, got {other:?}"),
-        }
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("known direct target {target} should return structured recovery");
+        };
+        let structured = &value["result"]["structuredContent"];
+        assert_eq!(structured["success"], false);
+        let output = &structured["output"];
+        assert_eq!(output["error_kind"], "wrong_invocation_route");
+        assert_eq!(output["execution_state"], "not_started");
+        assert_eq!(output["state_changed"], false);
+        assert_eq!(output["target_tool"], target);
+        assert_eq!(output["correct_route"]["mode"], "direct");
+        assert_eq!(output["recovery"]["tool"], target);
+        assert_eq!(output["recovery"]["route"]["mode"], "direct");
+        assert_eq!(output["recovery_kind"], "fix_input");
     }
+
+    let unknown = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7231)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {"tool": "not_a_real_webcodex_tool", "arguments": {}}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = unknown else {
+        panic!("unknown gateway target should return a structured unknown-tool result");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(output["error_kind"], "unknown_tool");
+    assert_eq!(output["execution_state"], "not_started");
+    assert_eq!(output["state_changed"], false);
+    assert!(output.get("correct_route").is_none());
+
+    let recursive = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7232)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                    "arguments": {}
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::BadRequest(value) = recursive else {
+        panic!("recursive adaptive gateway target must remain invalid arguments");
+    };
+    assert_eq!(value["error"]["code"], -32602);
 }
 
 #[tokio::test]
-async fn adaptive_runtime_tool_manifest_describes_one_long_tail_contract_without_expanding_surface()
-{
+async fn adaptive_runtime_gateway_route_classification_does_not_mask_target_scope_denials() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token);
+    auth.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.to_string()];
+
+    let direct_target = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7233)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": "read_files",
+                    "arguments": {"project": "missing-project", "items": [{"path": "src/lib.rs"}]}
+                }
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Forbidden {
+        required_scope,
+        body,
+    } = direct_target
+    else {
+        panic!("wrong-route read_files must not mask its canonical scope denial");
+    };
+    assert_eq!(required_scope, Some(crate::auth::SCOPE_PROJECT_READ));
+    assert!(body.to_string().contains(crate::auth::SCOPE_PROJECT_READ));
+    assert!(!body.to_string().contains("wrong_invocation_route"));
+
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7234)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": "read_file",
+                    "arguments": {"project": "missing-project", "path": "src/lib.rs"}
+                }
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Forbidden {
+        required_scope,
+        body,
+    } = outcome
+    else {
+        panic!("gateway-routed read_file must retain its canonical scope denial");
+    };
+    assert_eq!(required_scope, Some(crate::auth::SCOPE_PROJECT_READ));
+    assert!(body.to_string().contains(crate::auth::SCOPE_PROJECT_READ));
+    assert!(!body.to_string().contains("wrong_invocation_route"));
+}
+
+#[tokio::test]
+async fn adaptive_runtime_tool_manifest_exact_projection_is_sparse_and_routes_explicitly() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let canonical_direct = runtime
+        .dispatch(crate::tool_runtime::ToolCall::ToolManifest {
+            tool_name: Some("read_files".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
     let described = handle_mcp_request(
         &runtime,
         rpc(
             "tools/call",
             Some(json!(724)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {
+                    "tool_name": "read_files"
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = described else {
+        panic!("adaptive tool_manifest exact contract must succeed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(output["name"], "read_files");
+    assert!(output["description"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert_eq!(output["route"]["mode"], "direct");
+    assert!(output["route"].get("via").is_none());
+    assert_eq!(output["input_schema"]["type"], "object");
+    assert!(output["input_schema"]["properties"]["items"].is_object());
+    assert_eq!(output["effect"], "observe");
+    assert!(output["authority"]["scopes"].is_array());
+    assert!(output["annotations"].is_object());
+    for redundant in [
+        "tool_name",
+        "contract",
+        "tools",
+        "count",
+        "returned_count",
+        "filtered_count",
+        "categories",
+        "available_intents",
+        "gateway_tool",
+    ] {
+        assert!(
+            output.get(redundant).is_none(),
+            "exact sparse manifest retained redundant field {redundant}: {output}"
+        );
+    }
+    let canonical_bytes = serde_json::to_vec(&canonical_direct).unwrap().len();
+    let sparse_bytes = serde_json::to_vec(&value["result"]["structuredContent"])
+        .unwrap()
+        .len();
+    eprintln!("tool_manifest_exact_bytes before={canonical_bytes} after={sparse_bytes}");
+    assert!(
+        sparse_bytes < canonical_bytes,
+        "{canonical_bytes} -> {sparse_bytes}"
+    );
+
+    let gateway = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7241)),
             mcp_2026_params(json!({
                 "name": "tool_manifest",
                 "arguments": {
@@ -604,51 +767,16 @@ async fn adaptive_runtime_tool_manifest_describes_one_long_tail_contract_without
         None,
     )
     .await;
-    let McpOutcome::Ok(value) = described else {
-        panic!("adaptive tool_manifest exact contract must succeed");
+    let McpOutcome::Ok(value) = gateway else {
+        panic!("adaptive tool_manifest gateway contract must succeed");
     };
-    let output = &value["result"]["structuredContent"]["output"];
-    assert_eq!(output["tool_name"], "run_script");
-    assert_eq!(output["contract"]["name"], "run_script");
-    assert_eq!(output["contract"]["availability"], "gateway");
+    let gateway_output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(gateway_output["name"], "run_script");
+    assert_eq!(gateway_output["route"]["mode"], "gateway");
     assert_eq!(
-        output["contract"]["gateway_tool"],
+        gateway_output["route"]["via"],
         crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
     );
-    assert_eq!(output["tools"][0]["availability"], "gateway");
-    assert_eq!(
-        output["tools"][0]["gateway_tool"],
-        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
-    );
-    assert_eq!(output["contract"]["input_schema"]["type"], "object");
-    assert!(output["contract"]["input_schema"]["properties"]["script"].is_object());
-    assert!(output["contract"].get("output_schema").is_none());
-
-    let direct = handle_mcp_request(
-        &runtime,
-        rpc(
-            "tools/call",
-            Some(json!(7241)),
-            mcp_2026_params(json!({
-                "name": "tool_manifest",
-                "arguments": {
-                    "tool_name": "runtime_status",
-                    "include_recommended_flows": false,
-                    "include_risk_summary": false
-                }
-            })),
-        ),
-        None,
-    )
-    .await;
-    let McpOutcome::Ok(value) = direct else {
-        panic!("adaptive tool_manifest direct contract must succeed");
-    };
-    let direct_output = &value["result"]["structuredContent"]["output"];
-    assert_eq!(direct_output["contract"]["availability"], "direct");
-    assert!(direct_output["contract"]["gateway_tool"].is_null());
-    assert_eq!(direct_output["tools"][0]["availability"], "direct");
-    assert!(direct_output["tools"][0]["gateway_tool"].is_null());
 
     let listed = handle_mcp_request(
         &runtime,
@@ -664,6 +792,131 @@ async fn adaptive_runtime_tool_manifest_describes_one_long_tail_contract_without
         .unwrap()
         .iter()
         .any(|tool| tool["name"] == "run_script"));
+}
+
+#[tokio::test]
+async fn adaptive_runtime_tool_manifest_filtered_projection_is_selection_focused() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let canonical = runtime
+        .dispatch(crate::tool_runtime::ToolCall::ToolManifest {
+            tool_name: None,
+            category: None,
+            intent: Some("exploration".to_string()),
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7242)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"intent": "exploration"}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("intent-filtered tool_manifest must succeed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(output["intent"], "exploration");
+    assert!(output.get("categories").is_none());
+    assert!(output.get("available_intents").is_none());
+    assert!(output.get("risk_summary").is_none());
+    assert!(output.get("count").is_none());
+    assert!(output.get("returned_count").is_none());
+    assert!(output.get("filtered_count").is_none());
+    assert!(output.get("truncated").is_none());
+    let tools = output["tools"].as_array().expect("filtered sparse tools");
+    assert_eq!(
+        tools.len(),
+        canonical.output["tools"].as_array().unwrap().len()
+    );
+    for tool in tools {
+        assert!(tool["name"].is_string());
+        let description = tool["description"].as_str().expect("selection description");
+        assert!(!description.is_empty());
+        assert!(description.chars().count() <= 180, "{description}");
+        assert!(matches!(
+            tool["route"]["mode"].as_str(),
+            Some("direct" | "gateway")
+        ));
+        assert!(tool["requires_project"].is_boolean());
+        assert!(tool["effect"].is_string());
+        for verbose in [
+            "accepted_flattened_args",
+            "deprecated_or_unsupported_args",
+            "provider",
+            "approval",
+            "idempotency",
+            "path_hint",
+            "shell_like",
+            "authority",
+            "availability",
+            "gateway_tool",
+        ] {
+            assert!(tool.get(verbose).is_none(), "{verbose} leaked into {tool}");
+        }
+    }
+    let canonical_names = canonical.output["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].clone())
+        .collect::<Vec<_>>();
+    let sparse_names = tools
+        .iter()
+        .map(|tool| tool["name"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sparse_names, canonical_names,
+        "intent ordering must stay deterministic"
+    );
+    let canonical_bytes = serde_json::to_vec(&canonical).unwrap().len();
+    let sparse_bytes = serde_json::to_vec(&value["result"]["structuredContent"])
+        .unwrap()
+        .len();
+    eprintln!("tool_manifest_exploration_bytes before={canonical_bytes} after={sparse_bytes}");
+    assert!(
+        sparse_bytes < canonical_bytes,
+        "{canonical_bytes} -> {sparse_bytes}"
+    );
+}
+
+#[tokio::test]
+async fn adaptive_runtime_tool_manifest_unfiltered_keeps_global_category_discovery() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7243)),
+            mcp_2026_params(json!({"name": "tool_manifest", "arguments": {}})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("unfiltered tool_manifest must succeed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    assert!(output["tool_count"]
+        .as_u64()
+        .is_some_and(|count| count > 100));
+    assert!(output["categories"]
+        .as_object()
+        .is_some_and(|categories| !categories.is_empty()));
+    assert!(output["available_intents"]
+        .as_array()
+        .is_some_and(|intents| !intents.is_empty()));
+    assert!(
+        output.get("tools").is_none(),
+        "unfiltered discovery should not duplicate all category names"
+    );
 }
 
 #[tokio::test]

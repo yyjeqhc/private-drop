@@ -170,7 +170,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Global runtime discovery; do not pass project. Filter by category/intent, or pass exact tool_name for one contract with description + input schema and no output schema. The returned tool may itself require project. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
+            "Global runtime discovery; do not pass project. Filter by category/intent for sparse selection entries, or pass exact tool_name for one compact contract with description, route, input schema, and safety/authority hints but no output schema. Unfiltered discovery retains the global category inventory. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
             tool_manifest_input_schema,
         )),
         30,

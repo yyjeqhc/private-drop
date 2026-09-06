@@ -1818,7 +1818,7 @@ async fn any_plugin_scope_exposes_only_the_stable_gateway() {
 }
 
 #[tokio::test]
-async fn tool_manifest_returns_canonical_static_plugin_tool_contract_without_runner_inventory() {
+async fn tool_manifest_returns_sparse_static_plugin_tool_contract_without_runner_inventory() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
     let auth = plugin_auth_with_scopes(&[
         crate::auth::SCOPE_PLUGIN_INSPECT,
@@ -1845,18 +1845,15 @@ async fn tool_manifest_returns_canonical_static_plugin_tool_contract_without_run
         panic!("tool_manifest(plugin_tool) must succeed without any Runner inventory");
     };
     let output = &value["result"]["structuredContent"]["output"];
-    assert_eq!(output["tool_name"], crate::plugin_gateway::PLUGIN_TOOL_NAME);
+    assert_eq!(output["name"], crate::plugin_gateway::PLUGIN_TOOL_NAME);
+    assert_eq!(output["route"]["mode"], "direct");
+    assert!(output["route"].get("via").is_none());
     assert_eq!(
-        output["contract"]["name"],
-        crate::plugin_gateway::PLUGIN_TOOL_NAME
-    );
-    assert_eq!(output["contract"]["availability"], "direct");
-    assert_eq!(
-        output["contract"]["input_schema"]["properties"]["binding"]["pattern"],
+        output["input_schema"]["properties"]["binding"]["pattern"],
         "^wc_pbind_[0-9a-f]{32}$"
     );
-    assert_eq!(output["tools"][0]["authority"]["policy"], "require_any");
-    let scopes = output["tools"][0]["authority"]["scopes"]
+    assert_eq!(output["authority"]["policy"], "require_any");
+    let scopes = output["authority"]["scopes"]
         .as_array()
         .expect("Plugin gateway authority scopes");
     for scope in [
@@ -1883,7 +1880,7 @@ async fn tool_manifest_returns_canonical_static_plugin_tool_contract_without_run
         .iter()
         .find(|tool| tool["name"] == crate::plugin_gateway::PLUGIN_TOOL_NAME)
         .expect("plugin_tool after Runner registration");
-    assert_eq!(gateway["inputSchema"], output["contract"]["input_schema"]);
+    assert_eq!(gateway["inputSchema"], output["input_schema"]);
     assert!(!listed["result"]["tools"]
         .as_array()
         .unwrap()
@@ -1900,7 +1897,7 @@ async fn tool_manifest_returns_canonical_static_plugin_tool_contract_without_run
     for field in ["action", "runner", "plugin", "tool", "binding", "arguments"] {
         assert_eq!(
             stateless_gateway["inputSchema"]["properties"][field],
-            output["contract"]["input_schema"]["properties"][field],
+            output["input_schema"]["properties"][field],
             "Stateless MCP must preserve canonical Plugin business schema for {field}"
         );
     }

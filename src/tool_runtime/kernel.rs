@@ -904,6 +904,9 @@ impl ToolRuntime {
             );
             super::dispatch::sparsify_complete_read_success(&request.tool_name, &mut result);
         }
+        if request.tool_name == "tool_manifest" {
+            super::surface::sparsify_tool_manifest_model_result(&mut result);
+        }
         // Final model-facing projection: authoritative permission decisions and
         // recorder events have already been consumed by the Session ledger.
         super::dispatch::sparsify_failure_model_result_metadata(&request.tool_name, &mut result);

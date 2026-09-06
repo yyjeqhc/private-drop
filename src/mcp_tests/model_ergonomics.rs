@@ -176,6 +176,99 @@ async fn http_mcp_tools_list_stateless_audit_measures_final_compact_result_and_s
         .is_empty());
 }
 
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn http_mcp_wrong_route_then_corrected_call_is_queryable_without_new_telemetry_schema() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::AdaptiveRuntime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+
+    let mut wrong = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/call", true)
+        .add_header(
+            MCP_NAME_HEADER,
+            crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            true,
+        )
+        .add_header("x-action-session-id", "wrong-route-recovery", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 301,
+            "method": "tools/call",
+            "params": mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {"tool": "runtime_status", "arguments": {"summary_only": true}}
+            }))
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&wrong), StatusCode::OK);
+    let wrong_body: Value = wrong.take_json().await.unwrap();
+    assert_eq!(wrong_body["result"]["structuredContent"]["success"], false);
+    assert_eq!(
+        wrong_body["result"]["structuredContent"]["output"]["error_kind"],
+        "wrong_invocation_route"
+    );
+
+    let mut corrected = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/call", true)
+        .add_header(MCP_NAME_HEADER, "runtime_status", true)
+        .add_header("x-action-session-id", "wrong-route-recovery", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 302,
+            "method": "tools/call",
+            "params": mcp_2026_params(json!({
+                "name": "runtime_status",
+                "arguments": {"summary_only": true}
+            }))
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&corrected), StatusCode::OK);
+    let corrected_body: Value = corrected.take_json().await.unwrap();
+    assert_eq!(
+        corrected_body["result"]["structuredContent"]["success"],
+        true
+    );
+
+    let events = db.list_action_events("wrong-route-recovery", 10).unwrap();
+    assert_eq!(events.len(), 2);
+    let telemetry = events
+        .iter()
+        .filter_map(|event| serde_json::from_str::<Value>(&event.summary_json).ok())
+        .filter_map(|summary| summary.get("model_ergonomics").cloned())
+        .collect::<Vec<_>>();
+    assert_eq!(telemetry.len(), 2);
+    let wrong = telemetry
+        .iter()
+        .find(|record| record["error_kind"] == "wrong_invocation_route")
+        .expect("wrong-route telemetry");
+    assert_eq!(wrong["tool_name"], "runtime_status");
+    assert_eq!(wrong["success"], false);
+    assert_eq!(wrong["execution_state"], "not_started");
+    assert!(wrong["serialized_result_bytes"].as_u64().is_some());
+    let corrected = telemetry
+        .iter()
+        .find(|record| record["success"] == true)
+        .expect("corrected success telemetry");
+    assert_eq!(corrected["tool_name"], "runtime_status");
+    assert!(corrected["error_kind"].is_null());
+}
+
 #[tokio::test]
 async fn http_mcp_tools_list_audit_sink_failure_is_non_blocking() {
     let config = test_config(Some("secret"));

@@ -80,6 +80,26 @@ fn tool_manifest_and_list_tools_limit_truncation_reports_limit_reason() {
         .contains("ResponseTooLarge"));
 }
 
+#[test]
+fn tool_manifest_sparse_filtered_projection_only_keeps_truncation_metadata_when_needed() {
+    let runtime = test_runtime();
+    let canonical = runtime
+        .compact_tool_manifest_payload_bounded(None, Some("coding".to_string()), Some(3))
+        .expect("limited coding manifest");
+    let mut result = crate::tool_runtime::ToolResult::ok(canonical);
+    crate::tool_runtime::surface::sparsify_tool_manifest_model_result(&mut result);
+
+    assert_eq!(result.output["truncated"], true);
+    assert_eq!(result.output["truncation_reason"], "limit");
+    assert_eq!(result.output["returned_count"], 3);
+    assert!(result.output["filtered_count"].as_u64().unwrap() > 3);
+    assert_eq!(result.output["limit"], 3);
+    assert!(result.output.get("categories").is_none());
+    assert!(result.output.get("tool_count").is_none());
+    assert!(result.output.get("count").is_none());
+    assert!(result.output.get("total_count").is_none());
+}
+
 fn output_schema_properties(spec: &ToolSpec) -> &serde_json::Map<String, Value> {
     spec.output_schema["properties"]["output"]["properties"]
         .as_object()

@@ -220,6 +220,84 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         "tool_manifest" => Some(wrapped_output_schema(vec![
             (
+                "name",
+                schema_type(
+                    "string",
+                    "Exact requested tool identity in the sparse model-facing exact projection.",
+                ),
+            ),
+            (
+                "description",
+                schema_type(
+                    "string",
+                    "Canonical ToolSpec description for exact lookup, or a bounded canonical-derived selection summary in filtered tool entries.",
+                ),
+            ),
+            (
+                "route",
+                json!({
+                    "type": "object",
+                    "description": "Current ModelSurface invocation route only. This never grants scope, project authority, feature availability, or permission.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["direct", "gateway", "unavailable"]
+                        },
+                        "via": {
+                            "type": "string",
+                            "const": "call_runtime_tool",
+                            "description": "Gateway entry point, present only when mode=gateway."
+                        }
+                    },
+                    "required": ["mode"]
+                }),
+            ),
+            (
+                "input_schema",
+                open_object_schema(
+                    "Exact tool input schema in the sparse model-facing exact projection; output schema remains omitted.",
+                ),
+            ),
+            (
+                "effect",
+                schema_type(
+                    "string",
+                    "Canonical business effect: observe, mutate, or execute.",
+                ),
+            ),
+            (
+                "risk",
+                schema_type(
+                    "string",
+                    "Canonical risk class when relevant to exact lookup or filtered selection.",
+                ),
+            ),
+            (
+                "approval",
+                schema_type(
+                    "string",
+                    "Canonical interactive approval policy in exact lookup.",
+                ),
+            ),
+            (
+                "idempotency",
+                schema_type(
+                    "string",
+                    "Canonical retry/idempotency contract in exact lookup.",
+                ),
+            ),
+            (
+                "authority",
+                open_object_schema(
+                    "Canonical required-scope policy in exact lookup. Route discovery never grants these scopes.",
+                ),
+            ),
+            (
+                "annotations",
+                open_object_schema("Canonical ToolSpec annotations in exact lookup."),
+            ),
+            (
                 "schema_version",
                 schema_type("integer", "Manifest schema version."),
             ),
@@ -248,7 +326,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "tool_name",
-                nullable_schema("string", "Exact requested tool name in one-tool contract mode, or null."),
+                nullable_schema("string", "Compatibility/full canonical exact requested tool name. The default sparse model projection uses name instead."),
             ),
             (
                 "contract",
@@ -359,16 +437,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "categories",
                 open_object_schema(
-                    "Map of category name to the list of tool names in that category.",
+                    "Global category inventory in unfiltered discovery. Compatibility/full canonical results may also carry it for filtered/exact calls, but the default sparse model projection omits unrelated inventory.",
                 ),
             ),
             (
                 "tools",
                 array_schema(
                     open_object_schema(
-                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, effect, risk, approval, idempotency, read_only, requires_project, path_hint, destructive, shell_like, authority, availability, gateway_tool. authority is the canonical required-scope policy; availability is MCP ModelSurface routing only, not authorization."
+                        "Default filtered model projection: name, bounded canonical-derived description, route, requires_project, effect, and risk only when non-observe. Compatibility/full canonical results may retain richer metadata."
                     ),
-                    "Compact tool entries without input/output schemas.",
+                    "Filtered selection entries without input/output schemas; unfiltered sparse discovery uses the categories inventory instead of duplicating all tool names here.",
                 ),
             ),
             (
