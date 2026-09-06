@@ -946,7 +946,12 @@ elif mcp_tool_present "apply_unified_diff"; then
 else
     fail "MCP tools/list missing apply_unified_diff"
 fi
-for retired_patch_tool in apply_patch apply_patch_checked validate_patch; do
+if mcp_tool_present "apply_patch"; then
+    pass "MCP tools/list exposes canonical apply_patch"
+else
+    fail "MCP tools/list missing canonical apply_patch"
+fi
+for retired_patch_tool in apply_patch_checked validate_patch; do
     if mcp_tool_present "$retired_patch_tool"; then
         fail "MCP tools/list must not expose retired patch tool $retired_patch_tool"
     fi
@@ -1028,8 +1033,9 @@ for path, methods in schema.get("paths", {}).items():
 
 # Forbidden legacy/admin/internal paths must not appear in the schema paths.
 # list_files, search_text, git_diff_summary, jobs/list, and jobs/tail remain
-# dedicated GPT Actions. The retired patch triplet is explicitly forbidden;
-# jobs/stop, audit, legacy shell/codex, console, and /mcp also remain forbidden.
+# dedicated GPT Actions. Legacy dedicated patch routes are explicitly forbidden;
+# the current apply_patch tool is runtime-only through callRuntimeTool. jobs/stop,
+# audit, legacy shell/codex, console, and /mcp also remain forbidden.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
              "/api/jobs/stop",
              "/api/projects/replace_in_file", "/api/projects/write_file",
