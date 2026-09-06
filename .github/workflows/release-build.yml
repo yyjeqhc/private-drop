@@ -483,7 +483,9 @@ jobs:
             echo "Expected exactly one native macOS DMG, found ${#candidates[@]}." >&2
             exit 1
           fi
-          desktop="dist/${{ steps.desktop_bundle.outputs.desktop_name }}"
+          desktop_dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$desktop_dist"
+          desktop="$desktop_dist/${{ steps.desktop_bundle.outputs.desktop_name }}"
           cp "${candidates[0]}" "$desktop"
           digest="$(shasum -a 256 "$desktop" | awk '{print $1}')"
           printf '%s  %s\n' "$digest" "$(basename "$desktop")" > "$desktop.sha256"
@@ -501,7 +503,7 @@ jobs:
             --platform "$WEBCODEX_RELEASE_PLATFORM" \
             --stage-metadata "${{ steps.desktop_bundle.outputs.metadata }}" \
             --signing-mode "${{ steps.desktop_bundle.outputs.signing_mode }}" \
-            --evidence "dist/${{ steps.desktop_bundle.outputs.desktop_name }}.evidence.json"
+            --evidence "$GITHUB_WORKSPACE/dist/${{ steps.desktop_bundle.outputs.desktop_name }}.evidence.json"
 
       - name: Upload macOS candidate
         uses: actions/upload-artifact@v4
@@ -672,9 +674,12 @@ jobs:
           } else {
             $installerName = "webcodex-desktop-$env:INPUT_TAG-$shortSource-v$env:VERSION-win32-x64-setup.exe"
           }
+          $desktopDist = Join-Path $env:GITHUB_WORKSPACE "dist"
+          $installerPath = Join-Path $desktopDist $installerName
           "DESKTOP_TAURI_CONFIG=$(Join-Path $stage 'tauri.bundle.conf.json')" >> $env:GITHUB_ENV
           "DESKTOP_TAURI_TARGET=$(Join-Path $env:GITHUB_WORKSPACE 'target\desktop-release-tauri')" >> $env:GITHUB_ENV
           "DESKTOP_INSTALLER_NAME=$installerName" >> $env:GITHUB_ENV
+          "DESKTOP_INSTALLER_PATH=$installerPath" >> $env:GITHUB_ENV
 
       - name: Build unsigned Windows x64 Desktop NSIS candidate
         if: matrix.platform == 'win32-x64'
@@ -688,11 +693,11 @@ jobs:
           $bundleDir = Join-Path $env:CARGO_TARGET_DIR "release\bundle\nsis"
           $built = @(Get-ChildItem -LiteralPath $bundleDir -Filter "*-setup.exe" -File)
           if ($built.Count -ne 1) { throw "Expected exactly one NSIS candidate, found $($built.Count)" }
-          $installer = Join-Path "dist" $env:DESKTOP_INSTALLER_NAME
-          Copy-Item -LiteralPath $built[0].FullName -Destination $installer
-          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:DESKTOP_INSTALLER_PATH) | Out-Null
+          Copy-Item -LiteralPath $built[0].FullName -Destination $env:DESKTOP_INSTALLER_PATH
+          $hash = (Get-FileHash -LiteralPath $env:DESKTOP_INSTALLER_PATH -Algorithm SHA256).Hash.ToLowerInvariant()
           [System.IO.File]::WriteAllText(
-            "$installer.sha256",
+            "$($env:DESKTOP_INSTALLER_PATH).sha256",
             "$hash  $env:DESKTOP_INSTALLER_NAME`n",
             [System.Text.Encoding]::ASCII
           )
@@ -703,7 +708,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           & .\scripts\desktop_install_windows_smoke.ps1 `
-            -Installer (Join-Path "dist" $env:DESKTOP_INSTALLER_NAME) `
+            -Installer $env:DESKTOP_INSTALLER_PATH `
             -Version $env:VERSION `
             -SourceSha $env:SOURCE_SHA `
             -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT)

@@ -627,6 +627,36 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn('rustc -vV | grep -Fxq "host:', workflow)
         self.assertNotIn('file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"', workflow)
 
+    def test_release_build_stages_desktop_candidates_in_workspace_dist(self) -> None:
+        workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
+
+        self.assertIn('desktop_dist="$GITHUB_WORKSPACE/dist"', workflow)
+        self.assertIn('desktop="$desktop_dist/${{ steps.desktop_bundle.outputs.desktop_name }}"', workflow)
+        self.assertIn('printf \'%s  %s\\n\' "$digest" "$(basename "$desktop")" > "$desktop.sha256"', workflow)
+        self.assertIn('echo "path=$desktop" >> "$GITHUB_OUTPUT"', workflow)
+        self.assertIn('--dmg "${{ steps.desktop_dmg.outputs.path }}"', workflow)
+        self.assertIn(
+            '--evidence "$GITHUB_WORKSPACE/dist/${{ steps.desktop_bundle.outputs.desktop_name }}.evidence.json"',
+            workflow,
+        )
+
+        self.assertIn('$desktopDist = Join-Path $env:GITHUB_WORKSPACE "dist"', workflow)
+        self.assertIn('$installerPath = Join-Path $desktopDist $installerName', workflow)
+        self.assertIn('"DESKTOP_INSTALLER_PATH=$installerPath" >> $env:GITHUB_ENV', workflow)
+        self.assertIn('Copy-Item -LiteralPath $built[0].FullName -Destination $env:DESKTOP_INSTALLER_PATH', workflow)
+        self.assertIn('"$($env:DESKTOP_INSTALLER_PATH).sha256"', workflow)
+        self.assertIn('-Installer $env:DESKTOP_INSTALLER_PATH', workflow)
+
+        self.assertIn("dist/webcodex-desktop-*.dmg", workflow)
+        self.assertIn("dist/webcodex-desktop-*.dmg.sha256", workflow)
+        self.assertIn("dist/webcodex-desktop-*.dmg.evidence.json", workflow)
+        self.assertIn("dist/webcodex-desktop-*-win32-x64-setup.exe", workflow)
+        self.assertIn("dist/webcodex-desktop-*-win32-x64-setup.exe.sha256", workflow)
+
+        self.assertNotIn('desktop="dist/${{ steps.desktop_bundle.outputs.desktop_name }}"', workflow)
+        self.assertNotIn('$installer = Join-Path "dist" $env:DESKTOP_INSTALLER_NAME', workflow)
+        self.assertNotIn('-Installer (Join-Path "dist" $env:DESKTOP_INSTALLER_NAME)', workflow)
+
     def test_server_image_publication_is_separate_and_multi_arch(self) -> None:
         candidate = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
         image = Path(".github/workflows/release-image.yml").read_text(encoding="utf-8")
