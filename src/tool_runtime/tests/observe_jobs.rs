@@ -1,5 +1,6 @@
 //! Phase D bounded batch Job observation.
 
+use super::super::kernel::{HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport};
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
@@ -561,6 +562,89 @@ fn observe_jobs_compact_projection_single_running_unchanged_keeps_actionable_sta
     ] {
         assert!(item.get(omitted).is_none(), "mechanical {omitted} leaked");
     }
+}
+
+#[tokio::test]
+async fn observe_jobs_kernel_model_surface_applies_compact_projection() {
+    let runtime = test_runtime();
+    let (job_id, request, auth) =
+        register_and_start_agent_job(&runtime, "observe-kernel-projection").await;
+    update_observed_job(
+        &runtime,
+        "observe-kernel-projection",
+        &request,
+        "running",
+        None,
+        Some(process_activity()),
+        false,
+    )
+    .await;
+
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "observe_jobs".to_string(),
+                arguments: json!({
+                    "items": [{"job_id": job_id}],
+                    "tail_lines": 40
+                }),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: None,
+                auth: Some(&auth),
+                window: None,
+                record_oauth_scope_denials: true,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    assert!(outcome.error_status.is_none(), "{:?}", outcome.error_status);
+    let result = outcome
+        .result
+        .expect("model-facing observe_jobs ToolResult");
+    assert!(result.success, "{:?}", result.error);
+
+    let output = result
+        .output
+        .as_object()
+        .expect("compact observe_jobs output");
+    for omitted in [
+        "requested_count",
+        "returned_count",
+        "succeeded_count",
+        "failed_count",
+        "changed_count",
+        "terminal_count",
+        "output_truncated",
+        "next_index",
+    ] {
+        assert!(output.get(omitted).is_none(), "kernel leaked {omitted}");
+    }
+    assert_eq!(result.output["wait"]["outcome"], "immediate");
+    assert!(result.output["wait"].get("waited_ms").is_none());
+
+    let item = &result.output["items"][0];
+    assert_eq!(item["job_id"], job_id);
+    assert_eq!(item["status"], "running");
+    assert_eq!(item["terminal"], false);
+    assert_eq!(item["log_delta_status"], "baseline");
+    assert!(item["observation_token"]
+        .as_str()
+        .is_some_and(|token| !token.is_empty()));
+    assert_eq!(
+        item["activity"],
+        serde_json::to_value(process_activity()).unwrap()
+    );
+    assert!(item.get("output").is_none());
+    assert!(item.get("success").is_none());
+
+    let schema = super::super::registry::output_schema_for_tool("observe_jobs");
+    let value = serde_json::to_value(&result).unwrap();
+    assert!(
+        super::super::startup_brief::validate_schema_instance_for_test(&value, &schema).is_ok(),
+        "kernel-projected observe_jobs result did not satisfy output schema: {value}"
+    );
 }
 
 #[test]
