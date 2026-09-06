@@ -153,10 +153,11 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
 /// recorder that needs them has consumed the canonical ToolResult.
 /// Failure projection is handled separately and preserves every fact required
 /// for retry, escalation, uncertainty, Job handoff, and reconciliation.
-pub(super) fn sparsify_success_model_result_metadata(result: &mut ToolResult) {
+pub(super) fn sparsify_success_model_result_metadata(tool_name: &str, result: &mut ToolResult) {
     if !result.success {
         return;
     }
+    super::git::sparsify_complete_git_review_success(tool_name, result);
     let Some(output) = result.output.as_object_mut() else {
         return;
     };

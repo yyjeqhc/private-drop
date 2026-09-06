@@ -924,7 +924,7 @@ impl ToolRuntime {
                 output.insert("trace_ref".to_string(), Value::String(trace_ref));
             }
         }
-        super::dispatch::sparsify_success_model_result_metadata(&mut result);
+        super::dispatch::sparsify_success_model_result_metadata(&request.tool_name, &mut result);
         ToolCallOutcome {
             success: result.success,
             result: Some(result),

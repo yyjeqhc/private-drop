@@ -2099,18 +2099,35 @@ fn set_show_changes_verdict(output: &mut Value) {
             .get("project")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let recovery_kind = match (page_truncated, hunk_line_truncated) {
+            (true, true) => "mixed",
+            (true, false) => "page",
+            (false, true) => "hunk_lines",
+            (false, false) => unreachable!("truncated show_changes diff needs a recovery kind"),
+        };
+        let suggested_call = json!({
+            "project": project,
+            "cached": false,
+            "paths": suggested_paths,
+            "max_hunks": DEFAULT_MAX_HUNKS,
+            "max_hunk_lines": suggested_max_hunk_lines,
+        });
         output["diff_review_handoff"] = json!({
             "tool": "git_diff_hunks",
             "scope": "worktree",
             "reason": "show_changes_diff_truncated",
             "truncation_reasons": diff_truncation_reasons,
-            "suggested_call": {
-                "project": project,
-                "cached": false,
-                "paths": suggested_paths,
-                "max_hunks": DEFAULT_MAX_HUNKS,
-                "max_hunk_lines": suggested_max_hunk_lines,
+            "recovery": {
+                "kind": recovery_kind,
+                "tool": "git_diff_hunks",
+                "arguments": suggested_call.clone(),
+                "safe_continuation_for_omitted_lines": if hunk_line_truncated {
+                    Value::Bool(false)
+                } else {
+                    Value::Null
+                },
             },
+            "suggested_call": suggested_call,
         });
         push_unique_reason(&mut warning_reasons, "truncated_by_limit");
         push_unique_action(
@@ -2169,6 +2186,214 @@ fn set_show_changes_verdict(output: &mut Value) {
         "warning_reasons": warning_reasons,
         "suggested_next_actions": actions,
     });
+}
+
+fn git_diff_file_hunk_count(files: &[Value]) -> Option<usize> {
+    files.iter().try_fold(0usize, |count, file| {
+        file.get("hunks")
+            .and_then(Value::as_array)
+            .map(|hunks| count + hunks.len())
+    })
+}
+
+fn git_diff_files_have_omitted_lines(files: &[Value]) -> bool {
+    files.iter().any(|file| {
+        file.get("hunks")
+            .and_then(Value::as_array)
+            .is_some_and(|hunks| {
+                hunks
+                    .iter()
+                    .any(|hunk| hunk.get("truncated").and_then(Value::as_bool) == Some(true))
+            })
+    })
+}
+
+fn sparsify_complete_diff_files(files: &mut [Value]) {
+    for file in files {
+        let Some(file) = file.as_object_mut() else {
+            continue;
+        };
+        let duplicate_old_path = match (
+            file.get("path").and_then(Value::as_str),
+            file.get("old_path").and_then(Value::as_str),
+        ) {
+            (Some(path), Some(old_path)) => path == old_path,
+            _ => false,
+        };
+        if duplicate_old_path {
+            file.remove("old_path");
+        }
+        let Some(hunks) = file.get_mut("hunks").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for hunk in hunks {
+            let Some(hunk) = hunk.as_object_mut() else {
+                continue;
+            };
+            if hunk.get("truncated").and_then(Value::as_bool) == Some(false) {
+                hunk.remove("truncated");
+            }
+            let line_count_is_derived = match (
+                hunk.get("line_count").and_then(Value::as_u64),
+                hunk.get("diff").and_then(Value::as_str),
+            ) {
+                (Some(line_count), Some(diff)) => line_count == diff.lines().count() as u64,
+                _ => false,
+            };
+            if line_count_is_derived {
+                hunk.remove("line_count");
+            }
+        }
+    }
+}
+
+fn sparsify_complete_git_diff_hunks_output(output: &mut serde_json::Map<String, Value>) {
+    let Some(files) = output.get("files").and_then(Value::as_array) else {
+        return;
+    };
+    let Some(computed_hunks) = git_diff_file_hunk_count(files) else {
+        return;
+    };
+    let ordinary_complete = output.get("hunk_count").and_then(Value::as_u64)
+        == Some(computed_hunks as u64)
+        && output.get("truncated").and_then(Value::as_bool) == Some(false)
+        && output
+            .get("truncation_reasons")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        && output.get("has_more").and_then(Value::as_bool) == Some(false)
+        && output.get("next_continuation").is_some_and(Value::is_null)
+        && output.get("recovery").is_none()
+        && output.get("exit_code").and_then(Value::as_i64) == Some(0)
+        && output.get("stderr").and_then(Value::as_str) == Some("")
+        && !git_diff_files_have_omitted_lines(files);
+    if !ordinary_complete {
+        return;
+    }
+
+    if let Some(files) = output.get_mut("files").and_then(Value::as_array_mut) {
+        sparsify_complete_diff_files(files);
+    }
+    for key in [
+        "hunk_count",
+        "truncated",
+        "truncation_reasons",
+        "has_more",
+        "next_continuation",
+        "exit_code",
+        "stderr",
+    ] {
+        output.remove(key);
+    }
+}
+
+fn sparsify_complete_show_changes_output(output: &mut serde_json::Map<String, Value>) {
+    let Some(files_len) = output.get("files").and_then(Value::as_array).map(Vec::len) else {
+        return;
+    };
+    let status_observed = output.get("status_observation").is_some_and(|status| {
+        status.get("status").and_then(Value::as_str) == Some("observed")
+            && status.get("repository_probe").and_then(Value::as_str) == Some("inside_worktree")
+    });
+    let diff_stat_observed = output.get("diff_stat_status").is_some_and(|status| {
+        status.get("status").and_then(Value::as_str) == Some("observed")
+            && status.get("exit_code").and_then(Value::as_i64) == Some(0)
+            && status.get("reason_code").is_some_and(Value::is_null)
+    });
+    let has_hunks = output.get("hunks").and_then(Value::as_array).is_some();
+    let diff_observed = if has_hunks {
+        output.get("diff_exit").and_then(Value::as_i64) == Some(0)
+            && output.get("diff_status").is_some_and(|status| {
+                status.get("status").and_then(Value::as_str) == Some("observed")
+                    && status.get("exit_code").and_then(Value::as_i64) == Some(0)
+            })
+    } else {
+        output.get("diff_exit").is_some_and(Value::is_null)
+    };
+    let hunk_metadata_complete = match output.get("hunks").and_then(Value::as_array) {
+        Some(hunks) => {
+            git_diff_file_hunk_count(hunks).is_some_and(|count| {
+                output.get("hunk_count").and_then(Value::as_u64) == Some(count as u64)
+            }) && output.get("hunks_truncated").and_then(Value::as_bool) == Some(false)
+                && !git_diff_files_have_omitted_lines(hunks)
+        }
+        None => output.get("hunk_count").is_none() && output.get("hunks_truncated").is_none(),
+    };
+    let ordinary_complete = output.get("git_available").and_then(Value::as_bool) == Some(true)
+        && output.get("non_git_project").and_then(Value::as_bool) == Some(false)
+        && output.get("git_error").is_some_and(Value::is_null)
+        && status_observed
+        && output.get("files_total").and_then(Value::as_u64) == Some(files_len as u64)
+        && output.get("files_returned").and_then(Value::as_u64) == Some(files_len as u64)
+        && output.get("files_truncated").and_then(Value::as_bool) == Some(false)
+        && output.get("transport_safe").and_then(Value::as_bool) == Some(true)
+        && output.get("output_truncated").and_then(Value::as_bool) == Some(false)
+        && output
+            .get("truncation_reasons")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        && output.get("diff_review_handoff").is_none()
+        && output
+            .get("untracked_previews_truncated")
+            .is_none_or(|value| value.as_bool() == Some(false))
+        && output
+            .get("warnings")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        && output.get("exit_code").and_then(Value::as_i64) == Some(0)
+        && output.get("stderr").and_then(Value::as_str) == Some("")
+        && output.get("head_exit").and_then(Value::as_i64) == Some(0)
+        && diff_stat_observed
+        && diff_observed
+        && hunk_metadata_complete;
+    if !ordinary_complete {
+        return;
+    }
+
+    if let Some(hunks) = output.get_mut("hunks").and_then(Value::as_array_mut) {
+        sparsify_complete_diff_files(hunks);
+    }
+    for key in [
+        "git_available",
+        "non_git_project",
+        "git_error",
+        "status_observation",
+        "files_total",
+        "files_returned",
+        "files_truncated",
+        "files_limit",
+        "transport_safe",
+        "output_budget_bytes",
+        "output_truncated",
+        "truncation_reasons",
+        "diff_exit",
+        "diff_status",
+        "diff_stat_exit",
+        "diff_stat_status",
+        "head_exit",
+        "hunk_count",
+        "hunks_truncated",
+        "untracked_previews_truncated",
+        "warnings",
+        "exit_code",
+        "stderr",
+    ] {
+        output.remove(key);
+    }
+}
+
+pub(crate) fn sparsify_complete_git_review_success(tool_name: &str, result: &mut ToolResult) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    match tool_name {
+        "git_diff_hunks" => sparsify_complete_git_diff_hunks_output(output),
+        "show_changes" => sparsify_complete_show_changes_output(output),
+        _ => {}
+    }
 }
 
 fn string_array(value: Option<&Value>) -> Vec<String> {
@@ -2518,6 +2743,161 @@ fn committed_git_diff_hunks_scope_value(scope: &CommittedGitScope) -> Value {
         "base_is_ancestor": scope.base_is_ancestor,
         "diff_range": format!("{}..{}", scope.merge_base, scope.requested_head),
     })
+}
+
+fn git_diff_hunks_call_arguments(
+    project: &str,
+    paths: &[String],
+    cached: bool,
+    committed_scope: Option<&CommittedGitScope>,
+    max_hunks: usize,
+    max_hunk_lines: usize,
+    continuation: Option<&str>,
+) -> Value {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("project".to_string(), json!(project));
+    arguments.insert("paths".to_string(), json!(paths));
+    arguments.insert("max_hunks".to_string(), json!(max_hunks));
+    arguments.insert("max_hunk_lines".to_string(), json!(max_hunk_lines));
+    if let Some(scope) = committed_scope {
+        arguments.insert("base_commit".to_string(), json!(scope.requested_base));
+        arguments.insert("head_commit".to_string(), json!(scope.requested_head));
+    } else {
+        arguments.insert("cached".to_string(), json!(cached));
+    }
+    if let Some(continuation) = continuation {
+        arguments.insert("continuation".to_string(), json!(continuation));
+    }
+    Value::Object(arguments)
+}
+
+fn git_diff_hunks_exact_truncated_paths(files: &[Value]) -> Option<Vec<String>> {
+    let mut paths = Vec::new();
+    let mut saw_truncated_hunk = false;
+    for file in files {
+        let has_omitted_lines = file
+            .get("hunks")
+            .and_then(Value::as_array)
+            .is_some_and(|hunks| {
+                hunks
+                    .iter()
+                    .any(|hunk| hunk.get("truncated").and_then(Value::as_bool) == Some(true))
+            });
+        if !has_omitted_lines {
+            continue;
+        }
+        saw_truncated_hunk = true;
+        let Some(path) = file
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.is_empty())
+            .or_else(|| {
+                file.get("old_path")
+                    .and_then(Value::as_str)
+                    .filter(|path| !path.is_empty())
+            })
+        else {
+            return None;
+        };
+        if !paths.iter().any(|existing| existing == path) {
+            paths.push(path.to_string());
+        }
+    }
+    saw_truncated_hunk.then_some(paths)
+}
+
+fn git_diff_hunks_recovery_value(
+    project: &str,
+    paths: &[String],
+    cached: bool,
+    committed_scope: Option<&CommittedGitScope>,
+    max_hunks: usize,
+    max_hunk_lines: usize,
+    files: &[Value],
+    page_hunk_limit: bool,
+    hunk_line_limit: bool,
+    page_byte_budget: bool,
+    next_continuation: Option<&str>,
+) -> Option<Value> {
+    let page_truncated = page_hunk_limit || page_byte_budget;
+    let omitted_lines_present = hunk_line_limit || git_diff_files_have_omitted_lines(files);
+    if !page_truncated && !omitted_lines_present {
+        return None;
+    }
+
+    let kind = match (page_truncated, omitted_lines_present) {
+        (true, true) => "mixed",
+        (true, false) => "page",
+        (false, true) => "hunk_lines",
+        (false, false) => unreachable!(),
+    };
+    let continuation_call = next_continuation.map(|continuation| {
+        json!({
+            "tool": "git_diff_hunks",
+            "arguments": git_diff_hunks_call_arguments(
+                project,
+                paths,
+                cached,
+                committed_scope,
+                max_hunks,
+                max_hunk_lines,
+                Some(continuation),
+            ),
+        })
+    });
+
+    let (omitted_line_paths, path_provenance) = if omitted_lines_present {
+        match git_diff_hunks_exact_truncated_paths(files) {
+            Some(paths) => (paths, "exact"),
+            None => (paths.to_vec(), "scope"),
+        }
+    } else {
+        (Vec::new(), "none")
+    };
+    let omitted_lines_call = omitted_lines_present.then(|| {
+        json!({
+            "tool": "git_diff_hunks",
+            "arguments": git_diff_hunks_call_arguments(
+                project,
+                &omitted_line_paths,
+                cached,
+                committed_scope,
+                max_hunks,
+                MAX_MAX_HUNK_LINES,
+                None,
+            ),
+        })
+    });
+    let primary_call = if omitted_lines_present {
+        omitted_lines_call
+            .as_ref()
+            .expect("omitted-line recovery always has a bounded recovery call")
+    } else {
+        continuation_call.as_ref()?
+    };
+
+    Some(json!({
+        "kind": kind,
+        "tool": "git_diff_hunks",
+        "arguments": primary_call["arguments"].clone(),
+        "safe_continuation_for_omitted_lines": if omitted_lines_present {
+            Value::Bool(false)
+        } else {
+            Value::Null
+        },
+        "continuation": {
+            "available": continuation_call.is_some(),
+            "recovers_later_hunks": continuation_call.is_some(),
+            "recovers_omitted_lines": false,
+            "next_call": continuation_call,
+        },
+        "omitted_lines": {
+            "present": omitted_lines_present,
+            "path_provenance": path_provenance,
+            "paths": omitted_line_paths,
+            "next_call": omitted_lines_call,
+        },
+    }))
 }
 
 fn git_diff_hunks_committed_failure(
@@ -3951,6 +4331,19 @@ impl ToolRuntime {
         } else {
             None
         };
+        let recovery = git_diff_hunks_recovery_value(
+            &project,
+            &paths,
+            cached,
+            committed_scope.as_ref(),
+            max_hunks,
+            max_hunk_lines,
+            &files,
+            wire.page_hunk_limit,
+            wire.hunk_line_limit,
+            wire.page_byte_budget,
+            next_continuation.as_deref(),
+        );
         let mut payload = json!({
             "project": project,
             "paths": paths,
@@ -3964,6 +4357,9 @@ impl ToolRuntime {
             "exit_code": wire.diff_exit,
             "stderr": stderr,
         });
+        if let Some(recovery) = recovery {
+            payload["recovery"] = recovery;
+        }
         if let Some(committed_scope) = committed_scope.as_ref() {
             if let Some(payload) = payload.as_object_mut() {
                 payload.insert(

@@ -4,6 +4,99 @@ use super::common::{
     array_schema, nullable_schema, open_object_schema, schema_type, wrapped_output_schema,
 };
 
+fn git_diff_hunks_recovery_arguments_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Parser-ready git_diff_hunks arguments for one bounded recovery step.",
+        "additionalProperties": false,
+        "properties": {
+            "project": {"type": "string"},
+            "paths": {"type": "array", "items": {"type": "string"}},
+            "max_hunks": {"type": "integer"},
+            "max_hunk_lines": {"type": "integer"},
+            "cached": {"type": "boolean"},
+            "base_commit": {"type": "string"},
+            "head_commit": {"type": "string"},
+            "continuation": {"type": "string"}
+        },
+        "required": ["project", "paths", "max_hunks", "max_hunk_lines"]
+    })
+}
+
+fn git_diff_hunks_recovery_call_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "tool": {"type": "string", "const": "git_diff_hunks"},
+            "arguments": git_diff_hunks_recovery_arguments_schema()
+        },
+        "required": ["tool", "arguments"]
+    })
+}
+
+fn nullable_git_diff_hunks_recovery_call_schema() -> Value {
+    json!({
+        "anyOf": [git_diff_hunks_recovery_call_schema(), {"type": "null"}]
+    })
+}
+
+fn git_diff_hunks_recovery_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Actionable bounded recovery. Page continuation obtains later hunks only; omitted-line recovery is a fresh bounded call and never relies on continuation.",
+        "additionalProperties": false,
+        "properties": {
+            "kind": {"type": "string", "enum": ["page", "hunk_lines", "mixed"]},
+            "tool": {"type": "string", "const": "git_diff_hunks"},
+            "arguments": git_diff_hunks_recovery_arguments_schema(),
+            "safe_continuation_for_omitted_lines": nullable_schema("boolean", "False when current-hunk lines were omitted; null when no line truncation occurred."),
+            "continuation": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "available": {"type": "boolean"},
+                    "recovers_later_hunks": {"type": "boolean"},
+                    "recovers_omitted_lines": {"type": "boolean", "const": false},
+                    "next_call": nullable_git_diff_hunks_recovery_call_schema()
+                },
+                "required": ["available", "recovers_later_hunks", "recovers_omitted_lines", "next_call"]
+            },
+            "omitted_lines": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "present": {"type": "boolean"},
+                    "path_provenance": {"type": "string", "enum": ["none", "scope", "exact"]},
+                    "paths": {"type": "array", "items": {"type": "string"}},
+                    "next_call": nullable_git_diff_hunks_recovery_call_schema()
+                },
+                "required": ["present", "path_provenance", "paths", "next_call"]
+            }
+        },
+        "required": [
+            "kind", "tool", "arguments", "safe_continuation_for_omitted_lines",
+            "continuation", "omitted_lines"
+        ]
+    })
+}
+
+fn show_changes_handoff_arguments_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Ready-to-call worktree git_diff_hunks arguments. paths stays empty when show_changes cannot prove a narrower omitted-line path.",
+        "additionalProperties": false,
+        "properties": {
+            "project": {"type": "string"},
+            "cached": {"type": "boolean", "const": false},
+            "paths": {"type": "array", "items": {"type": "string"}},
+            "max_hunks": {"type": "integer"},
+            "max_hunk_lines": {"type": "integer"}
+        },
+        "required": ["project", "cached", "paths", "max_hunks", "max_hunk_lines"]
+    })
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "git_commit_paths" => Some(wrapped_output_schema(vec![
@@ -154,6 +247,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "next_continuation",
                 nullable_schema("string", "Opaque continuation for the next stable diff page."),
             ),
+            ("recovery", git_diff_hunks_recovery_schema()),
             (
                 "exit_code",
                 nullable_schema("integer", "Git diff exit code."),
@@ -470,24 +564,21 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                                 ]
                             }
                         },
-                        "suggested_call": {
+                        "recovery": {
                             "type": "object",
-                            "description": "Ready-to-call worktree git_diff_hunks arguments. paths is currently empty to preserve whole-worktree coverage because show_changes does not publish authoritative per-hunk line-truncation provenance.",
+                            "description": "Structured parser-ready first recovery call plus the truncation class. For line or mixed truncation, continuation is explicitly unsafe for omitted current-hunk lines.",
                             "additionalProperties": false,
                             "properties": {
-                                "project": {"type": "string"},
-                                "cached": {"type": "boolean", "const": false},
-                                "paths": {
-                                    "type": "array",
-                                    "items": {"type": "string"}
-                                },
-                                "max_hunks": {"type": "integer"},
-                                "max_hunk_lines": {"type": "integer"}
+                                "kind": {"type": "string", "enum": ["page", "hunk_lines", "mixed"]},
+                                "tool": {"type": "string", "const": "git_diff_hunks"},
+                                "arguments": show_changes_handoff_arguments_schema(),
+                                "safe_continuation_for_omitted_lines": nullable_schema("boolean", "False for hunk-line or mixed truncation; null for page-only truncation.")
                             },
-                            "required": ["project", "cached", "paths", "max_hunks", "max_hunk_lines"]
-                        }
+                            "required": ["kind", "tool", "arguments", "safe_continuation_for_omitted_lines"]
+                        },
+                        "suggested_call": show_changes_handoff_arguments_schema()
                     },
-                    "required": ["tool", "scope", "reason", "truncation_reasons", "suggested_call"]
+                    "required": ["tool", "scope", "reason", "truncation_reasons", "recovery", "suggested_call"]
                 }),
             ),
             (
