@@ -33,8 +33,9 @@ async fn wait_for_mcp_agent_request(
 #[tokio::test]
 async fn mcp_tools_list_returns_same_names_as_runtime() {
     // Name parity with the runtime registry must hold for stateless-2026 under
-    // both full and compact schema modes. Legacy MCP intentionally omits the
-    // stateless-only export_project_artifact transport adapter. Schema shape is
+    // both full and compact schema modes. Legacy unauthenticated MCP intentionally
+    // omits the stateless-only export_project_artifact transport adapter and the
+    // scope-gated plugin_tool gateway. Schema shape is
     // covered by dedicated tests:
     // `mcp_tools_list_default_retains_output_schema` and
     // `mcp_tools_list_compact_omits_output_schema_only`.
@@ -45,10 +46,11 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
         .map(|s| s.name.clone())
         .collect();
     assert!(runtime_names.iter().any(|name| name == "list_runners"));
+    assert!(runtime_names.iter().any(|name| name == "plugin_tool"));
     assert!(!runtime_names.iter().any(|name| name == "list_agents"));
     let legacy_runtime_names: Vec<String> = runtime_names
         .iter()
-        .filter(|name| name.as_str() != "export_project_artifact")
+        .filter(|name| !matches!(name.as_str(), "export_project_artifact" | "plugin_tool"))
         .cloned()
         .collect();
     let stateless_runtime_names = mcp_tools_list_payload_with_features_for_auth(
@@ -88,9 +90,10 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             .collect();
         assert_eq!(
             names, legacy_runtime_names,
-            "legacy tools/list must equal runtime registry minus stateless-only tools (compact={compact})"
+            "legacy unauthenticated tools/list must equal runtime registry minus transport-only and scope-gated gateways (compact={compact})"
         );
         assert!(names.iter().any(|name| name == "list_runners"));
+        assert!(!names.iter().any(|name| name == "plugin_tool"));
         assert!(!names.iter().any(|name| name == "list_agents"));
 
         let stateless_outcome = handle_mcp_request(
