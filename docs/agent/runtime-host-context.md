@@ -1,13 +1,11 @@
 # Runtime Host Context
 
-Status: implemented in the runtime/Runner contract; host-specific dogfood configuration is still operator-managed.
-
 This note defines the bounded Runner-registration host context that helps a
 model or operator choose the right execution path for a known machine.
 
 The need is practical rather than a new inventory system. WebCodex already knows
 which Runner is online, what it can do, which projects it owns, and its live
-build/process state. What it cannot currently express is stable local knowledge
+build/process state. Runner-configured host context adds stable local knowledge
 such as:
 
 - one Runner is running on the same host as the WebCodex Server, so Server
@@ -43,10 +41,10 @@ For example, `role = "server_host"` does not make an offline Runner callable,
 and a network note saying that Internet traffic normally uses a proxy does not
 prove that the proxy is currently reachable.
 
-## 2. Minimal proposed shape
+## 2. Configuration shape
 
 Do not start with arbitrary labels, a generic metadata map, a policy language,
-or a fleet model. The first useful shape is a small closed object with bounded
+or a fleet model. The configuration is a small closed object with bounded
 human-authored descriptions:
 
 ```json
@@ -62,11 +60,11 @@ human-authored descriptions:
 }
 ```
 
-Proposed fields:
+Fields:
 
 | Field | Meaning |
 |---|---|
-| `source` | Fixed provenance marker, initially `runner_config`. |
+| `source` | Fixed provenance marker, `runner_config`. |
 | `role` | Short stable role slug such as `server_host` or `primary_development`. |
 | `runtime` | Preferred way to operate workloads already reachable on this host. |
 | `service` | Stable service-management expectation; not current service state. |
@@ -86,7 +84,7 @@ extension mechanism.
 
 ## 3. Concrete examples
 
-### `sf`: Server host
+### Server host
 
 ```toml
 [host_context]
@@ -97,8 +95,8 @@ architecture = "This host runs the WebCodex Server/control plane."
 ```
 
 The planning consequence is intentionally narrow: when the model needs to
-inspect or operate the Server host and `sf` is online/capable, it should prefer
-`agent:sf:...` execution over first constructing an SSH route to `sf`.
+inspect or operate the Server host and `server-runner` is online/capable, it should prefer
+`agent:server-runner:...` execution over first constructing an SSH route to `server-runner`.
 
 This annotation does **not** mean:
 
@@ -107,13 +105,13 @@ This annotation does **not** mean:
 - SSH is forbidden;
 - the Runner may escape its registered project/policy boundary.
 
-### `special`: Primary development host
+### Development host
 
 ```toml
 [host_context]
 role = "primary_development"
 runtime = "Prefer this host for ordinary Linux development, builds, tests, and CLI work when it is available."
-network = "Internet egress normally uses the host proxy; campus/internal NEU destinations are intended to bypass that proxy and connect directly."
+network = "Internet egress normally uses the host proxy; internal destinations are intended to bypass that proxy and connect directly."
 architecture = "High-performance Linux development environment used as the primary coding host."
 ```
 
@@ -152,7 +150,7 @@ queried at the time they matter.
 
 ## 5. Placement in `runtime_status`
 
-The natural first projection is per Runner alongside the existing identity,
+The runtime projection is per Runner alongside the existing identity,
 capability, policy, build, and liveness facts:
 
 ```text
@@ -208,18 +206,18 @@ current failure signal.
 
 Examples:
 
-- User asks to inspect the live Server and `sf` is online: prefer the `sf`
+- User asks to inspect the live Server and `server-runner` is online: prefer the `server-runner`
   Runner instead of looking for an SSH route first.
-- `sf` is offline: the `server_host` annotation does not prevent another
+- `server-runner` is offline: the `server_host` annotation does not prevent another
   explicitly valid path from being used.
-- Work needs Internet access on `special`: preserve the host's configured proxy
-  environment rather than inventing a different route; an internal/campus
+- Work needs Internet access on `dev-runner`: preserve the host's configured proxy
+  environment rather than inventing a different route; an internal
   destination may still need an explicit direct-path execution decision.
 - User explicitly asks to use another host: the user instruction wins.
 
 ## 7. Security and privacy requirements
 
-The first implementation should enforce the same style of boundedness as other
+Implementations must preserve the same style of boundedness as other
 model-facing runtime metadata:
 
 - strict schema and small total payload;
@@ -252,19 +250,8 @@ If a repeated concrete need later requires a machine-readable field (for example
 an exact local-vs-remote execution preference), promote that one concept into a
 closed typed field. Do not preemptively turn every prose hint into enums.
 
-## 9. Implementation and dogfood boundary
+## 9. Operator configuration
 
-The implemented slice is intentionally limited to:
-
-1. optional closed/bounded `host_context` in Runner startup configuration;
-2. local validation plus Server-side registration revalidation;
-3. current-registration storage with reconnect/replacement semantics;
-4. full `runtime_status` / `list_runners` projection plus a bounded compact
-   Runner summary;
-5. focused bounds, config, restart-required, registration, reconnect, and
-   projection tests.
-
-There is still no model-routing code. Configure real host descriptions such as
-`sf` and `special` only as an operator/dogfood step after deploying a reviewed
-Runner build, then observe whether models consume the context naturally before
-adding any automatic placement mechanism.
+Operators configure host descriptions in Runner startup configuration and restart
+the Runner to publish changes. Host context supplies planning hints only; it does
+not implement automatic model routing or workload placement.

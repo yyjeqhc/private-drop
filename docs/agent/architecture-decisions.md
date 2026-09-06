@@ -56,7 +56,7 @@ this concrete Agent/Conversation model. Standing rules are:
 - the Session message board remains the explicit manual coordinator/worker handoff
   substrate. It is not migrated into Conversation and its todo semantics are not an
   Agent Task lease;
-- the planned asynchronous work object is an independent **Agent Task** with an
+- the asynchronous work object is an independent **Agent Task** with an
   exact fenced **Agent TaskAttempt**. It is not the existing Connector Task and is
   not inferred merely because a Conversation Message exists;
 - references among Conversation, Agent Task, Workflow Session, Job, CodingAgentRun,

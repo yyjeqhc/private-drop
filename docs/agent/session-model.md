@@ -643,7 +643,7 @@ arguments, commands/argv/scripts/stdin/stdout/stderr, ToolResult body or error
 prose, paths/cwd/project ids, query/file/clipboard/Computer contents, Session
 message/prompt/answer bodies, credentials, native identities, or arbitrary user
 text. Existing Action Audit correlation/attribution fields remain separate
-pre-existing audit data; P1a does not copy them into `model_ergonomics`.
+pre-existing audit data; they are not copied into `model_ergonomics`.
 
 `edit_tool_telemetry` remains the edit-specific structured tracing enrichment.
 An edit invocation therefore has one generic Action Audit invocation record plus

@@ -2,11 +2,13 @@
 
 [English](WINDOWS_OPENAI_TUNNEL.md) | [简体中文](WINDOWS_OPENAI_TUNNEL.zh-CN.md)
 
-本文是当前 Windows 独立前台 WebCodex Server + Runner + OpenAI Secure MCP Tunnel 的深入配置指南。稳定的当前操作和排障步骤放在前面；文末单独保留 [2026-08-30 historical dogfood note](#historical-dogfood-note--2026-08-30)，用于保存真实验证证据，而不会让当时的版本、机器、项目、app 或 branch 看起来像当前配置要求。
+本文介绍如何在 Windows 上运行独立的前台 WebCodex Server 和 Runner，并通过 OpenAI Secure MCP Tunnel 接入，包括配置、验证和故障排查步骤。
+
+本文来自作者的手动实操。[实操案例](#手动实操案例--2026-08-30)保留具体环境、操作经过和排障过程；创建 Connector 的步骤配有原始截图，便于对照操作。
 
 ## 适用场景
 
-如果你的目标只是**正常长期使用 WebCodex**，先看[完整使用指南](PERSONAL_SETUP.zh-CN.md)。本文是 Windows + OpenAI Tunnel 的深入配置与故障排查记录，只有在你明确选择这条私有网络入口、需要复现实操拓扑或排查 Tunnel 问题时才需要继续阅读。
+如果你的目标只是**正常长期使用 WebCodex**，先看[完整使用指南](PERSONAL_SETUP.zh-CN.md)。本文是 Windows + OpenAI Tunnel 的深入配置与故障排查指南，只有在你明确选择这条私有网络入口、需要复现实操拓扑或排查 Tunnel 问题时才需要继续阅读。
 
 你希望 Windows 机器本身承担完整的 WebCodex runtime：
 
@@ -52,7 +54,7 @@ webcodex-server --version
 webcodex-runner --version
 ```
 
-不要把不同版本的 CLI、Server 和 Runner 混在一起排查网络问题；应先统一三个 binary baseline。2026-08-30 historical dogfood 的精确 build 只记录在文末历史部分。
+不要把不同版本的 CLI、Server 和 Runner 混在一起排查网络问题；应先统一三个 binary baseline。
 
 ### OpenAI Secure MCP Tunnel
 
@@ -186,7 +188,7 @@ flowchart TD
 --control-plane.http-proxy http://127.0.0.1:<proxy-port>
 ```
 
-修改 route 后，应同时确认本地 readiness 与 control-plane metadata/poll 都正常，再重试创建 Connector。文末历史部分保留了 2026-08-30 真实 Clash 故障，它正是这条当前排障规则的证据来源。
+修改 route 后，应同时确认本地 readiness 与 control-plane metadata/poll 都正常，再重试创建 Connector。
 
 ## 6. 在 ChatGPT Developer Mode 创建 Connector
 
@@ -202,6 +204,22 @@ flowchart TD
 为什么是 **No authentication**？
 
 因为 OpenAI Tunnel 到本机 WebCodex MCP 的 Bearer 已由 `tunnel-client` 在本机注入。ChatGPT 不应该拿到或保存该 Bearer。
+
+### 创建与连接的截图示例
+
+以下是作者在 2026-08-30 手动操作时的截图。图中的 `tunnel-test` 是示例名称，界面文案和工具列表可能随版本变化。
+
+创建 app：选择隧道与无身份验证，确认后点击创建。
+
+![创建 MCP app 时的隧道和身份验证选项](WINDOWS_OPENAI_TUNNEL.zh-CN/0eeb07fe3df699b66c7fc2d592d9d4cf.png)
+
+在添加到 ChatGPT 的确认窗口中点击“连接”。
+
+![将 tunnel-test 连接到 ChatGPT 的确认窗口](WINDOWS_OPENAI_TUNNEL.zh-CN/fdeaad5c8f257517d1f556f090c9a37c.png)
+
+打开 app 详情检查工具是否已加载；图中展示的是当时的 `apply_text_edits` 工具说明，实际工具以当前 Server 为准。
+
+![连接后的 app 详情和工具列表](WINDOWS_OPENAI_TUNNEL.zh-CN/06653330b9a154a1ed60a481afa6efb7.png)
 
 ## 7. 通过 Connector 做端到端验收
 
@@ -249,9 +267,11 @@ OpenAI Secure MCP Tunnel 模式不需要。选择 **No authentication**，Bearer
 
 底层核心链路相同：本地 WebCodex MCP + 本地 Bearer 注入 + OpenAI `tunnel-client`。区别是 `share` 自己管理临时 Server/Runner/session，而本文显式拆开 Server 和 Runner，便于验证长期拓扑和排障。
 
-## Historical dogfood note — 2026-08-30
+## 手动实操案例 — 2026-08-30
 
-> 仅作为历史验证证据。上面的步骤描述当前支持行为。本轮 0.4 文档清理**没有**重新执行 2026-08-30 的 Windows 实验，因此下面的精确版本、commit、路径、app 名和 branch 都不能视为当前配置要求。
+下面保留作者亲自完成的一次 Windows 接入过程，包括操作环境、项目读写验证和网络故障的解决经过。版本、机器路径、app 名和分支用于交代案例背景；复现时应使用自己的配置，并按前文准备当前版本。
+
+### 操作环境
 
 当时的环境是：
 
@@ -262,6 +282,8 @@ Runner client_id=tutorial-msi-runner
 preferred/actual transport=websocket
 ChatGPT app=tunnel-test
 ```
+
+### 注册项目并验证读写
 
 独立 Runner 最初没有注册 Project，之后通过 Tunnel Connector 真实注册并访问了：
 
@@ -278,6 +300,8 @@ docs/windows-openai-tunnel-guide
 
 这次真实运行因此验证了：ChatGPT 可以经过 OpenAI Tunnel 到达 Windows 前台 Server，再到独立 WebSocket Runner，并完成真实 Project 注册、仓库读取和仓库写入。
 
+### 从创建失败到连接成功
+
 第一次创建 Connector 时还出现了一个重要网络故障：本地 MCP 已初始化、`/readyz = 200`，但 OpenAI control-plane poll 仍失败，因为该 Windows 进程没有继承浏览器使用的 Clash 路由，`api.openai.com` 的直连 DNS/IPv6 路径不可用。当时验证可用的 Clash HTTP proxy 是：
 
 ```text
@@ -291,14 +315,6 @@ http://127.0.0.1:7890
 ```
 
 之后 Tunnel log 显示 healthy proxy route 与正常 metadata/poll，Connector 创建成功。这是当前“浏览器联网和 `/readyz` 都不能单独证明 `tunnel-client` control-plane 可达”这一排障规则的历史证据。
-
-以下截图也来自 2026-08-30 的 ChatGPT UI，仅作历史参考；当前 UI 文案可能变化：
-
-![0eeb07fe3df699b66c7fc2d592d9d4cf](WINDOWS_OPENAI_TUNNEL.zh-CN/0eeb07fe3df699b66c7fc2d592d9d4cf.png)
-
-![fdeaad5c8f257517d1f556f090c9a37c](WINDOWS_OPENAI_TUNNEL.zh-CN/fdeaad5c8f257517d1f556f090c9a37c.png)
-
-![06653330b9a154a1ed60a481afa6efb7](WINDOWS_OPENAI_TUNNEL.zh-CN/06653330b9a154a1ed60a481afa6efb7.png)
 
 ## 相关文档
 

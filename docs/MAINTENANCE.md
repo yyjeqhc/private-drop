@@ -26,6 +26,29 @@ Review direct Rust and npm dependency freshness and relevant security advisories
 
 Record safe-to-disclose actionable dependency work as GitHub Issues and keep dependency-only changes narrow where practical. Sensitive security findings follow [`SECURITY.md`](../SECURITY.md) and stay out of public Issues until disclosure is appropriate. Do not mix unrelated upgrades into feature work, and do not treat dependency review as release authorization; release publication remains governed by the release checklist.
 
+## Documentation retention
+
+Keep documentation that helps a user operate the supported product or helps a
+contributor maintain it correctly. Judge content by its continuing purpose and
+accuracy, not its age or whether it was written for a coding agent.
+
+| Content | Treatment |
+| --- | --- |
+| Setup, usage, configuration, API contracts, troubleshooting, security, contribution, testing, and release procedures | Keep accurate, discoverable instructions for supported behavior. |
+| Architecture decisions, constraints, alternatives, and reasons for rejected approaches | Keep the rationale needed to avoid repeating mistakes; link to the authoritative contract instead of duplicating it. |
+| Known limitations and future direction | Distinguish implemented behavior from proposals; track actionable work in Issues without mirroring their status in docs. |
+| Compatibility and migration notes | Keep while supported versions, persisted data, or upgrade/recovery paths still depend on them. Age alone is not grounds for removal. |
+| Development diaries, completed phase plans, self-review reports, and one-off validation transcripts | Remove redundant progress/status narration after preserving useful technical content. Distinguish these records from instructional walkthroughs and case studies. PRs, CI artifacts, and Git history hold change-specific review evidence. |
+| Release evidence and security incident records | Preserve required provenance, immutable artifacts, and disclosure records under the release and security policies; do not treat them as disposable development logs. |
+| Hands-on tutorials, case studies, and screenshots | Keep useful steps, intermediate observations, failures, recovery paths, and illustrations, not just conclusions. Label the tested version/date and distinguish case-specific values from setup requirements. Improve organization and captions; an older UI or a single-machine origin alone does not make the material disposable. |
+
+When cleaning a page, check suspected stale claims against the relevant code or
+tests. Do not turn an old successful experiment into a claim of current support.
+If support cannot be established, retain a clearly scoped limitation or proposal.
+Prefer one canonical explanation with links; avoid creating an archive directory
+that merely relocates redundant logs. Update existing translations, navigation,
+and local links when moving or removing content.
+
 ## Bilingual documentation
 
 For user-facing documentation that already has a tracked `*.zh-CN.md` peer, the English file is the canonical source for normative wording.

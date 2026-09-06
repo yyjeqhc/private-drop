@@ -39,7 +39,7 @@ Start with the goal that matches what you are trying to do.
 - [Architecture](ARCHITECTURE.md) — how the major components fit together
 - [Coding Workflow](CODING_WORKFLOW.md) — task bootstrap, guidance, validation, and closeout
 - [Native Tool Plugins](PLUGINS.md) — add Runner-local tools with any executable language and no MCP SDK
-- [Computer Use roadmap](COMPUTER_USE.md) — semantic-first desktop automation direction and validation priorities
+- [Computer Use architecture](COMPUTER_USE.md) — desktop automation capabilities, design boundaries, and extension principles
 
 ## I want to contribute or release WebCodex
 
@@ -48,7 +48,7 @@ contain protocol fields, compatibility names, and implementation invariants that
 ordinary users should not need to learn.
 
 - [AGENTS.md](../AGENTS.md) — repository instructions for coding/AI agents
-- [Maintenance](MAINTENANCE.md) — maintenance queue, dependency cadence, PR/CI expectations, and bilingual-doc policy
+- [Maintenance](MAINTENANCE.md) — documentation retention, maintenance queue, dependency cadence, and bilingual-doc policy
 - [Testing](TESTING.md) — testing strategy
 - [Release checklist](RELEASE_CHECKLIST.md) — release readiness
 - [Architecture decisions](agent/architecture-decisions.md)

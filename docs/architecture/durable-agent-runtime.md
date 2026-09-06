@@ -64,7 +64,7 @@ be ambiguous.
 
 ## Implemented durable Agent foundation
 
-The current implementation already establishes these boundaries, the A2.5 natural-conversation path, and the A3 durable AgentTask/TaskAttempt ownership substrate:
+The current implementation already establishes these boundaries, the natural-conversation path, and the durable AgentTask/TaskAttempt ownership substrate:
 
 ```text
 Durable Agent
@@ -123,7 +123,7 @@ Important current invariants:
   in the same authoritative SQLite transaction as their effects, and Task/Attempt,
   fence, generation, lease, terminal result, and accepted replay identity survive
   database reopen/Server restart.
-- A3 does not bind or dispatch an execution backend: starting a TaskAttempt does not
+- The Agent Task foundation does not bind or dispatch an execution backend: starting a TaskAttempt does not
   create a CodingAgentRun, Job, Workflow Session, Wake, or Host callback.
 - process-local Host bindings are empty after restart; offline Messages, Deliveries,
   and the same logical Wake remain durable until a new exact Endpoint generation
@@ -137,7 +137,7 @@ is reused as a fictional arbitrary model-turn callback. Runtime Console is an
 explicit selection/attachment and polling surface only. The controller boundary and
 fake adapter tests prove dispatch semantics, not production Host wake delivery.
 
-These invariants, the natural-conversation slice, and the durable A3 ownership
+These invariants, the natural-conversation slice, and the durable Agent Task ownership
 substrate support asynchronous Agent work without introducing a scheduler.
 
 ## Asynchronous Agent work
@@ -155,7 +155,7 @@ is communication; converting or accepting a request into work must be an explici
 durable transition. An Agent Task may retain stable origin references such as `conversation_id` and
 `source_message_id`, but the Message body remains owned by the Conversation domain.
 
-A3 does not define a global work-stealing queue. Before an Agent Task can create an
+The Agent Task foundation does not define a global work-stealing queue. Before an Agent Task can create an
 Attempt, it has an explicit current assignee Agent established by Task creation,
 acceptance, or a separate authorized reassignment transition. An unassigned Task may
 exist if a real UI/workflow needs it, but it is not claimable by arbitrary Agents.
@@ -297,7 +297,7 @@ A lease that is already expired cannot be renewed by the stale owner and cannot
 submit completion. A new authorized start/claim by the current assignee after expiry
 creates a new Attempt.
 
-Planner or scheduler output, if one is added later, is advisory. In A3, assignment
+Planner or scheduler output, if one is added later, is advisory. In the current implementation, assignment
 is explicit rather than selected by a scheduler. The authoritative Attempt
 start/claim and dispatch mutations must re-check current Agent Task state, current
 assignee, Attempt state, lease, Project/executor authority, and any dependency rules
@@ -398,7 +398,7 @@ Standing rules:
 Do not name new scopes merely to make the model look symmetric. Introduce a scope
 only when the actual first Agent Task surface creates a distinct authority audience.
 
-For the first A3 slice, Agent assignment must not manufacture a new bearer
+Agent assignment must not manufacture a new bearer
 principal. Task creation/assignment/start/heartbeat/completion run under the current
 authenticated caller and must prove that caller may operate the exact Task and its
 current assignee Agent in the Task domain. A simple first implementation may reuse
@@ -447,9 +447,9 @@ TaskAttempt authority.
 Do not build a universal execution-provider framework in the Agent Task foundation.
 Use concrete backends first.
 
-### A3 — Agent Task + fenced TaskAttempt
+### Implemented: Agent Task + fenced TaskAttempt
 
-The current A3 implementation establishes durable Agent Task and TaskAttempt semantics only:
+The current implementation establishes durable Agent Task and TaskAttempt semantics only:
 
 - explicit work creation;
 - explicit assignment/acceptance and atomic Attempt start/claim by that assignee;
@@ -458,16 +458,16 @@ The current A3 implementation establishes durable Agent Task and TaskAttempt sem
 - exact heartbeat/completion/replay;
 - restart recovery;
 - authority/privacy boundaries;
-- minimal observation/listing needed to dogfood the domain.
+- bounded observation and listing.
 
-A3 does **not** automatically choose an assignee, spawn workers, operate a global
+The Agent Task foundation does **not** automatically choose an assignee, spawn workers, operate a global
 claimable queue, or choose execution capacity.
 
-A4a is intentionally not implemented in this foundation: `start_agent_task_attempt`
+Execution backend binding is not implemented in this foundation: `start_agent_task_attempt`
 creates durable ownership/fencing truth only and does not start a CodingAgentRun or
 any other execution backend.
 
-### A4a — TaskAttempt -> existing CodingAgentRun
+### Planned: TaskAttempt -> existing CodingAgentRun
 
 Use the existing ACP CodingAgentRun as the first real execution backend. It already
 has durable run identity, caller/project/provider intent binding, provider-instance
@@ -476,7 +476,7 @@ fencing, uncertain-dispatch handling, and restart reconciliation.
 This is deliberately the first backend because it proves that Agent Task execution
 is independent from ChatGPT browser windows.
 
-### A4b — TaskAttempt -> Agent Endpoint continuation
+### Planned: TaskAttempt -> Agent Endpoint continuation
 
 After a production Host continuation adapter exists, allow a TaskAttempt to execute
 through a wake-capable Agent Endpoint. The TaskAttempt remains Agent-owned; the
@@ -487,7 +487,7 @@ minimal shared execution binding/adapter abstraction.
 
 ## Scheduling is optional derived capability
 
-Later dogfood may show that many durable Agent Tasks benefit from a runnable-frontier
+Future usage may show that many durable Agent Tasks benefit from a runnable-frontier
 scheduler. If so, scheduling should derive from durable work, not from browser tabs
 or UI idle state.
 
@@ -503,8 +503,7 @@ Useful future invariants include:
 Capacity is therefore potentially per execution class rather than simply
 "number of active Agent Tasks = number of ChatGPT windows".
 
-This is a possible A5 product slice, not an A3 requirement and not WebCodex's north
-star.
+Scheduling is a possible extension, not a requirement of the Agent Task foundation.
 
 ## Dependencies and workflow graphs come later
 
@@ -523,9 +522,9 @@ Add an explicit workflow graph only after dependency plus conditional-routing us
 cases justify a third abstraction layer. Superstep/BSP-style coordination has no
 current roadmap commitment.
 
-## A3 acceptance matrix
+## Regression invariants
 
-The first Agent Task foundation should close at least these cases:
+Changes to Agent Task ownership must preserve these cases:
 
 | Case | Required result |
 | --- | --- |
@@ -547,7 +546,7 @@ The first Agent Task foundation should close at least these cases:
 | Agent Task references Project | receives no implicit Project authority |
 | unauthorized exact Agent Task/Attempt id | does not disclose foreign-resource existence |
 
-## Explicit non-goals for the next slice
+## Scope limits
 
 The Agent Task foundation must not expand into:
 
@@ -557,7 +556,7 @@ The Agent Task foundation must not expand into:
 - dependency DAG, fan-out/reducer, graph DSL, or superstep;
 - a universal execution-provider framework;
 - Agent parent/child hierarchy;
-- production ChatGPT continuation unless that is the dedicated A4b slice;
+- production ChatGPT continuation without a dedicated Host continuation adapter;
 - Agent-scoped Memory migration or Agent Skills;
 - federation/A2A compatibility;
 - PostgreSQL/distributed multi-Server scheduling;

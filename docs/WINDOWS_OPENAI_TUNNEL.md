@@ -2,11 +2,13 @@
 
 [English](WINDOWS_OPENAI_TUNNEL.md) | [简体中文](WINDOWS_OPENAI_TUNNEL.zh-CN.md)
 
-This page is the current deep-dive guide for running an independent foreground WebCodex Server and Runner on Windows behind an OpenAI Secure MCP Tunnel. The stable setup and troubleshooting steps come first. A clearly separated [historical dogfood note](#historical-dogfood-note--2026-08-30) at the end preserves the real 2026-08-30 validation evidence without making that old version, machine, repository, or app name part of the current setup contract.
+This guide covers setup, verification, and troubleshooting for an independent foreground WebCodex Server and Runner on Windows behind an OpenAI Secure MCP Tunnel.
+
+This guide draws on the author's manual setup. The [walkthrough](#manual-walkthrough--2026-08-30) preserves the environment, actions, and troubleshooting sequence; original screenshots accompany the Connector creation steps.
 
 ## When to use this topology
 
-If your goal is simply **normal long-lived WebCodex use**, start with the [Full Setup guide](PERSONAL_SETUP.md). This page is a Windows + OpenAI Tunnel deep dive and troubleshooting record; continue here when you deliberately choose this private network path, need to reproduce the explicit topology, or are diagnosing Tunnel behavior.
+If your goal is simply **normal long-lived WebCodex use**, start with the [Full Setup guide](PERSONAL_SETUP.md). This page is a Windows + OpenAI Tunnel deep dive and troubleshooting guide; continue here when you deliberately choose this private network path, need to reproduce the explicit topology, or are diagnosing Tunnel behavior.
 
 Use this setup when the Windows machine should host the complete WebCodex runtime while keeping the Server private:
 
@@ -52,7 +54,7 @@ webcodex-server --version
 webcodex-runner --version
 ```
 
-Do not debug a transport problem with a mixed CLI/Server/Runner baseline. Align all three binaries first. The exact build used by the historical 2026-08-30 validation is recorded only in the historical section below.
+Do not debug a transport problem with a mixed CLI/Server/Runner baseline. Align all three binaries first.
 
 ### OpenAI Secure MCP Tunnel
 
@@ -181,7 +183,7 @@ If the host requires an HTTP proxy, first verify that the proxy can reach `api.o
 --control-plane.http-proxy http://127.0.0.1:<proxy-port>
 ```
 
-After changing the route, require both local readiness and healthy control-plane metadata/poll behavior before retrying Connector creation. The 2026-08-30 historical section below records the concrete Clash failure that established this troubleshooting rule.
+After changing the route, require both local readiness and healthy control-plane metadata/poll behavior before retrying Connector creation.
 
 ## 6. Create the ChatGPT Connector
 
@@ -195,6 +197,22 @@ In ChatGPT Developer Mode, create a custom MCP app and use:
 6. create/scan the app tools.
 
 Why **No authentication**? The WebCodex Bearer for the local MCP hop is already injected locally by `tunnel-client`. ChatGPT should not receive or store it.
+
+### Illustrated creation and connection
+
+These screenshots show the author's manual setup on 2026-08-30 using the Chinese ChatGPT interface. `tunnel-test` is an example name; interface labels and tool lists may change between versions.
+
+Create the app: select Tunnel and No authentication, acknowledge the notice, and create it.
+
+![Tunnel and authentication options in the MCP app creation form](WINDOWS_OPENAI_TUNNEL.zh-CN/0eeb07fe3df699b66c7fc2d592d9d4cf.png)
+
+Click Connect in the confirmation dialog to add the app to ChatGPT.
+
+![Confirmation dialog connecting tunnel-test to ChatGPT](WINDOWS_OPENAI_TUNNEL.zh-CN/fdeaad5c8f257517d1f556f090c9a37c.png)
+
+Open the app details to check that tools loaded. The screenshot shows the then-current `apply_text_edits` description; use the tool list exposed by your current Server.
+
+![Connected app details and loaded tools](WINDOWS_OPENAI_TUNNEL.zh-CN/06653330b9a154a1ed60a481afa6efb7.png)
 
 ## 7. Validate end to end through the Connector
 
@@ -242,11 +260,13 @@ It does not. Foreground Server and Runner operation is supported. The tradeoff i
 
 The core transport is the same: local WebCodex MCP, local Bearer injection, and OpenAI `tunnel-client`. `share` owns a temporary Server/Runner/session automatically; this guide keeps the Server and Runner explicit so they can behave like a normal long-lived topology and be diagnosed independently.
 
-## Historical dogfood note — 2026-08-30
+## Manual walkthrough — 2026-08-30
 
-> Historical evidence only. The setup above describes the current supported behavior. This documentation cleanup did **not** rerun the 2026-08-30 Windows experiment on the current 0.4 branch, so the exact version, commit, paths, app name, and branch below must not be treated as current requirements.
+This case preserves the author's hands-on Windows setup, including the environment, repository read/write checks, and the steps that resolved a network failure. Versions, paths, app names, and branches describe that setup; use your own configuration and the current-version preparation above when reproducing it.
 
-The real run used:
+### Environment
+
+The manual setup used:
 
 ```text
 WebCodex 0.3.9
@@ -255,6 +275,8 @@ Runner client_id=tutorial-msi-runner
 preferred/actual transport=websocket
 ChatGPT app=tunnel-test
 ```
+
+### Register projects and verify reads and writes
 
 The independent Runner began with zero projects, then the Tunnel Connector registered and accessed these real Windows repositories:
 
@@ -270,6 +292,8 @@ docs/windows-openai-tunnel-guide
 ```
 
 That run therefore demonstrated the complete path from ChatGPT through OpenAI Tunnel to a foreground Windows Server, an independent WebSocket Runner, real project registration, repository reads, and repository writes.
+
+### Diagnose and resolve Connector creation failure
 
 The first Connector-creation attempt also established an important network failure mode. Local MCP initialization and `/readyz = 200` were healthy, while the OpenAI control-plane poll failed because the Windows process did not inherit the browser's Clash route and its direct DNS/IPv6 path to `api.openai.com` was unusable. The tested Clash HTTP proxy listened on:
 

@@ -39,7 +39,7 @@
 - [架构](ARCHITECTURE.md) —— 主要组件如何协同
 - [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— 任务启动、指导、验证和收尾
 - [Native Tool Plugins](PLUGINS.zh-CN.md) —— 用任意可执行语言为 Runner 增加本地工具，不需要 MCP SDK
-- [Computer Use roadmap](COMPUTER_USE.md) —— semantic-first desktop automation 方向与验证优先级
+- [Computer Use 架构](COMPUTER_USE.md) —— 桌面自动化能力、设计边界与扩展原则
 
 ## 我想参与开发或发布
 
@@ -48,7 +48,7 @@ protocol field、兼容名称和实现 invariant；普通用户不需要为了�
 这些内容。
 
 - [AGENTS.md](../AGENTS.md) —— 面向 coding/AI agent 的仓库开发指引
-- [仓库维护](MAINTENANCE.md) —— 维护队列、依赖更新节奏、PR/CI 约定和双语文档规则
+- [仓库维护](MAINTENANCE.md) —— 文档保留标准、维护队列、依赖更新与双语文档规则
 - [测试策略](TESTING.md)
 - [发布清单](RELEASE_CHECKLIST.md)
 - [架构决策](agent/architecture-decisions.md)
