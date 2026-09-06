@@ -244,6 +244,7 @@ mod tests {
         "runtime_status",
         "runner_config_check",
         "runner_config_reload",
+        "plugin_tool",
         "tool_manifest",
         "search_project_texts",
         "read_files",

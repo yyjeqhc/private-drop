@@ -253,6 +253,11 @@ pub fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
     for field in runtime_tool_extra_accepted_flattened_args(&spec.name) {
         push_unique_flattened_arg(&mut names, field);
     }
+    // These names belong to the generic callRuntimeTool envelope. Concrete
+    // tools may legitimately use the same words inside canonical `params`
+    // (plugin_tool uses provider-local `tool` and `arguments`), but they cannot
+    // be represented unambiguously as top-level flattened fields.
+    names.retain(|field| !matches!(field.as_str(), "tool" | "params" | "arguments"));
     push_unique_flattened_arg(&mut names, TOOL_CALL_RECORDING_SESSION_ID_FIELD);
     names
 }

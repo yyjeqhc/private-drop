@@ -1,5 +1,18 @@
 use super::*;
 
+fn model_surface_direct_auth() -> crate::auth::AuthContext {
+    // Exercise the declared direct surface without also admitting the separate
+    // mcp_tool/ssh_resource gateways. Plugin scopes are explicit because
+    // plugin_tool is a scope-gated canonical direct gateway after #317.
+    let mut auth = crate::auth::shared_key_context("model-surface-direct-test");
+    auth.scopes.extend([
+        crate::auth::SCOPE_PLUGIN_INSPECT.to_string(),
+        crate::auth::SCOPE_PLUGIN_INVOKE.to_string(),
+        crate::auth::SCOPE_PLUGIN_MANAGE.to_string(),
+    ]);
+    auth
+}
+
 // =========================================================================
 // local_coding model surface
 // =========================================================================
@@ -9,10 +22,11 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
     // Explicit local_coding surface; names are compact-invariant, so no env
     // or lock is needed.
     let runtime = test_runtime_with_surface(ModelSurface::LocalCoding);
+    let auth = model_surface_direct_auth();
     let outcome = handle_mcp_request(
         &runtime,
         rpc("tools/list", Some(Value::from(60)), json!({})),
-        None,
+        Some(&auth),
     )
     .await;
     let value = match outcome {
@@ -269,6 +283,7 @@ async fn local_coding_allows_surface_tools_to_dispatch() {
 #[tokio::test]
 async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let auth = model_surface_direct_auth();
     let outcome = handle_mcp_request(
         &runtime,
         rpc(
@@ -276,7 +291,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
             Some(Value::from(720)),
             mcp_2026_params(json!({})),
         ),
-        None,
+        Some(&auth),
     )
     .await;
     let McpOutcome::Ok(value) = outcome else {
@@ -301,11 +316,12 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         direct_names.iter().map(String::as_str).collect::<Vec<_>>()
     );
     let serialized_tools_bytes = serde_json::to_vec(tools).unwrap().len();
-    // P5 intentionally admits two directly actionable high-frequency recovery
-    // targets (list_jobs and git_diff_hunks). Measured post-admission baseline:
-    // ~479,442 bytes (~468.2 KiB). Preserve the prior ~12.8% schema-growth headroom without
-    // turning the exact direct-tool count into an architectural lock.
-    const MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES: usize = 528 * 1024;
+    // P5 admits directly actionable recovery targets and #317 adds the stable
+    // scope-gated plugin_tool gateway to the declared direct set. Measured
+    // post-#317 baseline is ~547,411 bytes (~534.6 KiB). Keep roughly the same
+    // ~13% schema-growth headroom without turning the exact tool count into an
+    // architectural lock.
+    const MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES: usize = 608 * 1024;
     assert!(
         serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES,
         "adaptive tools/list schema cost {serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES} bytes"
@@ -798,10 +814,11 @@ async fn explicit_local_coding_v1_selects_local_coding() {
     let runtime = test_runtime_from_model_surface_env(Some(
         crate::model_surface::MCP_MODEL_SURFACE_LOCAL_CODING_V1,
     ));
+    let auth = model_surface_direct_auth();
     let outcome = handle_mcp_request(
         &runtime,
         rpc("tools/list", Some(Value::from(74)), json!({})),
-        None,
+        Some(&auth),
     )
     .await;
     let value = match outcome {
@@ -864,6 +881,7 @@ async fn explicit_full_operator_v1_reports_full_operator_surface() {
 #[tokio::test]
 async fn selected_surface_is_immutable_after_environment_changes() {
     let local = test_runtime_from_model_surface_env(None);
+    let local_auth = model_surface_direct_auth();
     // Prove the already-built runtime stays local_coding while the process env
     // actively requests the opposite surface; restore it before any await.
     with_model_surface_env(
@@ -871,8 +889,12 @@ async fn selected_surface_is_immutable_after_environment_changes() {
         || assert_eq!(local.model_surface(), Some(ModelSurface::LocalCoding)),
     );
     for method in ["initialize", "tools/list"] {
-        let outcome =
-            handle_mcp_request(&local, rpc(method, Some(json!(80)), json!({})), None).await;
+        let outcome = handle_mcp_request(
+            &local,
+            rpc(method, Some(json!(80)), json!({})),
+            Some(&local_auth),
+        )
+        .await;
         let McpOutcome::Ok(value) = outcome else {
             panic!("{method} must succeed");
         };
@@ -948,10 +970,11 @@ async fn selected_surface_is_immutable_after_environment_changes() {
 #[tokio::test]
 async fn local_coding_list_manifest_and_catalog_are_identical() {
     let runtime = test_runtime_with_surface(ModelSurface::LocalCoding);
+    let auth = model_surface_direct_auth();
     let listed = handle_mcp_request(
         &runtime,
         rpc("tools/list", Some(json!(83)), json!({})),
-        None,
+        Some(&auth),
     )
     .await;
     let McpOutcome::Ok(value) = listed else {

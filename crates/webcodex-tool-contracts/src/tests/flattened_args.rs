@@ -79,10 +79,13 @@ fn call_runtime_tool_flattened_args_exclude_testing_and_debug_metadata() {
         "assertion_name",
         "test_expect_failure_kind",
         "allow_cross_project_session",
+        "tool",
+        "params",
+        "arguments",
     ] {
         assert!(
             !accepted_fields.contains(field),
-            "runtime flattened compatibility args must not advertise non-business metadata field {field}"
+            "runtime flattened compatibility args must not advertise reserved/non-business field {field}"
         );
     }
 }

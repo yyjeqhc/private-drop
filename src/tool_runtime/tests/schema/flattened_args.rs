@@ -17,6 +17,14 @@ fn accepted_flattened_args_cover_each_tool_spec_input_property() {
             .collect::<BTreeSet<_>>();
 
         for field in input_properties.keys() {
+            if matches!(field.as_str(), "tool" | "params" | "arguments") {
+                assert!(
+                    !accepted.contains(field),
+                    "{} provider-local reserved field {field} must use canonical params rather than top-level flattening",
+                    spec.name
+                );
+                continue;
+            }
             assert!(
                 accepted.contains(field),
                 "{} input_schema.properties.{field} must be accepted by the concrete tool/manifest contract",

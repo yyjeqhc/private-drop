@@ -431,11 +431,8 @@ async fn oauth2_adaptive_gateway_preserves_canonical_target_scope_errors() {
         &token,
         "tools/call",
         json!({
-            "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
-            "arguments": {
-                "tool": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                "arguments": {"action": "list"}
-            }
+            "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+            "arguments": {"action": "list"}
         }),
     )
     .await;

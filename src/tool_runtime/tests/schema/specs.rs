@@ -201,7 +201,13 @@ fn assert_schema_property_names_are_safe(tool_name: &str, schema: &Value, path: 
                 !field.is_empty(),
                 "{tool_name} {path} property names must be non-empty"
             );
-            assert_ne!(field, TOOL_CALL_TOOL_FIELD, "{tool_name} {path}.{field}");
+            let provider_local_tool_field = tool_name == "plugin_tool"
+                && path == "input_schema"
+                && field == TOOL_CALL_TOOL_FIELD;
+            assert!(
+                field != TOOL_CALL_TOOL_FIELD || provider_local_tool_field,
+                "{tool_name} {path}.{field}"
+            );
             let lower = field.to_ascii_lowercase();
             assert!(
                 !SENSITIVE_INPUT_FIELD_NAMES.contains(&lower.as_str()),
