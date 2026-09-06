@@ -303,6 +303,7 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
                         "arguments": {
                             "project": "agent:oe:demo",
                             "path": "src/lib.rs",
+                            "session_id": "wc_sess_demo",
                             "start_line": 3,
                             "limit": 1
                         }
@@ -373,6 +374,7 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
                         "tool": "read_files",
                         "arguments": {
                             "project": "agent:oe:demo",
+                            "session_id": "wc_sess_demo",
                             "items": [
                                 {"path": "src/1.rs"},
                                 {"path": "src/2.rs", "start_line": 4, "limit": 20}

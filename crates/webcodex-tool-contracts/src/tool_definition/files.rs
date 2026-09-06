@@ -153,7 +153,7 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Default inspect tool for targeted source reading. Bounded UTF-8 range read with full-file sha256. Partial success returns a deterministic positional read_range continuation with a directly reusable read_file call; it is not snapshot-stable, so compare the next full-file sha256 before treating ranges as one unchanged source. Line numbers only change text. Oversized ranges fail range_too_large: shrink limit or narrow the range.",
+        "Default inspect tool for targeted source reading. Bounded UTF-8 range read with full-file sha256. Partial success returns a deterministic positional read_range continuation whose reusable read_file call binds the exact resolved Project id and preserves an explicitly supplied business session_id; shorthand is never replayed. The range cursor is not snapshot-stable, so compare the next full-file sha256 before treating ranges as one unchanged source. Line numbers only change text. Oversized ranges fail range_too_large: shrink limit or narrow the range.",
         read_file_input_schema,
     )),
     adaptive_runtime_direct(
@@ -176,7 +176,7 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Read 1 to 8 UTF-8 file ranges in request order with isolated failures and four Runner reads in flight. Partial items return deterministic positional read_range continuations; compare full-file sha256 before joining a later range because reads are not snapshot-stable. Result-budget omission returns an actionable batch_items continuation whose suggested read_files call already contains the remaining original items; next_index is recovery evidence, not a read_files input. When a budget cannot return any part of the first item, increase_result_budget explicitly recommends a bounded max_result_bytes refinement instead. Complete a current partial item before the later batch continuation. The primary batch projection defaults to ~64 KiB and remains capped at 256 KiB; Session/continuity overlays stay separately bounded.",
+            "Read 1 to 8 UTF-8 ranges in request order with isolated failures. Partial items return positional read_range continuations; recovery binds the exact resolved Project id and preserves an explicit business session_id, so shorthand is never replayed. Compare sha256 before joining ranges because reads are not snapshot-stable. Budget omission returns batch_items with remaining original items; next_index is evidence, not a read_files input. If no part of the first item fits, increase_result_budget suggests bounded max_result_bytes. Complete a current partial item before later batch recovery. Primary batch budget defaults to ~64 KiB, capped at 256 KiB; Session overlays remain bounded.",
             read_files_input_schema,
         )),
         50,

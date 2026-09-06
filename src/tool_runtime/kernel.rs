@@ -816,7 +816,6 @@ impl ToolRuntime {
 
         let project = tool_project(&call);
         let deferred_search_projection = super::dispatch::SearchModelProjection::capture(&call);
-        let deferred_read_projection = super::read_files::ReadModelProjection::capture(&call);
         let defer_batch_model_projection = context.session_id.is_some()
             && matches!(
                 &call,
@@ -825,8 +824,8 @@ impl ToolRuntime {
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).
-        let mut result = self
-            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+        let (mut result, deferred_read_projection) = self
+            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_read_projection(
                 call,
                 context.auth,
                 context.transport.into(),

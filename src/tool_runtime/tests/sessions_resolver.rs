@@ -112,6 +112,177 @@ async fn read_file_accepts_unique_short_id() {
 }
 
 #[tokio::test]
+async fn read_file_short_id_continuation_binds_resolved_project_across_registry_churn() {
+    let runtime = runtime_with_resolver_projects().await;
+    let auth = auth_context(None, true);
+    let first = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project: "other-repo".to_string(),
+                        path: "README.md".to_string(),
+                        session_id: None,
+                        start_line: Some(1),
+                        limit: Some(1),
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = wait_for_runner_request_for_client(&runtime, "workstation").await;
+    assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
+    runtime
+        .runner_registry
+        .complete(RunnerResultRequest {
+            client_id: "workstation".to_string(),
+            runner_instance_id: "inst-workstation".to_string(),
+            request_id: req.request_id,
+            exit_code: Some(0),
+            stdout: Some(canonical_agent_file_read_range("one\ntwo", 1, 1)),
+            stderr: None,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+    let first = first.await.unwrap();
+    assert!(first.success, "{:?}", first.error);
+    let suggested = &first.output["continuation"]["suggested_call"];
+    assert_eq!(
+        suggested["arguments"]["project"],
+        "agent:workstation:other-repo"
+    );
+    assert!(suggested["arguments"].get("session_id").is_none());
+    let next_call = ToolCall::from_tool_name(
+        suggested["tool"].as_str().unwrap(),
+        suggested["arguments"].clone(),
+    )
+    .expect("short-id continuation suggested_call must parse");
+
+    // Make the original shorthand ambiguous after the first read. The already
+    // constructed recovery call must remain bound to workstation.
+    register_agent_projects(
+        &runtime,
+        "laptop",
+        None,
+        crate::runner_protocol::RunnerCapabilities {
+            file_read: true,
+            git: true,
+            shell: true,
+            internal_posix_script: true,
+            ..Default::default()
+        },
+        vec![
+            named_registered_project(
+                "laptop",
+                "my-repo",
+                "My Repo",
+                "/root/git/laptop-my-repo",
+                190,
+            ),
+            named_registered_project(
+                "laptop",
+                "other-repo",
+                "Other Repo",
+                "/root/git/laptop-other-repo",
+                220,
+            ),
+        ],
+    )
+    .await;
+    let ambiguous = runtime
+        .resolve_project_input("other-repo")
+        .await
+        .unwrap_err();
+    assert_eq!(ambiguous.kind, ProjectResolverErrorKind::AmbiguousProject);
+
+    let second = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move { runtime.dispatch_with_auth(next_call, Some(&auth)).await }
+    });
+    let req = wait_for_runner_request_for_client(&runtime, "workstation").await;
+    assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
+    assert_eq!(req.start_line, Some(2));
+    runtime
+        .runner_registry
+        .complete(RunnerResultRequest {
+            client_id: "workstation".to_string(),
+            runner_instance_id: "inst-workstation".to_string(),
+            request_id: req.request_id,
+            exit_code: Some(0),
+            stdout: Some(canonical_agent_file_read_range("one\ntwo", 2, 1)),
+            stderr: None,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+    let second = second.await.unwrap();
+    assert!(second.success, "{:?}", second.error);
+    assert_eq!(second.output["text"], "two");
+}
+
+#[tokio::test]
+async fn read_files_short_id_item_continuation_uses_resolved_project_id() {
+    let runtime = runtime_with_resolver_projects().await;
+    let auth = auth_context(None, true);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFiles {
+                        project: "other-repo".to_string(),
+                        items: vec![ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: Some(1),
+                            limit: Some(1),
+                        }],
+                        session_id: None,
+                        with_line_numbers: None,
+                        max_result_bytes: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = wait_for_runner_request_for_client(&runtime, "workstation").await;
+    runtime
+        .runner_registry
+        .complete(RunnerResultRequest {
+            client_id: "workstation".to_string(),
+            runner_instance_id: "inst-workstation".to_string(),
+            request_id: req.request_id,
+            exit_code: Some(0),
+            stdout: Some(canonical_agent_file_read_range("one\ntwo", 1, 1)),
+            stderr: None,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(
+        result.output["items"][0]["continuation"]["suggested_call"]["arguments"]["project"],
+        "agent:workstation:other-repo"
+    );
+    assert!(
+        result.output["items"][0]["continuation"]["suggested_call"]["arguments"]
+            .get("session_id")
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn git_status_accepts_unique_short_id() {
     let runtime = runtime_with_resolver_projects().await;
     let bootstrap = auth_context(None, true);

@@ -509,6 +509,32 @@ impl ToolRuntime {
         .await
     }
 
+    pub(crate) async fn read_file_resolved(
+        &self,
+        resolved: &ResolvedProject,
+        path: String,
+        start_line: Option<usize>,
+        limit: Option<usize>,
+        with_line_numbers: Option<bool>,
+    ) -> ToolResult {
+        let with_line_numbers = with_line_numbers.unwrap_or(false);
+        // Reuse the same path/sensitive checks as the legacy direct helper,
+        // but consume the authoritative Project resolved by dispatch instead
+        // of performing another registry lookup.
+        if let Some(failure) = validate_read_file_path(&path) {
+            return failure;
+        }
+        self.read_one_validated_project_file(
+            &resolved.config,
+            path,
+            start_line,
+            limit,
+            with_line_numbers,
+            None,
+        )
+        .await
+    }
+
     pub(crate) async fn read_one_resolved_project_file(
         &self,
         project: &ProjectConfig,

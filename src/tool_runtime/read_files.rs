@@ -26,11 +26,13 @@ pub(crate) enum ReadModelProjection {
     Single {
         project: String,
         path: String,
+        session_id: Option<String>,
         with_line_numbers: Option<bool>,
     },
     Batch {
         project: String,
         items: Vec<ReadFilesItem>,
+        session_id: Option<String>,
         with_line_numbers: Option<bool>,
         max_result_bytes: Option<usize>,
     },
@@ -42,26 +44,44 @@ impl ReadModelProjection {
             ToolCall::ReadFile {
                 project,
                 path,
+                session_id,
                 with_line_numbers,
                 ..
             } => Self::Single {
                 project: project.clone(),
                 path: path.clone(),
+                session_id: session_id.clone(),
                 with_line_numbers: *with_line_numbers,
             },
             ToolCall::ReadFiles {
                 project,
                 items,
+                session_id,
                 with_line_numbers,
                 max_result_bytes,
-                ..
             } => Self::Batch {
                 project: project.clone(),
                 items: items.clone(),
+                session_id: session_id.clone(),
                 with_line_numbers: *with_line_numbers,
                 max_result_bytes: *max_result_bytes,
             },
             _ => Self::None,
+        }
+    }
+
+    /// Replace shorthand with the exact Project identity selected by the same
+    /// authoritative resolver pass used for this call. Recovery must not
+    /// re-enter shorthand resolution and retarget after registry churn.
+    pub(crate) fn bind_resolved_project(&mut self, resolved: Option<&ResolvedProject>) {
+        let Some(resolved) = resolved else {
+            return;
+        };
+        match self {
+            Self::Single { project, .. } | Self::Batch { project, .. } => {
+                *project = resolved.resolved_id.clone();
+            }
+            Self::None => {}
         }
     }
 }
@@ -71,6 +91,7 @@ fn read_file_suggested_arguments(
     path: &str,
     start_line: usize,
     limit: usize,
+    session_id: Option<&str>,
     with_line_numbers: Option<bool>,
 ) -> Value {
     let mut arguments = json!({
@@ -79,6 +100,9 @@ fn read_file_suggested_arguments(
         "start_line": start_line,
         "limit": limit,
     });
+    if let Some(session_id) = session_id {
+        arguments["session_id"] = json!(session_id);
+    }
     if let Some(with_line_numbers) = with_line_numbers {
         arguments["with_line_numbers"] = json!(with_line_numbers);
     }
@@ -89,6 +113,7 @@ fn read_range_continuation(
     project: &str,
     path: &str,
     output: &serde_json::Map<String, Value>,
+    session_id: Option<&str>,
     with_line_numbers: Option<bool>,
 ) -> Option<Value> {
     if output.get("has_more").and_then(Value::as_bool) != Some(true) {
@@ -121,13 +146,19 @@ fn read_range_continuation(
                 path,
                 next_start_line,
                 limit,
+                session_id,
                 with_line_numbers,
             )
         }
     }))
 }
 
-fn add_item_read_continuation(item: &mut Value, project: &str, with_line_numbers: Option<bool>) {
+fn add_item_read_continuation(
+    item: &mut Value,
+    project: &str,
+    session_id: Option<&str>,
+    with_line_numbers: Option<bool>,
+) {
     if item.get("success").and_then(Value::as_bool) != Some(true) {
         return;
     }
@@ -137,7 +168,9 @@ fn add_item_read_continuation(item: &mut Value, project: &str, with_line_numbers
     let continuation = item
         .get("output")
         .and_then(Value::as_object)
-        .and_then(|output| read_range_continuation(project, &path, output, with_line_numbers));
+        .and_then(|output| {
+            read_range_continuation(project, &path, output, session_id, with_line_numbers)
+        });
     if let (Some(continuation), Some(item)) = (continuation, item.as_object_mut()) {
         item.insert("continuation".to_string(), continuation);
     }
@@ -146,6 +179,7 @@ fn add_item_read_continuation(item: &mut Value, project: &str, with_line_numbers
 fn read_files_suggested_arguments(
     project: &str,
     items: &[ReadFilesItem],
+    session_id: Option<&str>,
     with_line_numbers: Option<bool>,
     max_result_bytes: Option<usize>,
 ) -> Value {
@@ -166,6 +200,9 @@ fn read_files_suggested_arguments(
         "project": project,
         "items": suggested_items,
     });
+    if let Some(session_id) = session_id {
+        arguments["session_id"] = json!(session_id);
+    }
     if let Some(with_line_numbers) = with_line_numbers {
         arguments["with_line_numbers"] = json!(with_line_numbers);
     }
@@ -179,6 +216,7 @@ fn add_batch_read_continuation(
     output: &mut serde_json::Map<String, Value>,
     project: &str,
     original_items: &[ReadFilesItem],
+    session_id: Option<&str>,
     with_line_numbers: Option<bool>,
     max_result_bytes: Option<usize>,
 ) {
@@ -226,6 +264,7 @@ fn add_batch_read_continuation(
                     "arguments": read_files_suggested_arguments(
                         project,
                         original_items,
+                        session_id,
                         with_line_numbers,
                         Some(MAX_SERIALIZED_OUTPUT_BYTES),
                     )
@@ -251,6 +290,7 @@ fn add_batch_read_continuation(
                 "arguments": read_files_suggested_arguments(
                     project,
                     remaining,
+                    session_id,
                     with_line_numbers,
                     max_result_bytes,
                 )
@@ -276,10 +316,17 @@ pub(crate) fn add_actionable_read_continuations(
         ReadModelProjection::Single {
             project,
             path,
+            session_id,
             with_line_numbers,
         } => {
             let continuation = result.output.as_object().and_then(|output| {
-                read_range_continuation(project, path, output, *with_line_numbers)
+                read_range_continuation(
+                    project,
+                    path,
+                    output,
+                    session_id.as_deref(),
+                    *with_line_numbers,
+                )
             });
             if let (Some(continuation), Some(output)) =
                 (continuation, result.output.as_object_mut())
@@ -290,12 +337,18 @@ pub(crate) fn add_actionable_read_continuations(
         ReadModelProjection::Batch {
             project,
             items: original_items,
+            session_id,
             with_line_numbers,
             max_result_bytes,
         } => {
             if let Some(items) = result.output.get_mut("items").and_then(Value::as_array_mut) {
                 for item in items {
-                    add_item_read_continuation(item, project, *with_line_numbers);
+                    add_item_read_continuation(
+                        item,
+                        project,
+                        session_id.as_deref(),
+                        *with_line_numbers,
+                    );
                 }
             }
             if let Some(output) = result.output.as_object_mut() {
@@ -303,6 +356,7 @@ pub(crate) fn add_actionable_read_continuations(
                     output,
                     project,
                     original_items,
+                    session_id.as_deref(),
                     *with_line_numbers,
                     *max_result_bytes,
                 );
@@ -372,11 +426,17 @@ fn projected_read_item_len(item: &Value, projection: &ReadModelProjection) -> us
     let mut projected = item.clone();
     if let ReadModelProjection::Batch {
         project,
+        session_id,
         with_line_numbers,
         ..
     } = projection
     {
-        add_item_read_continuation(&mut projected, project, *with_line_numbers);
+        add_item_read_continuation(
+            &mut projected,
+            project,
+            session_id.as_deref(),
+            *with_line_numbers,
+        );
     }
     if projected["success"].as_bool() == Some(true) {
         let outer_path = projected
@@ -854,6 +914,7 @@ mod tests {
     fn batch_projection(count: usize, max_result_bytes: Option<usize>) -> ReadModelProjection {
         ReadModelProjection::Batch {
             project: "agent:oe:demo".to_string(),
+            session_id: None,
             items: (0..count)
                 .map(|index| ReadFilesItem {
                     path: format!("src/{index}.rs"),
@@ -1019,7 +1080,10 @@ mod tests {
         let first = vec!["x".repeat(140 * 1024)];
         let second = vec!["y".repeat(140 * 1024)];
         let third = vec!["z".to_string()];
-        let projection = batch_projection(3, Some(MAX_SERIALIZED_OUTPUT_BYTES));
+        let mut projection = batch_projection(3, Some(MAX_SERIALIZED_OUTPUT_BYTES));
+        if let ReadModelProjection::Batch { session_id, .. } = &mut projection {
+            *session_id = Some("wc_sess_batch_recovery".to_string());
+        }
         let output = apply_output_budget(
             "agent:oe:demo",
             3,
@@ -1044,6 +1108,10 @@ mod tests {
         assert_eq!(continuation["recommended_order"], "next");
         let suggested = &continuation["suggested_call"];
         assert_eq!(suggested["tool"], "read_files");
+        assert_eq!(
+            suggested["arguments"]["session_id"],
+            "wc_sess_batch_recovery"
+        );
         assert!(suggested["arguments"].get("next_index").is_none());
         assert_eq!(
             suggested["arguments"]["items"]
@@ -1063,9 +1131,11 @@ mod tests {
             next,
             ToolCall::ReadFiles {
                 ref items,
+                session_id: Some(ref next_session_id),
                 max_result_bytes: Some(bytes),
                 ..
             } if bytes == MAX_SERIALIZED_OUTPUT_BYTES
+                && next_session_id == "wc_sess_batch_recovery"
                 && items.iter().map(|item| item.path.as_str()).collect::<Vec<_>>()
                     == vec!["src/1.rs", "src/2.rs"]
         ));
@@ -1372,6 +1442,7 @@ mod tests {
         });
         let single_projection = ReadModelProjection::Single {
             project: "agent:oe:demo".to_string(),
+            session_id: None,
             path: "src/lib.rs".to_string(),
             with_line_numbers: None,
         };
@@ -1418,6 +1489,7 @@ mod tests {
         let partial_batch = batch_output("agent:oe:demo", 1, vec![partial_item], false, None, None);
         let partial_batch_projection = ReadModelProjection::Batch {
             project: "agent:oe:demo".to_string(),
+            session_id: None,
             items: vec![ReadFilesItem {
                 path: "src/0.rs".to_string(),
                 start_line: Some(11),

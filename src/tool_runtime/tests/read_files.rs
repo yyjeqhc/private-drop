@@ -302,6 +302,11 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-partial-visible";
     let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("read continuation session".to_string()),
+    );
+    let session_id = session.session_id.clone();
     let auth = auth_context(None, true);
     let content = "one\ntwo\nthree";
 
@@ -309,13 +314,14 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
         let runtime = runtime.clone();
         let project = project.clone();
         let auth = auth.clone();
+        let session_id = session_id.clone();
         async move {
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFile {
                         project,
                         path: "src/lib.rs".to_string(),
-                        session_id: None,
+                        session_id: Some(session_id),
                         start_line: Some(2),
                         limit: Some(1),
                         with_line_numbers: None,
@@ -349,6 +355,10 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
         format!("{:x}", Sha256::digest(content.as_bytes()))
     );
     assert_eq!(continuation["suggested_call"]["tool"], "read_file");
+    assert_eq!(
+        continuation["suggested_call"]["arguments"]["session_id"],
+        session_id
+    );
     let next_call = ToolCall::from_tool_name(
         continuation["suggested_call"]["tool"].as_str().unwrap(),
         continuation["suggested_call"]["arguments"].clone(),
@@ -359,10 +369,13 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
         ToolCall::ReadFile {
             project: ref next_project,
             path: ref next_path,
+            session_id: Some(ref next_session_id),
             start_line: Some(3),
             limit: Some(1),
             ..
-        } if next_project == &project && next_path == "src/lib.rs"
+        } if next_project == &project
+            && next_path == "src/lib.rs"
+            && next_session_id == &session_id
     ));
 
     let schema = crate::tool_runtime::registry::output_schema_for_tool("read_file");
@@ -587,12 +600,18 @@ async fn read_files_partial_item_has_actionable_item_continuation() {
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "read-batch-item-continuation";
     let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("batch read continuation session".to_string()),
+    );
+    let session_id = session.session_id.clone();
     let auth = auth_context(None, true);
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
         let auth = auth.clone();
+        let session_id = session_id.clone();
         async move {
             runtime
                 .dispatch_with_auth(
@@ -602,7 +621,7 @@ async fn read_files_partial_item_has_actionable_item_continuation() {
                             item("src/lib.rs", Some(2), Some(1)),
                             item("src/main.rs", None, None),
                         ],
-                        session_id: None,
+                        session_id: Some(session_id),
                         with_line_numbers: Some(true),
                         max_result_bytes: None,
                     },
@@ -631,6 +650,7 @@ async fn read_files_partial_item_has_actionable_item_continuation() {
     assert_eq!(continuation["safe_cursor"], true);
     assert_eq!(continuation["snapshot_stable"], false);
     let suggested = &continuation["suggested_call"];
+    assert_eq!(suggested["arguments"]["session_id"], session_id);
     let next_call = ToolCall::from_tool_name(
         suggested["tool"].as_str().unwrap(),
         suggested["arguments"].clone(),
@@ -641,11 +661,14 @@ async fn read_files_partial_item_has_actionable_item_continuation() {
         ToolCall::ReadFile {
             project: ref next_project,
             path: ref next_path,
+            session_id: Some(ref next_session_id),
             start_line: Some(3),
             limit: Some(1),
             with_line_numbers: Some(true),
             ..
-        } if next_project == &project && next_path == "src/lib.rs"
+        } if next_project == &project
+            && next_path == "src/lib.rs"
+            && next_session_id == &session_id
     ));
     assert!(items[1].get("continuation").is_none());
 

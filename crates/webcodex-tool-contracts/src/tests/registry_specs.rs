@@ -14,6 +14,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "read_range",
         "not snapshot-stable",
         "sha256",
+        "exact resolved project",
+        "business session_id",
     ] {
         assert!(
             read_file_desc.contains(phrase),
@@ -30,6 +32,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "increase_result_budget",
         "complete a current partial item",
         "256 kib",
+        "exact resolved project",
+        "business session_id",
     ] {
         assert!(
             read_files_desc.contains(phrase),

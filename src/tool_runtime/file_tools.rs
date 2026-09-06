@@ -26,10 +26,17 @@ impl ToolRuntime {
                 start_line,
                 limit,
                 with_line_numbers,
-            } => {
-                self.read_file(project, path, start_line, limit, with_line_numbers)
-                    .await
-            }
+            } => match project_resolution {
+                Some(Ok(resolved)) => {
+                    self.read_file_resolved(&resolved, path, start_line, limit, with_line_numbers)
+                        .await
+                }
+                Some(Err(error)) => error.into_tool_result(),
+                None => {
+                    self.read_file(project, path, start_line, limit, with_line_numbers)
+                        .await
+                }
+            },
             ToolCall::ReadFiles {
                 project,
                 items,

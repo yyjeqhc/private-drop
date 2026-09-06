@@ -578,10 +578,15 @@ fn suggested_read_file_arguments_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "project": schema_type("string", "Same accepted project argument used by the current read."),
+            "project": schema_type("string", "Exact resolved Project id selected by the current read; shorthand is never replayed by recovery."),
             "path": schema_type("string", "Same project-relative file path."),
             "start_line": {"type": "integer", "minimum": 1},
             "limit": {"type": "integer", "minimum": 1, "maximum": 2000},
+            "session_id": {
+                "type": "string",
+                "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                "description": "Original explicit business Workflow Session id, present only when the triggering read_file call supplied one."
+            },
             "with_line_numbers": {"type": "boolean"}
         },
         "required": ["project", "path", "start_line", "limit"]
@@ -614,7 +619,7 @@ fn suggested_read_files_arguments_schema() -> Value {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "project": schema_type("string", "Same accepted project argument used by the current batch."),
+            "project": schema_type("string", "Exact resolved Project id selected by the current batch; shorthand is never replayed by recovery."),
             "items": {
                 "type": "array",
                 "minItems": 1,
@@ -629,6 +634,11 @@ fn suggested_read_files_arguments_schema() -> Value {
                     },
                     "required": ["path"]
                 }
+            },
+            "session_id": {
+                "type": "string",
+                "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                "description": "Original explicit business Workflow Session id, present only when the triggering read_files call supplied one."
             },
             "with_line_numbers": {"type": "boolean"},
             "max_result_bytes": {
