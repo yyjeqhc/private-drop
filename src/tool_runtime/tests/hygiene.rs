@@ -37,11 +37,16 @@ async fn dispatch_hygiene_with_agent(
     });
 
     let forbidden = ["python3", "-c"].join(" ");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    // A hygiene check can issue both the fixed diagnostic script and a bounded
+    // size-probe script. On Windows each local POSIX-shell startup is noticeably
+    // more expensive, especially while the full Rust test suite is running in
+    // parallel, so the old 10-second harness deadline was below the production
+    // per-script timeout and could fail despite healthy bounded execution.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     while !task.is_finished() {
         assert!(
             tokio::time::Instant::now() < deadline,
-            "hygiene check did not finish within 10 seconds for client {client_id}"
+            "hygiene check did not finish within 30 seconds for client {client_id}"
         );
         if let Some(req) = probe_patch_agent_request(runtime, client_id).await {
             assert_eq!(req.kind, "run_internal_posix_script");

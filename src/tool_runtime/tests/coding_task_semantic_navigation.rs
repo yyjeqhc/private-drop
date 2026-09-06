@@ -354,7 +354,11 @@ async fn coding_task_semantic_navigation_timeout_uses_one_budget_and_cancels_wai
     let task = spawn_start(&runtime, project, SessionMode::Normal);
     let request = next_semantic_status_request(&runtime, "timeout-agent").await;
     let result = finish_start_servicing_locally(&runtime, "timeout-agent", task).await;
-    assert!(started.elapsed() < Duration::from_millis(2_000));
+    // This wall-clock bound includes the normal Git startup inspection that
+    // follows the 25ms semantic-navigation probe. Keep it well below the
+    // helper's 10-second liveness deadline so a lost probe budget still fails,
+    // but leave enough scheduler headroom for the full Windows test suite.
+    assert!(started.elapsed() < Duration::from_secs(5));
     assert!(result.success, "{result:?}");
     let semantic = &result.output["semantic_navigation"];
     assert_eq!(semantic["status"], "probe_timeout");

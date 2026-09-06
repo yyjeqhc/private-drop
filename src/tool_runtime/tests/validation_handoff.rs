@@ -340,7 +340,7 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
     let client_id = "vhandoff-go-fast";
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("project");
-    let scoped = root.join("internal/nodeapp");
+    let scoped = root.join("internal").join("nodeapp");
     std::fs::create_dir_all(&scoped).unwrap();
     let runtime = test_runtime().with_validation_sync_wait(std::time::Duration::from_millis(300));
     register_agent_with_projects(
