@@ -248,16 +248,25 @@ impl ProcessSupervisor {
         // Runner do so only when Desktop adds their explicit opt-in CLI flag.
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child =
-            ManagedChild::spawn_with_options(&mut command, platform::managed_spawn_options())
-                .map_err(|error| {
-                    DesktopError::new(
-                        "process_start_failed",
-                        format!("Could not start the {kind:?} process"),
-                        "Check the configured WebCodex binaries and retry.",
-                    )
-                    .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
-                })?;
+        // The Desktop owns the Runner itself, but the Runner is also a trusted
+        // process supervisor: each user command is immediately placed into the
+        // Runner's own ManagedChild Job Object. Let only this direct child
+        // silently break descendants away from the Desktop's outer Job to avoid
+        // nested-Job incompatibilities (notably Git for Windows/MSYS) while
+        // preserving exact ownership at both lifecycle layers.
+        let silent_child_breakaway = kind == ProcessKind::LocalRunner;
+        let mut child = ManagedChild::spawn_with_options(
+            &mut command,
+            platform::managed_spawn_options(silent_child_breakaway),
+        )
+        .map_err(|error| {
+            DesktopError::new(
+                "process_start_failed",
+                format!("Could not start the {kind:?} process"),
+                "Check the configured WebCodex binaries and retry.",
+            )
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+        })?;
         let pid = child.id();
         let stdout = child.child_mut().stdout.take().ok_or_else(|| {
             DesktopError::new(

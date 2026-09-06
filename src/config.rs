@@ -924,6 +924,29 @@ mod tests {
 
         env.remove("WEBCODEX_ENV_FILE");
     }
+
+    #[test]
+    fn startup_env_precedence_is_default_then_file_then_process_environment() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        let dir = tempfile::tempdir().unwrap();
+        let env_file = dir.path().join("webcodex.env");
+        std::fs::write(&env_file, "WEBCODEX_MCP_COMPACT_SCHEMAS=true\n").unwrap();
+        env.set("WEBCODEX_ENV_FILE", &env_file);
+        env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+
+        assert!(!mcp_compact_schemas_enabled());
+        let from_file = load_startup_env_files().unwrap();
+        assert_eq!(from_file[0].loaded_count, 1);
+        assert!(mcp_compact_schemas_enabled());
+
+        env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+        let with_process_override = load_startup_env_files().unwrap();
+        assert_eq!(with_process_override[0].loaded_count, 0);
+        assert!(!mcp_compact_schemas_enabled());
+
+        env.remove("WEBCODEX_ENV_FILE");
+        env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    }
     #[test]
     fn mcp_compact_schemas_defaults_off() {
         let mut env = crate::test_support::TestEnvGuard::new();

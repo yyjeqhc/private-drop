@@ -67,12 +67,13 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   };
 
   const run = async () => {
-    if (!mode || !project || state.current_operation) return;
+    if (!mode || state.current_operation) return;
+    if ((mode === "remote" || mode === "share") && !project) return;
     setBusy(true);
     setError(null);
     try {
       if (mode === "local") {
-        let next = await desktopApi.configureLocal(project.path);
+        let next = await desktopApi.configureLocal(project?.path ?? null);
         onState(next);
         if (connectAfterSetup && next.openai_tunnel_configured && next.readiness.runtime_ready) {
           next = await desktopApi.startRegularTunnel();
@@ -80,6 +81,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         }
         onComplete?.();
       } else if (mode === "remote") {
+        if (!project) return;
         const oneTimeCode = pairingCode;
         setPairingCode("");
         const next = await desktopApi.configureRemote(
@@ -90,6 +92,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         onState(next);
         onComplete?.();
       } else {
+        if (!project) return;
         onState(await desktopApi.startQuickShare(project.path, provider));
         onComplete?.();
       }
@@ -240,6 +243,9 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         <div>
           <span className="section-kicker">{t("setup.project")}</span>
           <strong>{project ? project.path : t("setup.chooseProject")}</strong>
+          {mode === "local" && !project && (
+            <span className="project-meta">{t("setup.projectOptional")}</span>
+          )}
           {project && (
             <span className="project-meta">
               {t("setup.allowedRoot", {
@@ -279,7 +285,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
           className="primary-button"
           disabled={
             mutationBusy ||
-            !project ||
+            ((mode === "remote" || mode === "share") && !project) ||
             (mode === "remote" &&
               (!serverUrl.trim() || (!canReuseRemoteEnrollment && !pairingCode.trim())))
           }

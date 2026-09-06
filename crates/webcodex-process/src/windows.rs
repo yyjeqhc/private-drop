@@ -23,6 +23,7 @@ use windows_sys::Win32::System::JobObjects::{
     JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
     TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
 };
 use windows_sys::Win32::System::Threading::{
     GetProcessId, OpenThread, ResumeThread, CREATE_SUSPENDED, THREAD_SUSPEND_RESUME,
@@ -58,9 +59,12 @@ impl JobObject {
 
     /// Configure the job so the kernel terminates every contained process when
     /// the last job handle is closed.
-    fn set_kill_on_close(&self) -> io::Result<()> {
+    fn set_limits(&self, silent_child_breakaway: bool) -> io::Result<()> {
         let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if silent_child_breakaway {
+            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+        }
         // SAFETY: `info` is a valid, initialized
         // `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` of exactly the size this info
         // class expects, and the job handle is valid for the call.
@@ -158,7 +162,7 @@ impl ManagedChild {
     /// Like [`ManagedChild::spawn`], but with extra [`SpawnOptions`].
     pub fn spawn_with_options(command: &mut Command, options: SpawnOptions) -> io::Result<Self> {
         let job = JobObject::create()?;
-        job.set_kill_on_close()?;
+        job.set_limits(options.windows_silent_child_breakaway)?;
 
         command.creation_flags(CREATE_SUSPENDED | options.windows_creation_flags);
         let spawn_result = command.spawn();

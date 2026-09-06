@@ -15,6 +15,9 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const TUNNEL_CLIENT_VERSION: &str = "0.0.12";
 const TUNNEL_CLIENT_RELEASE_BASE: &str =
     "https://github.com/openai/tunnel-client/releases/download/v0.0.12";
@@ -26,6 +29,8 @@ const TUNNEL_CLIENT_CONTROL_PLANE_PROBE_TIMEOUT: Duration = Duration::from_secs(
 const TUNNEL_CLIENT_READY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const TUNNEL_CLIENT_HEALTH_URL_BYTES: usize = 512;
 const TUNNEL_CLIENT_OVERRIDE: &str = "WEBCODEX_TUNNEL_CLIENT_BIN";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TunnelClientAsset {
@@ -86,6 +91,7 @@ pub(super) async fn start_openai_tunnel(
     let health_url_file = session_dir.join("openai-tunnel-health-url");
     let log_file = session_dir.join("openai-tunnel.log");
     let mut command = Command::new(&prerequisites.binary);
+    suppress_windows_console(&mut command);
     command.arg("run");
     configure_runtime_command(&mut command, prerequisites, mcp_url, authorization_file);
     command
@@ -144,6 +150,7 @@ async fn run_doctor(
     deadline: Instant,
 ) -> Result<(), ProductError> {
     let mut command = Command::new(&prerequisites.binary);
+    suppress_windows_console(&mut command);
     command.arg("doctor");
     configure_runtime_command(&mut command, prerequisites, mcp_url, authorization_file);
     command
@@ -198,6 +205,7 @@ async fn run_control_plane_probe(
     deadline: Instant,
 ) -> Result<(), ProductError> {
     let mut command = Command::new(&prerequisites.binary);
+    suppress_windows_console(&mut command);
     remove_npm_wrapper_network_environment(&mut command);
     command
         .arg("admin")
@@ -733,13 +741,13 @@ fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<(), Product
 }
 
 async fn verify_tunnel_client_version(path: &Path) -> Result<(), ProductError> {
-    let output = tokio::time::timeout(
-        TUNNEL_CLIENT_VERIFY_TIMEOUT,
-        Command::new(path).arg("--version").output(),
-    )
-    .await
-    .map_err(|_| verification_error())?
-    .map_err(|_| verification_error())?;
+    let mut command = Command::new(path);
+    suppress_windows_console(&mut command);
+    command.arg("--version");
+    let output = tokio::time::timeout(TUNNEL_CLIENT_VERIFY_TIMEOUT, command.output())
+        .await
+        .map_err(|_| verification_error())?
+        .map_err(|_| verification_error())?;
     let version_text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -749,6 +757,13 @@ async fn verify_tunnel_client_version(path: &Path) -> Result<(), ProductError> {
         return Err(verification_error());
     }
     Ok(())
+}
+
+fn suppress_windows_console(command: &mut Command) {
+    #[cfg(windows)]
+    command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    #[cfg(not(windows))]
+    let _ = command;
 }
 
 fn missing_tunnel_configuration(message: &'static str) -> ProductError {

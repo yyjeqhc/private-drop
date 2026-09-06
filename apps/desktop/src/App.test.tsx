@@ -189,10 +189,15 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeDisabled();
   });
 
-  it("exposes Chinese first-run actions and native Quick Share radio state", async () => {
+  it("bootstraps a fresh Desktop with its default project and keeps setup choices accessible", async () => {
     api.getState.mockResolvedValue(firstRunState);
+    api.configureLocal.mockResolvedValue(readyState);
     renderApp();
 
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith(null));
+    expect(await screen.findByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "更改运行方式" }));
     expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /连接现有 Server/ })).toBeInTheDocument();
     const quickShare = screen.getByRole("button", { name: /快速共享项目/ });

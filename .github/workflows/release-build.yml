@@ -683,7 +683,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $env:CARGO_TARGET_DIR = $env:DESKTOP_TAURI_TARGET
-          npm exec tauri -- build --bundles nsis --config $env:DESKTOP_TAURI_CONFIG --ci --no-sign -- --locked
+          node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $env:DESKTOP_TAURI_CONFIG --ci --no-sign -- --locked
           if ($LASTEXITCODE -ne 0) { throw "Tauri NSIS build failed" }
           $bundleDir = Join-Path $env:CARGO_TARGET_DIR "release\bundle\nsis"
           $built = @(Get-ChildItem -LiteralPath $bundleDir -Filter "*-setup.exe" -File)

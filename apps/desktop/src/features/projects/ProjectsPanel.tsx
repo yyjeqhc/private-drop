@@ -2,7 +2,7 @@ import type { DesktopState } from "../../models/topology";
 import { useLocale } from "../../i18n/locale";
 import { projectReadinessLabel } from "../../i18n/presentation";
 
-export function ProjectsPanel({ state }: { state: DesktopState }) {
+export function ProjectsPanel({ state, onConfigure }: { state: DesktopState; onConfigure: () => void }) {
   const { t } = useLocale();
   return (
     <section className="page-section" aria-labelledby="projects-title" data-webcodex-page="projects">
@@ -20,7 +20,12 @@ export function ProjectsPanel({ state }: { state: DesktopState }) {
           </dl>
         </article>
       ) : (
-        <div className="empty-state">{t("project.none")}</div>
+        <div className="empty-state">
+          <span>{t("project.none")}</span>
+          <button className="primary-button" onClick={onConfigure} data-webcodex-action="add-project">
+            {t("project.add")}
+          </button>
+        </div>
       )}
     </section>
   );

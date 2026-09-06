@@ -352,16 +352,15 @@ async fn run_bounded_until(
         command.stdin(Stdio::null());
     }
     let mut child =
-        ManagedChild::spawn_with_options(&mut command, platform::managed_spawn_options()).map_err(
-            |error| {
+        ManagedChild::spawn_with_options(&mut command, platform::managed_spawn_options(false))
+            .map_err(|error| {
                 DesktopError::new(
                     "webcodex_command_start_failed",
                     "Could not start a safely owned WebCodex command",
                     "Check the Desktop binary directory and execution permissions.",
                 )
                 .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
-            },
-        )?;
+            })?;
 
     let stdout = match child.child_mut().stdout.take() {
         Some(stdout) => stdout,

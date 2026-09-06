@@ -40,6 +40,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(300);
 const READINESS_CLEANUP_SLACK: Duration = Duration::from_secs(2);
 const SHUTDOWN_OPERATION_WAIT: Duration = Duration::from_secs(5);
 const DESKTOP_STATE_MAX_BYTES: u64 = 256 * 1024;
+const DESKTOP_SERVER_ENV_MAX_BYTES: u64 = 256 * 1024;
+const DESKTOP_MCP_MODEL_SURFACE: &str = "adaptive-runtime-v1";
+const DESKTOP_MCP_COMPACT_SCHEMAS: &str = "true";
 static NEXT_STATE_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 type SharedSupervisor = Arc<Mutex<ProcessSupervisor>>;
@@ -151,7 +154,7 @@ impl AppState {
 
     pub async fn configure_local_setup(
         &self,
-        project_path: &str,
+        project_path: Option<&str>,
     ) -> DesktopResult<DesktopStateSnapshot> {
         let (operation, cancellation, mut core, baseline) = self
             .begin_operation(DesktopOperationKind::LocalSetup, true)
@@ -427,6 +430,7 @@ fn process_is_active(snapshot: Option<crate::process::ProcessSnapshot>) -> bool 
 
 pub struct DesktopCore {
     data_dir: PathBuf,
+    default_project_dir: PathBuf,
     config_path: PathBuf,
     config: StoredDesktopConfig,
     snapshot: DesktopStateSnapshot,
@@ -439,6 +443,7 @@ pub struct DesktopCore {
 impl DesktopCore {
     fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
         let activity = ActivityLog::default();
+        let default_project_dir = default_management_project_dir(&data_dir, &resource_dir);
         let config_path = data_dir.join("desktop-state.json");
         let config = load_config(&config_path, &activity)?;
         let mut snapshot = DesktopStateSnapshot::default();
@@ -451,6 +456,7 @@ impl DesktopCore {
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
         Ok(Self {
             data_dir,
+            default_project_dir,
             config_path,
             config,
             snapshot,
@@ -722,20 +728,20 @@ impl DesktopCore {
             .config
             .project
             .as_ref()
-            .map(|project| project.path.clone())
-            .ok_or_else(|| {
-                DesktopError::new(
-                    "project_not_ready",
-                    "The saved Desktop runtime no longer has a project selection",
-                    "Choose a project or change the Desktop runtime setup.",
-                )
-            })?;
+            .map(|project| project.path.clone());
         match topology.server {
             ServerTopology::Local => {
-                self.configure_local_setup(&project_path, cancellation)
+                self.configure_local_setup(project_path.as_deref(), cancellation)
                     .await
             }
             ServerTopology::Remote { url } => {
+                let project_path = project_path.ok_or_else(|| {
+                    DesktopError::new(
+                        "project_not_ready",
+                        "The saved remote Desktop runtime no longer has a project selection",
+                        "Choose a project or change the Desktop runtime setup.",
+                    )
+                })?;
                 self.configure_remote_setup(&url, "", &project_path, cancellation)
                     .await
             }
@@ -760,11 +766,35 @@ impl DesktopCore {
 
     pub async fn configure_local_setup(
         &mut self,
-        project_path: &str,
+        project_path: Option<&str>,
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
-        let project = self.adapter.inspect_project(project_path).await?;
+        let project = match project_path.map(str::trim).filter(|path| !path.is_empty()) {
+            Some(path) => self.adapter.inspect_project(path).await?,
+            None => {
+                tokio::fs::create_dir_all(&self.default_project_dir)
+                    .await
+                    .map_err(|error| {
+                        DesktopError::new(
+                            "default_project_unavailable",
+                            "Desktop could not prepare its default management project",
+                            "Check that the WebCodex Desktop install directory is writable, or choose another project from Change runtime mode.",
+                        )
+                        .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+                    })?;
+                let mut project = self
+                    .adapter
+                    .inspect_project(&self.default_project_dir.to_string_lossy())
+                    .await?;
+                // The automatically registered management project should not
+                // also grant authority to register sibling installation folders.
+                // Equality is a valid allowed-root boundary, so keep this
+                // implicit setup scoped to the installation directory itself.
+                project.allowed_root = project.path.clone();
+                project
+            }
+        };
         cancellation.check()?;
         let binaries = self.adapter.ensure_binaries(cancellation).await?.clone();
         self.snapshot.binaries = Some(binaries.info());
@@ -803,16 +833,19 @@ impl DesktopCore {
         cancellation.check()?;
 
         let server_url = if env_file.is_file() {
+            ensure_desktop_server_defaults(&env_file)?;
             self.adapter
                 .server_status(None, Some(&env_file), None, cancellation)
                 .await?
                 .probe_url
         } else {
             let listen = reserve_loopback_address()?;
-            self.adapter
+            let status = self
+                .adapter
                 .init_local_server(&listen, &data_dir, &env_file, cancellation)
-                .await?
-                .probe_url
+                .await?;
+            ensure_desktop_server_defaults(&env_file)?;
+            status.probe_url
         };
         let reusable_identity = identity_from_config(&self.config).filter(|identity| {
             same_server(&identity.server_url, &server_url)
@@ -882,8 +915,8 @@ impl DesktopCore {
         self.snapshot.readiness.server = ServerReadiness::Ready;
         self.publish_snapshot();
 
-        let identity = match reusable_identity {
-            Some(identity) => identity,
+        let (identity, identity_replaced) = match reusable_identity {
+            Some(identity) => (identity, false),
             None => {
                 let pairing_code = self
                     .adapter
@@ -903,16 +936,24 @@ impl DesktopCore {
                 self.store_identity(&project, &identity, Some(env_file.clone()))
                     .await?;
                 cancellation.check()?;
-                identity
+                (identity, true)
             }
         };
 
         let runner_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
-        let runner_ready = self
-            .adapter
-            .runner_ready_until(&identity, cancellation, runner_deadline)
-            .await
-            .unwrap_or(false);
+        let runner_ready = if identity_replaced {
+            // A fresh Desktop enrollment may reuse the same client_id while
+            // changing the Runner token or project registry. An older owned
+            // Runner with that client_id is not proof that this exact config is
+            // active, so force replacement instead of accepting stale online
+            // status.
+            false
+        } else {
+            self.adapter
+                .runner_ready_until(&identity, cancellation, runner_deadline)
+                .await
+                .unwrap_or(false)
+        };
         cancellation.check()?;
         let runner_started = if !runner_ready {
             if runner_deadline.is_elapsed() {
@@ -1005,35 +1046,36 @@ impl DesktopCore {
         );
         self.publish_snapshot();
 
-        let identity = match identity_from_config(&self.config).filter(|identity| {
-            same_server(&identity.server_url, &server_url)
-                && same_project(&identity.project_path, &project.path)
-        }) {
-            Some(identity) => identity,
-            None => {
-                if !pairing_code.starts_with("wc_pair_") {
-                    return Err(DesktopError::new(
-                        "pairing_code_invalid",
-                        "The one-time login code is not a WebCodex pairing code",
-                        "Enter the wc_pair_… code issued by the existing Server.",
-                    ));
+        let (identity, identity_replaced) =
+            match identity_from_config(&self.config).filter(|identity| {
+                same_server(&identity.server_url, &server_url)
+                    && same_project(&identity.project_path, &project.path)
+            }) {
+                Some(identity) => (identity, false),
+                None => {
+                    if !pairing_code.starts_with("wc_pair_") {
+                        return Err(DesktopError::new(
+                            "pairing_code_invalid",
+                            "The one-time login code is not a WebCodex pairing code",
+                            "Enter the wc_pair_… code issued by the existing Server.",
+                        ));
+                    }
+                    let identity = self
+                        .adapter
+                        .login_with_pairing(
+                            &server_url,
+                            pairing_code,
+                            &self.data_dir.join("connections"),
+                            &project,
+                            cancellation,
+                        )
+                        .await?;
+                    self.config.topology = Some(topology.clone());
+                    self.store_identity(&project, &identity, None).await?;
+                    cancellation.check()?;
+                    (identity, true)
                 }
-                let identity = self
-                    .adapter
-                    .login_with_pairing(
-                        &server_url,
-                        pairing_code,
-                        &self.data_dir.join("connections"),
-                        &project,
-                        cancellation,
-                    )
-                    .await?;
-                self.config.topology = Some(topology.clone());
-                self.store_identity(&project, &identity, None).await?;
-                cancellation.check()?;
-                identity
-            }
-        };
+            };
 
         let server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
         let server_status = match self
@@ -1069,11 +1111,14 @@ impl DesktopCore {
             ));
         }
         let runner_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
-        let runner_ready = self
-            .adapter
-            .runner_ready_until(&identity, cancellation, runner_deadline)
-            .await
-            .unwrap_or(false);
+        let runner_ready = if identity_replaced {
+            false
+        } else {
+            self.adapter
+                .runner_ready_until(&identity, cancellation, runner_deadline)
+                .await
+                .unwrap_or(false)
+        };
         cancellation.check()?;
         let runner_started = if !runner_ready {
             if runner_deadline.is_elapsed() {
@@ -1384,7 +1429,7 @@ impl DesktopCore {
             return Err(DesktopError::new(
                 "runtime_not_ready",
                 "Local WebCodex runtime is not ready",
-                "Restore the Server, Runner, and project readiness before starting the secure tunnel.",
+                "Restore the Server and Runner readiness before starting the secure tunnel.",
             ));
         }
         let runtime = self.config.runtime.clone().ok_or_else(|| {
@@ -1445,7 +1490,7 @@ impl DesktopCore {
             ServerReadiness::Ready,
             RunnerReadiness::Ready,
             ExposureReadiness::Starting,
-            ProjectReadiness::Ready,
+            current.readiness.project.clone(),
         );
         self.activity.push(
             ActivityEventKind::RegularTunnelStarting,
@@ -1506,7 +1551,7 @@ impl DesktopCore {
                     ServerReadiness::Ready,
                     RunnerReadiness::Ready,
                     ExposureReadiness::Error,
-                    ProjectReadiness::Ready,
+                    current.readiness.project.clone(),
                 );
                 apply_regular_tunnel_next_action(&mut self.snapshot, &ExposureReadiness::Error);
                 return Err(DesktopError::new(
@@ -1566,7 +1611,7 @@ impl DesktopCore {
             ServerReadiness::Ready,
             RunnerReadiness::Ready,
             exposure.clone(),
-            ProjectReadiness::Ready,
+            current.readiness.project.clone(),
         );
         apply_regular_tunnel_next_action(&mut self.snapshot, &exposure);
         self.snapshot.topology = effective_topology(self.config.topology.as_ref(), true);
@@ -1933,6 +1978,72 @@ fn readiness_timeout_error(
 ) -> DesktopError {
     DesktopError::new(code, message, action)
         .with_details(serde_json::json!({ "category": "readiness_timeout" }))
+}
+
+// These are Desktop packaging defaults, not process-environment overrides.
+// The Server loads its env file only into keys that are absent from the process
+// environment, so the effective precedence remains built-in defaults < this
+// config file < explicit environment variables.
+fn ensure_desktop_server_defaults(path: &Path) -> DesktopResult<()> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        desktop_state_unavailable("Desktop could not inspect its local Server configuration")
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    if !metadata.is_file() || metadata.len() > DESKTOP_SERVER_ENV_MAX_BYTES {
+        return Err(desktop_state_unavailable(
+            "Desktop local Server configuration is not a bounded regular file",
+        ));
+    }
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        desktop_state_unavailable("Desktop could not read its local Server configuration")
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    let has_key = |key: &str| {
+        content.lines().any(|line| {
+            let line = line.trim();
+            let line = line.strip_prefix("export ").unwrap_or(line).trim();
+            line.split_once('=')
+                .is_some_and(|(candidate, _)| candidate.trim() == key)
+        })
+    };
+    let mut additions = Vec::new();
+    if !has_key("WEBCODEX_MCP_MODEL_SURFACE") {
+        additions.push(format!(
+            "WEBCODEX_MCP_MODEL_SURFACE={DESKTOP_MCP_MODEL_SURFACE}"
+        ));
+    }
+    if !has_key("WEBCODEX_MCP_COMPACT_SCHEMAS") {
+        additions.push(format!(
+            "WEBCODEX_MCP_COMPACT_SCHEMAS={DESKTOP_MCP_COMPACT_SCHEMAS}"
+        ));
+    }
+    if additions.is_empty() {
+        return Ok(());
+    }
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(|error| {
+            desktop_state_unavailable("Desktop could not update its local Server configuration")
+                .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+        })?;
+    if !content.is_empty() && !content.ends_with('\n') {
+        file.write_all(b"\n").map_err(|error| {
+            desktop_state_unavailable("Desktop could not update its local Server configuration")
+                .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+        })?;
+    }
+    for addition in additions {
+        writeln!(file, "{addition}").map_err(|error| {
+            desktop_state_unavailable("Desktop could not update its local Server configuration")
+                .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+        })?;
+    }
+    file.flush().map_err(|error| {
+        desktop_state_unavailable("Desktop could not update its local Server configuration")
+            .with_details(serde_json::json!({ "io_kind": format!("{:?}", error.kind()) }))
+    })?;
+    Ok(())
 }
 
 fn machine_event_overflow_error(event: &Value) -> DesktopError {
@@ -2384,6 +2495,28 @@ fn runtime_autostart(config: &StoredDesktopConfig) -> bool {
     })
 }
 
+fn default_management_project_dir(data_dir: &Path, resource_dir: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let _ = data_dir;
+        // The NSIS package is current-user scoped. Use the actual installation
+        // directory as the default management Project so a fresh Desktop is
+        // immediately manageable without asking the user to choose an unrelated
+        // source checkout first. This intentionally grants the Project the same
+        // install-directory authority the user has requested for Desktop
+        // configuration and maintenance.
+        return resource_dir.to_path_buf();
+    }
+    #[cfg(not(windows))]
+    {
+        // A macOS resource directory lives inside the signed app bundle and is
+        // not a mutable workspace. Keep the same management-project semantics
+        // in the per-user Desktop data directory there.
+        let _ = resource_dir;
+        data_dir.join("workspace")
+    }
+}
+
 fn preferred_connection(config: &StoredDesktopConfig) -> RegularConnectionPreference {
     config.preferred_connection.unwrap_or_default()
 }
@@ -2432,6 +2565,55 @@ fn same_project(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_management_project_uses_safe_platform_location() {
+        let data = PathBuf::from(r"C:\Users\test\AppData\Local\WebCodex");
+        let resources = PathBuf::from(r"D:\Apps\WebCodex Desktop");
+        let project = default_management_project_dir(&data, &resources);
+        #[cfg(windows)]
+        assert_eq!(project, resources);
+        #[cfg(not(windows))]
+        assert_eq!(project, data.join("workspace"));
+    }
+
+    #[test]
+    fn desktop_server_defaults_append_missing_values_and_preserve_explicit_config() {
+        let dir = unique_state_dir("server-defaults-explicit");
+        std::fs::create_dir_all(&dir).unwrap();
+        let env_file = dir.join("webcodex.env");
+        std::fs::write(
+            &env_file,
+            "WEBCODEX_TOKEN=secret\nWEBCODEX_MCP_COMPACT_SCHEMAS=false\n",
+        )
+        .unwrap();
+
+        ensure_desktop_server_defaults(&env_file).unwrap();
+        let once = std::fs::read_to_string(&env_file).unwrap();
+        assert!(once.contains("WEBCODEX_TOKEN=secret\n"));
+        assert!(once.contains("WEBCODEX_MCP_COMPACT_SCHEMAS=false\n"));
+        assert!(once.contains("WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1\n"));
+        assert_eq!(once.matches("WEBCODEX_MCP_COMPACT_SCHEMAS=").count(), 1);
+
+        ensure_desktop_server_defaults(&env_file).unwrap();
+        assert_eq!(std::fs::read_to_string(&env_file).unwrap(), once);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn desktop_server_defaults_add_both_values_to_fresh_server_env() {
+        let dir = unique_state_dir("server-defaults-fresh");
+        std::fs::create_dir_all(&dir).unwrap();
+        let env_file = dir.join("webcodex.env");
+        std::fs::write(&env_file, "WEBCODEX_ADDR=127.0.0.1:12345").unwrap();
+
+        ensure_desktop_server_defaults(&env_file).unwrap();
+        let content = std::fs::read_to_string(&env_file).unwrap();
+        assert!(content.starts_with("WEBCODEX_ADDR=127.0.0.1:12345\n"));
+        assert!(content.contains("WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1\n"));
+        assert!(content.contains("WEBCODEX_MCP_COMPACT_SCHEMAS=true\n"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn unique_state_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -2968,7 +3150,9 @@ mod tests {
         let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("test-resources"))
             .expect("create local dogfood state");
         let cancellation = CancellationContext::never();
-        let setup = core.configure_local_setup(&project, &cancellation).await;
+        let setup = core
+            .configure_local_setup(Some(&project), &cancellation)
+            .await;
         let snapshot = match setup {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -3012,7 +3196,7 @@ mod tests {
             .is_none());
 
         let restarted = core
-            .configure_local_setup(&project, &cancellation)
+            .configure_local_setup(Some(&project), &cancellation)
             .await
             .expect("restart local full setup without re-enrollment");
         assert_eq!(restarted.readiness.server, ServerReadiness::Ready);

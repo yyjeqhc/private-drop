@@ -13,6 +13,12 @@ pub struct ProjectRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalSetupRequest {
+    pub project_path: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteSetupRequest {
     pub server_url: String,
     pub pairing_code: String,
@@ -80,10 +86,12 @@ pub async fn inspect_project(
 
 #[tauri::command]
 pub async fn configure_local_setup(
-    request: ProjectRequest,
+    request: LocalSetupRequest,
     state: State<'_, AppState>,
 ) -> Result<DesktopStateSnapshot, DesktopError> {
-    state.configure_local_setup(&request.project_path).await
+    state
+        .configure_local_setup(request.project_path.as_deref())
+        .await
 }
 
 #[tauri::command]

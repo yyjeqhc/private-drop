@@ -18,9 +18,9 @@ export const desktopApi = {
     invoke<ProjectSelection>("inspect_project", {
       request: { projectPath },
     }),
-  configureLocal: (projectPath: string) =>
+  configureLocal: (projectPath?: string | null) =>
     invoke<DesktopState>("configure_local_setup", {
-      request: { projectPath },
+      request: { projectPath: projectPath ?? null },
     }),
   configureRemote: (
     serverUrl: string,

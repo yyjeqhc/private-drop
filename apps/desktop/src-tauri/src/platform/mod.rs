@@ -3,13 +3,14 @@ mod windows;
 
 use webcodex_process::SpawnOptions;
 
-pub fn managed_spawn_options() -> SpawnOptions {
+pub fn managed_spawn_options(silent_child_breakaway: bool) -> SpawnOptions {
     #[cfg(target_os = "windows")]
     {
-        return windows::managed_spawn_options();
+        return windows::managed_spawn_options(silent_child_breakaway);
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = silent_child_breakaway;
         SpawnOptions::new()
     }
 }

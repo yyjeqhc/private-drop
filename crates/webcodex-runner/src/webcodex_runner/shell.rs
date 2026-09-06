@@ -2593,6 +2593,14 @@ fn execute_configured_command(
         .stderr(Stdio::piped());
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());
+    } else {
+        // Never leak the Runner's own stdin into user subprocesses. Desktop
+        // deliberately keeps the Runner stdin pipe open as its parent-liveness
+        // lease; inheriting that handle lets grandchildren retain the lease and
+        // also gives ordinary no-input commands a long-lived parent pipe instead
+        // of an explicit EOF source. Structured commands with no stdin contract
+        // receive a closed/null input handle instead.
+        cmd.stdin(Stdio::null());
     }
     // ManagedChild owns the whole process tree: a private process group on
     // Unix, a kill-on-close Job Object on Windows. `child_mut()` below only

@@ -628,6 +628,22 @@ fn structured_process_supports_empty_args_and_bounded_stdin() {
     assert_eq!(with_stdin.result.stdout.as_deref(), Some(stdin));
 }
 
+#[cfg(windows)]
+#[test]
+fn structured_process_without_stdin_receives_eof_instead_of_runner_parent_lease() {
+    let cwd = tempfile::tempdir().unwrap();
+    let helper = process_argv_helper();
+    let result = run_direct_process(cwd.path(), &helper, &["stdin".to_string()], None, 2);
+    assert_eq!(
+        result.execution_state,
+        ShellCommandExecutionState::Completed,
+        "{:?}",
+        result.result
+    );
+    assert_eq!(result.result.exit_code, Some(0));
+    assert_eq!(result.result.stdout.as_deref(), Some(""));
+}
+
 #[test]
 fn structured_process_preserves_large_literal_argv_without_shell_parsing() {
     let cwd = tempfile::tempdir().unwrap();

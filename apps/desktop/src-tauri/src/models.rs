@@ -171,7 +171,7 @@ pub fn aggregate_readiness(
             "Runner is not connected".to_string(),
             Some("Start the Runner and wait for it to connect.".to_string()),
         )
-    } else if !matches!(project, ProjectReadiness::Ready) {
+    } else if project != ProjectReadiness::Ready {
         (
             ReadinessSummaryKind::ProjectNotReady,
             Some(ReadinessNextActionKind::AddOrReloadProject),
@@ -445,6 +445,7 @@ mod tests {
             ProjectReadiness::None,
         );
         assert!(!missing_project.runtime_ready);
+        assert!(!missing_project.ready_for_chatgpt);
 
         let local_only = aggregate_readiness(
             ServerReadiness::Ready,

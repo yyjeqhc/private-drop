@@ -349,20 +349,26 @@ impl WebCodexAdapter {
                     "Check local app-data permissions and retry.",
                 )
             })?;
+        let args = vec![
+            "login".into(),
+            server_url.into(),
+            "--code-stdin".into(),
+            "--dir".into(),
+            connections_dir.to_string_lossy().to_string(),
+            // Desktop owns this connection directory and may intentionally
+            // re-enroll the same device when its selected/default project
+            // changes. The one-shot pairing code remains the authority for the
+            // replacement; --overwrite never broadens Server authority.
+            "--overwrite".into(),
+            "--allowed-root".into(),
+            project.allowed_root.clone(),
+            "--project".into(),
+            project.path.clone(),
+            "--json".into(),
+        ];
         let output: LoginOutput = run_json(
             &webcodex,
-            &[
-                "login".into(),
-                server_url.into(),
-                "--code-stdin".into(),
-                "--dir".into(),
-                connections_dir.to_string_lossy().to_string(),
-                "--allowed-root".into(),
-                project.allowed_root.clone(),
-                "--project".into(),
-                project.path.clone(),
-                "--json".into(),
-            ],
+            &args,
             Some(pairing_code.as_bytes()),
             true,
             cancellation,
@@ -723,9 +729,9 @@ mod tests {
                 .iter()
                 .any(|(name, _)| name.to_str() == Some(key)));
         }
-        for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+        for key in ["http_proxy", "https_proxy"] {
             assert!(openai_env.iter().any(|(name, value)| {
-                name.to_str() == Some(key)
+                name.to_string_lossy().eq_ignore_ascii_case(key)
                     && value.and_then(|value| value.to_str()) == Some("http://127.0.0.1:7890")
             }));
         }

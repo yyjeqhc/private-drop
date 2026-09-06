@@ -46,12 +46,20 @@ export default function App() {
         const initial = await desktopApi.getState();
         if (cancelled) return;
         commitState(initial);
-        if (!initial.topology || initial.current_operation) return;
-        if (!initial.runtime_autostart || initial.topology.experience !== "full") return;
+        if (initial.current_operation) return;
+        const bootstrapLocal = !initial.topology;
+        const resumeExisting = Boolean(
+          initial.topology
+          && initial.runtime_autostart
+          && initial.topology.experience === "full",
+        );
+        if (!bootstrapLocal && !resumeExisting) return;
 
         setRefreshing(true);
         try {
-          let next = await desktopApi.resumeSavedRuntime();
+          let next = bootstrapLocal
+            ? await desktopApi.configureLocal(null)
+            : await desktopApi.resumeSavedRuntime();
           if (cancelled) return;
           commitState(next);
           if (shouldStartPreferredTunnel(next)) {
@@ -260,7 +268,9 @@ export default function App() {
             onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)}
           />
         ))}
-        {navigation === "projects" && <ProjectsPanel state={state} />}
+        {navigation === "projects" && (
+          <ProjectsPanel state={state} onConfigure={() => setShowSetup(true)} />
+        )}
         {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "settings" && <SettingsPanel state={state} onState={commitState} />}
