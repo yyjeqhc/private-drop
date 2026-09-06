@@ -912,6 +912,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         "total_matches",
         "truncated",
         "truncation_reason",
+        "continuation",
         "context_before",
         "context_after",
     ] {

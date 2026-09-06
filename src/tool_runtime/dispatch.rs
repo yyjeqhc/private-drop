@@ -11,7 +11,7 @@ use super::{
 };
 use crate::auth::AuthContext;
 use crate::tool_runtime::project_resolution::{ProjectResolverError, ResolvedProject};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// Add the Phase A lifecycle tuple to a definite pre-execution structured
 /// execution denial without changing generic denial helpers used by unrelated
@@ -206,42 +206,20 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
 
 pub(super) enum SearchModelProjection {
     None,
-    SingleDefault,
-    Batch { default_queries: Vec<bool> },
+    Single { default_timeout: bool },
+    Batch { default_timeouts: Vec<bool> },
 }
 
 impl SearchModelProjection {
     pub(super) fn capture(call: &ToolCall) -> Self {
         match call {
-            ToolCall::SearchProjectText {
-                pattern_mode,
-                result_mode,
-                timeout_secs,
-                context_before,
-                context_after,
-                ..
-            } if caller_uses_default_search_controls(
-                pattern_mode,
-                result_mode,
-                timeout_secs,
-                context_before,
-                context_after,
-            ) =>
-            {
-                Self::SingleDefault
-            }
+            ToolCall::SearchProjectText { timeout_secs, .. } => Self::Single {
+                default_timeout: caller_uses_default_search_timeout(timeout_secs),
+            },
             ToolCall::SearchProjectTexts { queries, .. } => Self::Batch {
-                default_queries: queries
+                default_timeouts: queries
                     .iter()
-                    .map(|query| {
-                        caller_uses_default_search_controls(
-                            &query.pattern_mode,
-                            &query.result_mode,
-                            &query.timeout_secs,
-                            &query.context_before,
-                            &query.context_after,
-                        )
-                    })
+                    .map(|query| caller_uses_default_search_timeout(&query.timeout_secs))
                     .collect(),
             },
             _ => Self::None,
@@ -277,64 +255,118 @@ impl BatchResponseBudgetProjection {
     }
 }
 
-fn caller_uses_default_search_controls(
-    pattern_mode: &Option<super::SearchPatternMode>,
-    result_mode: &Option<super::SearchResultMode>,
-    timeout_secs: &Option<i64>,
-    context_before: &Option<usize>,
-    context_after: &Option<usize>,
-) -> bool {
-    pattern_mode
+fn caller_uses_default_search_timeout(timeout_secs: &Option<i64>) -> bool {
+    timeout_secs
         .as_ref()
-        .is_none_or(|mode| matches!(mode, super::SearchPatternMode::Regex))
-        && result_mode
-            .as_ref()
-            .is_none_or(|mode| matches!(mode, super::SearchResultMode::Matches))
-        && timeout_secs
-            .as_ref()
-            .copied()
-            .unwrap_or(super::files::DEFAULT_SEARCH_TIMEOUT_SECS as i64)
-            == super::files::DEFAULT_SEARCH_TIMEOUT_SECS as i64
-        && context_before.as_ref().copied().unwrap_or(0) == 0
-        && context_after.as_ref().copied().unwrap_or(0) == 0
+        .copied()
+        .unwrap_or(super::files::DEFAULT_SEARCH_TIMEOUT_SECS as i64)
+        == super::files::DEFAULT_SEARCH_TIMEOUT_SECS as i64
 }
 
-/// Project an ordinary complete default text search down to its actual records.
-/// Session/event extraction sees the complete result before this model-facing
-/// pass. Fallbacks, partial results, non-default modes, timeouts, and context
-/// requests stay explicit. Batch defaults may inherit a smaller remaining
-/// timeout from the shared outer deadline without making that derived value
-/// model-relevant.
-pub(crate) fn sparsify_complete_default_search_output(
+fn sparsify_search_match_items(output: &mut serde_json::Map<String, Value>) {
+    let Some(matches) = output.get_mut("matches").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for item in matches {
+        let Some(item) = item.as_object_mut() else {
+            continue;
+        };
+        for key in ["context_before", "context_after"] {
+            if item
+                .get(key)
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            {
+                item.remove(key);
+            }
+        }
+        let path = item.get("path").and_then(Value::as_str).map(str::to_string);
+        let Some(read_hint) = item.get_mut("read_hint").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if path
+            .as_deref()
+            .is_some_and(|path| read_hint.get("path").and_then(Value::as_str) == Some(path))
+        {
+            read_hint.remove("path");
+        }
+    }
+}
+
+fn add_search_refinement_continuation(output: &mut serde_json::Map<String, Value>) {
+    if output.get("truncated").and_then(Value::as_bool) != Some(true)
+        || !matches!(
+            output.get("truncation_reason").and_then(Value::as_str),
+            Some("limit" | "output_bytes")
+        )
+    {
+        return;
+    }
+    output.entry("continuation".to_string()).or_insert_with(|| {
+        json!({
+            "kind": "refine_query",
+            "safe_cursor": false,
+            "refine_with": ["path", "include_globs", "pattern", "result_mode", "limit"]
+        })
+    });
+}
+
+/// Project successful text-search presentation after Session/event consumers
+/// have seen canonical evidence. Complete rg results keep only mode-relevant
+/// records and explicit non-default controls. Fallback/truncated successes retain
+/// diagnostic metadata; match items still drop only empty context and duplicate
+/// read-hint paths. A default batch timeout may shrink under the shared absolute
+/// deadline without making that derived value model-relevant.
+pub(crate) fn sparsify_search_output_for_model(
     output: &mut serde_json::Map<String, Value>,
+    default_timeout: bool,
     allow_batch_deadline_reduction: bool,
 ) -> bool {
-    let Some(matches_len) = output
-        .get("matches")
-        .and_then(Value::as_array)
-        .map(Vec::len)
-    else {
-        return false;
-    };
+    sparsify_search_match_items(output);
+    add_search_refinement_continuation(output);
+
     let exit_code = output.get("exit_code").and_then(Value::as_i64);
-    let effective_timeout = output.get("effective_timeout_secs").and_then(Value::as_u64);
-    let default_timeout = if allow_batch_deadline_reduction {
-        effective_timeout.is_some_and(|timeout| {
-            (1..=super::files::DEFAULT_SEARCH_TIMEOUT_SECS).contains(&timeout)
-        })
-    } else {
-        effective_timeout == Some(super::files::DEFAULT_SEARCH_TIMEOUT_SECS)
+    let result_mode = output
+        .get("result_mode")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mode_consistent = match result_mode.as_deref() {
+        Some("matches") => output
+            .get("matches")
+            .and_then(Value::as_array)
+            .is_some_and(|matches| {
+                output.get("count").and_then(Value::as_u64) == Some(matches.len() as u64)
+            }),
+        Some("files_with_matches") => {
+            output
+                .get("files")
+                .and_then(Value::as_array)
+                .is_some_and(|files| {
+                    output.get("returned_file_count").and_then(Value::as_u64)
+                        == Some(files.len() as u64)
+                })
+        }
+        Some("count") => output
+            .get("files")
+            .and_then(Value::as_array)
+            .is_some_and(|files| {
+                output.get("returned_file_count").and_then(Value::as_u64)
+                    == Some(files.len() as u64)
+                    && output.get("count_complete").and_then(Value::as_bool) == Some(true)
+                    && output.get("returned_match_count").and_then(Value::as_u64)
+                        == output.get("total_matches").and_then(Value::as_u64)
+            }),
+        _ => false,
     };
     let ordinary_complete = output.get("backend").and_then(Value::as_str) == Some("rg")
-        && output.get("pattern_mode").and_then(Value::as_str) == Some("regex")
-        && output.get("result_mode").and_then(Value::as_str) == Some("matches")
-        && default_timeout
-        && output.get("context_before").and_then(Value::as_u64) == Some(0)
-        && output.get("context_after").and_then(Value::as_u64) == Some(0)
+        && matches!(
+            output.get("pattern_mode").and_then(Value::as_str),
+            Some("regex" | "literal")
+        )
+        && mode_consistent
         && output.get("truncated").and_then(Value::as_bool) == Some(false)
         && output.get("truncation_reason").is_some_and(Value::is_null)
-        && matches!(exit_code, Some(0 | 1))
-        && output.get("count").and_then(Value::as_u64) == Some(matches_len as u64);
+        && matches!(exit_code, Some(0 | 1));
     if !ordinary_complete {
         return false;
     }
@@ -343,17 +375,53 @@ pub(crate) fn sparsify_complete_default_search_output(
         "project",
         "pattern",
         "backend",
-        "result_mode",
-        "pattern_mode",
-        "effective_timeout_secs",
         "exit_code",
-        "context_before",
-        "context_after",
-        "count",
         "truncated",
         "truncation_reason",
     ] {
         output.remove(key);
+    }
+    if output.get("pattern_mode").and_then(Value::as_str) == Some("regex") {
+        output.remove("pattern_mode");
+    }
+    match result_mode.as_deref() {
+        Some("matches") => {
+            output.remove("result_mode");
+            output.remove("count");
+        }
+        Some("files_with_matches") => {
+            output.remove("returned_file_count");
+        }
+        Some("count") => {
+            output.remove("returned_file_count");
+            output.remove("returned_match_count");
+            output.remove("count_complete");
+            if output
+                .get("files")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            {
+                output.remove("files");
+            }
+        }
+        _ => {}
+    }
+    for key in ["context_before", "context_after"] {
+        if output.get(key).and_then(Value::as_u64) == Some(0) {
+            output.remove(key);
+        }
+    }
+    let effective_timeout = output.get("effective_timeout_secs").and_then(Value::as_u64);
+    let timeout_is_boring_default = default_timeout
+        && if allow_batch_deadline_reduction {
+            effective_timeout.is_some_and(|timeout| {
+                (1..=super::files::DEFAULT_SEARCH_TIMEOUT_SECS).contains(&timeout)
+            })
+        } else {
+            effective_timeout == Some(super::files::DEFAULT_SEARCH_TIMEOUT_SECS)
+        };
+    if timeout_is_boring_default {
+        output.remove("effective_timeout_secs");
     }
     if output.get("path").and_then(Value::as_str) == Some(".") {
         output.remove("path");
@@ -361,7 +429,7 @@ pub(crate) fn sparsify_complete_default_search_output(
     true
 }
 
-pub(super) fn sparsify_complete_default_search_success(
+pub(super) fn sparsify_search_success_for_model(
     projection: &SearchModelProjection,
     result: &mut ToolResult,
 ) {
@@ -372,10 +440,10 @@ pub(super) fn sparsify_complete_default_search_success(
         return;
     };
     match projection {
-        SearchModelProjection::SingleDefault => {
-            sparsify_complete_default_search_output(output, false);
+        SearchModelProjection::Single { default_timeout } => {
+            sparsify_search_output_for_model(output, *default_timeout, false);
         }
-        SearchModelProjection::Batch { default_queries } => {
+        SearchModelProjection::Batch { default_timeouts } => {
             let complete_batch =
                 output
                     .get("items")
@@ -413,14 +481,18 @@ pub(super) fn sparsify_complete_default_search_success(
                 let Some(index) = item.get("index").and_then(Value::as_u64) else {
                     continue;
                 };
-                if default_queries.get(index as usize).copied() != Some(true) {
-                    continue;
-                }
                 let Some(search_output) = item.get_mut("output").and_then(Value::as_object_mut)
                 else {
                     continue;
                 };
-                sparsify_complete_default_search_output(search_output, true);
+                sparsify_search_output_for_model(
+                    search_output,
+                    default_timeouts
+                        .get(index as usize)
+                        .copied()
+                        .unwrap_or(false),
+                    true,
+                );
             }
             if complete_batch {
                 for key in [
@@ -440,13 +512,13 @@ pub(super) fn sparsify_complete_default_search_success(
     }
 }
 
-pub(crate) fn sparsify_complete_default_search_batch_success(
-    default_queries: &[bool],
+pub(crate) fn sparsify_search_batch_success_for_model(
+    default_timeouts: &[bool],
     result: &mut ToolResult,
 ) {
-    sparsify_complete_default_search_success(
+    sparsify_search_success_for_model(
         &SearchModelProjection::Batch {
-            default_queries: default_queries.to_vec(),
+            default_timeouts: default_timeouts.to_vec(),
         },
         result,
     );
@@ -1344,24 +1416,26 @@ impl ToolRuntime {
                 super::read_files::enforce_final_model_facing_hard_cap(&mut result);
             }
             BatchResponseBudgetProjection::SearchProjectTexts { max_result_bytes } => {
-                let default_queries = match &search_projection {
-                    SearchModelProjection::Batch { default_queries } => default_queries.as_slice(),
+                let default_timeouts = match &search_projection {
+                    SearchModelProjection::Batch { default_timeouts } => {
+                        default_timeouts.as_slice()
+                    }
                     _ => &[],
                 };
                 super::search_project_texts::apply_model_facing_output_budget(
                     &mut result,
-                    default_queries,
+                    default_timeouts,
                     *max_result_bytes,
                 );
                 super::search_project_texts::enforce_final_model_facing_hard_cap(
                     &mut result,
-                    default_queries,
+                    default_timeouts,
                 );
             }
         }
         sparsify_terminal_structured_execution_success(tool_name, &mut result);
         if !defer_batch_sparsification {
-            sparsify_complete_default_search_success(&search_projection, &mut result);
+            sparsify_search_success_for_model(&search_projection, &mut result);
             sparsify_complete_read_success(tool_name, &mut result);
         }
         result

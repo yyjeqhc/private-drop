@@ -199,6 +199,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 }),
             ),
             (
+                "continuation",
+                search_refinement_continuation_schema(),
+            ),
+            (
                 "exit_code",
                 nullable_schema("integer", "Search command exit code, when available."),
             ),
@@ -314,6 +318,29 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     }
 }
 
+fn search_refinement_continuation_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Model-facing recovery hint for a single truncated query. Search match order is not a stable cursor, so this requires query refinement rather than offset paging.",
+        "properties": {
+            "kind": {"type": "string", "const": "refine_query"},
+            "safe_cursor": {"type": "boolean", "const": false},
+            "refine_with": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "uniqueItems": true,
+                "items": {
+                    "type": "string",
+                    "enum": ["path", "include_globs", "pattern", "result_mode", "limit"]
+                }
+            }
+        },
+        "required": ["kind", "safe_cursor", "refine_with"]
+    })
+}
+
 fn search_project_texts_output_schema() -> Value {
     let search_success_properties = json!({
         "path": schema_type("string", "Effective project-relative search root; omitted for the default project root in sparse complete matches success."),
@@ -337,7 +364,8 @@ fn search_project_texts_output_schema() -> Value {
                 {"type": "string", "enum": ["limit", "output_bytes", "timeout", "transport"]},
                 {"type": "null"}
             ]
-        }
+        },
+        "continuation": search_refinement_continuation_schema()
     });
     let search_success_full = json!({
         "type": "object",
@@ -353,13 +381,53 @@ fn search_project_texts_output_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "path": search_success_properties["path"].clone(),
+            "pattern_mode": {"type": "string", "const": "literal"},
+            "effective_timeout_secs": search_success_properties["effective_timeout_secs"].clone(),
+            "context_before": search_success_properties["context_before"].clone(),
+            "context_after": search_success_properties["context_after"].clone(),
             "matches": search_success_properties["matches"].clone()
         },
         "required": ["matches"],
-        "description": "Sparse model-facing form for ordinary complete rg matches-mode success under the default timeout and zero context. Omitted metadata means the documented boring defaults."
+        "description": "Sparse model-facing form for complete rg matches-mode success. Literal mode, custom timeout, non-root path, and requested context counts remain explicit; boring defaults are omitted."
+    });
+    let search_success_sparse_files = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "path": search_success_properties["path"].clone(),
+            "result_mode": {"type": "string", "const": "files_with_matches"},
+            "pattern_mode": {"type": "string", "const": "literal"},
+            "effective_timeout_secs": search_success_properties["effective_timeout_secs"].clone(),
+            "context_before": search_success_properties["context_before"].clone(),
+            "context_after": search_success_properties["context_after"].clone(),
+            "files": search_success_properties["files"].clone()
+        },
+        "required": ["result_mode", "files"],
+        "description": "Sparse model-facing form for complete rg files_with_matches success; files are the primary result and redundant returned-file counts are omitted."
+    });
+    let search_success_sparse_count = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "path": search_success_properties["path"].clone(),
+            "result_mode": {"type": "string", "const": "count"},
+            "pattern_mode": {"type": "string", "const": "literal"},
+            "effective_timeout_secs": search_success_properties["effective_timeout_secs"].clone(),
+            "context_before": search_success_properties["context_before"].clone(),
+            "context_after": search_success_properties["context_after"].clone(),
+            "files": search_success_properties["files"].clone(),
+            "total_matches": {"type": "integer", "minimum": 0}
+        },
+        "required": ["result_mode", "total_matches"],
+        "description": "Sparse model-facing form for complete rg count success. total_matches is authoritative; optional files retain bounded per-path grouping and redundant count bookkeeping is omitted."
     });
     let search_success = json!({
-        "anyOf": [search_success_full, search_success_sparse_matches]
+        "anyOf": [
+            search_success_full,
+            search_success_sparse_matches,
+            search_success_sparse_files,
+            search_success_sparse_count
+        ]
     });
     let search_failure = json!({
         "type": "object",

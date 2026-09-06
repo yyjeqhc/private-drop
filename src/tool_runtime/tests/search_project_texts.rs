@@ -3,6 +3,7 @@
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{RunnerPollRequest, RunnerRequest, RunnerResultRequest};
+use crate::tool_runtime::files::{search_project_text_output, SearchOptions, SearchRequest};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -113,6 +114,359 @@ async fn run_single_agent_batch_response(
     let result = task.await.unwrap();
     assert_no_agent_request(&runtime, client_id).await;
     result
+}
+
+fn canonical_search_result(
+    pattern: &str,
+    pattern_mode: Option<SearchPatternMode>,
+    result_mode: SearchResultMode,
+    limit: usize,
+    context_before: usize,
+    context_after: usize,
+    stdout: &str,
+    exit_code: i32,
+) -> ToolResult {
+    let options = SearchOptions::normalize_with_pattern_mode(
+        SearchRequest {
+            pattern: pattern.to_string(),
+            path: None,
+            limit: Some(limit),
+            context_before: Some(context_before),
+            context_after: Some(context_after),
+            include_globs: None,
+            exclude_globs: None,
+            result_mode: Some(result_mode),
+            timeout_secs: None,
+        },
+        pattern_mode,
+    )
+    .expect("canonical search options");
+    search_project_text_output("demo", &options, stdout, Some(exit_code), "")
+}
+
+fn project_single_search(canonical: &ToolResult) -> ToolResult {
+    let mut projected = ToolResult::ok(canonical.output.clone());
+    let output = projected
+        .output
+        .as_object_mut()
+        .expect("canonical search output object");
+    crate::tool_runtime::dispatch::sparsify_search_output_for_model(output, true, false);
+    projected
+}
+
+fn serialized_output_bytes(result: &ToolResult) -> usize {
+    serde_json::to_vec(&result.output).unwrap().len()
+}
+
+#[test]
+fn search_project_text_model_projection_compacts_default_matches_and_measures_bytes() {
+    let marker = "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
+    let one_stdout = format!("{marker}src/foo.rs:123:needle\n");
+    let one = canonical_search_result(
+        "needle",
+        None,
+        SearchResultMode::Matches,
+        20,
+        0,
+        0,
+        &one_stdout,
+        0,
+    );
+    assert!(one.success, "{:?}", one.error);
+    assert_eq!(one.output["matches"][0]["context_before"], json!([]));
+    assert_eq!(one.output["matches"][0]["context_after"], json!([]));
+    assert_eq!(one.output["matches"][0]["read_hint"]["path"], "src/foo.rs");
+    let one_sparse = project_single_search(&one);
+    let one_match = &one_sparse.output["matches"][0];
+    assert_eq!(one_match["path"], "src/foo.rs");
+    assert_eq!(one_match["line"], 123);
+    assert_eq!(one_match["preview"], "needle");
+    assert!(one_match.get("context_before").is_none());
+    assert!(one_match.get("context_after").is_none());
+    assert!(one_match["read_hint"].get("path").is_none());
+    assert_eq!(one_match["read_hint"]["start_line"], 103);
+    assert_eq!(one_match["read_hint"]["limit"], 80);
+    for omitted in [
+        "project",
+        "pattern",
+        "backend",
+        "result_mode",
+        "pattern_mode",
+        "effective_timeout_secs",
+        "exit_code",
+        "context_before",
+        "context_after",
+        "count",
+        "truncated",
+        "truncation_reason",
+    ] {
+        assert!(
+            one_sparse.output.get(omitted).is_none(),
+            "{omitted}: {}",
+            one_sparse.output
+        );
+    }
+    let one_canonical_bytes = serialized_output_bytes(&one);
+    let one_sparse_bytes = serialized_output_bytes(&one_sparse);
+    eprintln!(
+        "search_single_default_match_bytes canonical={one_canonical_bytes} sparse={one_sparse_bytes}"
+    );
+    assert!(one_sparse_bytes < one_canonical_bytes);
+
+    let mut ten_stdout = marker.to_string();
+    for index in 0..10 {
+        ten_stdout.push_str(&format!("src/foo.rs\0{}:needle-{index}\n", index + 1));
+    }
+    let ten = canonical_search_result(
+        "needle",
+        None,
+        SearchResultMode::Matches,
+        20,
+        0,
+        0,
+        &ten_stdout,
+        0,
+    );
+    assert!(ten.success, "{:?}", ten.error);
+    let ten_sparse = project_single_search(&ten);
+    let matches = ten_sparse.output["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 10);
+    for item in matches {
+        assert!(item.get("context_before").is_none());
+        assert!(item.get("context_after").is_none());
+        assert!(item["read_hint"].get("path").is_none());
+    }
+    let ten_canonical_bytes = serialized_output_bytes(&ten);
+    let ten_sparse_bytes = serialized_output_bytes(&ten_sparse);
+    eprintln!(
+        "search_ten_default_matches_bytes canonical={ten_canonical_bytes} sparse={ten_sparse_bytes}"
+    );
+    assert!(ten_sparse_bytes < ten_canonical_bytes);
+}
+
+#[test]
+fn search_project_text_model_projection_preserves_requested_context_and_unicode() {
+    let marker = "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
+    let stdout = format!(
+        "{marker}src/foo.rs\0{}-before 界\nsrc/foo.rs\0{}:target 界\nsrc/foo.rs\0{}-after 界\n",
+        122, 123, 124
+    );
+    let canonical = canonical_search_result(
+        "target",
+        None,
+        SearchResultMode::Matches,
+        20,
+        1,
+        1,
+        &stdout,
+        0,
+    );
+    assert!(canonical.success, "{:?}", canonical.error);
+    let sparse = project_single_search(&canonical);
+    assert_eq!(sparse.output["context_before"], 1);
+    assert_eq!(sparse.output["context_after"], 1);
+    let item = &sparse.output["matches"][0];
+    assert_eq!(item["line"], 123);
+    assert_eq!(item["preview"], "target 界");
+    assert_eq!(
+        item["context_before"],
+        json!([{"line": 122, "text": "before 界"}])
+    );
+    assert_eq!(
+        item["context_after"],
+        json!([{"line": 124, "text": "after 界"}])
+    );
+    assert!(item["read_hint"].get("path").is_none());
+    assert_eq!(item["read_hint"]["start_line"], 103);
+    assert!(sparse.output.get("backend").is_none());
+    assert!(sparse.output.get("truncated").is_none());
+
+    let canonical_bytes = serialized_output_bytes(&canonical);
+    let sparse_bytes = serialized_output_bytes(&sparse);
+    eprintln!("search_context_match_bytes canonical={canonical_bytes} sparse={sparse_bytes}");
+    assert!(sparse_bytes < canonical_bytes);
+}
+
+#[test]
+fn search_project_text_model_projection_compacts_files_count_and_guides_truncation() {
+    let marker = "{\"webcodex_search\":{\"backend\":\"rg\",\"feature_unavailable\":false}}\n";
+
+    let files_stdout = format!("{marker}src/a.rs\nsrc/b.rs\n");
+    let files = canonical_search_result(
+        "needle",
+        None,
+        SearchResultMode::FilesWithMatches,
+        20,
+        0,
+        0,
+        &files_stdout,
+        0,
+    );
+    let files_sparse = project_single_search(&files);
+    assert_eq!(files_sparse.output["result_mode"], "files_with_matches");
+    assert_eq!(
+        files_sparse.output["files"],
+        json!([{"path": "src/a.rs"}, {"path": "src/b.rs"}])
+    );
+    for omitted in [
+        "backend",
+        "returned_file_count",
+        "truncated",
+        "truncation_reason",
+        "context_before",
+        "context_after",
+    ] {
+        assert!(
+            files_sparse.output.get(omitted).is_none(),
+            "{omitted}: {}",
+            files_sparse.output
+        );
+    }
+    let files_canonical_bytes = serialized_output_bytes(&files);
+    let files_sparse_bytes = serialized_output_bytes(&files_sparse);
+    eprintln!(
+        "search_files_with_matches_bytes canonical={files_canonical_bytes} sparse={files_sparse_bytes}"
+    );
+    assert!(files_sparse_bytes < files_canonical_bytes);
+
+    let count_stdout = format!("{marker}src/a.rs:2\nsrc/b.rs:1\n");
+    let count = canonical_search_result(
+        "needle",
+        None,
+        SearchResultMode::Count,
+        20,
+        0,
+        0,
+        &count_stdout,
+        0,
+    );
+    let count_sparse = project_single_search(&count);
+    assert_eq!(count_sparse.output["result_mode"], "count");
+    assert_eq!(count_sparse.output["total_matches"], 3);
+    assert_eq!(
+        count_sparse.output["files"],
+        json!([
+            {"path": "src/a.rs", "match_count": 2},
+            {"path": "src/b.rs", "match_count": 1}
+        ])
+    );
+    for omitted in [
+        "backend",
+        "returned_file_count",
+        "returned_match_count",
+        "count_complete",
+        "truncated",
+        "truncation_reason",
+    ] {
+        assert!(
+            count_sparse.output.get(omitted).is_none(),
+            "{omitted}: {}",
+            count_sparse.output
+        );
+    }
+
+    let empty_count =
+        canonical_search_result("absent", None, SearchResultMode::Count, 20, 0, 0, marker, 1);
+    let empty_count_sparse = project_single_search(&empty_count);
+    assert_eq!(empty_count_sparse.output["result_mode"], "count");
+    assert_eq!(empty_count_sparse.output["total_matches"], 0);
+    assert!(empty_count_sparse.output.get("files").is_none());
+    assert!(empty_count_sparse.output.get("matches").is_none());
+
+    let truncated_stdout = format!("{marker}src/a.rs:1:first\nsrc/a.rs:2:second\n");
+    let truncated = canonical_search_result(
+        "needle",
+        None,
+        SearchResultMode::Matches,
+        1,
+        0,
+        0,
+        &truncated_stdout,
+        0,
+    );
+    assert_eq!(truncated.output["truncated"], true);
+    assert_eq!(truncated.output["truncation_reason"], "limit");
+    let truncated_sparse = project_single_search(&truncated);
+    assert_eq!(truncated_sparse.output["backend"], "rg");
+    assert_eq!(truncated_sparse.output["result_mode"], "matches");
+    assert_eq!(truncated_sparse.output["truncated"], true);
+    assert_eq!(truncated_sparse.output["truncation_reason"], "limit");
+    assert_eq!(
+        truncated_sparse.output["continuation"]["kind"],
+        "refine_query"
+    );
+    assert_eq!(
+        truncated_sparse.output["continuation"]["safe_cursor"],
+        false
+    );
+    assert!(truncated_sparse.output.get("next_index").is_none());
+    assert!(truncated_sparse.output.get("match_offset").is_none());
+    assert!(truncated_sparse.output.get("next_match").is_none());
+    assert!(truncated_sparse.output["matches"][0]["read_hint"]
+        .get("path")
+        .is_none());
+    assert!(truncated_sparse.output["matches"][0]
+        .get("context_before")
+        .is_none());
+    assert!(truncated_sparse.output["matches"][0]
+        .get("context_after")
+        .is_none());
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_text");
+    let serialized = serde_json::to_value(&truncated_sparse).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| {
+            panic!("truncated sparse search success must match schema: {error}")
+        });
+}
+
+#[tokio::test]
+async fn search_project_texts_four_query_projection_measures_canonical_vs_sparse_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-four-query-bytes";
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let queries = (0..4)
+        .map(|index| query(&format!("needle-{index}"), None))
+        .collect::<Vec<_>>();
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .search_project_texts("demo".to_string(), queries)
+                .await
+        }
+    });
+    for _ in 0..4 {
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
+        let pattern = request_pattern(&request);
+        complete_search_success(&runtime, client_id, &request, &format!("src/{pattern}.rs")).await;
+    }
+    let canonical = task.await.unwrap();
+    assert!(canonical.success, "{:?}", canonical.error);
+    assert_eq!(canonical.output["items"].as_array().unwrap().len(), 4);
+    assert_eq!(canonical.output["output_truncated"], false);
+    assert!(canonical.output["next_index"].is_null());
+
+    let mut sparse = ToolResult::ok(canonical.output.clone());
+    crate::tool_runtime::dispatch::sparsify_search_batch_success_for_model(&[true; 4], &mut sparse);
+    assert!(sparse.output.get("project").is_none());
+    assert!(sparse.output.get("requested_count").is_none());
+    assert!(sparse.output.get("next_index").is_none());
+    let items = sparse.output["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+    for item in items {
+        assert!(item["output"].get("backend").is_none());
+        let search_match = &item["output"]["matches"][0];
+        assert!(search_match.get("context_before").is_none());
+        assert!(search_match.get("context_after").is_none());
+        assert!(search_match["read_hint"].get("path").is_none());
+    }
+
+    let canonical_bytes = serialized_output_bytes(&canonical);
+    let sparse_bytes = serialized_output_bytes(&sparse);
+    eprintln!("search_four_query_batch_bytes canonical={canonical_bytes} sparse={sparse_bytes}");
+    assert!(sparse_bytes < canonical_bytes);
 }
 
 #[test]
@@ -394,7 +748,7 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
 }
 
 #[tokio::test]
-async fn search_project_text_nondefault_success_keeps_effective_metadata() {
+async fn search_project_text_nondefault_success_keeps_effective_selection_metadata() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-noteworthy-single";
@@ -433,15 +787,24 @@ async fn search_project_text_nondefault_success_keeps_effective_metadata() {
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["path"], "src");
-    assert_eq!(result.output["backend"], "rg");
-    assert_eq!(result.output["result_mode"], "matches");
-    assert_eq!(result.output["pattern_mode"], "regex");
     assert_eq!(result.output["effective_timeout_secs"], 5);
     assert_eq!(result.output["context_before"], 1);
-    assert_eq!(result.output["context_after"], 0);
-    assert_eq!(result.output["count"], 1);
-    assert_eq!(result.output["truncated"], false);
-    assert!(result.output["truncation_reason"].is_null());
+    assert_eq!(result.output["matches"].as_array().unwrap().len(), 1);
+    for omitted in [
+        "backend",
+        "result_mode",
+        "pattern_mode",
+        "context_after",
+        "count",
+        "truncated",
+        "truncation_reason",
+    ] {
+        assert!(
+            result.output.get(omitted).is_none(),
+            "{omitted}: {}",
+            result.output
+        );
+    }
 }
 
 #[tokio::test]
@@ -488,8 +851,13 @@ async fn search_project_text_literal_mode_keeps_effective_metadata() {
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["pattern_mode"], "literal");
-    assert_eq!(result.output["backend"], "rg");
+    assert!(result.output.get("backend").is_none());
     assert_eq!(result.output["matches"][0]["path"], "src/a.rs");
+    assert!(result.output["matches"][0].get("context_before").is_none());
+    assert!(result.output["matches"][0].get("context_after").is_none());
+    assert!(result.output["matches"][0]["read_hint"]
+        .get("path")
+        .is_none());
 }
 
 #[tokio::test]
@@ -534,7 +902,7 @@ async fn search_project_texts_literal_query_preserves_mode_to_runner_and_output(
         result.output["items"][0]["output"]["pattern_mode"],
         "literal"
     );
-    assert_eq!(result.output["items"][0]["output"]["backend"], "rg");
+    assert!(result.output["items"][0]["output"].get("backend").is_none());
 }
 
 #[tokio::test]
@@ -645,7 +1013,14 @@ async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid(
     for item in items {
         assert_eq!(item["success"], true);
         assert!(item["error"].is_null());
-        assert!(item["output"]["matches"].as_array().is_some());
+        let matches = item["output"]["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        let search_match = &matches[0];
+        assert!(search_match.get("context_before").is_none());
+        assert!(search_match.get("context_after").is_none());
+        assert!(search_match["read_hint"].get("path").is_none());
+        assert!(search_match["read_hint"]["start_line"].is_u64());
+        assert_eq!(search_match["read_hint"]["limit"], 80);
         for omitted in [
             "path",
             "backend",

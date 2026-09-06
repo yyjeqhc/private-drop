@@ -23,15 +23,31 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "default inspect/search tool",
         "rg-first",
         "grep fallback",
-        "structured output",
+        "pattern_mode=literal",
         "matches",
         "context",
-        "backend",
         "truncated",
+        "no safe match cursor",
+        "refine",
     ] {
         assert!(
             search_desc.contains(phrase),
             "search_project_text description should mention {phrase}: {search_desc}"
+        );
+    }
+
+    let batch_search_desc = desc("search_project_texts");
+    for phrase in [
+        "pattern_mode=literal",
+        "request context explicitly",
+        "whole-query",
+        "authoritative next_index",
+        "no safe match cursor",
+        "refined",
+    ] {
+        assert!(
+            batch_search_desc.contains(phrase),
+            "search_project_texts description should mention {phrase}: {batch_search_desc}"
         );
     }
 

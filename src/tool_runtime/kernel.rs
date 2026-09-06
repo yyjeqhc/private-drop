@@ -881,15 +881,15 @@ impl ToolRuntime {
                     super::read_files::enforce_final_model_facing_hard_cap(&mut result);
                 }
                 "search_project_texts" => {
-                    let default_queries = match &deferred_search_projection {
-                        super::dispatch::SearchModelProjection::Batch { default_queries } => {
-                            default_queries.as_slice()
+                    let default_timeouts = match &deferred_search_projection {
+                        super::dispatch::SearchModelProjection::Batch { default_timeouts } => {
+                            default_timeouts.as_slice()
                         }
                         _ => &[],
                     };
                     super::search_project_texts::enforce_final_model_facing_hard_cap(
                         &mut result,
-                        default_queries,
+                        default_timeouts,
                     );
                 }
                 _ => {}
@@ -898,7 +898,7 @@ impl ToolRuntime {
             // outer recording Session was pending. Only now, after final hard-cap
             // enforcement has accounted for continuity/recovery/handoff/attention,
             // project the response to the established sparse model-facing shape.
-            super::dispatch::sparsify_complete_default_search_success(
+            super::dispatch::sparsify_search_success_for_model(
                 &deferred_search_projection,
                 &mut result,
             );

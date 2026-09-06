@@ -3334,11 +3334,22 @@ async fn search_project_text_count_distinguishes_complete_and_truncated_totals()
     )
     .await;
     assert!(complete.success, "{:?}", complete.error);
-    assert_eq!(complete.output["returned_file_count"], 2);
-    assert_eq!(complete.output["returned_match_count"], 3);
-    assert_eq!(complete.output["count_complete"], true);
+    assert_eq!(complete.output["result_mode"], "count");
     assert_eq!(complete.output["total_matches"], 3);
-    assert_eq!(complete.output["truncated"], false);
+    for omitted in [
+        "backend",
+        "returned_file_count",
+        "returned_match_count",
+        "count_complete",
+        "truncated",
+        "truncation_reason",
+    ] {
+        assert!(
+            complete.output.get(omitted).is_none(),
+            "{omitted}: {}",
+            complete.output
+        );
+    }
     // Both files are present regardless of traversal order.
     let mut complete_files = complete.output["files"]
         .as_array()
@@ -3878,8 +3889,8 @@ async fn search_project_text_context_does_not_enqueue_python_helper() {
 
     assert!(result.success, "{:?}", result.error);
     assert!(matches!(
-        result.output["backend"].as_str(),
-        Some("rg" | "grep")
+        result.output.get("backend").and_then(Value::as_str),
+        None | Some("grep")
     ));
     assert_eq!(result.output["context_before"], 1);
     assert_eq!(result.output["context_after"], 1);

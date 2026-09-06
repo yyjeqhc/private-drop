@@ -103,7 +103,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
         ),
-        "Default inspect/search tool for project text. Uses rg-first with grep fallback. Regex is default; prefer pattern_mode=literal for exact identifiers, snippets, and paths. Supports matches/files_with_matches/count and context. Structured output reports backend, truncated, and failure metadata.",
+        "Default inspect/search tool for project text. Uses rg-first with grep fallback. Regex is default; prefer pattern_mode=literal for exact identifiers, snippets, and paths, and request context explicitly when needed. Supports matches/files_with_matches/count. A truncated single search has no safe match cursor: refine the query/path/globs/mode/limit instead of inventing an offset. Failure and fallback diagnostics remain explicit.",
         search_project_text_input_schema,
     )),
     adaptive_runtime_direct(
@@ -126,7 +126,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Run 1 to 8 independent project-text searches with isolated failures and at most two Runner requests in flight. Each query defaults to regex; prefer pattern_mode=literal for identifiers, snippets, paths, and exact text. Budget continuation is whole-query via next_index.",
+            "Run 1 to 8 independent project-text searches with isolated failures and at most two Runner requests in flight. Each query defaults to regex; prefer pattern_mode=literal for identifiers, snippets, paths, and exact text, and request context explicitly. Batch continuation is whole-query via authoritative next_index; an individual truncated query has no safe match cursor and should be refined instead.",
             search_project_texts_input_schema,
         )),
         40,

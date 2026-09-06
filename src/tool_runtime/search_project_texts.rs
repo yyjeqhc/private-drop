@@ -99,22 +99,19 @@ fn serialized_value_len(value: &Value) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-fn projected_batch_serialized_len(output: &Value, default_queries: &[bool]) -> usize {
+fn projected_batch_serialized_len(output: &Value, default_timeouts: &[bool]) -> usize {
     let mut projected = ToolResult::ok(output.clone());
-    super::dispatch::sparsify_complete_default_search_batch_success(
-        default_queries,
-        &mut projected,
-    );
+    super::dispatch::sparsify_search_batch_success_for_model(default_timeouts, &mut projected);
     serde_json::to_vec(&projected)
         .map(|bytes| bytes.len())
         .unwrap_or(usize::MAX)
 }
 
-fn projected_search_item_len(item: &Value, default_query: bool) -> usize {
+fn projected_search_item_len(item: &Value, default_timeout: bool) -> usize {
     let mut projected = item.clone();
-    if default_query && projected["success"].as_bool() == Some(true) {
+    if projected["success"].as_bool() == Some(true) {
         if let Some(output) = projected.get_mut("output").and_then(Value::as_object_mut) {
-            super::dispatch::sparsify_complete_default_search_output(output, true);
+            super::dispatch::sparsify_search_output_for_model(output, default_timeout, true);
         }
     }
     serialized_value_len(&projected)
@@ -135,7 +132,7 @@ fn apply_output_budget(
     project: &str,
     requested_count: usize,
     completed: Vec<Value>,
-    default_queries: &[bool],
+    default_timeouts: &[bool],
     max_result_bytes: Option<usize>,
 ) -> Value {
     let result_budget = normalized_result_budget(max_result_bytes);
@@ -151,7 +148,7 @@ fn apply_output_budget(
     // First evaluate the exact sparse model projection. Canonical search
     // metadata stays intact unless that final applicable projection itself
     // exceeds the response budget.
-    if projected_batch_serialized_len(&complete, default_queries) <= payload_budget {
+    if projected_batch_serialized_len(&complete, default_timeouts) <= payload_budget {
         return complete;
     }
 
@@ -169,7 +166,7 @@ fn apply_output_budget(
             Some(0),
             Some(truncation_reason),
         ),
-        default_queries,
+        default_timeouts,
     );
     let mut returned = Vec::with_capacity(completed.len());
     let mut returned_item_bytes = 0usize;
@@ -178,7 +175,7 @@ fn apply_output_budget(
     for item in completed {
         let index = item["index"].as_u64().unwrap_or(returned.len() as u64) as usize;
         let item_len =
-            projected_search_item_len(&item, default_queries.get(index).copied().unwrap_or(false));
+            projected_search_item_len(&item, default_timeouts.get(index).copied().unwrap_or(false));
         let candidate_item_count = returned.len() + 1;
         if projected_batch_len(
             base_len,
@@ -206,7 +203,7 @@ fn apply_output_budget(
         next_index,
         Some(truncation_reason),
     );
-    while projected_batch_serialized_len(&output, default_queries) > payload_budget {
+    while projected_batch_serialized_len(&output, default_timeouts) > payload_budget {
         let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
             break;
         };
@@ -383,7 +380,7 @@ fn batch_item(index: usize, mut result: ToolResult) -> Value {
 
 pub(crate) fn apply_model_facing_output_budget(
     result: &mut ToolResult,
-    default_queries: &[bool],
+    default_timeouts: &[bool],
     max_result_bytes: Option<usize>,
 ) {
     if !result.success {
@@ -414,7 +411,7 @@ pub(crate) fn apply_model_facing_output_budget(
         &project,
         requested_count,
         completed,
-        default_queries,
+        default_timeouts,
         max_result_bytes,
     );
     let Some(root) = result.output.as_object_mut() else {
@@ -440,12 +437,9 @@ pub(crate) fn apply_model_facing_output_budget(
     }
 }
 
-fn final_model_result_len(output: &Value, default_queries: &[bool]) -> usize {
+fn final_model_result_len(output: &Value, default_timeouts: &[bool]) -> usize {
     let mut projected = ToolResult::ok(output.clone());
-    super::dispatch::sparsify_complete_default_search_batch_success(
-        default_queries,
-        &mut projected,
-    );
+    super::dispatch::sparsify_search_batch_success_for_model(default_timeouts, &mut projected);
     serde_json::to_vec(&projected)
         .map(|bytes| bytes.len())
         .unwrap_or(usize::MAX)
@@ -486,10 +480,10 @@ fn mark_final_hard_cap_truncation(output: &mut Value, next_index: usize) {
 /// omitted query.
 pub(crate) fn enforce_final_model_facing_hard_cap(
     result: &mut ToolResult,
-    default_queries: &[bool],
+    default_timeouts: &[bool],
 ) {
     if !result.success
-        || final_model_result_len(&result.output, default_queries) <= MAX_SERIALIZED_OUTPUT_BYTES
+        || final_model_result_len(&result.output, default_timeouts) <= MAX_SERIALIZED_OUTPUT_BYTES
     {
         return;
     }
@@ -517,7 +511,7 @@ pub(crate) fn enforce_final_model_facing_hard_cap(
             removed["index"].as_u64().unwrap_or(0) as usize
         };
         mark_final_hard_cap_truncation(&mut result.output, removed_index);
-        if final_model_result_len(&result.output, default_queries) <= MAX_SERIALIZED_OUTPUT_BYTES {
+        if final_model_result_len(&result.output, default_timeouts) <= MAX_SERIALIZED_OUTPUT_BYTES {
             return;
         }
     }
@@ -693,10 +687,7 @@ mod tests {
             assert_eq!(actual["output"]["matches"], expected["output"]["matches"]);
         }
 
-        super::super::dispatch::sparsify_complete_default_search_batch_success(
-            &[true; 8],
-            &mut result,
-        );
+        super::super::dispatch::sparsify_search_batch_success_for_model(&[true; 8], &mut result);
         assert!(result.output.get("output_truncated").is_none());
         assert!(result.output.get("next_index").is_none());
         assert_eq!(result.output["items"].as_array().unwrap().len(), 8);

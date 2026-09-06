@@ -266,11 +266,11 @@ pub fn search_match_schema() -> Value {
     let context_lines = array_schema(search_context_line_schema(), "Context lines.");
     let read_hint = json!({
         "type": "object",
-        "description": "Ready-to-use read_file/read_files item for bounded expansion around this match. Reuse the same project; this hint performs no read and contains no additional file content.",
+        "description": "Ready-to-use bounded expansion range around this match. Reuse the outer match path and the same project; canonical results also repeat path here, while sparse model-facing results omit that duplicate path. This hint performs no read and contains no additional file content.",
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Same trusted project-relative file path as the match."
+                "description": "Same trusted project-relative file path as the match; omitted from sparse model-facing results when identical to the outer match path."
             },
             "start_line": {
                 "type": "integer",
@@ -283,12 +283,12 @@ pub fn search_match_schema() -> Value {
                 "description": "Deterministic bounded line count for read_file/read_files expansion."
             }
         },
-        "required": ["path", "start_line", "limit"],
+        "required": ["start_line", "limit"],
         "additionalProperties": false
     });
     json!({
         "type": "object",
-        "description": "Search match with path, 1-based line, preview, bounded context lines, and deterministic search-to-read continuation metadata.",
+        "description": "Search match with path, 1-based line, preview, optional requested context lines, and deterministic search-to-read continuation metadata. Canonical results include both context arrays even when empty; sparse model-facing results omit empty arrays only.",
         "properties": {
             "path": {
                 "type": "string",
@@ -306,7 +306,7 @@ pub fn search_match_schema() -> Value {
             "context_after": context_lines,
             "read_hint": read_hint,
         },
-        "required": ["path", "line", "preview", "context_before", "context_after", "read_hint"],
+        "required": ["path", "line", "preview", "read_hint"],
         "additionalProperties": true
     })
 }
