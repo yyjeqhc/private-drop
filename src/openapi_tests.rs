@@ -483,6 +483,12 @@ fn openapi_call_runtime_tool_lists_accepted_tool_names() {
     assert!(tool_desc.contains("document_diagnostics"));
     assert!(tool_desc.contains("hover"));
     assert!(tool_desc.contains("workspace_symbols"));
+    for hidden_extension in ["skill_list", "memory_search", "read_tool_trace"] {
+        assert!(
+            !tool_desc.contains(hidden_extension),
+            "generic OpenAPI callRuntimeTool must not advertise Stateless operator extension {hidden_extension}"
+        );
+    }
     let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
         .as_object()
         .unwrap();
