@@ -503,7 +503,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "applyUnifiedDiff",
                     "Apply a unified diff to a project",
-                    "External/raw unified-diff mutation only, with side effects; requires Bearer auth and Runner shell capability. Use when input is already a standard unified diff; model-generated edits should use callRuntimeTool with tool=apply_patch. Performs bounded preflight; failed preflight is zero-write and post-dispatch uncertainty requires workspace inspection.",
+                    "External/raw unified-diff mutation only, with side effects; requires Bearer auth and Runner shell capability. Use only when input is already a standard unified diff; ordinary model-generated edits should use callRuntimeTool with tool=apply_text_edits after reading the current file SHA, while contextual or large patch-shaped changes can use tool=apply_patch. Performs bounded preflight; failed preflight is zero-write and post-dispatch uncertainty requires workspace inspection.",
                     "ApplyUnifiedDiffRequest",
                     "ApplyUnifiedDiffToolResult",
                     json!({
@@ -635,10 +635,27 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool",
-                    "Generic/advanced route for model-visible runtime tools. Prefer dedicated actions when they match, except model-generated patch edits: GPT Actions use this operation with tool=apply_patch as the formal apply_patch route. Flatten tool args at top level; params is the canonical non-Action envelope; recording_session_id records wrapper calls.",
+                    "Generic/advanced route for model-visible runtime tools. Prefer dedicated actions when they match. For ordinary model-generated file edits after read_file/read_files, use tool=apply_text_edits with the current expected_sha256; use tool=apply_patch when a contextual or large patch-shaped change is clearer. Flatten tool args at top level; params is the canonical non-Action envelope; recording_session_id records wrapper calls.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
+                        "applyTextEdits": {
+                            "summary": "Apply a SHA-guarded edit after reading the current file",
+                            "value": {
+                                "tool": "apply_text_edits",
+                                "project": "webcodex",
+                                "changes": [{
+                                    "kind": "edit",
+                                    "path": "README.md",
+                                    "expected_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                                    "edits": [{
+                                        "kind": "replace_exact",
+                                        "old_text": "# WebCodex",
+                                        "new_text": "# WebCodex Runtime"
+                                    }]
+                                }]
+                            }
+                        },
                         "applyPatch": {
                             "summary": "Apply a model-generated Codex patch",
                             "value": {

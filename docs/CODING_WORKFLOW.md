@@ -67,7 +67,7 @@ For branch/PR review, start with the bounded review/change-summary tools exposed
 
 ## Editing
 
-Use `apply_patch` as the default model-generated editing path. Its default `matching_mode=unique` tolerates bounded whitespace/Unicode drift but writes only when the actual mutation target is unique; a repeated `@@` anchor alone is not an ambiguity when the old lines still identify one target. Use `matching_mode=exact_unique` only as an explicit stale-context/concurrency fence after reading exact current source. Use `apply_text_edits` for small exact SHA-guarded edits and `apply_unified_diff` when the input is already a unified diff.
+Use `apply_text_edits` as the default model-generated editing path after `read_file`/`read_files` when current file content and SHA are available. Pass each existing file's returned SHA as `expected_sha256`; exact selectors are unique by default, with `line_scope`/`occurrence` available for intentional disambiguation. This makes the normal loop read snapshot -> SHA-guarded transactional edit. Use `apply_patch` when a contextual or large multi-hunk patch is clearer than enumerating exact edits. Its default `matching_mode=unique` tolerates bounded whitespace/Unicode drift but writes only when the actual mutation target is unique; use `matching_mode=exact_unique` only as an explicit stale-context/concurrency fence after reading exact current source. Use `apply_unified_diff` only when the input is already a standard unified diff.
 
 Guard failures are **zero-write conflicts**, not reasons to weaken the guard. Re-read the current source and regenerate the intended edit against that state.
 

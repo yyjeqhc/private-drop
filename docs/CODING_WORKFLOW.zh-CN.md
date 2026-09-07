@@ -55,7 +55,7 @@ Bootstrap 只读取固定的几个指令入口，不会扫描所有子目录规�
 
 ## 编辑
 
-模型生成的普通编辑优先使用 `apply_patch`。默认 `matching_mode=unique` 可以容忍有界的空白/Unicode 漂移，但只有实际 mutation target 唯一时才会写入；如果 old lines 仍只指向一个目标，单独重复的 `@@` anchor 不算真实歧义。只有在读取过精确当前源码并明确需要 stale-context/concurrency fence 时才使用 `matching_mode=exact_unique`。小型、精确且有 SHA guard 的修改使用 `apply_text_edits`；输入本身已经是 unified diff 时使用 `apply_unified_diff`。
+模型生成的普通编辑，在 `read_file`/`read_files` 已经拿到当前文件内容和 SHA 时，默认使用 `apply_text_edits`。现有文件把读取结果中的 SHA 作为 `expected_sha256`；exact selector 默认要求唯一，需要显式消歧时再使用 `line_scope`/`occurrence`。这样普通路径就是“读取快照 -> SHA guard 的事务编辑”。当改动更适合用上下文式或大型 multi-hunk patch 表达，而逐条列 exact edit 反而更笨重时，再使用 `apply_patch`；其默认 `matching_mode=unique` 允许有界空白/Unicode 漂移，但仍只在实际 mutation target 唯一时写入。只有明确需要 stale-context/concurrency fence 时才使用 `matching_mode=exact_unique`。输入本身已经是标准 unified diff 时才使用 `apply_unified_diff`。
 
 Guard failure 是 **zero-write conflict**，不是削弱 guard 的理由。重新读取当前源码，并基于最新状态重新生成原本的编辑。
 

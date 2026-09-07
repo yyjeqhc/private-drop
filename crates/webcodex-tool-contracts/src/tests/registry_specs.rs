@@ -130,11 +130,13 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    // Primary model-generated edit path.
+    // Contextual patch path remains the larger-change alternative.
     let apply_patch_desc = desc("apply_patch");
     for phrase in [
-        "primary model edit path",
-        "contextual/multi-file codex patches",
+        "contextual patch path",
+        "guarded exact edits",
+        "large or multi-hunk rewrites",
+        "prefer read_file/read_files -> apply_text_edits",
         "transactional",
         "sha rechecks",
         "rollback",
@@ -144,8 +146,6 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "matching_mode=exact_unique",
         "stale-context",
         "matching_mode=first_match",
-        "apply_text_edits",
-        "small exact edits",
         "external diffs",
     ] {
         assert!(
@@ -154,21 +154,24 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    // Small exact guarded-edit fallback.
+    // Default read-paired guarded edit path.
     let apply_text_edits_desc = desc("apply_text_edits");
     for phrase in [
-        "precision fallback",
-        "small exact guarded file changes",
+        "default guarded edit path",
+        "after read_file/read_files",
         "current worktree",
+        "ordinary model-generated changes",
         "transactional",
         "sha-guarded",
+        "expected_sha256",
         "unique by default",
         "occurrence",
         "line_scope",
-        "prefer apply_patch",
+        "transactional multi-file edits",
+        "use apply_patch",
         "contextual",
-        "multi-hunk",
-        "multi-file",
+        "large multi-hunk",
+        "external raw diff",
     ] {
         assert!(
             apply_text_edits_desc.contains(phrase),
@@ -180,13 +183,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let unified_diff_desc = desc("apply_unified_diff");
     for phrase in [
         "external raw unified-diff mutation path",
-        "prefer apply_patch",
-        "model-generated changes",
-        "apply_text_edits",
-        "small exact guarded edits",
+        "input is already a standard unified diff",
+        "ordinary model-generated edits",
+        "read_file/read_files followed by apply_text_edits",
+        "contextual or large patch-shaped changes use apply_patch",
         "bounded preflight",
         "never needs a separate validation call",
-        "standard unified diff",
     ] {
         assert!(
             unified_diff_desc.contains(phrase),
@@ -199,10 +201,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     for phrase in [
         "create new files",
         "whole-file rewrites",
-        "prefer apply_patch",
-        "model-generated changes",
-        "apply_text_edits",
-        "small exact guarded edits",
+        "ordinary model-generated changes",
+        "after read_file/read_files",
+        "prefer apply_text_edits",
+        "returned current sha",
+        "use apply_patch",
+        "contextual or large multi-hunk patch",
         "inspect current content",
         "expected_sha256",
     ] {

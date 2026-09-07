@@ -168,8 +168,8 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_EDIT,
         tools: &[
-            "apply_patch",
             "apply_text_edits",
+            "apply_patch",
             "apply_unified_diff",
             "write_project_file",
             "save_project_artifact",
@@ -344,12 +344,13 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: prefer apply_patch for model-generated contextual, multi-hunk, or multi-file changes; use apply_text_edits for small exact guarded edits; apply_unified_diff only for external raw diffs; write_project_file only for intentional whole-file rewrites.",
+            "Edit: after read_file/read_files, prefer apply_text_edits for ordinary model-generated changes using the returned current SHA; use apply_patch for contextual or large multi-hunk changes; apply_unified_diff only for external raw diffs; write_project_file only for intentional whole-file rewrites.",
         manifest_purpose:
-            "Prefer Codex-compatible transactional patches for model-generated changes; use guarded exact edits only when exact matching is intentional, raw unified diff for external patch input, and whole-file write for intentional rewrites.",
+            "Read current files first, then use SHA-guarded apply_text_edits by default; use apply_patch when a contextual or large patch is clearer, raw unified diff only for external patch input, and whole-file write only for intentional rewrites.",
         tools: &[
-            "apply_patch",
+            "read_files",
             "apply_text_edits",
+            "apply_patch",
             "apply_unified_diff",
             "write_project_file",
         ],
@@ -469,8 +470,8 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "find_references",
     "call_hierarchy",
     // guarded edits
-    "apply_patch",
     "apply_text_edits",
+    "apply_patch",
     "apply_unified_diff",
     // structured process, shell escape hatch, and jobs
     "run_process",

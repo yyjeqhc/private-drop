@@ -137,14 +137,17 @@ fn tool_recommended_flows_reference_visible_defined_tools() {
 }
 
 #[test]
-fn edit_recommended_flow_prefers_apply_patch_before_exact_edits() {
+fn edit_recommended_flow_pairs_reads_with_guarded_exact_edits() {
     let flow = TOOL_RECOMMENDED_FLOWS
         .iter()
         .find(|flow| flow.name == "edit")
         .expect("edit recommended flow");
-    assert_eq!(flow.tools.first().copied(), Some("apply_patch"));
+    assert_eq!(flow.tools.first().copied(), Some("read_files"));
     assert_eq!(flow.tools.get(1).copied(), Some("apply_text_edits"));
-    assert!(flow.summary.starts_with("Edit: prefer apply_patch"));
+    assert_eq!(flow.tools.get(2).copied(), Some("apply_patch"));
+    assert!(flow
+        .summary
+        .starts_with("Edit: after read_file/read_files, prefer apply_text_edits"));
 }
 
 #[test]
@@ -243,8 +246,8 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     assert_eq!(
         edit_prefix,
         vec![
-            "apply_patch",
             "apply_text_edits",
+            "apply_patch",
             "apply_unified_diff",
             "write_project_file",
             "save_project_artifact"
@@ -270,8 +273,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "supervisor-owned job",
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
-        "edit: prefer apply_patch for model-generated contextual",
-        "use apply_text_edits for small exact guarded edits",
+        "edit: after read_file/read_files, prefer apply_text_edits",
+        "using the returned current sha",
+        "use apply_patch for contextual or large multi-hunk changes",
         "apply_unified_diff only for external raw diffs",
         "write_project_file only for intentional whole-file rewrites",
         "validate: use cargo_check / cargo_test / go_test",
@@ -452,7 +456,7 @@ fn coding_intent_matches_local_coding_canonical_tools() {
         .iter()
         .position(|tool| *tool == "apply_text_edits")
         .unwrap();
-    assert!(apply_patch_position < apply_text_edits_position);
+    assert!(apply_text_edits_position < apply_patch_position);
     for middle in [
         "project_overview",
         "apply_patch",

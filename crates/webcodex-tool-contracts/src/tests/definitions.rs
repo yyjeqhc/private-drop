@@ -70,8 +70,8 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .find(|definition| definition.name == "apply_text_edits")
         .expect("apply_text_edits must be adaptive-direct");
     assert!(
-        apply_patch.adaptive_runtime_direct_rank()
-            < apply_text_edits.adaptive_runtime_direct_rank()
+        apply_text_edits.adaptive_runtime_direct_rank()
+            < apply_patch.adaptive_runtime_direct_rank()
     );
 
     for name in [

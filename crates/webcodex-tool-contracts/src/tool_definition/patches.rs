@@ -31,12 +31,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 false,
                 ),
-                "Primary model edit path for contextual/multi-file Codex patches. Transactional with SHA rechecks, rollback, dry_run. matching_mode=unique (default) allows bounded whitespace/Unicode drift but writes only when final target is unique; repeated `@@` is okay when old lines still identify one target, while pure additions need a unique anchor. For repetitive targets, add a stable parent/function/test/module anchor. Use matching_mode=exact_unique only after reading exact current source for a stale-context fence; never relax it after rejection. matching_mode=first_match is permissive compatibility only. Put multiple chunks for one file in one Update File; duplicate file operations are rejected. Ambiguity may return equal read_files windows. outcome_unknown requires workspace inspection before retry. Prefer apply_text_edits for small exact edits and unified diff for external diffs.",
+                "Contextual patch path for model-generated changes awkward as guarded exact edits, especially large or multi-hunk rewrites. Prefer read_file/read_files -> apply_text_edits when current text and SHA are available. Transactional with SHA rechecks, rollback, dry_run. matching_mode=unique tolerates bounded whitespace/Unicode drift but writes only to one target; pure additions need a unique anchor. For repetitive targets add a stable parent/function/test/module anchor. matching_mode=exact_unique is only for a stale-context fence after rereading exact source; never relax it after rejection. matching_mode=first_match is permissive compatibility. Keep multiple chunks for one file in one Update File; duplicate file operations reject. Ambiguity may return read_files recovery. outcome_unknown requires workspace inspection before retry. apply_unified_diff is only for external diffs.",
                 apply_patch_input_schema,
             ),
             PERMISSION_RISK_PATCH,
         ),
-        60,
+        65,
     ),
     permission_risk(
         model_spec(
@@ -58,7 +58,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 false,
             ),
-            "External raw unified-diff mutation path. Prefer apply_patch for model-generated changes and apply_text_edits for small exact guarded edits. Performs bounded preflight before applying and never needs a separate validation call. Input must be a standard unified diff; shell heredocs and Codex *** Begin Patch wrappers are rejected with recovery metadata.",
+            "External raw unified-diff mutation path. Use only when input is already a standard unified diff; ordinary model-generated edits should use read_file/read_files followed by apply_text_edits, while contextual or large patch-shaped changes use apply_patch. Performs bounded preflight before applying and never needs a separate validation call. Shell heredocs and Codex *** Begin Patch wrappers are rejected with recovery metadata.",
             apply_unified_diff_input_schema,
         ),
         PERMISSION_RISK_PATCH,
