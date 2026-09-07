@@ -1705,8 +1705,6 @@ pub(super) async fn handle_call(
     }
     let context_continuity_surface_capable =
         stateless_2026 && model_surface.supports_operator_extensions();
-    let context_continuity_capable =
-        context_continuity_surface_capable && runtime_tool_accepts_context_ack(&params.name);
     // context_request remains surface-scoped and independent from ACK policy.
     let context_sidecar_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let skill_runtime_capable = stateless_2026 && model_surface.supports_operator_extensions();
@@ -1738,15 +1736,16 @@ pub(super) async fn handle_call(
         Vec::new()
     };
     // Tolerate cached old schemas: strip the public wrapper from every operator
-    // request, but preserve it as typed continuity proof only for ACK-capable
-    // tools. The wrapper never re-enters concrete business arguments.
+    // request. The adapter preserves only the normalized wire shape; whether the
+    // concrete tool may consume it as continuity proof is decided by the kernel
+    // from the trusted surface capability plus canonical ToolDefinition policy.
     let context_revision = context_continuity_surface_capable
         .then(|| strip_stateless_ack_session_context_revision(&mut params.arguments))
         .flatten();
-    let ack_session_context_revision = if context_continuity_capable {
+    let ack_session_context_revision = if context_continuity_surface_capable {
         session_context_revision_ack_from_wire(context_revision)
     } else {
-        crate::tool_runtime::sessions::SessionContextRevisionAck::Unsupported
+        crate::tool_runtime::sessions::SessionContextRevisionAck::Unacknowledged
     };
     if let Some(lc) = lifecycle.as_deref() {
         lc.capture_payload("effective_arguments", &params.arguments);
@@ -1774,7 +1773,7 @@ pub(super) async fn handle_call(
                 ack_session_context_revision,
             },
             ToolProtocolCapabilities {
-                context_continuity: context_continuity_capable,
+                context_continuity: context_continuity_surface_capable,
                 context_sidecar: context_sidecar_capable,
                 skill_runtime: skill_runtime_capable,
                 skill_management: skill_management_capable,
