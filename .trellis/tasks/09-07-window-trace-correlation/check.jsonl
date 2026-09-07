@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Focused validation, privacy review, and delivery rules"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify no raw external session identity enters logs or trace storage"}

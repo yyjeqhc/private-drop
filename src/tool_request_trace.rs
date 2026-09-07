@@ -22,6 +22,7 @@
 //! combine with reverse-proxy `status` / `body_bytes_sent` / `request_time` for
 //! that transport boundary.
 
+use crate::client_window::ClientWindow;
 use crate::config::ToolRequestTraceMode;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -1544,6 +1545,7 @@ pub struct ToolRequestLifecycle {
     jsonrpc_id: String,
     method: String,
     tool_name: Option<String>,
+    client_window: Option<ClientWindow>,
     suppress_payload_capture: bool,
     started: Instant,
     completed: AtomicBool,
@@ -1565,6 +1567,7 @@ impl ToolRequestLifecycle {
             jsonrpc_id: jsonrpc_id.into(),
             method: method.into(),
             tool_name,
+            client_window: None,
             suppress_payload_capture,
             started: Instant::now(),
             completed: AtomicBool::new(false),
@@ -1600,6 +1603,13 @@ impl ToolRequestLifecycle {
 
     pub fn set_jsonrpc_id(&mut self, jsonrpc_id: impl Into<String>) {
         self.jsonrpc_id = jsonrpc_id.into();
+    }
+
+    /// Attach an adapter-resolved client window for diagnostic correlation only.
+    /// The lifecycle deliberately accepts `ClientWindow` rather than a raw host
+    /// identifier so tracing cannot become another opaque-identity parser.
+    pub(crate) fn set_client_window(&mut self, window: Option<&ClientWindow>) {
+        self.client_window = window.cloned();
     }
 
     pub fn duration_ms(&self) -> u64 {
@@ -1639,6 +1649,8 @@ impl ToolRequestLifecycle {
             jsonrpc_id = %self.jsonrpc_id,
             method = %self.method,
             tool_name = self.tool_name.as_deref().unwrap_or("-"),
+            client_window_key = self.client_window.as_ref().map(ClientWindow::key).unwrap_or("-"),
+            client_window_source = self.client_window.as_ref().map(ClientWindow::source).unwrap_or("-"),
             duration_ms = self.duration_ms(),
             estimated_json_bytes = estimated_json_bytes.map(|b| b as i64).unwrap_or(-1),
             http_status = http_status.map(|s| s as i32).unwrap_or(-1),
@@ -1660,6 +1672,8 @@ impl ToolRequestLifecycle {
                     "jsonrpc_id": self.jsonrpc_id.as_str(),
                     "method": self.method.as_str(),
                     "tool_name": self.tool_name.as_deref(),
+                    "client_window_key": self.client_window.as_ref().map(ClientWindow::key),
+                    "client_window_source": self.client_window.as_ref().map(ClientWindow::source),
                     "duration_ms": self.duration_ms(),
                     "estimated_json_bytes": estimated_json_bytes,
                     "http_status": http_status,
@@ -1876,6 +1890,72 @@ mod tests {
         );
         guard.capture_payload("raw_arguments", &json!({"content": "private"}));
         assert!(!temp.path().join("trace-metadata").exists());
+    }
+
+    #[test]
+    fn full_mode_lifecycle_persists_only_hashed_client_window_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        let raw_window = "chatgpt-window-opaque-secret";
+        let params = json!({
+            "name": "runtime_status",
+            "arguments": {},
+            "_meta": {"openai/session": raw_window}
+        });
+        let resolved = crate::client_window::stateless_mcp_window(&params);
+        let window = resolved.identity.expect("valid OpenAI session window");
+        let expected_key = window.key().to_string();
+        let trace_ids = ["window-trace-a", "window-trace-b"];
+
+        for trace_id in trace_ids {
+            let mut guard = ToolRequestLifecycle::new(
+                "mcp",
+                trace_id.into(),
+                "none",
+                "tools/call",
+                Some("runtime_status".into()),
+            );
+            guard.set_client_window(Some(&window));
+            guard.parsed("ok");
+            guard.mark_completed();
+        }
+
+        let absent_trace_id = "window-trace-absent";
+        let absent = ToolRequestLifecycle::new(
+            "mcp",
+            absent_trace_id.into(),
+            "none",
+            "tools/call",
+            Some("runtime_status".into()),
+        );
+        absent.parsed("ok");
+        absent.mark_completed();
+        flush_full_trace_writer();
+
+        for trace_id in trace_ids {
+            let events =
+                fs::read_to_string(temp.path().join(trace_id).join("events.jsonl")).unwrap();
+            assert!(!events.contains(raw_window));
+            let event: Value = serde_json::from_str(events.lines().next().unwrap()).unwrap();
+            assert_eq!(event["client_window_key"], expected_key);
+            assert_eq!(event["client_window_source"], "openai-session");
+            assert_eq!(event["server_trace_id"], trace_id);
+        }
+
+        let absent_events =
+            fs::read_to_string(temp.path().join(absent_trace_id).join("events.jsonl")).unwrap();
+        let absent_event: Value =
+            serde_json::from_str(absent_events.lines().next().unwrap()).unwrap();
+        assert!(absent_event["client_window_key"].is_null());
+        assert!(absent_event["client_window_source"].is_null());
     }
 
     #[test]

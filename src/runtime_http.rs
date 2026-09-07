@@ -292,6 +292,8 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
     };
     guard.set_tool_name(Some(tool.clone()));
+    let window = crate::client_window::api_window(req, res);
+    guard.set_client_window(Some(&window));
     guard.parsed("ok");
     guard.capture_payload(
         "effective_arguments",
@@ -303,7 +305,6 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
 
     let session_id = extract_recording_session_id(&body);
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let window = crate::client_window::api_window(req, res);
     let active_trace_id = guard.active_trace_id();
     let outcome = scope_active_trace(
         active_trace_id,
