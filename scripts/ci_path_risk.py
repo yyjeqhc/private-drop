@@ -291,6 +291,7 @@ def _classify_path(risk: Risk, path: str) -> None:
             risk.needs_runner_real_process = True
         runner_native_tokens = (
             "plugin",
+            "lsp",
             "shell",
             "process",
             "transport",

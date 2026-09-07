@@ -271,7 +271,9 @@ fn check_observes_edited_v2_without_replacing_current_v1() {
 }
 
 #[test]
-fn check_failures_are_structured_diagnostic_results_and_cleanup_process_trees() {
+#[ignore = "runner real-process lane: disposable plugin checks clean up failed candidate process trees"]
+fn runner_real_process_plugin_check_failures_are_structured_diagnostic_results_and_cleanup_process_trees(
+) {
     for (scenario, timeout_secs, phase, code) in [
         (
             "check_bad_version_tree",
@@ -529,7 +531,8 @@ fn candidate_gate_serializes_check_and_reload_without_blocking_current_providers
 }
 
 #[test]
-fn shutdown_interrupts_blocked_check_candidate_and_reaps_tree() {
+#[ignore = "runner real-process lane: plugin shutdown interrupts blocked candidate and reaps its tree"]
+fn runner_real_process_plugin_shutdown_interrupts_blocked_check_candidate_and_reaps_tree() {
     let fixture = CheckFixture::new("candidate_block_list_tree", 10);
     let _ = fs::remove_file(fixture.marker.with_extension("release"));
     let manager = Arc::clone(&fixture.manager);

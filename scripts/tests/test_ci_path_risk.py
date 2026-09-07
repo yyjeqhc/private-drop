@@ -73,6 +73,7 @@ class PathRiskFixtureTests(unittest.TestCase):
             "crates/webcodex-runner/src/webcodex_runner/detached_job/tests.rs",
             "crates/webcodex-runner/src/webcodex_runner/external_tools.rs",
             "crates/webcodex-runner/src/webcodex_runner/job_manager.rs",
+            "crates/webcodex-runner/src/webcodex_runner/lsp/tests.rs",
             "crates/webcodex-runner/src/webcodex_runner/mcp_gateway.rs",
             "crates/webcodex-runner/src/webcodex_runner/projects.rs",
             "crates/webcodex-runner/src/webcodex_runner/ssh.rs",

@@ -1256,7 +1256,8 @@ fn lsp_default_args_apply_to_env_and_path_but_not_configured() {
 }
 
 #[test]
-fn lsp_crashed_connection_reaps_immediately_without_full_shutdown_deadline() {
+#[ignore = "runner real-process lane: crashed LSP child reap latency"]
+fn runner_real_process_lsp_crashed_connection_reaps_immediately_without_full_shutdown_deadline() {
     let _serial = super::super::serialize_fake_lsp_test();
     // Crashed-but-alive child must not wait the full shutdown timeout before
     // kill/wait. Use a deliberately large budget so the difference is obvious.
@@ -1315,7 +1316,8 @@ fn lsp_stderr_capture_is_bounded() {
 }
 
 #[test]
-fn lsp_graceful_leader_exit_still_reaps_surviving_descendant() {
+#[ignore = "runner real-process lane: LSP graceful leader exit reaps surviving descendant"]
+fn runner_real_process_lsp_graceful_leader_exit_still_reaps_surviving_descendant() {
     let _serial = super::super::serialize_fake_lsp_test();
     let fixture = Fixture::with_config(
         "shutdown_descendant",
@@ -1354,7 +1356,8 @@ fn lsp_graceful_leader_exit_still_reaps_surviving_descendant() {
 }
 
 #[test]
-fn lsp_shutdown_and_drop_reap_the_child_process() {
+#[ignore = "runner real-process lane: LSP shutdown and Drop reap child process"]
+fn runner_real_process_lsp_shutdown_and_drop_reap_the_child_process() {
     let _serial = super::super::serialize_fake_lsp_test();
     let fixture = Fixture::new("normal");
     let server = fixture
@@ -1389,7 +1392,8 @@ fn lsp_shutdown_and_drop_reap_the_child_process() {
 }
 
 #[test]
-fn lsp_shutdown_uses_single_deadline_against_hanging_server() {
+#[ignore = "runner real-process lane: hanging LSP shutdown honors one deadline"]
+fn runner_real_process_lsp_shutdown_uses_single_deadline_against_hanging_server() {
     let _serial = super::super::serialize_fake_lsp_test();
     // Shutdown timeout 200ms. Multiplied waits would approach 600–800ms+.
     let shutdown_timeout = Duration::from_millis(200);
@@ -1439,7 +1443,8 @@ fn lsp_shutdown_uses_single_deadline_against_hanging_server() {
 }
 
 #[test]
-fn lsp_multiple_hanging_servers_share_one_supervisor_deadline() {
+#[ignore = "runner real-process lane: multiple hanging LSP children share one shutdown deadline"]
+fn runner_real_process_lsp_multiple_hanging_servers_share_one_supervisor_deadline() {
     let _serial = super::super::serialize_fake_lsp_test();
     let shutdown_timeout = Duration::from_millis(200);
     let fixture = Fixture::with_config(
@@ -1565,7 +1570,8 @@ fn lsp_reaper_timeout_does_not_rearm_supervisor_drop_budget() {
 }
 
 #[test]
-fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
+#[ignore = "runner real-process lane: LSP initialize-timeout child cleanup budget"]
+fn runner_real_process_lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
     let _serial = super::super::serialize_fake_lsp_test();
     let shutdown_timeout = Duration::from_millis(150);
     let temp = tempfile::tempdir().unwrap();
@@ -1624,7 +1630,8 @@ fn lsp_initialize_timeout_cleanup_uses_configured_shutdown_budget() {
 }
 
 #[test]
-fn lsp_idle_cleanup_is_explicit_and_bounded() {
+#[ignore = "runner real-process lane: explicit idle LSP cleanup reaps child"]
+fn runner_real_process_lsp_idle_cleanup_is_explicit_and_bounded() {
     let _serial = super::super::serialize_fake_lsp_test();
     let fixture = Fixture::with_manual_cleanup("normal", 4, Duration::ZERO);
     let server = fixture
@@ -1665,7 +1672,8 @@ fn lsp_idle_cleanup_skips_active_pending_requests() {
 }
 
 #[test]
-fn lsp_idle_cleanup_reaps_crashed_alive_server_immediately() {
+#[ignore = "runner real-process lane: idle cleanup reaps crashed-but-live LSP child"]
+fn runner_real_process_lsp_idle_cleanup_reaps_crashed_alive_server_immediately() {
     let _serial = super::super::serialize_fake_lsp_test();
     let fixture =
         Fixture::with_manual_cleanup("malformed_alive_always", 4, Duration::from_secs(3600));
@@ -1688,7 +1696,8 @@ fn lsp_idle_cleanup_reaps_crashed_alive_server_immediately() {
 }
 
 #[test]
-fn lsp_background_reaper_reclaims_idle_capacity_without_explicit_cleanup() {
+#[ignore = "runner real-process lane: background LSP reaper reclaims idle child capacity"]
+fn runner_real_process_lsp_background_reaper_reclaims_idle_capacity_without_explicit_cleanup() {
     let _serial = super::super::serialize_fake_lsp_test();
     // Production agents never call cleanup_idle directly; idle_ttl must be
     // honored by the built-in background reaper or capacity leaks forever.

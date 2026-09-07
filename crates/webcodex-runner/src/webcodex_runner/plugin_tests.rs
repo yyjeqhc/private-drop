@@ -341,7 +341,9 @@ fn output_schema_violation_is_completed_and_retires_provider() {
 }
 
 #[test]
-fn blocking_stdin_write_respects_total_deadline_and_retires_provider_tree() {
+#[ignore = "runner real-process lane: plugin blocked-stdin deadline and provider-tree retirement"]
+fn runner_real_process_plugin_blocking_stdin_write_respects_total_deadline_and_retires_provider_tree(
+) {
     let fixture = Fixture::new("block_after_preflight_tree", 1);
     let started = Instant::now();
     let response = fixture.call_with_arguments(maximum_bounded_arguments());
@@ -379,7 +381,9 @@ fn blocking_stdin_write_respects_total_deadline_and_retires_provider_tree() {
 }
 
 #[test]
-fn shutdown_terminates_process_tree_while_effectful_stdin_write_is_blocked() {
+#[ignore = "runner real-process lane: plugin shutdown terminates blocked provider process tree"]
+fn runner_real_process_plugin_shutdown_terminates_process_tree_while_effectful_stdin_write_is_blocked(
+) {
     let fixture = Fixture::new("block_after_preflight_tree", 10);
     let manager = Arc::clone(&fixture.manager);
     let provider = fixture.provider.clone();
@@ -532,12 +536,9 @@ fn provider_busy_is_not_started() {
             expected_schema: schema,
         })
     });
-    for _ in 0..100 {
-        if fixture.marker_count("call") == 1 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(wait_until(Duration::from_secs(1), || {
+        fixture.marker_count("call") == 1
+    }));
     let discovery = fixture.list();
     assert!(
         discovery.error.is_none(),
