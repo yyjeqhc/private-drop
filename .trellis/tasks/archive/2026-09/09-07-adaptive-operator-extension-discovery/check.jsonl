@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "Full-scope backend quality check"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Focused validation, security review, hygiene and delivery checklist"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify capability, scope and authority remain fail closed"}
-{"file": ".trellis/tasks/09-07-adaptive-operator-extension-discovery/research/current-discovery-path.md", "reason": "Verify final discovery and admission route matches researched authoritative path"}
