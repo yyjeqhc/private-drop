@@ -710,7 +710,8 @@ fn tree_payload_request(temp: &Path) -> (DetachedStartRequest, PathBuf, PathBuf)
 
 #[cfg(unix)]
 #[test]
-fn accepted_handoff_keeps_payload_alive_after_owner_process_exits() {
+#[ignore = "runner real-process lane: detached supervisor outlives its owner process"]
+fn runner_real_process_accepted_handoff_keeps_payload_alive_after_owner_process_exits() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let state_root = temp.path().join("state");
@@ -762,7 +763,8 @@ fn owner_subprocess_entrypoint() {
 
 #[cfg(unix)]
 #[test]
-fn accepted_handoff_survives_owner_exit_before_ack() {
+#[ignore = "runner real-process lane: detached handoff survives owner loss after accept"]
+fn runner_real_process_accepted_handoff_survives_owner_exit_before_ack() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let state_root = temp.path().join("state");
@@ -840,7 +842,8 @@ fn accept_then_exit_owner_subprocess_entrypoint() {
 
 #[cfg(unix)]
 #[test]
-fn duplicate_handoff_never_spawns_a_second_payload() {
+#[ignore = "runner real-process lane: detached handoff owns a real payload process"]
+fn runner_real_process_duplicate_handoff_never_spawns_a_second_payload() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -869,7 +872,8 @@ fn duplicate_handoff_never_spawns_a_second_payload() {
 
 #[cfg(unix)]
 #[test]
-fn durable_update_sequence_advances_and_duplicate_handoff_does_not() {
+#[ignore = "runner real-process lane: detached update sequencing observes a live payload"]
+fn runner_real_process_durable_update_sequence_advances_and_duplicate_handoff_does_not() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -895,7 +899,8 @@ fn durable_update_sequence_advances_and_duplicate_handoff_does_not() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn restart_scan_reconciles_live_detached_execution_without_respawn() {
+#[ignore = "runner real-process lane: restart reconciliation observes a live detached supervisor"]
+fn runner_real_process_restart_scan_reconciles_live_detached_execution_without_respawn() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let state_root = temp.path().join("state");
@@ -929,7 +934,8 @@ fn restart_scan_reconciles_live_detached_execution_without_respawn() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn durable_stop_request_terminates_exact_supervisor_owned_tree() {
+#[ignore = "runner real-process lane: durable stop terminates a detached process tree"]
+fn runner_real_process_durable_stop_request_terminates_exact_supervisor_owned_tree() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -984,7 +990,8 @@ fn macos_native_process_start_identity_is_stable() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn stale_native_supervisor_identity_reconciles_to_lost_without_respawn() {
+#[ignore = "runner real-process lane: stale supervisor identity is checked against a live process"]
+fn runner_real_process_stale_native_supervisor_identity_reconciles_to_lost_without_respawn() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -1023,7 +1030,8 @@ fn stale_native_supervisor_identity_reconciles_to_lost_without_respawn() {
 
 #[cfg(unix)]
 #[test]
-fn supervisor_continuously_drains_and_bounds_both_output_streams() {
+#[ignore = "runner real-process lane: detached supervisor drains a real child process"]
+fn runner_real_process_supervisor_continuously_drains_and_bounds_both_output_streams() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -1042,7 +1050,8 @@ fn supervisor_continuously_drains_and_bounds_both_output_streams() {
 
 #[cfg(unix)]
 #[test]
-fn terminal_state_is_atomically_rereadable() {
+#[ignore = "runner real-process lane: terminal persistence races a real detached child"]
+fn runner_real_process_terminal_state_is_atomically_rereadable() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -1097,7 +1106,8 @@ fn linux_child_pids(pid: u32) -> Vec<u32> {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn pre_accept_owner_disconnect_is_terminal_and_replay_never_spawns() {
+#[ignore = "runner real-process lane: pre-accept disconnect controls a real supervisor process"]
+fn runner_real_process_pre_accept_owner_disconnect_is_terminal_and_replay_never_spawns() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -1165,7 +1175,8 @@ fn pre_accept_owner_disconnect_is_terminal_and_replay_never_spawns() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn pre_accept_supervisor_death_leaves_no_internal_or_payload_orphan() {
+#[ignore = "runner real-process lane: pre-accept supervisor death exercises real process cleanup"]
+fn runner_real_process_pre_accept_supervisor_death_leaves_no_internal_or_payload_orphan() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
@@ -1219,7 +1230,8 @@ fn pre_accept_supervisor_death_leaves_no_internal_or_payload_orphan() {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
-fn supervisor_death_terminates_payload_process_tree() {
+#[ignore = "runner real-process lane: supervisor death terminates a real detached process tree"]
+fn runner_real_process_supervisor_death_terminates_payload_process_tree() {
     let _guard = test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let store = DetachedJobStore::new(temp.path().join("state"));
