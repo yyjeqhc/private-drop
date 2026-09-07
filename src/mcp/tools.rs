@@ -62,45 +62,20 @@ fn full_operator_runtime_specs_for_auth(
     });
     if stateless_2026 {
         specs.extend(
-            crate::tool_runtime::skill_runtime_tool_specs()
+            crate::tool_runtime::stateless_operator_extension_tool_specs()
                 .into_iter()
                 .filter(|spec| {
-                    !oauth_scope_projection || check_runtime_tool_scope(auth, &spec.name).is_ok()
+                    if crate::tool_runtime::skills::is_skill_runtime_tool_name(&spec.name) {
+                        !oauth_scope_projection
+                            || check_runtime_tool_scope(auth, &spec.name).is_ok()
+                    } else if crate::tool_runtime::skills::is_skill_management_tool_name(&spec.name)
+                    {
+                        auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN))
+                    } else {
+                        check_runtime_tool_scope(auth, &spec.name).is_ok()
+                    }
                 }),
         );
-        if auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN)) {
-            specs.extend(crate::tool_runtime::skill_management_tool_specs());
-        }
-        specs.extend(
-            crate::tool_runtime::memory_runtime_tool_specs()
-                .into_iter()
-                .chain(crate::tool_runtime::memory_management_tool_specs())
-                .filter(|spec| check_runtime_tool_scope(auth, &spec.name).is_ok()),
-        );
-        specs.extend(
-            crate::tool_runtime::operator_diagnostic_tool_specs()
-                .into_iter()
-                .filter(|spec| check_runtime_tool_scope(auth, &spec.name).is_ok()),
-        );
-    }
-    specs
-}
-
-/// Full model-visible target universe reachable through the adaptive gateway.
-///
-/// This is intentionally independent of the current caller's OAuth scopes. The
-/// gateway decides only whether a target belongs to an admitted model surface;
-/// the selected target's existing scope/authority checks remain authoritative
-/// after routing. Stateless-only extensions are included only in the protocol
-/// era where Full Operator can model-expose them.
-fn adaptive_runtime_gateway_target_specs(stateless_2026: bool) -> Vec<ToolSpec> {
-    let mut specs = registered_tool_specs();
-    if stateless_2026 {
-        specs.extend(crate::tool_runtime::skill_runtime_tool_specs());
-        specs.extend(crate::tool_runtime::skill_management_tool_specs());
-        specs.extend(crate::tool_runtime::memory_runtime_tool_specs());
-        specs.extend(crate::tool_runtime::memory_management_tool_specs());
-        specs.extend(crate::tool_runtime::operator_diagnostic_tool_specs());
     }
     specs
 }
@@ -156,7 +131,17 @@ fn adaptive_runtime_gateway_target_route(
     if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME {
         return AdaptiveRuntimeGatewayTargetRoute::Recursive;
     }
-    match ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(target) {
+    let operator_extension_admitted = stateless_2026
+        && crate::tool_runtime::stateless_operator_extension_tool_specs()
+            .iter()
+            .any(|spec| spec.name == target);
+    let (availability, gateway_tool) = if operator_extension_admitted {
+        ModelSurface::AdaptiveRuntime
+            .runtime_tool_invocation_route_with_operator_extension(target, true)
+    } else {
+        ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(target)
+    };
+    match (availability, gateway_tool) {
         (crate::model_surface::TOOL_SURFACE_AVAILABILITY_DIRECT, None) => {
             return AdaptiveRuntimeGatewayTargetRoute::Direct;
         }
@@ -168,19 +153,23 @@ fn adaptive_runtime_gateway_target_route(
         }
         _ => {}
     }
-    // The MCP adapter and stateless operator extensions are intentionally not
-    // registered ToolDefinition routes. Preserve their existing gateway-only
-    // admission without teaching ordinary runtime tools a second route table.
+    // The MCP adapter's own gateway remains a specialized protocol route. It is
+    // not part of the runtime ToolSpec extension universe.
     if target == crate::mcp_gateway::MCP_TOOL_NAME {
         return AdaptiveRuntimeGatewayTargetRoute::Gateway;
     }
-    if adaptive_runtime_gateway_target_specs(stateless_2026)
-        .iter()
-        .any(|spec| spec.name == target)
-    {
-        return AdaptiveRuntimeGatewayTargetRoute::Gateway;
-    }
     AdaptiveRuntimeGatewayTargetRoute::Unknown
+}
+
+#[cfg(test)]
+pub(crate) fn adaptive_runtime_gateway_target_admitted_for_test(
+    target: &str,
+    stateless_2026: bool,
+) -> bool {
+    matches!(
+        adaptive_runtime_gateway_target_route(target, stateless_2026),
+        AdaptiveRuntimeGatewayTargetRoute::Gateway
+    )
 }
 
 fn unwrap_adaptive_runtime_gateway_arguments(

@@ -891,6 +891,251 @@ async fn adaptive_runtime_tool_manifest_exact_projection_is_sparse_and_routes_ex
 }
 
 #[tokio::test]
+async fn stateless_operator_extension_manifest_routes_match_real_model_surface() {
+    for (surface, expected_mode, expected_via) in [
+        (
+            ModelSurface::AdaptiveRuntime,
+            "gateway",
+            Some(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME),
+        ),
+        (ModelSurface::FullOperatorRuntime, "direct", None),
+    ] {
+        let runtime = test_runtime_with_surface(surface);
+        for tool_name in ["skill_list", "memory_search", "read_tool_trace"] {
+            let outcome = handle_mcp_request(
+                &runtime,
+                rpc(
+                    "tools/call",
+                    Some(json!(726)),
+                    mcp_2026_params(json!({
+                        "name": "tool_manifest",
+                        "arguments": {"tool_name": tool_name}
+                    })),
+                ),
+                None,
+            )
+            .await;
+            let McpOutcome::Ok(value) = outcome else {
+                panic!("{surface:?} must discover {tool_name}");
+            };
+            let structured = &value["result"]["structuredContent"];
+            assert_eq!(
+                structured["success"], true,
+                "{surface:?} {tool_name}: {value}"
+            );
+            let output = &structured["output"];
+            assert_eq!(output["name"], tool_name);
+            assert_eq!(output["route"]["mode"], expected_mode);
+            match expected_via {
+                Some(via) => assert_eq!(output["route"]["via"], via),
+                None => assert!(output["route"].get("via").is_none()),
+            }
+            assert_eq!(output["input_schema"]["type"], "object");
+            assert!(output["annotations"].is_object());
+            assert!(output["authority"].is_object());
+            assert!(output["effect"].is_string());
+            assert!(output.get("output_schema").is_none());
+
+            if surface == ModelSurface::AdaptiveRuntime {
+                assert!(
+                    crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
+                        tool_name, true
+                    )
+                );
+                assert!(
+                    !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
+                        tool_name, false
+                    ),
+                    "legacy gateway admission leaked {tool_name}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn adaptive_stateless_manifest_inventory_matches_extension_gateway_universe() {
+    use std::collections::BTreeSet;
+
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(727)),
+            mcp_2026_params(json!({"name": "tool_manifest", "arguments": {}})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("adaptive stateless unfiltered tool_manifest must succeed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    let discovered = output["categories"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|names| names.as_array().unwrap())
+        .map(|name| name.as_str().unwrap().to_string())
+        .collect::<BTreeSet<_>>();
+    let extensions = crate::tool_runtime::stateless_operator_extension_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<BTreeSet<_>>();
+    assert!(
+        extensions.is_subset(&discovered),
+        "manifest inventory omitted extension targets: {:?}",
+        extensions.difference(&discovered).collect::<Vec<_>>()
+    );
+    for name in &extensions {
+        assert!(crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true));
+    }
+
+    let category = crate::tool_runtime::tool_manifest_category("skill_list");
+    let category_outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(728)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"category": category}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(category_value) = category_outcome else {
+        panic!("adaptive stateless extension category discovery must succeed");
+    };
+    let category_tools = category_value["result"]["structuredContent"]["output"]["tools"]
+        .as_array()
+        .unwrap();
+    let skill_list = category_tools
+        .iter()
+        .find(|tool| tool["name"] == "skill_list")
+        .expect("skill_list must be present in its manifest category");
+    assert_eq!(skill_list["route"]["mode"], "gateway");
+    assert_eq!(
+        skill_list["route"]["via"],
+        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+
+    let listed = handle_mcp_request(
+        &runtime,
+        rpc("tools/list", Some(json!(729)), mcp_2026_params(json!({}))),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(listed) = listed else {
+        panic!("adaptive tools/list must remain available");
+    };
+    let direct_names = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        extensions
+            .iter()
+            .all(|name| !direct_names.contains(name.as_str())),
+        "operator extensions must remain absent from Adaptive outer direct tools/list"
+    );
+}
+
+#[tokio::test]
+async fn operator_extension_manifest_is_absent_without_stateless_capability_and_does_not_grant_scope(
+) {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+
+    let generic = runtime
+        .dispatch(crate::tool_runtime::ToolCall::ToolManifest {
+            tool_name: Some("skill_list".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(!generic.success);
+    assert_eq!(generic.output["code"], "unknown_tool_manifest_tool");
+
+    let legacy = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(730)),
+            json!({
+                "name": "tool_manifest",
+                "arguments": {"tool_name": "skill_list"}
+            }),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(legacy_value) = legacy else {
+        panic!("legacy tool_manifest dispatch itself must remain reachable");
+    };
+    assert_eq!(
+        legacy_value["result"]["structuredContent"]["success"],
+        false
+    );
+    assert_eq!(
+        legacy_value["result"]["structuredContent"]["output"]["code"],
+        "unknown_tool_manifest_tool"
+    );
+
+    let mut runtime_reader = crate::auth::AuthContext::new(crate::auth::AuthKind::OAuth2Token);
+    runtime_reader.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.to_string()];
+    let discovery = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(731)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"tool_name": "skill_install"}
+            })),
+        ),
+        Some(&runtime_reader),
+    )
+    .await;
+    let McpOutcome::Ok(discovered) = discovery else {
+        panic!("contract discovery must not require the target's admin authority");
+    };
+    assert_eq!(discovered["result"]["structuredContent"]["success"], true);
+    assert_eq!(
+        discovered["result"]["structuredContent"]["output"]["route"]["mode"],
+        "gateway"
+    );
+
+    let invoked = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(732)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {"tool": "skill_install", "arguments": {}}
+            })),
+        ),
+        Some(&runtime_reader),
+    )
+    .await;
+    let McpOutcome::Forbidden {
+        required_scope,
+        body,
+    } = invoked
+    else {
+        panic!("discovery must not bypass skill management admin scope");
+    };
+    assert_eq!(required_scope, Some(crate::auth::SCOPE_ADMIN));
+    assert!(body.to_string().contains(crate::auth::SCOPE_ADMIN));
+}
+
+#[tokio::test]
 async fn adaptive_runtime_tool_manifest_filtered_projection_is_selection_focused() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
     let canonical = runtime

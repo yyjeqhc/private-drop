@@ -1,5 +1,6 @@
 //! Runtime dispatch adapters for discovery and observability tool calls.
 
+use super::kernel::ToolProtocolCapabilities;
 use super::runtime_info::ListRunnersOptions;
 use super::tool_inputs::ListToolsOptions;
 use super::{ToolCall, ToolResult, ToolRuntime};
@@ -10,6 +11,7 @@ impl ToolRuntime {
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
+        protocol_capabilities: ToolProtocolCapabilities,
     ) -> ToolResult {
         match call {
             ToolCall::ListTools {
@@ -95,6 +97,7 @@ impl ToolRuntime {
                     intent,
                     include_recommended_flows,
                     include_risk_summary,
+                    protocol_capabilities,
                 )
                 .await
             }

@@ -900,6 +900,7 @@ impl ToolRuntime {
                     skill_runtime: capabilities.skill_runtime,
                     memory_surface: capabilities.memory_surface,
                 },
+                capabilities,
             )
             .await;
         if let Some(start) = session_event.as_mut() {

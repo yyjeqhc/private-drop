@@ -18,6 +18,7 @@ These notes summarize the repository-specific conventions that are most useful t
 | [Error Handling](./error-handling.md) | Structured failures, authority, and uncertainty |
 | [Quality Guidelines](./quality-guidelines.md) | Editing, tests, review, and delivery |
 | [Logging Guidelines](./logging-guidelines.md) | `tracing` and diagnostic privacy |
+| [Tool Discovery Guidelines](./tool-discovery-guidelines.md) | Protocol/surface-aware discovery and `ModelHidden` extension boundaries |
 
 ## Quality check
 

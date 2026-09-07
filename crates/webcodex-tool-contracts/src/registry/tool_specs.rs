@@ -75,6 +75,20 @@ pub fn skill_management_tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
+/// Canonical fixed Stateless MCP 2026 operator-extension universe. These specs
+/// remain globally ModelHidden and are projected only by protocol/surface-aware
+/// adapters and discovery. Keeping the composition here prevents tools/list,
+/// Adaptive gateway admission, and tool_manifest from maintaining separate name sets.
+pub fn stateless_operator_extension_tool_specs() -> Vec<ToolSpec> {
+    skill_runtime_tool_specs()
+        .into_iter()
+        .chain(skill_management_tool_specs())
+        .chain(memory_runtime_tool_specs())
+        .chain(memory_management_tool_specs())
+        .chain(operator_diagnostic_tool_specs())
+        .collect()
+}
+
 fn resolve_tool_specs<'a>(
     definitions: impl IntoIterator<Item = &'a ToolDefinition>,
 ) -> Vec<ToolSpec> {
@@ -175,6 +189,41 @@ mod tests {
         );
         assert_eq!(spec_names, definition_names);
         assert_eq!(specs.len(), definitions.len());
+    }
+
+    #[test]
+    fn stateless_operator_extension_specs_are_one_unique_hidden_family_union() {
+        let expected = skill_runtime_tool_specs()
+            .into_iter()
+            .chain(skill_management_tool_specs())
+            .chain(memory_runtime_tool_specs())
+            .chain(memory_management_tool_specs())
+            .chain(operator_diagnostic_tool_specs())
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+        let actual = stateless_operator_extension_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual, expected,
+            "canonical extension ordering/families drifted"
+        );
+
+        let unique = actual.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        assert_eq!(
+            unique.len(),
+            actual.len(),
+            "extension ToolSpecs must be unique"
+        );
+        let generic = registered_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<BTreeSet<_>>();
+        assert!(
+            unique.iter().all(|name| !generic.contains(*name)),
+            "Stateless operator extensions must remain outside registered_tool_specs: {unique:?}"
+        );
     }
 
     #[test]

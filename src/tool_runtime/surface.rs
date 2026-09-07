@@ -4,8 +4,12 @@
 //! manifests, and bounded `list_tools` filtering close together while leaving
 //! dispatch and authorization flow in `mod.rs`.
 
+use super::kernel::ToolProtocolCapabilities;
 use super::metadata::ToolAuthorityPolicy;
-use super::registry::{accepted_flattened_args_for_spec, registered_tool_specs};
+use super::registry::{
+    accepted_flattened_args_for_spec, operator_diagnostic_tool_specs, registered_tool_specs,
+    stateless_operator_extension_tool_specs,
+};
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
     available_tool_manifest_intent_names, is_model_visible_tool_name, resolve_tool_manifest_intent,
@@ -66,6 +70,57 @@ pub(crate) fn recommended_flows() -> Vec<&'static str> {
         .iter()
         .map(|flow| flow.summary)
         .collect()
+}
+
+fn tool_manifest_specs(
+    capabilities: ToolProtocolCapabilities,
+    model_surface: crate::model_surface::ModelSurface,
+) -> Vec<ToolSpec> {
+    let mut specs = registered_tool_specs();
+    if model_surface.supports_operator_extensions() {
+        specs.extend(
+            stateless_operator_extension_tool_specs()
+                .into_iter()
+                .filter(|spec| tool_manifest_extension_capability_allows(&spec.name, capabilities)),
+        );
+    }
+    specs
+}
+
+fn tool_manifest_extension_capability_allows(
+    tool_name: &str,
+    capabilities: ToolProtocolCapabilities,
+) -> bool {
+    if super::skills::is_skill_runtime_tool_name(tool_name) {
+        capabilities.skill_runtime
+    } else if super::skills::is_skill_management_tool_name(tool_name) {
+        capabilities.skill_management
+    } else if super::memory::is_memory_runtime_tool_name(tool_name)
+        || super::memory::is_memory_management_tool_name(tool_name)
+    {
+        capabilities.memory_surface
+    } else if operator_diagnostic_tool_specs()
+        .iter()
+        .any(|spec| spec.name == tool_name)
+    {
+        capabilities.trace_diagnostics
+    } else {
+        // New extension families must declare an explicit server-owned protocol
+        // capability before discovery can expose them.
+        false
+    }
+}
+
+fn tool_manifest_route(
+    spec: &ToolSpec,
+    model_surface: crate::model_surface::ModelSurface,
+) -> (&'static str, Option<&'static str>) {
+    if is_model_visible_tool_name(spec.name.as_str()) {
+        model_surface.runtime_tool_invocation_route(spec.name.as_str())
+    } else {
+        model_surface
+            .runtime_tool_invocation_route_with_operator_extension(spec.name.as_str(), true)
+    }
 }
 
 impl ToolRuntime {
@@ -164,6 +219,7 @@ impl ToolRuntime {
         intent: Option<String>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
+        protocol_capabilities: ToolProtocolCapabilities,
     ) -> ToolResult {
         if let Some(tool_name) = tool_name {
             if category.is_some() || intent.is_some() {
@@ -173,6 +229,7 @@ impl ToolRuntime {
                 &tool_name,
                 include_recommended_flows,
                 include_risk_summary,
+                protocol_capabilities,
             ) {
                 Ok(payload) => ToolResult::ok(payload),
                 Err(result) => result,
@@ -183,6 +240,7 @@ impl ToolRuntime {
             intent,
             include_recommended_flows,
             include_risk_summary,
+            protocol_capabilities,
         ) {
             Ok(payload) => ToolResult::ok(payload),
             Err(result) => result,
@@ -194,6 +252,7 @@ impl ToolRuntime {
         raw_tool_name: &str,
         include_recommended_flows: bool,
         include_risk_summary: bool,
+        protocol_capabilities: ToolProtocolCapabilities,
     ) -> Result<Value, ToolResult> {
         let tool_name = raw_tool_name.trim();
         let model_surface = self.model_surface().ok_or_else(|| {
@@ -205,15 +264,14 @@ impl ToolRuntime {
         if tool_name.is_empty() {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         }
-        let specs = registered_tool_specs();
+        let specs = tool_manifest_specs(protocol_capabilities, model_surface);
         let tool_count = specs.len();
         let Some(spec) = specs.iter().find(|spec| spec.name == tool_name) else {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         };
         let category = runtime_tool_category(spec.name.as_str());
         let metadata = runtime_tool_metadata(spec.name.as_str());
-        let (availability, gateway_tool) =
-            model_surface.runtime_tool_invocation_route(spec.name.as_str());
+        let (availability, gateway_tool) = tool_manifest_route(spec, model_surface);
         let mut exact_categories = serde_json::Map::new();
         exact_categories.insert(category.to_string(), json!([spec.name]));
         let mut output = json!({
@@ -262,7 +320,7 @@ impl ToolRuntime {
     }
 
     pub(crate) fn compact_tool_manifest_payload(&self) -> Value {
-        self.tool_manifest_payload(None, None, true, true)
+        self.tool_manifest_payload(None, None, true, true, ToolProtocolCapabilities::default())
             .expect("default tool_manifest payload without intent must succeed")
     }
 
@@ -275,7 +333,14 @@ impl ToolRuntime {
         if categories.is_none() && intent.is_none() && limit.is_none() {
             return Ok(self.compact_tool_manifest_payload());
         }
-        self.tool_manifest_payload_for_categories(categories, intent, limit, true, true)
+        self.tool_manifest_payload_for_categories(
+            categories,
+            intent,
+            limit,
+            true,
+            true,
+            ToolProtocolCapabilities::default(),
+        )
     }
 
     fn tool_manifest_payload(
@@ -284,6 +349,7 @@ impl ToolRuntime {
         intent: Option<String>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
+        protocol_capabilities: ToolProtocolCapabilities,
     ) -> Result<Value, ToolResult> {
         self.tool_manifest_payload_for_categories(
             category.map(|category| vec![category]),
@@ -291,6 +357,7 @@ impl ToolRuntime {
             None,
             include_recommended_flows,
             include_risk_summary,
+            protocol_capabilities,
         )
     }
 
@@ -301,6 +368,7 @@ impl ToolRuntime {
         limit: Option<usize>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
+        protocol_capabilities: ToolProtocolCapabilities,
     ) -> Result<Value, ToolResult> {
         let resolved_intent = match intent {
             None => None,
@@ -311,8 +379,14 @@ impl ToolRuntime {
                 }
             },
         };
+        let model_surface = self.model_surface().ok_or_else(|| {
+            ToolResult::err(
+                "tool_manifest is unavailable under the project_connector runtime exposure"
+                    .to_string(),
+            )
+        })?;
 
-        let specs = registered_tool_specs();
+        let specs = tool_manifest_specs(protocol_capabilities, model_surface);
         let tool_count = specs.len();
         let categories_requested = normalize_tool_manifest_categories(categories);
         let category = categories_requested
@@ -340,12 +414,6 @@ impl ToolRuntime {
             None => filtered_specs,
         };
         let risk_summary = include_risk_summary.then(|| build_risk_summary(&returned_specs));
-        let model_surface = self.model_surface().ok_or_else(|| {
-            ToolResult::err(
-                "tool_manifest is unavailable under the project_connector runtime exposure"
-                    .to_string(),
-            )
-        })?;
         let tools: Vec<Value> = returned_specs
             .iter()
             .map(|spec| compact_manifest_tool_entry(spec, model_surface))
@@ -803,7 +871,7 @@ pub(super) fn compact_manifest_tool_entry(
 ) -> Value {
     let name = spec.name.as_str();
     let m = runtime_tool_metadata(name);
-    let (availability, gateway_tool) = model_surface.runtime_tool_invocation_route(name);
+    let (availability, gateway_tool) = tool_manifest_route(spec, model_surface);
     json!({
         "name": name,
         "category": runtime_tool_category(name),

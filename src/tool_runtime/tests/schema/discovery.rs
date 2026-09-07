@@ -1547,6 +1547,90 @@ async fn tool_manifest_surface_routing_metadata_tracks_current_model_surface() {
 }
 
 #[tokio::test]
+async fn tool_manifest_operator_extensions_require_explicit_family_capabilities() {
+    use crate::model_surface::ModelSurface;
+    use crate::tool_runtime::kernel::ToolProtocolCapabilities;
+
+    let runtime = test_runtime().with_model_surface(ModelSurface::AdaptiveRuntime);
+    let manifest = |tool_name: &'static str, capabilities: ToolProtocolCapabilities| {
+        runtime.tool_manifest(
+            Some(tool_name.to_string()),
+            None,
+            None,
+            false,
+            false,
+            capabilities,
+        )
+    };
+
+    let no_capability = manifest("skill_list", ToolProtocolCapabilities::default()).await;
+    assert!(!no_capability.success);
+    assert_eq!(no_capability.output["code"], "unknown_tool_manifest_tool");
+
+    let skill_only = ToolProtocolCapabilities {
+        skill_runtime: true,
+        ..Default::default()
+    };
+    let skill = manifest("skill_list", skill_only).await;
+    assert!(skill.success, "{:?}", skill.error);
+    assert_eq!(skill.output["contract"]["availability"], "gateway");
+    assert_eq!(
+        skill.output["contract"]["gateway_tool"],
+        "call_runtime_tool"
+    );
+    for hidden_without_skill_cap in ["skill_install", "memory_search", "read_tool_trace"] {
+        let hidden = manifest(hidden_without_skill_cap, skill_only).await;
+        assert!(
+            !hidden.success,
+            "{hidden_without_skill_cap} leaked via skill runtime capability"
+        );
+        assert_eq!(hidden.output["code"], "unknown_tool_manifest_tool");
+    }
+
+    let memory_only = ToolProtocolCapabilities {
+        memory_surface: true,
+        ..Default::default()
+    };
+    assert!(manifest("memory_search", memory_only).await.success);
+    assert!(!manifest("skill_list", memory_only).await.success);
+    assert!(!manifest("read_tool_trace", memory_only).await.success);
+
+    let diagnostic_only = ToolProtocolCapabilities {
+        trace_diagnostics: true,
+        ..Default::default()
+    };
+    assert!(manifest("read_tool_trace", diagnostic_only).await.success);
+    assert!(!manifest("memory_search", diagnostic_only).await.success);
+
+    let local = test_runtime().with_model_surface(ModelSurface::LocalCoding);
+    let local_with_capability = local
+        .tool_manifest(
+            Some("skill_list".to_string()),
+            None,
+            None,
+            false,
+            false,
+            skill_only,
+        )
+        .await;
+    assert!(
+        !local_with_capability.success,
+        "unsupported Local Coding surface must not expose operator extensions even with inconsistent internal capability input"
+    );
+    assert_eq!(
+        local_with_capability.output["code"],
+        "unknown_tool_manifest_tool"
+    );
+
+    let management_only = ToolProtocolCapabilities {
+        skill_management: true,
+        ..Default::default()
+    };
+    assert!(manifest("skill_install", management_only).await.success);
+    assert!(!manifest("skill_list", management_only).await.success);
+}
+
+#[tokio::test]
 async fn tool_manifest_is_not_a_project_connector_runtime_route() {
     let runtime = test_runtime()
         .with_runtime_exposure(crate::model_surface::RuntimeExposure::ProjectConnector);

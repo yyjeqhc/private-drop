@@ -808,6 +808,7 @@ impl ToolRuntime {
             inner_model_facing_recording,
             context_request,
             material_capabilities,
+            super::kernel::ToolProtocolCapabilities::default(),
         )
         .await
         .0
@@ -827,6 +828,7 @@ impl ToolRuntime {
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
+        protocol_capabilities: super::kernel::ToolProtocolCapabilities,
     ) -> (ToolResult, super::read_files::ReadModelProjection) {
         let mut read_projection = super::read_files::ReadModelProjection::capture(&call);
         // Edit usage telemetry retains only fixed safe classifications. For
@@ -843,6 +845,7 @@ impl ToolRuntime {
                 inner_model_facing_recording,
                 context_request.clone(),
                 material_capabilities,
+                protocol_capabilities,
                 &mut read_projection,
             )
             .await;
@@ -975,6 +978,7 @@ impl ToolRuntime {
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
+        protocol_capabilities: super::kernel::ToolProtocolCapabilities,
         read_projection: &mut super::read_files::ReadModelProjection,
     ) -> ToolResult {
         call = call
@@ -1393,6 +1397,7 @@ impl ToolRuntime {
                 project_resolution,
                 trusted_recording_session_id,
                 trusted_recording_session_project,
+                protocol_capabilities,
             )
             .await;
         let permission = permission.filter(|_| {
@@ -1522,13 +1527,17 @@ impl ToolRuntime {
         project_resolution: Option<Result<ResolvedProject, ProjectResolverError>>,
         trusted_recording_session_id: Option<&str>,
         trusted_recording_session_project: Option<&str>,
+        protocol_capabilities: super::kernel::ToolProtocolCapabilities,
     ) -> ToolResult {
         match call {
             call @ (ToolCall::ListTools { .. }
             | ToolCall::ListRunners { .. }
             | ToolCall::RuntimeStatus { .. }
             | ToolCall::ReadToolTrace { .. }
-            | ToolCall::ToolManifest { .. }) => self.dispatch_discovery_tool(call, auth).await,
+            | ToolCall::ToolManifest { .. }) => {
+                self.dispatch_discovery_tool(call, auth, protocol_capabilities)
+                    .await
+            }
 
             call @ (ToolCall::RunnerConfigCheck { .. } | ToolCall::RunnerConfigReload { .. }) => {
                 self.dispatch_runner_config_tool(call, auth).await

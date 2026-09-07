@@ -15,4 +15,5 @@ pub use output_schemas::output_schema_for_tool;
 pub use tool_specs::{
     memory_management_tool_specs, memory_runtime_tool_specs, operator_diagnostic_tool_specs,
     registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,
+    stateless_operator_extension_tool_specs,
 };

@@ -103,6 +103,28 @@ impl ModelSurface {
         self,
         tool_name: &str,
     ) -> (&'static str, Option<&'static str>) {
+        self.runtime_tool_invocation_route_with_operator_extension(tool_name, false)
+    }
+
+    /// Route one runtime tool when the protocol adapter has already admitted a
+    /// ModelHidden Stateless operator extension. `operator_extension_admitted`
+    /// is server-owned request context; callers cannot use this to make an
+    /// arbitrary hidden tool model-visible.
+    pub(crate) fn runtime_tool_invocation_route_with_operator_extension(
+        self,
+        tool_name: &str,
+        operator_extension_admitted: bool,
+    ) -> (&'static str, Option<&'static str>) {
+        if operator_extension_admitted {
+            return match self {
+                Self::LocalCoding => (TOOL_SURFACE_AVAILABILITY_UNAVAILABLE, None),
+                Self::AdaptiveRuntime => (
+                    TOOL_SURFACE_AVAILABILITY_GATEWAY,
+                    Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME),
+                ),
+                Self::FullOperatorRuntime => (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+            };
+        }
         if !is_model_visible_tool_name(tool_name) {
             return (TOOL_SURFACE_AVAILABILITY_UNAVAILABLE, None);
         }
