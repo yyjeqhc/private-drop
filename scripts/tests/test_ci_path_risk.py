@@ -70,10 +70,12 @@ class PathRiskFixtureTests(unittest.TestCase):
     def test_runner_process_owners_require_native_runner_and_real_process_lanes(self) -> None:
         for path in (
             "crates/webcodex-runner/src/webcodex_runner/coding_agent.rs",
+            "crates/webcodex-runner/src/webcodex_runner/detached_job/tests.rs",
             "crates/webcodex-runner/src/webcodex_runner/external_tools.rs",
             "crates/webcodex-runner/src/webcodex_runner/job_manager.rs",
             "crates/webcodex-runner/src/webcodex_runner/mcp_gateway.rs",
             "crates/webcodex-runner/src/webcodex_runner/projects.rs",
+            "crates/webcodex-runner/src/webcodex_runner/ssh.rs",
             "crates/webcodex-runner/src/webcodex_runner/validation/execute.rs",
         ):
             with self.subTest(path=path):

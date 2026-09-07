@@ -81,7 +81,9 @@ The lanes above define test semantics; workflows decide when to run them.
   tooling. macOS native coverage has core Runner/Computer, Runner real-process, and
   Desktop package jobs; the first two run on both published architectures while the
   Desktop job remains independently selected. Windows likewise separates the default
-  Runner/Computer suite from the real-process Runner group, so process-tree tests no
+  Runner/Computer suite from the real-process Runner group. That group now owns the
+  explicit shell/JobManager/Git/validation process-tree fixtures, detached-supervisor
+  lifecycle tests, and Windows fake-SSH stop/timeout/tree fixtures, so those tests no
   longer force the whole default suite to share their wall-clock/process-contention
   profile. The real-process jobs themselves use two libtest threads. The local-`sshd`
   SSH integration fixture remains Linux-only because it depends on Linux daemon
@@ -91,7 +93,7 @@ The lanes above define test semantics; workflows decide when to run them.
   main pushes force full-native classification, so that proof includes the explicit
   Runner real-process lanes on Linux, Windows, and both macOS architectures. Readiness
   then runs its release-specific E2E/eval and disposable Server-image checks instead
-  of duplicating the same process-tree suite. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
+  of duplicating the same real-child-process lifecycle suite. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
   and `.github/workflows/release-readiness.yml`.
 - Slow/manual and real-process lanes remain explicit targeted evidence unless
   a workflow names them. Do not infer that one lane ran merely because another CI
