@@ -69,6 +69,27 @@ impl Drop for EnvGuard {
     }
 }
 
+/// Create security-sensitive CLI fixtures under a canonical scratch root
+/// rather than the platform's ambient temp alias. On macOS, `tempfile` normally
+/// starts under `/var/folders`, while `/var` is a system symlink to
+/// `/private/var`; credential tests intentionally reject symlink ancestors and
+/// project tests intentionally reject `/private/var` as a dangerous root.
+/// Canonical `/tmp` becomes `/private/tmp` on macOS and stays outside those
+/// policies. Windows keeps its canonical ambient temp directory.
+pub(crate) fn canonical_test_tempdir() -> tempfile::TempDir {
+    #[cfg(unix)]
+    let root = std::path::PathBuf::from("/tmp");
+    #[cfg(windows)]
+    let root = std::env::temp_dir();
+    let root = root
+        .canonicalize()
+        .expect("canonicalize CLI test temp root");
+    tempfile::Builder::new()
+        .prefix("webcodex-cli-case-")
+        .tempdir_in(root)
+        .expect("create canonical CLI test tempdir")
+}
+
 pub(crate) fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|s| s.to_string()).collect()
 }

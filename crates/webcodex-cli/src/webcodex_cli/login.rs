@@ -1164,6 +1164,7 @@ pub(crate) fn run_status(opts: StatusOptions) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webcodex_cli::test_support::canonical_test_tempdir;
 
     thread_local! {
         /// Forces `remove_internal_dir` to fail, so the residue-reporting paths
@@ -1320,7 +1321,7 @@ mod tests {
 
     #[test]
     fn destination_is_server_then_user() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let paths = resolve_destination(temp.path(), "https://api.example.com", "alice").unwrap();
         assert_eq!(
             paths.dir,
@@ -1331,7 +1332,7 @@ mod tests {
 
     #[test]
     fn a_fresh_login_publishes_through_staging_and_leaves_nothing_behind() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         assert_eq!(
             publish_login(base, "https://api.example.com", false).unwrap(),
@@ -1379,7 +1380,7 @@ mod tests {
 
     #[test]
     fn allowed_root_without_project_remains_policy_only() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let allowed_root = temp.path().join("workspaces");
         std::fs::create_dir_all(&allowed_root).unwrap();
@@ -1432,7 +1433,7 @@ mod tests {
     #[test]
     fn published_secrets_are_not_world_readable() {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         publish_login(temp.path(), "https://api.example.com", false).unwrap();
         let paths = all_connections(temp.path())[0].paths.clone();
         for secret in [&paths.runner_config, &paths.user_token] {
@@ -1445,7 +1446,7 @@ mod tests {
     #[test]
     fn a_staging_directory_is_private_while_it_exists() {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let paths = resolve_destination(temp.path(), "https://api.example.com", "alice").unwrap();
         std::fs::create_dir_all(paths.dir.parent().unwrap()).unwrap();
         let staging = create_staging_dir(paths.dir.parent().unwrap()).unwrap();
@@ -1457,7 +1458,7 @@ mod tests {
 
     #[test]
     fn a_failure_while_staging_leaves_no_connection_and_no_residue() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let opts = login_opts(base, "https://api.example.com", false);
         let identity = identity();
@@ -1486,7 +1487,7 @@ mod tests {
 
     #[test]
     fn overwrite_replaces_the_connection_and_removes_the_backup() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         let paths = all_connections(base)[0].paths.clone();
@@ -1506,7 +1507,7 @@ mod tests {
 
     #[test]
     fn a_failed_overwrite_restores_the_previous_connection() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         let paths = all_connections(base)[0].paths.clone();
@@ -1527,7 +1528,7 @@ mod tests {
 
     #[test]
     fn without_overwrite_the_old_connection_stays_and_new_credentials_are_kept() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         let paths = all_connections(base)[0].paths.clone();
@@ -1559,7 +1560,7 @@ mod tests {
 
     #[test]
     fn status_ignores_staging_backup_and_recovery_directories() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         // A second login without --overwrite parks a full recovery directory.
@@ -1580,7 +1581,7 @@ mod tests {
 
     #[test]
     fn logout_with_multiple_users_requires_explicit_user_or_all() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         seed_connection(base, "https://api.example.com", "alice");
         seed_connection(base, "https://api.example.com", "bob");
@@ -1625,7 +1626,7 @@ mod tests {
 
     #[test]
     fn logout_json_multiple_user_ambiguity_is_structured_and_secret_free() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         seed_connection(base, "https://api.example.com", "alice");
         seed_connection(base, "https://api.example.com", "bob");
@@ -1651,7 +1652,7 @@ mod tests {
 
     #[test]
     fn logout_over_https_does_not_touch_the_http_connection() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         seed_connection(base, "http://api.example.com", "alice");
         seed_connection(base, "https://api.example.com", "alice");
@@ -1674,7 +1675,7 @@ mod tests {
 
     #[test]
     fn logout_on_one_port_does_not_touch_another() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         seed_connection(base, "https://api.example.com", "alice");
         seed_connection(base, "https://api.example.com:8443", "alice");
@@ -1697,7 +1698,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn logout_never_follows_a_symlinked_connection_directory() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let outside = temp.path().join("precious");
         std::fs::create_dir_all(&outside).unwrap();
@@ -1728,7 +1729,7 @@ mod tests {
 
     #[test]
     fn removal_refuses_a_path_outside_the_base_directory() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         std::fs::create_dir_all(&base).unwrap();
         let outside = temp.path().join("elsewhere/https_api.example.com/alice");
@@ -1748,7 +1749,7 @@ mod tests {
 
     #[test]
     fn status_lists_every_connection_and_guides_when_empty() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let empty = render_status(&all_connections(base), false).unwrap();
         assert!(empty.contains("Not logged in"), "{empty}");
@@ -1770,7 +1771,7 @@ mod tests {
 
     #[test]
     fn one_device_can_hold_the_same_user_on_several_servers() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://s1.example.com", false).unwrap();
         publish_login(base, "https://s2.example.com", false).unwrap();
@@ -1807,7 +1808,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn login_refuses_a_symlinked_base_directory() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let outside = temp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         let base = temp.path().join("config");
@@ -1822,7 +1823,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn login_refuses_a_symlinked_server_directory() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let outside = temp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         let base = temp.path().join("config");
@@ -1840,7 +1841,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn dangling_server_symlink_is_rejected() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         std::fs::create_dir_all(&base).unwrap();
         let canonical = canonical_server_url("https://api.example.com").unwrap();
@@ -1858,7 +1859,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn login_does_not_create_staging_outside_base() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let outside = temp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         let base = temp.path().join("config");
@@ -1881,7 +1882,7 @@ mod tests {
         // safe/link -> outside, base = safe/link/config. `create_dir_all` walks
         // straight through `link` and the canonicalize afterwards then reports
         // the relocated path as if it were fine.
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let outside = temp.path().join("outside");
         let safe = temp.path().join("safe");
         std::fs::create_dir_all(&outside).unwrap();
@@ -1903,7 +1904,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn login_refuses_a_symlinked_base_ancestor_before_redeeming() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let outside = temp.path().join("outside");
         let safe = temp.path().join("safe");
         std::fs::create_dir_all(&outside).unwrap();
@@ -1927,7 +1928,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn login_refuses_a_dangling_symlinked_base_ancestor() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let safe = temp.path().join("safe");
         std::fs::create_dir_all(&safe).unwrap();
         let nowhere = temp.path().join("nowhere");
@@ -1946,7 +1947,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn login_refuses_a_file_in_the_base_path() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let safe = temp.path().join("safe");
         std::fs::create_dir_all(&safe).unwrap();
         std::fs::write(safe.join("blocker"), "not a directory").unwrap();
@@ -1965,7 +1966,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn missing_base_components_are_created_without_following_symlinks() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let outside = temp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         // A symlink that shares a name with a component that will be created
@@ -1988,7 +1989,7 @@ mod tests {
 
     #[test]
     fn base_paths_may_be_relative_and_contain_dot_components() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let anchor = temp.path().canonicalize().unwrap();
         let canonical = canonical_server_url("https://api.example.com").unwrap();
 
@@ -2009,7 +2010,7 @@ mod tests {
 
     #[test]
     fn resolve_connection_parent_creates_a_missing_base_and_server_directory() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("nested/config");
         let canonical = canonical_server_url("https://api.example.com").unwrap();
         let parent = resolve_connection_parent(&base, &canonical).unwrap();
@@ -2026,7 +2027,7 @@ mod tests {
 
     #[test]
     fn successful_overwrite_does_not_silently_leave_backup() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         let outcome = publish_login(base, "https://api.example.com", true).unwrap();
@@ -2040,7 +2041,7 @@ mod tests {
 
     #[test]
     fn backup_cleanup_failure_is_reported() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
 
@@ -2057,7 +2058,7 @@ mod tests {
 
     #[test]
     fn staging_cleanup_failure_is_reported() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let canonical = canonical_server_url("https://api.example.com").unwrap();
         let parent = resolve_connection_parent(base, &canonical).unwrap();
@@ -2075,7 +2076,7 @@ mod tests {
 
     #[test]
     fn cleanup_errors_do_not_contain_credentials() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let canonical = canonical_server_url("https://api.example.com").unwrap();
         let parent = resolve_connection_parent(base, &canonical).unwrap();
@@ -2120,7 +2121,7 @@ mod tests {
 
     #[tokio::test]
     async fn login_rejects_an_unusable_server_url_before_spending_the_code() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         for bad in [
             "https://api.example.com/path",
             "ftp://api.example.com",
@@ -2162,7 +2163,7 @@ mod tests {
 
     #[test]
     fn resolved_default_device_combines_hostname_and_persistent_suffix() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let opts = login_opts(base, "https://api.example.com", false);
         let first = resolve_device_name(base, &opts).unwrap();
@@ -2183,7 +2184,7 @@ mod tests {
         let second = resolve_device_name(base, &opts).unwrap();
         assert_eq!(first, second);
         // Two different bases get different suffixes.
-        let other = tempfile::TempDir::new().unwrap();
+        let other = canonical_test_tempdir();
         let third = resolve_device_name(other.path(), &opts).unwrap();
         assert_ne!(first, third);
     }
@@ -2217,7 +2218,7 @@ mod tests {
             .unwrap();
         });
 
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config root");
         let opts = LoginOptions {
             server_url: format!("http://{address}"),
@@ -2284,7 +2285,7 @@ mod tests {
             .unwrap();
         });
 
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let allowed_root = temp.path().join("workspaces");
         let project = allowed_root.join("my-repo");
@@ -2352,7 +2353,7 @@ mod tests {
 
     #[tokio::test]
     async fn login_project_outside_allowed_roots_fails_before_redemption() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let allowed_root = temp.path().join("allowed");
         let outside = temp.path().join("outside");
@@ -2387,7 +2388,7 @@ mod tests {
 
     #[tokio::test]
     async fn login_project_rejects_unauthorized_dangerous_root_before_redemption() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let allowed_root = temp.path().join("allowed");
         std::fs::create_dir_all(&allowed_root).unwrap();
@@ -2429,7 +2430,7 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn login_project_rejects_raw_unc_before_redemption_or_canonicalization() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -2469,7 +2470,7 @@ mod tests {
 
     #[test]
     fn explicit_device_wins_verbatim_without_a_suffix() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let opts = explicit_device_opts(base, "https://api.example.com", "my-rig");
         assert_eq!(resolve_device_name(base, &opts).unwrap(), "my-rig");
@@ -2482,7 +2483,7 @@ mod tests {
     fn device_suffix_file_is_created_with_mode_0600() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         std::fs::create_dir_all(base).unwrap();
         let opts = login_opts(base, "https://api.example.com", false);
@@ -2498,7 +2499,7 @@ mod tests {
 
     #[test]
     fn device_suffix_is_not_listed_as_a_connection() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         std::fs::write(base.join(DEVICE_ID_FILE), "aabbccddeeff0011\n").unwrap();
@@ -2508,7 +2509,7 @@ mod tests {
 
     #[test]
     fn device_suffix_race_reuses_the_winner() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let path = base.join(DEVICE_ID_FILE);
         std::fs::create_dir_all(base).unwrap();
@@ -2521,7 +2522,7 @@ mod tests {
     fn device_suffix_waits_for_a_concurrent_creator_to_finish() {
         use std::io::Write;
 
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let path = temp.path().join(DEVICE_ID_FILE);
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -2555,7 +2556,7 @@ mod tests {
 
     #[test]
     fn device_suffix_rejects_malformed_or_planted_files_before_redeem() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         std::fs::create_dir_all(base).unwrap();
 
@@ -2582,7 +2583,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn device_suffix_rejects_a_symlink() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         let outside = temp.path().join("outside");
         std::fs::create_dir_all(base).unwrap();
@@ -2596,7 +2597,7 @@ mod tests {
     #[test]
     fn device_suffix_rejects_group_or_other_permissions() {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         std::fs::create_dir_all(base).unwrap();
         let path = base.join(DEVICE_ID_FILE);
@@ -2608,7 +2609,7 @@ mod tests {
 
     #[test]
     fn a_hostname_near_the_cap_is_truncated_so_the_suffix_survives() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         // 80-char hostname plus suffix would exceed the server's 80 cap; the
         // head must be truncated to make room for `-` + 16 hex.
@@ -2627,7 +2628,7 @@ mod tests {
 
     #[test]
     fn render_login_result_includes_safe_metadata_and_no_tokens_by_default() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         let paths = all_connections(base)[0].paths.clone();
@@ -2883,7 +2884,7 @@ mod tests {
         } else {
             install_argv.clone()
         };
-        let parser_env = tempfile::TempDir::new().unwrap();
+        let parser_env = canonical_test_tempdir();
         std::fs::write(parser_env.path().join("webcodex-runner"), "").unwrap();
         #[cfg(windows)]
         std::fs::write(parser_env.path().join("webcodex-runner.exe"), "").unwrap();
@@ -2983,7 +2984,7 @@ mod tests {
 
     #[test]
     fn print_mcp_config_emits_the_bearer_block_and_marks_it_sensitive() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         let paths = all_connections(base)[0].paths.clone();
@@ -3020,7 +3021,7 @@ mod tests {
 
     #[test]
     fn print_mcp_config_rejects_a_runner_transport_token_in_the_user_token_file() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let paths = ConnectionPaths::new(temp.path().join("connection"));
         std::fs::create_dir_all(&paths.dir).unwrap();
         let secret = "wc_agent_do_not_echo_login_0123456789";
@@ -3044,7 +3045,7 @@ mod tests {
 
     #[test]
     fn print_mcp_config_never_touches_the_recovery_path() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = canonical_test_tempdir();
         let base = temp.path();
         publish_login(base, "https://api.example.com", false).unwrap();
         let paths = all_connections(base)[0].paths.clone();

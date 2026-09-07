@@ -538,6 +538,7 @@ fn remove_exact_registration(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webcodex_cli::test_support::canonical_test_tempdir;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -578,7 +579,7 @@ mod tests {
 
     #[test]
     fn canonical_matching_and_multi_profile_ambiguity_are_exact() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -598,7 +599,7 @@ mod tests {
 
     #[test]
     fn resolve_registration_accepts_a_single_legacy_registry_layout() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -628,7 +629,7 @@ mod tests {
     #[test]
     fn project_registration_symlink_fails_closed() {
         use std::os::unix::fs::symlink;
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -647,7 +648,7 @@ mod tests {
 
     #[test]
     fn non_regular_project_registration_fails_closed() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -666,7 +667,7 @@ mod tests {
 
     #[tokio::test]
     async fn offline_unregister_preserves_other_project_and_repository() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -704,7 +705,7 @@ mod tests {
 
     #[tokio::test]
     async fn offline_disconnect_accepts_legacy_agent_toml_only() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -734,7 +735,7 @@ mod tests {
 
     #[tokio::test]
     async fn offline_disconnect_rejects_dual_runner_config_names() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -765,7 +766,7 @@ mod tests {
 
     #[tokio::test]
     async fn offline_oauth_unregister_does_not_require_managed_login() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -862,7 +863,7 @@ mod tests {
     {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config_base = tmp.path().join("config");
         let state_base = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -955,7 +956,7 @@ mod tests {
     async fn lost_unregister_response_reobserves_runner_removed_registration_as_absent() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let config_base = tmp.path().join("config");
         let state_base = tmp.path().join("state");
         let project = tmp.path().join("repo");
@@ -1107,7 +1108,7 @@ mod tests {
     fn last_project_disconnect_stops_managed_runner() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let runner = tmp.path().join("webcodex-runner");
         std::fs::write(
             &runner,

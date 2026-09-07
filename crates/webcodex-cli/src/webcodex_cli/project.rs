@@ -240,6 +240,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webcodex_cli::test_support::canonical_test_tempdir;
 
     fn config_with_policy(
         path: &Path,
@@ -268,7 +269,7 @@ mod tests {
 
     #[test]
     fn register_existing_directory_is_idempotent_and_respects_registry_path() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let root = tmp.path().join("root");
         let project = root.join("demo");
         let registry = tmp.path().join("registry");
@@ -304,7 +305,7 @@ mod tests {
 
     #[test]
     fn human_registration_output_prioritizes_project_and_reload_action() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let root = tmp.path().join("root");
         let project = root.join("demo");
         let registry = tmp.path().join("registry");
@@ -387,7 +388,7 @@ mod tests {
 
     #[test]
     fn outside_allowed_roots_is_rejected_without_registry_mutation() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let root = tmp.path().join("root");
         let outside = tmp.path().join("outside");
         let registry = tmp.path().join("registry");
@@ -407,7 +408,7 @@ mod tests {
 
     #[test]
     fn stale_first_root_does_not_block_later_matching_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let stale = tmp.path().join("deleted-project");
         let root = tmp.path().join("root");
         let project = root.join("demo");
@@ -433,7 +434,7 @@ mod tests {
 
     #[test]
     fn stale_root_and_valid_nonmatching_root_remain_denied() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let stale = tmp.path().join("deleted-project");
         let allowed = tmp.path().join("allowed");
         let project = tmp.path().join("outside");
@@ -455,7 +456,7 @@ mod tests {
 
     #[test]
     fn all_stale_roots_remain_denied() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let project = tmp.path().join("project");
         let registry = tmp.path().join("registry");
         std::fs::create_dir_all(&project).unwrap();
@@ -484,7 +485,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn project_symlink_escape_remains_denied() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let root = tmp.path().join("root");
         let outside = tmp.path().join("outside");
         let registry = tmp.path().join("registry");
@@ -507,7 +508,7 @@ mod tests {
 
     #[test]
     fn stale_roots_do_not_relax_allow_cwd_anywhere_false() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let project = tmp.path().join("ordinary-project");
         std::fs::create_dir_all(&project).unwrap();
         let stale = tmp.path().join("deleted-project");
@@ -533,7 +534,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn raw_unc_is_rejected_before_canonicalization_even_when_explicitly_allowed() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let registry = tmp.path().join("registry");
         let unc = PathBuf::from(r"\\server\share\webcodex-unreachable-repo");
 
@@ -550,7 +551,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn raw_local_disk_path_proceeds_to_project_canonicalization() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let registry = tmp.path().join("registry");
         let missing = PathBuf::from(r"C:\webcodex-definitely-missing-p2-regression\repo");
 
@@ -566,7 +567,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn cwd_anywhere_rejects_dangerous_root_without_mutating_registry() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let home = tmp.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
         let _guard = crate::webcodex_cli::test_support::env_test_guard();
@@ -591,7 +592,7 @@ mod tests {
 
     #[test]
     fn cwd_anywhere_still_allows_an_ordinary_directory_outside_explicit_roots() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let authority = tmp.path().join("authority");
         let project = tmp.path().join("ordinary-project");
         let registry = tmp.path().join("registry");
@@ -614,7 +615,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn explicit_dangerous_root_authority_allows_intentional_registration() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let registry = tmp.path().join("registry");
         let config_path = tmp.path().join("runner.toml");
         config_with_policy(&config_path, &registry, &[PathBuf::from("/etc")], true);
@@ -632,7 +633,7 @@ mod tests {
 
     #[test]
     fn different_paths_with_same_basename_get_stable_collision_suffix() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let root = tmp.path().join("root");
         let one = root.join("one/demo");
         let two = root.join("two/demo");

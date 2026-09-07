@@ -1148,6 +1148,7 @@ fn read_local_runner_log_tail(state_dir: &Path, lines: u32) -> Result<LogTail, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webcodex_cli::test_support::canonical_test_tempdir;
 
     fn write_lines(path: &Path, start: usize, end: usize, trailing_newline: bool) {
         let mut content = (start..end)
@@ -1162,7 +1163,7 @@ mod tests {
 
     #[test]
     fn local_runner_tail_reads_archives_in_order_and_bounds_large_files() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let state = tmp.path();
         write_lines(&local_runner_log_archive_path(state, 2), 0, 50, true);
         write_lines(&local_runner_log_archive_path(state, 1), 50, 100, true);
@@ -1224,7 +1225,7 @@ mod tests {
     fn local_runner_reuses_process_recovers_stale_pid_and_stops() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let runner = tmp.path().join("webcodex-runner");
         std::fs::write(
             &runner,
@@ -1303,7 +1304,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn local_runner_reuses_process_recovers_stale_pid_and_stops_windows() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         // A real, native long-lived "Runner": a cmd batch that loops forever.
         // ensure_runner_unlocked drives it through the same Win32 identity
         // capture and taskkill stop path the production binary uses.
@@ -1373,7 +1374,7 @@ mod tests {
     fn local_runner_rotates_logs_while_alive_and_stops_its_writer() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = canonical_test_tempdir();
         let runner = tmp.path().join("webcodex-runner");
         std::fs::write(
             &runner,
@@ -1440,12 +1441,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn immediate_runner_failure_does_not_leave_active_state() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let tmp = tempfile::tempdir().unwrap();
-        let runner = tmp.path().join("webcodex-runner");
-        std::fs::write(&runner, "#!/bin/sh\nexit 23\n").unwrap();
-        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let tmp = canonical_test_tempdir();
+        let runner = std::path::PathBuf::from("/usr/bin/false");
         let config = tmp.path().join("runner.toml");
         std::fs::write(&config, "server_url='http://example.test'\n").unwrap();
         let state = tmp.path().join("state");
