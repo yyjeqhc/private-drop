@@ -4005,7 +4005,9 @@ fn main() {
     }
 
     #[test]
-    fn windows_blocked_program_writer_timeout_drains_output_and_returns_bounded() {
+    #[ignore = "runner real-process lane: fake SSH blocks program delivery until timeout"]
+    fn runner_real_process_windows_blocked_program_writer_timeout_drains_output_and_returns_bounded(
+    ) {
         let policy = RunnerPolicy {
             max_output_bytes: 4 * 1024,
             ..RunnerPolicy::default()
@@ -4036,7 +4038,9 @@ fn main() {
     }
 
     #[test]
-    fn windows_blocked_program_writer_stop_is_outcome_unknown_and_reaps_client() {
+    #[ignore = "runner real-process lane: fake SSH blocked writer is stopped and reaped"]
+    fn runner_real_process_windows_blocked_program_writer_stop_is_outcome_unknown_and_reaps_client()
+    {
         let temp = tempfile::tempdir().unwrap();
         let marker = temp.path().join("blocked-writer.pid");
         let host = format!("fake-never-read-stop={}", marker.display());
@@ -4206,7 +4210,8 @@ fn main() {
     }
 
     #[test]
-    fn windows_one_shot_post_dispatch_stop_is_outcome_unknown_and_reaps_tree() {
+    #[ignore = "runner real-process lane: one-shot fake SSH stop reaps a real process"]
+    fn runner_real_process_windows_one_shot_post_dispatch_stop_is_outcome_unknown_and_reaps_tree() {
         let temp = tempfile::tempdir().unwrap();
         let started_marker = temp.path().join("one-shot-stop.started");
         let stop_requested = Arc::new(AtomicBool::new(false));
@@ -4371,7 +4376,8 @@ fn main() {
     }
 
     #[test]
-    fn windows_background_ssh_post_spawn_rejection_reaps_owned_tree() {
+    #[ignore = "runner real-process lane: post-spawn rejection terminates a fake SSH process tree"]
+    fn runner_real_process_windows_background_ssh_post_spawn_rejection_reaps_owned_tree() {
         use std::io::{BufRead, BufReader};
 
         let temp = tempfile::tempdir().unwrap();
@@ -4421,7 +4427,8 @@ fn main() {
     }
 
     #[test]
-    fn windows_one_shot_timeout_reaps_the_managed_ssh_tree() {
+    #[ignore = "runner real-process lane: one-shot fake SSH timeout reaps a real process tree"]
+    fn runner_real_process_windows_one_shot_timeout_reaps_the_managed_ssh_tree() {
         let temp = tempfile::tempdir().unwrap();
         let delayed_marker = temp.path().join("one-shot-grandchild.marker");
         let result = run_ssh_shell_with_execution_state(
@@ -4454,7 +4461,8 @@ fn main() {
     }
 
     #[test]
-    fn windows_background_ssh_reuses_job_manager_lifecycle_and_bounds_output() {
+    #[ignore = "runner real-process lane: background fake SSH exercises repeated child-process lifecycle"]
+    fn runner_real_process_windows_background_ssh_reuses_job_manager_lifecycle_and_bounds_output() {
         let config = ssh_config("spe", None);
         let mut manager = crate::JobManager::new(1);
         manager.ssh_pool = fake_pool();
@@ -4586,7 +4594,8 @@ fn main() {
     }
 
     #[test]
-    fn windows_background_ssh_stop_and_timeout_reap_owned_trees() {
+    #[ignore = "runner real-process lane: background fake SSH stop and timeout reap process trees"]
+    fn runner_real_process_windows_background_ssh_stop_and_timeout_reap_owned_trees() {
         let temp = tempfile::tempdir().unwrap();
         let config = ssh_config("spe", None);
         let mut manager = crate::JobManager::new(1);
@@ -4663,7 +4672,8 @@ fn main() {
     }
 
     #[test]
-    fn windows_background_ssh_shutdown_drain_is_bounded_and_reaps_tree() {
+    #[ignore = "runner real-process lane: Runner shutdown drains and reaps a fake SSH tree"]
+    fn runner_real_process_windows_background_ssh_shutdown_drain_is_bounded_and_reaps_tree() {
         let temp = tempfile::tempdir().unwrap();
         let marker = temp.path().join("shutdown-grandchild.marker");
         let mut manager = crate::JobManager::new(1);
