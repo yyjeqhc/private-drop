@@ -3121,11 +3121,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(data_dir);
     }
 
+    /// Serializes tests that mutate process environment variables.
+    ///
+    /// Env mutation is process-global, so env-mutating tests in this test
+    /// binary hold one shared lock for their whole body. Desktop is its own
+    /// Cargo workspace, so this per-crate `TEST_ENV_LOCK` follows the
+    /// convention documented in docs/TESTING.md.
+    static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Restores one process environment variable when the guard is dropped,
+    /// including through panic unwinding. Holding `TEST_ENV_LOCK` for the
+    /// guard's lifetime also serializes env mutation across sibling tests;
+    /// poisoning is tolerated because the RAII restore already fixed the
+    /// environment before the lock is released.
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+        _test_env_lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let test_env_lock = TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self {
+                key,
+                previous,
+                _test_env_lock: test_env_lock,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     #[tokio::test]
     #[ignore = "requires current-source dogfood binaries and a temporary project"]
     async fn native_local_full_dogfood_reuses_enrollment_and_stops_owned_runtime() {
         let project = std::env::var("WEBCODEX_DESKTOP_DOGFOOD_PROJECT")
             .expect("WEBCODEX_DESKTOP_DOGFOOD_PROJECT must point to the temporary fixture");
+        // The Server only accepts lowercase local pairing usernames. Pin a
+        // mixed-case OS username so the compatibility path is exercised on
+        // every machine, not only where the login name already fails. The
+        // guard restores the previous value on every exit path, including
+        // panics, so this override never leaks to sibling tests.
+        let _username_guard = EnvVarGuard::set("USERNAME", "Alice Dogfood");
         // macOS exposes its temporary root through /var -> /private/var.
         // Resolve the fixture root, not the credential-store security checks.
         let temporary_root = std::env::temp_dir()
@@ -3214,6 +3263,39 @@ mod tests {
             first_user_token == second_user_token,
             "local restart must reuse enrollment instead of rotating the managed user token"
         );
+        // The supervisor refuses to spawn while an owned runtime process is
+        // still active, and the saved identity only matches an unchanged
+        // project, so switching projects stops the runtime first and pairs
+        // again through the same username path as first setup.
+        core.stop_local_runtime(&cancellation)
+            .await
+            .expect("stop runtime before switching project");
+        let second_project = data_dir.join("second-project");
+        std::fs::create_dir_all(&second_project).expect("create second project fixture");
+        let expected_project = core
+            .adapter
+            .inspect_project(&second_project.to_string_lossy())
+            .await
+            .expect("inspect second project fixture");
+        let switched = match core
+            .configure_local_setup(Some(&second_project.to_string_lossy()), &cancellation)
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let readiness = core.snapshot.readiness.clone();
+                core.supervisor.lock().await.stop_all().await;
+                let _ = std::fs::remove_dir_all(&data_dir);
+                panic!("switch project setup failed: {error:?}; readiness={readiness:?}");
+            }
+        };
+        assert_eq!(switched.readiness.server, ServerReadiness::Ready);
+        assert_eq!(switched.readiness.runner, RunnerReadiness::Ready);
+        assert_eq!(switched.readiness.project, ProjectReadiness::Ready);
+        assert!(same_project(
+            &core.config.project.as_ref().expect("selected project").path,
+            &expected_project.path,
+        ));
         core.stop_local_runtime(&cancellation)
             .await
             .expect("stop restarted local runtime");

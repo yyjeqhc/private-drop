@@ -81,6 +81,8 @@ launchctl setenv CONTROL_PLANE_API_KEY "$CONTROL_PLANE_API_KEY"
 
 首次启动后，Desktop 会准备本机 Server + Runner。Windows 会先把 Desktop 安装目录注册为默认项目；macOS 使用 Desktop 自己的 workspace。真正开发时，请在“项目”页面**显式添加你的代码仓库目录**。
 
+本地配对时，Desktop 会将操作系统用户名转换为 Server 接受的名称：原本合法的名称保持不变；否则 ASCII 字母转为小写，连续的不支持字符合并为一个 `-`，名称中原有的 `-` 保持原样，去掉首尾生成的 `-`，结果限制为 64 个字符；转换后为空时使用 `desktop`。这个本地配对名称不是操作系统登录身份；重启时会复用已保存的注册身份。
+
 这是有意的安全边界：默认项目不会自动获得其他目录或整块磁盘的访问权限。
 
 ![本机运行环境示例](desktop-install/image-20260906171904811.png)

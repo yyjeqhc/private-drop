@@ -91,6 +91,8 @@ On first use, Desktop prepares its local Server + Runner. Windows initially has 
 
 This is an intentional authority boundary: the default Desktop project does not grant access to unrelated directories or the whole disk.
 
+For local pairing, Desktop derives a Server-compatible username from your OS username: names the Server already accepts are kept as-is; otherwise ASCII letters are lowercased, each run of unsupported characters becomes a single `-`, the name's own `-` characters are preserved, leading and trailing generated separators are removed, and the result is limited to 64 characters. Names with nothing left use `desktop`. This local pairing name is not an OS login identity; existing saved enrollment is reused on restart.
+
 ![Local runtime example](desktop-install/image-20260906171904811.png)
 
 ## 5. Configure Tunnel networking if needed
