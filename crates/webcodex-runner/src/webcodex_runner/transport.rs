@@ -249,9 +249,7 @@ impl RunnerRuntimeState {
     }
 
     async fn wait_for_shutdown(&self) {
-        while !self.shutdown_requested() {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
+        self.coordinator.wait_requested().await;
     }
 
     #[cfg(any(unix, test))]

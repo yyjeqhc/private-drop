@@ -83,9 +83,11 @@ The lanes above define test semantics; workflows decide when to run them.
   Desktop job remains independently selected. Windows likewise separates the default
   Runner/Computer suite from the real-process Runner group. That group now owns the
   explicit shell/JobManager/Git/validation process-tree fixtures, detached-supervisor
-  lifecycle tests, and Windows fake-SSH stop/timeout/tree fixtures, so those tests no
-  longer force the whole default suite to share their wall-clock/process-contention
-  profile. The real-process jobs themselves use two libtest threads. The local-`sshd`
+  lifecycle tests, Windows fake-SSH stop/timeout/tree fixtures, selected Plugin
+  provider/check shutdown and process-tree fixtures, and LSP child shutdown/reap/
+  idle-cleanup fixtures. Ordinary Plugin protocol/catalog and LSP navigation/restart
+  coverage stays in the default Runner suite. The real-process jobs themselves use two
+  libtest threads. The local-`sshd`
   SSH integration fixture remains Linux-only because it depends on Linux daemon
   account/auth configuration.
 - Exact-source release acceptance is a separate trust boundary from ordinary CI.
@@ -127,6 +129,8 @@ The lanes above define test semantics; workflows decide when to run them.
   progress; prefer channels, notifications, or direct state inspection. Short
   negative probes, semantic grace windows, and exact count/protocol iterations
   may remain when they are the contract.
+  Async Runner shutdown waits are notification-driven by `ShutdownCoordinator`;
+  tests should signal that state directly rather than sleep for a presumed polling interval.
 - Ignored tests are not dead tests. Each ignored test should have a reason and a
   documented lane for running it intentionally.
   The `runner_real_process_` ignored tests belong to ordinary CI through their explicit

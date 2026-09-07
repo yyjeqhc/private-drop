@@ -174,11 +174,44 @@ fn runtime_completion_log_follows_bounded_background_cleanup() {
     let cfg = test_runner_config("http://127.0.0.1:1".to_string());
     let runtime =
         RunnerRuntimeState::with_shutdown_budget(&cfg, PathBuf::new(), Duration::from_millis(500));
-    runtime.register_background_thread(thread::spawn(|| {
-        thread::sleep(Duration::from_millis(60));
+    let (background_ready_tx, background_ready_rx) = std::sync::mpsc::channel();
+    let (background_release_tx, background_release_rx) = std::sync::mpsc::channel();
+    runtime.register_background_thread(thread::spawn(move || {
+        background_ready_tx.send(()).unwrap();
+        background_release_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("test must release background cleanup");
     }));
+    background_ready_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("background cleanup fixture did not start");
 
-    let report = runtime.shutdown();
+    let shutdown_runtime = runtime.clone();
+    let (report_tx, report_rx) = std::sync::mpsc::channel();
+    let shutdown = thread::spawn(move || {
+        report_tx.send(shutdown_runtime.shutdown()).unwrap();
+    });
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !runtime.config.is_stopping() {
+        assert!(
+            Instant::now() < deadline,
+            "shutdown never entered stop-accepting phase"
+        );
+        thread::yield_now();
+    }
+    assert!(
+        matches!(
+            report_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ),
+        "shutdown completed while registered background cleanup was still blocked"
+    );
+    background_release_tx.send(()).unwrap();
+    let report = report_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("shutdown did not complete after background cleanup was released");
+    shutdown.join().unwrap();
+
     let background = report
         .phases
         .iter()
@@ -187,10 +220,6 @@ fn runtime_completion_log_follows_bounded_background_cleanup() {
     assert_eq!(
         background.status,
         super::super::shutdown::ShutdownPhaseStatus::Completed
-    );
-    assert!(
-        report.elapsed_ms >= 40,
-        "completion was recorded before background cleanup"
     );
     let lines = report.log_lines();
     assert!(
@@ -246,7 +275,7 @@ fn runtime_shutdown_wakes_and_joins_reload_listener() {
     let config = Arc::clone(&runtime.config);
     runtime.register_reload_thread(thread::spawn(move || {
         while !config.is_stopping() {
-            thread::sleep(Duration::from_millis(5));
+            thread::yield_now();
         }
     }));
     let report = runtime.shutdown();
@@ -5403,7 +5432,6 @@ async fn websocket_reconnect_backoff_is_interrupted_by_process_shutdown() {
         run_websocket_runner(cfg, false, "inst-backoff-shutdown", &runner_runtime)
     });
     closed_rx.await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
     let started = Instant::now();
     runtime.request_shutdown_signal();
     tokio::time::timeout(Duration::from_secs(2), runner)

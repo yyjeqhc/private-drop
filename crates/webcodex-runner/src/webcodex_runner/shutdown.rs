@@ -210,6 +210,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 pub(crate) struct ShutdownCoordinator {
     budget: Duration,
     requested: Arc<AtomicBool>,
+    requested_watch: tokio::sync::watch::Sender<bool>,
     signal_received: AtomicBool,
     started: Mutex<Option<ShutdownDeadline>>,
     report: OnceLock<ShutdownReport>,
@@ -218,9 +219,11 @@ pub(crate) struct ShutdownCoordinator {
 
 impl ShutdownCoordinator {
     pub(crate) fn new(budget: Duration) -> Self {
+        let (requested_watch, _) = tokio::sync::watch::channel(false);
         Self {
             budget,
             requested: Arc::new(AtomicBool::new(false)),
+            requested_watch,
             signal_received: AtomicBool::new(false),
             started: Mutex::new(None),
             report: OnceLock::new(),
@@ -232,6 +235,7 @@ impl ShutdownCoordinator {
         self.signal_received.store(true, Ordering::SeqCst);
         let first = !self.requested.swap(true, Ordering::SeqCst);
         self.ensure_deadline();
+        self.requested_watch.send_replace(true);
         if first {
             eprintln!("webcodex-runner shutdown signal received");
         }
@@ -241,6 +245,20 @@ impl ShutdownCoordinator {
     pub(crate) fn request_cleanup(&self) {
         self.requested.store(true, Ordering::SeqCst);
         self.ensure_deadline();
+        self.requested_watch.send_replace(true);
+    }
+
+    pub(crate) async fn wait_requested(&self) {
+        let mut requested = self.requested_watch.subscribe();
+        loop {
+            if *requested.borrow_and_update() {
+                return;
+            }
+            requested
+                .changed()
+                .await
+                .expect("ShutdownCoordinator retains its watch sender");
+        }
     }
 
     pub(crate) fn is_requested(&self) -> bool {
@@ -444,6 +462,23 @@ mod tests {
         assert!(lines[..lines.len() - 1]
             .iter()
             .all(|line| !line.contains("shutdown complete")));
+    }
+
+    #[tokio::test]
+    async fn shutdown_wait_observes_signal_without_polling() {
+        let coordinator = Arc::new(ShutdownCoordinator::new(Duration::from_secs(1)));
+        let waiting = Arc::clone(&coordinator);
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let waiter = tokio::spawn(async move {
+            started_tx.send(()).unwrap();
+            waiting.wait_requested().await;
+        });
+        started_rx.await.unwrap();
+        coordinator.request_signal();
+        tokio::time::timeout(Duration::from_millis(100), waiter)
+            .await
+            .expect("shutdown waiter was not notified")
+            .unwrap();
     }
 
     #[test]
