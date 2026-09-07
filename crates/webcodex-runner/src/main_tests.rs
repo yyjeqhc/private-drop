@@ -1481,8 +1481,11 @@ fn managed_worktree_explicit_ref_preserves_dirty_source_and_resume_survives_sour
     assert_eq!(created["source_dirty"], true);
     let worktree = PathBuf::from(created["path"].as_str().unwrap());
     assert_eq!(
-        std::fs::read_to_string(worktree.join("hello.txt")).unwrap(),
-        "first\n"
+        std::fs::read_to_string(worktree.join("hello.txt"))
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec!["first"]
     );
     assert_eq!(
         std::fs::read_to_string(source.join("hello.txt")).unwrap(),
