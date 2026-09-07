@@ -5,6 +5,7 @@
 //! `ToolResult` projection before attaching it to the existing Action Audit row.
 
 use super::edit_tool_telemetry::{edit_tool_surface, EditToolSurface};
+use super::sessions::SessionContextRevisionAck;
 use super::tool_definition::model_visible_tool_definitions;
 use super::{ToolResult, RECOVERY_KIND_VALUES};
 use serde::Serialize;
@@ -75,26 +76,25 @@ pub(crate) struct ModelErgonomicsRecord {
 
 impl ModelErgonomicsTimer {
     pub(crate) fn start(tool_name: &str) -> Option<Self> {
-        Self::start_with_protocol(tool_name, &Value::Null, false)
+        Self::start_with_protocol(
+            tool_name,
+            &Value::Null,
+            SessionContextRevisionAck::Unsupported,
+        )
     }
 
     pub(crate) fn start_with_protocol(
         tool_name: &str,
         arguments: &Value,
-        context_continuity_capable: bool,
+        context_ack: SessionContextRevisionAck,
     ) -> Option<Self> {
         let definition =
             model_visible_tool_definitions().find(|definition| definition.name == tool_name)?;
-        let context_ack_shape = if context_continuity_capable {
-            match arguments.as_object().and_then(|object| {
-                object.get(super::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD)
-            }) {
-                None => ContextAckShape::Missing,
-                Some(value) if value.as_u64().is_some() => ContextAckShape::Revision,
-                Some(_) => ContextAckShape::Invalid,
-            }
-        } else {
-            ContextAckShape::Unsupported
+        let context_ack_shape = match context_ack {
+            SessionContextRevisionAck::Unsupported => ContextAckShape::Unsupported,
+            SessionContextRevisionAck::Unacknowledged => ContextAckShape::Missing,
+            SessionContextRevisionAck::Revision(_) => ContextAckShape::Revision,
+            SessionContextRevisionAck::Invalid => ContextAckShape::Invalid,
         };
         let finish_summary_only = (tool_name == "finish_coding_task").then(|| {
             arguments
@@ -723,20 +723,28 @@ mod tests {
 
     #[test]
     fn protocol_telemetry_distinguishes_unsupported_missing_exact_and_recovery_states() {
-        let unsupported = ModelErgonomicsTimer::start_with_protocol("read_file", &json!({}), false)
-            .unwrap()
-            .finish_after(Duration::ZERO)
-            .record_for_tool_result(&ToolResult::ok(json!({"session_context_revision": 1})))
-            .unwrap();
+        let unsupported = ModelErgonomicsTimer::start_with_protocol(
+            "read_file",
+            &json!({}),
+            SessionContextRevisionAck::Unsupported,
+        )
+        .unwrap()
+        .finish_after(Duration::ZERO)
+        .record_for_tool_result(&ToolResult::ok(json!({"session_context_revision": 1})))
+        .unwrap();
         assert!(!unsupported.context_continuity_eligible);
         assert_eq!(unsupported.context_ack_present, None);
         assert_eq!(unsupported.context_continuity_status, None);
 
-        let missing = ModelErgonomicsTimer::start_with_protocol("read_file", &json!({}), true)
-            .unwrap()
-            .finish_after(Duration::ZERO)
-            .record_for_tool_result(&ToolResult::ok(json!({"session_context_revision": 1})))
-            .unwrap();
+        let missing = ModelErgonomicsTimer::start_with_protocol(
+            "read_file",
+            &json!({}),
+            SessionContextRevisionAck::Unacknowledged,
+        )
+        .unwrap()
+        .finish_after(Duration::ZERO)
+        .record_for_tool_result(&ToolResult::ok(json!({"session_context_revision": 1})))
+        .unwrap();
         assert!(missing.context_continuity_eligible);
         assert_eq!(missing.context_ack_present, Some(false));
         assert_eq!(
@@ -745,21 +753,22 @@ mod tests {
         );
         assert_eq!(missing.session_recovery_event_count, Some(0));
 
-        let ack_field =
-            super::super::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
-        let exact =
-            ModelErgonomicsTimer::start_with_protocol("read_file", &json!({ack_field: 1}), true)
-                .unwrap()
-                .finish_after(Duration::ZERO)
-                .record_for_tool_result(&ToolResult::ok(json!({"session_context_revision": 2})))
-                .unwrap();
+        let exact = ModelErgonomicsTimer::start_with_protocol(
+            "read_file",
+            &json!({}),
+            SessionContextRevisionAck::Revision(1),
+        )
+        .unwrap()
+        .finish_after(Duration::ZERO)
+        .record_for_tool_result(&ToolResult::ok(json!({"session_context_revision": 2})))
+        .unwrap();
         assert_eq!(exact.context_ack_present, Some(true));
         assert_eq!(exact.context_continuity_status.as_deref(), Some("exact"));
 
         let behind = ModelErgonomicsTimer::start_with_protocol(
             "read_file",
-            &json!({ack_field: 1}),
-            true,
+            &json!({}),
+            SessionContextRevisionAck::Revision(1),
         )
         .unwrap()
         .finish_after(Duration::ZERO)
@@ -776,8 +785,8 @@ mod tests {
 
         let invalid = ModelErgonomicsTimer::start_with_protocol(
             "read_file",
-            &json!({ack_field: "bad"}),
-            true,
+            &json!({}),
+            SessionContextRevisionAck::Invalid,
         )
         .unwrap()
         .finish_after(Duration::ZERO)
@@ -804,12 +813,15 @@ mod tests {
     #[test]
     fn finish_summary_only_is_taken_from_request_metadata_without_body_capture() {
         for (arguments, expected) in [(json!({"summary_only": true}), true), (json!({}), false)] {
-            let record =
-                ModelErgonomicsTimer::start_with_protocol("finish_coding_task", &arguments, false)
-                    .unwrap()
-                    .finish_after(Duration::ZERO)
-                    .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
-                    .unwrap();
+            let record = ModelErgonomicsTimer::start_with_protocol(
+                "finish_coding_task",
+                &arguments,
+                SessionContextRevisionAck::Unsupported,
+            )
+            .unwrap()
+            .finish_after(Duration::ZERO)
+            .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
+            .unwrap();
             assert_eq!(record.schema_version, 3);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());

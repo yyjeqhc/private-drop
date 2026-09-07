@@ -718,6 +718,52 @@ async fn specialized_recording_session_authority_fails_closed_at_mcp_boundary() 
 }
 
 #[tokio::test]
+async fn plugin_tool_does_not_accept_stateless_continuity_wrappers() {
+    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    let auth = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INSPECT]);
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "provider-instance-a",
+        vec![],
+    )
+    .await;
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(694)),
+            mcp_2026_params(json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"list",
+                    crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_cached"],
+                    crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"]
+                }
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::BadRequest(value) = outcome else {
+        panic!("specialized plugin_tool must reject generic continuity wrappers");
+    };
+    let encoded = serde_json::to_string(&value).unwrap();
+    assert!(encoded.contains("unknown field"), "{encoded}");
+    assert!(runtime
+        .runner_registry
+        .poll(RunnerPollRequest {
+            client_id: "runner-a".to_string(),
+            runner_instance_id: "runner-instance-a".to_string(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn restricted_permission_denies_plugin_call_and_outer_direct_name_never_dispatches() {
     let runtime = test_runtime().with_permission_evaluator(
         crate::tool_runtime::PermissionEvaluator::with_mode(

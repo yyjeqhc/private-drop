@@ -1,8 +1,7 @@
-use super::super::context_projection::{
-    ContextMaterialCapabilities, TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD,
-};
+use super::super::context_projection::ContextMaterialCapabilities;
 use super::super::kernel::{
-    HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolProtocolCapabilities, ToolTransport,
+    HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+    ToolProtocolCapabilities, ToolTransport,
 };
 use super::super::permissions::{AuthorityMode, PermissionEvaluator};
 use super::super::sessions::{
@@ -1003,16 +1002,19 @@ async fn skill_management_surface_and_admin_authority_are_independent() {
     ));
 
     let private_marker = runtime
-        .call_tool_with_protocol_capabilities(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: "skill_versions".to_string(),
                 arguments: json!({
                     "project": "agent:missing:demo",
-                    "skill_key": "demo",
-                    TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD: ["skills.catalog"]
+                    "skill_key": "demo"
                 }),
             },
             context(Some(&admin)),
+            ToolInvocationMetadata {
+                context_request: vec!["skills.catalog".to_string()],
+                ..Default::default()
+            },
             ToolProtocolCapabilities {
                 context_sidecar: true,
                 skill_runtime: true,
@@ -1045,14 +1047,12 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     let project =
         register_runner_project_at_path(&runtime, "skill-fence", "demo", root.path()).await;
 
-    let mut denied_arguments = json!({"project": project});
-    denied_arguments[TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] = json!(["skills.catalog"]);
     let auth = auth_context(None, true);
     let surface_denied = runtime
-        .call_tool_with_context_protocol_capability(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: "skill_list".to_string(),
-                arguments: denied_arguments,
+                arguments: json!({"project": project}),
             },
             ToolCallContext {
                 transport: ToolTransport::Mcp,
@@ -1062,8 +1062,15 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
                 record_oauth_scope_denials: false,
                 host_file_import_trust: HostFileImportTrust::Untrusted,
             },
-            true,
-            false,
+            ToolInvocationMetadata {
+                context_request: vec!["skills.catalog".to_string()],
+                ..Default::default()
+            },
+            ToolProtocolCapabilities {
+                context_continuity: true,
+                context_sidecar: false,
+                ..Default::default()
+            },
         )
         .await;
     assert!(!surface_denied.success);

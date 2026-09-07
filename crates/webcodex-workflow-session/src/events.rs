@@ -9,14 +9,11 @@ use webcodex_core::workflow_session_contract::is_tool_call_expectation_metadata_
 pub use webcodex_core::workflow_session_contract::{is_valid_session_id, EXPLORATION_TOOL_NAMES};
 
 use super::model::{
-    PersistentShellEventEvidence, SessionContextRevisionAck, SessionEvent, SessionSummary,
-    ToolCallExpectation, ToolCallRecorderMetadata, ToolCallSessionMessageResolution,
-    LOGICAL_INVOCATION_ID_PREFIX, LOGICAL_INVOCATION_ROLE_BUSINESS,
+    PersistentShellEventEvidence, SessionEvent, SessionSummary, ToolCallExpectation,
+    ToolCallRecorderMetadata, LOGICAL_INVOCATION_ID_PREFIX, LOGICAL_INVOCATION_ROLE_BUSINESS,
     LOGICAL_INVOCATION_ROLE_RECORDER, MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS,
     MAX_OBSERVED_PATHS_PER_EVENT, MAX_VALIDATION_EXCERPT_CHARS, TOOL_ACCEPTED_EXIT_CODES_FIELD,
-    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
-    TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
-    TOOL_CALL_RECORDING_SESSION_ID_FIELD, TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
+    TOOL_ASSERTION_NAME_FIELD, TOOL_CALL_EXPECTATION_METADATA_FIELDS,
     TOOL_EXPECTATION_RESULT_MATCHED, TOOL_EXPECTATION_RESULT_MATCHED_RESULT,
     TOOL_EXPECTATION_RESULT_MISMATCH, TOOL_EXPECTATION_RESULT_NONE,
     TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE, TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS,
@@ -45,60 +42,13 @@ impl ToolCallRecorderMetadata {
         }
     }
 
-    pub fn from_arguments(arguments: &Value) -> Self {
-        Self::from_arguments_with_context_continuity(arguments, false)
-    }
-
-    pub fn from_arguments_with_context_continuity(
-        arguments: &Value,
-        context_continuity_capable: bool,
-    ) -> Self {
-        let recording_session_id = arguments
-            .as_object()
-            .and_then(|object| object.get(TOOL_CALL_RECORDING_SESSION_ID_FIELD))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| is_valid_session_id(value))
-            .map(str::to_string);
+    /// Construct recorder metadata from concrete business arguments only.
+    /// Protocol/session invocation metadata is supplied separately by the
+    /// ToolRuntime kernel and must never be recovered from hidden JSON fields.
+    pub fn from_business_arguments(arguments: &Value) -> Self {
         Self {
-            recording_session_id,
-            recording_session_project: None,
-            recording_session_authorized: false,
-            logical_invocation_id: None,
-            logical_invocation_role: None,
             expectation: tool_call_expectation_from_arguments(arguments),
-            ack_session_message_ids: arguments
-                .as_object()
-                .and_then(|obj| obj.get(TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD))
-                .and_then(Value::as_array)
-                .map(|values| {
-                    values
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            session_message_resolution: arguments
-                .as_object()
-                .and_then(|obj| obj.get(TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD))
-                .and_then(|value| {
-                    serde_json::from_value::<ToolCallSessionMessageResolution>(value.clone()).ok()
-                }),
-            ack_session_context_revision: if context_continuity_capable {
-                match arguments
-                    .as_object()
-                    .and_then(|obj| obj.get(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD))
-                {
-                    None => SessionContextRevisionAck::Unacknowledged,
-                    Some(value) => value
-                        .as_u64()
-                        .map(SessionContextRevisionAck::Revision)
-                        .unwrap_or(SessionContextRevisionAck::Invalid),
-                }
-            } else {
-                SessionContextRevisionAck::Unsupported
-            },
+            ..Self::default()
         }
     }
 }
@@ -448,10 +398,6 @@ pub fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     for &key in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
         obj.remove(key);
     }
-    obj.remove(TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD);
-    obj.remove(TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD);
-    obj.remove(TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD);
-    obj.remove(webcodex_core::workflow_session_contract::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD);
     Value::Object(obj)
 }
 

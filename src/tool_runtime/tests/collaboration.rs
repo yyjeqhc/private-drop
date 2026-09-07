@@ -1,6 +1,9 @@
 //! Workflow Session collaboration tests: coordinator/worker isolation, provenance, and authority.
 
-use super::super::kernel::{HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport};
+use super::super::kernel::{
+    HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+    ToolProtocolCapabilities, ToolTransport,
+};
 use super::super::sessions::{
     self, PostSessionMessageInput, SessionMessageKind, SessionMessagePriority,
 };
@@ -21,8 +24,29 @@ async fn call_with_recorder(
     auth: &AuthContext,
     window: Option<&ClientWindow>,
 ) -> super::super::ToolResult {
+    call_with_recorder_metadata(
+        runtime,
+        tool_name,
+        arguments,
+        recorder_session_id,
+        ToolInvocationMetadata::default(),
+        auth,
+        window,
+    )
+    .await
+}
+
+async fn call_with_recorder_metadata(
+    runtime: &ToolRuntime,
+    tool_name: &str,
+    arguments: Value,
+    recorder_session_id: Option<&str>,
+    invocation_metadata: ToolInvocationMetadata,
+    auth: &AuthContext,
+    window: Option<&ClientWindow>,
+) -> super::super::ToolResult {
     let outcome = runtime
-        .call_tool_with_context(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: tool_name.to_string(),
                 arguments,
@@ -35,6 +59,8 @@ async fn call_with_recorder(
                 record_oauth_scope_denials: false,
                 host_file_import_trust: HostFileImportTrust::Untrusted,
             },
+            invocation_metadata,
+            ToolProtocolCapabilities::default(),
         )
         .await;
     assert!(
@@ -162,13 +188,15 @@ async fn request_scoped_ack_suppresses_only_current_response_and_records_first_o
         .get("attention_instruction")
         .is_none());
 
-    let acknowledged = call_with_recorder(
+    let acknowledged = call_with_recorder_metadata(
         &runtime,
         "list_tools",
-        json!({
-            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [guidance.message_id]
-        }),
+        json!({}),
         Some(&session.session_id),
+        ToolInvocationMetadata {
+            ack_session_message_ids: vec![guidance.message_id.clone()],
+            ..Default::default()
+        },
         &auth,
         None,
     )
@@ -208,13 +236,15 @@ async fn request_scoped_ack_suppresses_only_current_response_and_records_first_o
         .await
         .unwrap();
 
-    let repeated = call_with_recorder(
+    let repeated = call_with_recorder_metadata(
         &runtime,
         "list_tools",
-        json!({
-            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [guidance.message_id]
-        }),
+        json!({}),
         Some(&session.session_id),
+        ToolInvocationMetadata {
+            ack_session_message_ids: vec![guidance.message_id.clone()],
+            ..Default::default()
+        },
         &auth,
         None,
     )
@@ -264,13 +294,18 @@ async fn request_scoped_ack_suppresses_only_current_response_and_records_first_o
         guidance.message_id
     );
 
-    let foreign_ack = call_with_recorder(
+    let foreign_ack = call_with_recorder_metadata(
         &runtime,
         "list_tools",
-        json!({
-            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [foreign_guidance.message_id, "wc_msg_unknown"]
-        }),
+        json!({}),
         Some(&session.session_id),
+        ToolInvocationMetadata {
+            ack_session_message_ids: vec![
+                foreign_guidance.message_id.clone(),
+                "wc_msg_unknown".to_string(),
+            ],
+            ..Default::default()
+        },
         &auth,
         None,
     )
@@ -396,16 +431,19 @@ async fn ack_and_resolve_same_outer_request_observes_ack_before_business_mutatio
         )
         .unwrap();
 
-    let result = call_with_recorder(
+    let result = call_with_recorder_metadata(
         &runtime,
         "resolve_session_message",
         json!({
             "session_id": session.session_id,
             "message_id": guidance.message_id,
-            "resolution": "handled",
-            sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: [guidance.message_id]
+            "resolution": "handled"
         }),
         Some(&session.session_id),
+        ToolInvocationMetadata {
+            ack_session_message_ids: vec![guidance.message_id.clone()],
+            ..Default::default()
+        },
         &auth,
         None,
     )

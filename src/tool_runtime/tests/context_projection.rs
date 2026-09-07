@@ -1,5 +1,10 @@
-use super::super::kernel::{HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport};
-use super::super::sessions::{SessionTransport, ToolCallRecorderMetadata};
+use super::super::kernel::{
+    HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+    ToolProtocolCapabilities, ToolTransport,
+};
+use super::super::sessions::{
+    SessionContextRevisionAck, SessionTransport, ToolCallRecorderMetadata,
+};
 use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
 use serde_json::{json, Value};
@@ -139,15 +144,12 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
 #[tokio::test]
 async fn private_context_marker_requires_explicit_sidecar_capability() {
     let runtime = ToolRuntime::new_for_tests();
-    let mut arguments = json!({});
-    arguments[crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] =
-        json!(["webcodex.workflow"]);
 
     let outcome = runtime
-        .call_tool_with_context_protocol_capability(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: "list_tools".to_string(),
-                arguments,
+                arguments: json!({}),
             },
             ToolCallContext {
                 transport: ToolTransport::Mcp,
@@ -157,8 +159,15 @@ async fn private_context_marker_requires_explicit_sidecar_capability() {
                 record_oauth_scope_denials: false,
                 host_file_import_trust: HostFileImportTrust::Untrusted,
             },
-            true,
-            false,
+            ToolInvocationMetadata {
+                context_request: vec!["webcodex.workflow".to_string()],
+                ..Default::default()
+            },
+            ToolProtocolCapabilities {
+                context_continuity: true,
+                context_sidecar: false,
+                ..Default::default()
+            },
         )
         .await;
     let result = outcome.result.expect("model-facing result");
@@ -495,7 +504,6 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
 async fn context_projection_coexists_with_session_continuity_and_attention() {
     use crate::tool_runtime::sessions::{
         PostSessionMessageInput, SessionMessageKind, SessionMessagePriority,
-        TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
     };
     let runtime = ToolRuntime::new_for_tests();
     let session = runtime
@@ -515,15 +523,11 @@ async fn context_projection_coexists_with_session_continuity_and_attention() {
             true,
         )
         .unwrap();
-    let mut arguments = json!({});
-    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
-    arguments[crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] =
-        json!(["webcodex.workflow"]);
     let outcome = runtime
-        .call_tool_with_context_protocol_capability(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: "list_tools".to_string(),
-                arguments,
+                arguments: json!({}),
             },
             ToolCallContext {
                 transport: ToolTransport::Mcp,
@@ -533,8 +537,16 @@ async fn context_projection_coexists_with_session_continuity_and_attention() {
                 record_oauth_scope_denials: false,
                 host_file_import_trust: HostFileImportTrust::Untrusted,
             },
-            true,
-            true,
+            ToolInvocationMetadata {
+                context_request: vec!["webcodex.workflow".to_string()],
+                ack_session_context_revision: SessionContextRevisionAck::Revision(0),
+                ..Default::default()
+            },
+            ToolProtocolCapabilities {
+                context_continuity: true,
+                context_sidecar: true,
+                ..Default::default()
+            },
         )
         .await;
     let result = outcome.result.expect("model-facing result");

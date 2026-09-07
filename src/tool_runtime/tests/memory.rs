@@ -1,13 +1,11 @@
-use super::super::context_projection::{
-    ContextMaterialCapabilities, MAX_CONTEXT_PROJECTION_BYTES,
-    TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD,
-};
+use super::super::context_projection::{ContextMaterialCapabilities, MAX_CONTEXT_PROJECTION_BYTES};
 use super::super::kernel::{
     check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
-    ToolCallRequest, ToolProtocolCapabilities, ToolTransport,
+    ToolCallRequest, ToolInvocationMetadata, ToolProtocolCapabilities, ToolTransport,
 };
 use super::super::permissions::{AuthorityMode, PermissionEvaluator};
 use super::super::project_resolution::ResolvedProject;
+use super::super::sessions::SessionContextRevisionAck;
 use super::super::{ToolResult, ToolRuntime};
 use super::support::*;
 use crate::db::{memory_catalog_revision, MemoryPriority, MAX_MEMORY_BOOTSTRAP_BYTES};
@@ -48,22 +46,21 @@ async fn list_files_with_session_context(
     ack_revision: Option<u64>,
     context_request: Vec<&str>,
 ) -> ToolResult {
-    use super::super::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
-
-    let mut arguments = json!({"project": project, "path": ".", "limit": 20});
-    if let Some(ack_revision) = ack_revision {
-        arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(ack_revision);
-    }
-    if !context_request.is_empty() {
-        arguments[TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] = json!(context_request);
-    }
+    let arguments = json!({"project": project, "path": ".", "limit": 20});
+    let invocation_metadata = ToolInvocationMetadata {
+        context_request: context_request.into_iter().map(str::to_string).collect(),
+        ack_session_context_revision: ack_revision
+            .map(SessionContextRevisionAck::Revision)
+            .unwrap_or(SessionContextRevisionAck::Unacknowledged),
+        ..Default::default()
+    };
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let session_id = session_id.to_string();
         async move {
             let auth = auth_context(None, true);
             runtime
-                .call_tool_with_protocol_capabilities(
+                .call_tool_with_invocation_metadata(
                     ToolCallRequest {
                         tool_name: "list_project_files".to_string(),
                         arguments,
@@ -76,6 +73,7 @@ async fn list_files_with_session_context(
                         record_oauth_scope_denials: false,
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
+                    invocation_metadata,
                     ToolProtocolCapabilities {
                         context_continuity: true,
                         context_sidecar: true,
@@ -976,17 +974,20 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
     ));
 
     let private_marker = runtime
-        .call_tool_with_protocol_capabilities(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: "memory_set".to_string(),
                 arguments: json!({
                     "project": project,
                     "memory_key": "private-marker",
-                    "summary": "cannot bypass",
-                    TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD: ["memory.bootstrap"]
+                    "summary": "cannot bypass"
                 }),
             },
             context(Some(&writer)),
+            ToolInvocationMetadata {
+                context_request: vec!["memory.bootstrap".to_string()],
+                ..Default::default()
+            },
             ToolProtocolCapabilities {
                 context_sidecar: true,
                 ..Default::default()
@@ -1114,17 +1115,20 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         .contains("project:write"));
 
     let manage_with_bootstrap = runtime
-        .call_tool_with_protocol_capabilities(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: "memory_set".to_string(),
                 arguments: json!({
                     "project": project,
                     "memory_key": "management-without-read",
-                    "summary": "Management does not imply read authority.",
-                    TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD: ["memory.bootstrap"]
+                    "summary": "Management does not imply read authority."
                 }),
             },
             context(Some(&manage_both)),
+            ToolInvocationMetadata {
+                context_request: vec!["memory.bootstrap".to_string()],
+                ..Default::default()
+            },
             ToolProtocolCapabilities {
                 context_sidecar: true,
                 memory_surface: true,
@@ -1149,18 +1153,21 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
     assert!(denied_bootstrap.get("projection").is_none());
 
     let mutation_with_bootstrap = runtime
-        .call_tool_with_protocol_capabilities(
+        .call_tool_with_invocation_metadata(
             ToolCallRequest {
                 tool_name: "memory_set".to_string(),
                 arguments: json!({
                     "project": project,
                     "memory_key": "post-tool-proof",
                     "summary": "Created by the current effect before its sidecar.",
-                    "bootstrap": true,
-                    TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD: ["memory.bootstrap"]
+                    "bootstrap": true
                 }),
             },
             context(Some(&writer)),
+            ToolInvocationMetadata {
+                context_request: vec!["memory.bootstrap".to_string()],
+                ..Default::default()
+            },
             ToolProtocolCapabilities {
                 context_sidecar: true,
                 memory_surface: true,

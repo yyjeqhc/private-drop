@@ -2580,7 +2580,7 @@ impl ToolCall {
                     .to_string(),
             );
         }
-        let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
+        let recorder_metadata = ToolCallRecorderMetadata::from_business_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         if name == "read_project_artifact"
             && arguments

@@ -780,20 +780,8 @@ fn stateless_ack_wrapper_normalizes_and_is_removed_before_concrete_tool_parsing(
     assert!(arguments
         .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD)
         .is_none());
-
-    arguments[crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD] =
-        json!(normalized);
-    let recorder =
-        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&arguments);
-    assert_eq!(
-        recorder.ack_session_message_ids,
-        vec!["wc_msg_beta", "wc_msg_alpha"]
-    );
-    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
-    assert!(concrete
-        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+    assert_eq!(normalized, vec!["wc_msg_beta", "wc_msg_alpha"]);
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
         .expect("wrapper ACK metadata must be gone before concrete parsing");
 
     let mut malformed = json!({
@@ -825,26 +813,7 @@ fn stateless_message_resolution_wrapper_is_validated_and_removed_before_concrete
     assert!(arguments
         .get(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD)
         .is_none());
-
-    arguments.as_object_mut().unwrap().insert(
-        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD
-            .to_string(),
-        json!(resolution),
-    );
-    let recorder =
-        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&arguments);
-    assert_eq!(
-        recorder
-            .session_message_resolution
-            .as_ref()
-            .map(|value| value.message_id.as_str()),
-        Some("wc_msg_beta")
-    );
-    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
-    assert!(concrete
-        .get(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
         .expect("message resolution wrapper metadata must be gone before concrete parsing");
 
     for malformed in [
@@ -893,20 +862,7 @@ fn stateless_context_request_is_deduped_open_ended_and_removed_before_parsing() 
     assert!(arguments
         .get(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD)
         .is_none());
-    arguments[crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] =
-        json!(normalized);
-    assert_eq!(
-        crate::tool_runtime::context_projection::context_request_from_arguments(&arguments),
-        vec![
-            "project.instructions".to_string(),
-            "future.material".to_string()
-        ]
-    );
-    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
-    assert!(concrete
-        .get(crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
         .expect("context_request wrapper metadata must be gone before concrete parsing");
 
     for malformed in [
@@ -934,35 +890,15 @@ fn stateless_context_revision_ack_is_request_scoped_and_removed_before_parsing()
     assert!(arguments
         .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD)
         .is_none());
-    arguments
-        [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] =
-        ack;
-    let recorder = crate::tool_runtime::sessions::ToolCallRecorderMetadata::
-        from_arguments_with_context_continuity(&arguments, true);
     assert_eq!(
-        recorder.ack_session_context_revision,
+        session_context_revision_ack_from_wire(Some(ack)),
         crate::tool_runtime::sessions::SessionContextRevisionAck::Revision(41)
     );
-    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
-    assert!(concrete
-        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", concrete)
+    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
         .expect("context revision wrapper metadata must be gone before concrete parsing");
 
-    let unsupported =
-        crate::tool_runtime::sessions::ToolCallRecorderMetadata::from_arguments(&json!({
-            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD: 9
-        }));
     assert_eq!(
-        unsupported.ack_session_context_revision,
-        crate::tool_runtime::sessions::SessionContextRevisionAck::Unsupported
-    );
-
-    let missing = crate::tool_runtime::sessions::ToolCallRecorderMetadata::
-        from_arguments_with_context_continuity(&json!({}), true);
-    assert_eq!(
-        missing.ack_session_context_revision,
+        session_context_revision_ack_from_wire(None),
         crate::tool_runtime::sessions::SessionContextRevisionAck::Unacknowledged
     );
 
@@ -970,13 +906,8 @@ fn stateless_context_revision_ack_is_request_scoped_and_removed_before_parsing()
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: "not-a-revision",
     });
     let malformed_ack = strip_stateless_ack_session_context_revision(&mut malformed).unwrap();
-    malformed
-        [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] =
-        malformed_ack;
-    let recorder = crate::tool_runtime::sessions::ToolCallRecorderMetadata::
-        from_arguments_with_context_continuity(&malformed, true);
     assert_eq!(
-        recorder.ack_session_context_revision,
+        session_context_revision_ack_from_wire(Some(malformed_ack)),
         crate::tool_runtime::sessions::SessionContextRevisionAck::Invalid
     );
 }
@@ -997,19 +928,67 @@ fn no_checkpoint_tool_still_accepts_context_revision_ack() {
     let accepts_ack =
         crate::tool_runtime::tool_definition::runtime_tool_accepts_context_ack("read_files");
     assert!(accepts_ack);
-    arguments
-        [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] =
-        ack;
-    let recorder = crate::tool_runtime::sessions::ToolCallRecorderMetadata::
-        from_arguments_with_context_continuity(&arguments, accepts_ack);
     assert_eq!(
-        recorder.ack_session_context_revision,
+        session_context_revision_ack_from_wire(Some(ack)),
         crate::tool_runtime::sessions::SessionContextRevisionAck::Revision(41)
     );
 
-    let concrete = crate::tool_runtime::sessions::strip_tool_call_expectation_metadata(arguments);
-    crate::tool_runtime::ToolCall::from_tool_name("read_files", concrete)
+    crate::tool_runtime::ToolCall::from_tool_name("read_files", arguments)
         .expect("cached ACK must be stripped before concrete read_files parsing");
+}
+
+#[test]
+fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean() {
+    let mut arguments = json!({
+        "project": "proj",
+        "items": [{"path": "src/lib.rs"}],
+        crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_adapter",
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_alpha"],
+        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+            "message_id": "wc_msg_alpha",
+            "resolution": "handled"
+        },
+        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"],
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: 7,
+    });
+    let recording_session_id = strip_recording_session_id(&mut arguments).unwrap();
+    let ack_session_message_ids = strip_stateless_ack_session_message_ids(&mut arguments).unwrap();
+    let session_message_resolution =
+        strip_stateless_session_message_resolution(&mut arguments).unwrap();
+    let context_request = strip_stateless_context_request(&mut arguments).unwrap();
+    let ack_session_context_revision = session_context_revision_ack_from_wire(
+        strip_stateless_ack_session_context_revision(&mut arguments),
+    );
+    let metadata = crate::tool_runtime::kernel::ToolInvocationMetadata {
+        ack_session_message_ids,
+        session_message_resolution,
+        context_request,
+        ack_session_context_revision,
+    };
+
+    assert_eq!(recording_session_id.as_deref(), Some("wc_sess_adapter"));
+    assert_eq!(metadata.ack_session_message_ids, vec!["wc_msg_alpha"]);
+    assert_eq!(metadata.context_request, vec!["webcodex.workflow"]);
+    assert_eq!(
+        metadata.ack_session_context_revision,
+        crate::tool_runtime::sessions::SessionContextRevisionAck::Revision(7)
+    );
+    assert!(metadata.session_message_resolution.is_some());
+    for field in [
+        crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
+        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
+        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
+    ] {
+        assert!(
+            arguments.get(field).is_none(),
+            "wrapper leaked into business args: {field}"
+        );
+    }
+    assert!(!arguments.to_string().contains("__webcodex_"));
+    crate::tool_runtime::ToolCall::from_tool_name("read_files", arguments)
+        .expect("typed invocation metadata must not be required for concrete ToolCall parsing");
 }
 
 #[test]

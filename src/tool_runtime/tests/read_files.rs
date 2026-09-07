@@ -1133,9 +1133,10 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
 #[tokio::test]
 async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
     use crate::tool_runtime::kernel::{
-        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+        ToolProtocolCapabilities, ToolTransport,
     };
-    use crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
+    use crate::tool_runtime::sessions::SessionContextRevisionAck;
 
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
@@ -1145,11 +1146,10 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
         .sessions
         .start_session(Some(project.clone()), Some("outer sparse read".to_string()));
     let auth = auth_context(None, true);
-    let mut arguments = json!({
+    let arguments = json!({
         "project": project,
         "items": [{"path": "a.rs"}]
     });
-    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -1157,7 +1157,7 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
         let auth = auth.clone();
         async move {
             runtime
-                .call_tool_with_context_protocol_capability(
+                .call_tool_with_invocation_metadata(
                     ToolCallRequest {
                         tool_name: "read_files".to_string(),
                         arguments,
@@ -1170,8 +1170,15 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
                         record_oauth_scope_denials: false,
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
-                    true,
-                    true,
+                    ToolInvocationMetadata {
+                        ack_session_context_revision: SessionContextRevisionAck::Revision(0),
+                        ..Default::default()
+                    },
+                    ToolProtocolCapabilities {
+                        context_continuity: true,
+                        context_sidecar: true,
+                        ..Default::default()
+                    },
                 )
                 .await
         }
@@ -1210,11 +1217,12 @@ async fn read_files_outer_recording_session_preserves_complete_sparse_shape() {
 #[tokio::test]
 async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
     use crate::tool_runtime::kernel::{
-        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+        ToolProtocolCapabilities, ToolTransport,
     };
     use crate::tool_runtime::sessions::{
-        PostSessionMessageInput, SessionMessageKind, SessionMessagePriority,
-        TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
+        PostSessionMessageInput, SessionContextRevisionAck, SessionMessageKind,
+        SessionMessagePriority,
     };
     use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
@@ -1320,13 +1328,10 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
     );
 
     let auth = auth_context(None, true);
-    let mut arguments = json!({
+    let arguments = json!({
         "project": project,
         "items": [{"path": "a.rs"}]
     });
-    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
-    arguments[crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD] =
-        json!(["webcodex.workflow"]);
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -1334,7 +1339,7 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
         let auth = auth.clone();
         async move {
             runtime
-                .call_tool_with_context_protocol_capability(
+                .call_tool_with_invocation_metadata(
                     ToolCallRequest {
                         tool_name: "read_files".to_string(),
                         arguments,
@@ -1347,8 +1352,16 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
                         record_oauth_scope_denials: false,
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
-                    true,
-                    true,
+                    ToolInvocationMetadata {
+                        context_request: vec!["webcodex.workflow".to_string()],
+                        ack_session_context_revision: SessionContextRevisionAck::Revision(0),
+                        ..Default::default()
+                    },
+                    ToolProtocolCapabilities {
+                        context_continuity: true,
+                        context_sidecar: true,
+                        ..Default::default()
+                    },
                 )
                 .await
         }
@@ -1443,9 +1456,10 @@ async fn read_files_recovery_handoff_and_attention_overlays_stay_bounded() {
 #[tokio::test]
 async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap() {
     use crate::tool_runtime::kernel::{
-        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+        ToolProtocolCapabilities, ToolTransport,
     };
-    use crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD;
+    use crate::tool_runtime::sessions::SessionContextRevisionAck;
     use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
     let root = tempfile::tempdir().unwrap();
@@ -1461,12 +1475,11 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
         20
     );
     let auth = auth_context(None, true);
-    let mut arguments = json!({
+    let arguments = json!({
         "project": project,
         "items": [{"path": "a.rs"}, {"path": "b.rs"}],
         "max_result_bytes": MAX_SERIALIZED_OUTPUT_BYTES
     });
-    arguments[TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD] = json!(0);
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -1474,7 +1487,7 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
         let auth = auth.clone();
         async move {
             runtime
-                .call_tool_with_context_protocol_capability(
+                .call_tool_with_invocation_metadata(
                     ToolCallRequest {
                         tool_name: "read_files".to_string(),
                         arguments,
@@ -1487,8 +1500,15 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
                         record_oauth_scope_denials: false,
                         host_file_import_trust: HostFileImportTrust::Untrusted,
                     },
-                    true,
-                    true,
+                    ToolInvocationMetadata {
+                        ack_session_context_revision: SessionContextRevisionAck::Revision(0),
+                        ..Default::default()
+                    },
+                    ToolProtocolCapabilities {
+                        context_continuity: true,
+                        context_sidecar: true,
+                        ..Default::default()
+                    },
                 )
                 .await
         }

@@ -12,7 +12,8 @@ use crate::model_surface::{ModelSurface, RuntimeExposure};
 use crate::tool_request_trace::ToolRequestLifecycle;
 use crate::tool_runtime::kernel::{
     check_runtime_tool_scope, HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
-    ToolCallRequest as KernelToolCallRequest, ToolProtocolCapabilities, ToolTransport,
+    ToolCallRequest as KernelToolCallRequest, ToolInvocationMetadata, ToolProtocolCapabilities,
+    ToolTransport,
 };
 use crate::tool_runtime::model_ergonomics_telemetry::{
     ModelErgonomicsRecord, ModelErgonomicsTimer,
@@ -1121,6 +1122,18 @@ pub(super) fn strip_stateless_ack_session_context_revision(arguments: &mut Value
         .remove(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD)
 }
 
+pub(super) fn session_context_revision_ack_from_wire(
+    value: Option<Value>,
+) -> crate::tool_runtime::sessions::SessionContextRevisionAck {
+    match value {
+        None => crate::tool_runtime::sessions::SessionContextRevisionAck::Unacknowledged,
+        Some(value) => value
+            .as_u64()
+            .map(crate::tool_runtime::sessions::SessionContextRevisionAck::Revision)
+            .unwrap_or(crate::tool_runtime::sessions::SessionContextRevisionAck::Invalid),
+    }
+}
+
 pub(super) async fn handle_call(
     runtime: &ToolRuntime,
     connector: Option<&ConnectorRuntime>,
@@ -1655,11 +1668,6 @@ pub(super) async fn handle_call(
         Vec::new()
     };
     let session_message_resolution = if stateless_2026 {
-        if let Some(arguments) = params.arguments.as_object_mut() {
-            arguments.remove(
-                crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD,
-            );
-        }
         match strip_stateless_session_message_resolution(&mut params.arguments) {
             Ok(value) => value,
             Err(message) => {
@@ -1695,24 +1703,6 @@ pub(super) async fn handle_call(
         }
         return McpOutcome::BadRequest(rpc_error(id, -32602, message));
     }
-    if let (Some(arguments), Some(resolution)) =
-        (params.arguments.as_object_mut(), session_message_resolution)
-    {
-        arguments.insert(
-            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD
-                .to_string(),
-            json!(resolution),
-        );
-    }
-    if !ack_session_message_ids.is_empty() {
-        if let Some(arguments) = params.arguments.as_object_mut() {
-            arguments.insert(
-                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD
-                    .to_string(),
-                json!(ack_session_message_ids),
-            );
-        }
-    }
     let context_continuity_surface_capable =
         stateless_2026 && model_surface.supports_operator_extensions();
     let context_continuity_capable =
@@ -1747,43 +1737,24 @@ pub(super) async fn handle_call(
     } else {
         Vec::new()
     };
-    if !context_request.is_empty() {
-        if let Some(arguments) = params.arguments.as_object_mut() {
-            arguments.insert(
-                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD
-                    .to_string(),
-                json!(context_request),
-            );
-        }
-    }
-    if context_continuity_surface_capable {
-        if let Some(arguments) = params.arguments.as_object_mut() {
-            arguments.remove(
-                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD,
-            );
-        }
-        // Tolerate cached old schemas: strip the public wrapper from every
-        // operator request, but preserve it as proof only for ACK-capable tools.
-        let context_revision = strip_stateless_ack_session_context_revision(&mut params.arguments);
-        if context_continuity_capable {
-            if let (Some(arguments), Some(context_revision)) =
-                (params.arguments.as_object_mut(), context_revision)
-            {
-                arguments.insert(
-                    crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD
-                        .to_string(),
-                    context_revision,
-                );
-            }
-        }
-    }
+    // Tolerate cached old schemas: strip the public wrapper from every operator
+    // request, but preserve it as typed continuity proof only for ACK-capable
+    // tools. The wrapper never re-enters concrete business arguments.
+    let context_revision = context_continuity_surface_capable
+        .then(|| strip_stateless_ack_session_context_revision(&mut params.arguments))
+        .flatten();
+    let ack_session_context_revision = if context_continuity_capable {
+        session_context_revision_ack_from_wire(context_revision)
+    } else {
+        crate::tool_runtime::sessions::SessionContextRevisionAck::Unsupported
+    };
     if let Some(lc) = lifecycle.as_deref() {
         lc.capture_payload("effective_arguments", &params.arguments);
     }
     let as_image_requested = params.name == "read_project_artifact"
         && params.arguments.get("as_image").and_then(Value::as_bool) == Some(true);
     let outcome = runtime
-        .call_tool_with_protocol_capabilities(
+        .call_tool_with_invocation_metadata(
             KernelToolCallRequest {
                 tool_name: params.name.clone(),
                 arguments: params.arguments,
@@ -1795,6 +1766,12 @@ pub(super) async fn handle_call(
                 window,
                 record_oauth_scope_denials: false,
                 host_file_import_trust,
+            },
+            ToolInvocationMetadata {
+                ack_session_message_ids,
+                session_message_resolution,
+                context_request,
+                ack_session_context_revision,
             },
             ToolProtocolCapabilities {
                 context_continuity: context_continuity_capable,

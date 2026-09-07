@@ -1153,7 +1153,7 @@ impl SessionStore {
             tool_name,
             arguments,
             resolved_project,
-            ToolCallRecorderMetadata::from_arguments(arguments),
+            ToolCallRecorderMetadata::from_business_arguments(arguments),
             contract,
         )
     }

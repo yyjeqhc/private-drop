@@ -1,6 +1,7 @@
 use super::model_ergonomics_telemetry::{ModelErgonomicsCompletion, ModelErgonomicsTimer};
 use super::sessions::{
-    strip_tool_call_expectation_metadata, SessionTransport, ToolCallRecorderMetadata,
+    strip_tool_call_expectation_metadata, SessionContextRevisionAck, SessionTransport,
+    ToolCallRecorderMetadata, ToolCallSessionMessageResolution,
 };
 use super::tool_audit::{session_log_arguments_for_tool_request, session_log_result_for_tool};
 use super::{
@@ -58,6 +59,31 @@ pub(crate) struct ToolCallContext<'a> {
 pub(crate) struct ToolCallRequest {
     pub(crate) tool_name: String,
     pub(crate) arguments: Value,
+}
+
+/// Protocol/session metadata already parsed and provenance-bound by the adapter.
+/// None of these fields are concrete tool business arguments or execution
+/// authority. Trusted protocol capabilities remain a separate adapter-derived
+/// input and the kernel continues to own all authority checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolInvocationMetadata {
+    pub(crate) ack_session_message_ids: Vec<String>,
+    pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
+    pub(crate) context_request: Vec<String>,
+    pub(crate) ack_session_context_revision: SessionContextRevisionAck,
+}
+
+impl Default for ToolInvocationMetadata {
+    fn default() -> Self {
+        Self {
+            ack_session_message_ids: Vec::new(),
+            session_message_resolution: None,
+            context_request: Vec::new(),
+            // Missing is the adapter-level default. A protocol/tool that is not
+            // continuity-capable is normalized to Unsupported inside the kernel.
+            ack_session_context_revision: SessionContextRevisionAck::Unacknowledged,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -257,15 +283,36 @@ impl ToolRuntime {
         context: ToolCallContext<'_>,
         capabilities: ToolProtocolCapabilities,
     ) -> ToolCallOutcome {
+        self.call_tool_with_invocation_metadata(
+            request,
+            context,
+            ToolInvocationMetadata::default(),
+            capabilities,
+        )
+        .await
+    }
+
+    pub(crate) async fn call_tool_with_invocation_metadata(
+        &self,
+        request: ToolCallRequest,
+        context: ToolCallContext<'_>,
+        invocation_metadata: ToolInvocationMetadata,
+        capabilities: ToolProtocolCapabilities,
+    ) -> ToolCallOutcome {
         let context_continuity_capable = capabilities.context_continuity
             && super::tool_definition::runtime_tool_accepts_context_ack(&request.tool_name);
+        let context_ack = if context_continuity_capable {
+            invocation_metadata.ack_session_context_revision
+        } else {
+            SessionContextRevisionAck::Unsupported
+        };
         let telemetry = ModelErgonomicsTimer::start_with_protocol(
             &request.tool_name,
             &request.arguments,
-            context_continuity_capable,
+            context_ack,
         );
         let mut outcome = self
-            .call_tool_with_context_inner(request, context, capabilities)
+            .call_tool_with_context_inner(request, context, invocation_metadata, capabilities)
             .await;
         outcome.model_ergonomics = telemetry.map(ModelErgonomicsTimer::finish);
         outcome
@@ -275,15 +322,21 @@ impl ToolRuntime {
         &self,
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
+        invocation_metadata: ToolInvocationMetadata,
         capabilities: ToolProtocolCapabilities,
     ) -> ToolCallOutcome {
         let context_continuity_capable = capabilities.context_continuity
             && super::tool_definition::runtime_tool_accepts_context_ack(&request.tool_name);
         let mut recorder_metadata =
-            ToolCallRecorderMetadata::from_arguments_with_context_continuity(
-                &request.arguments,
-                context_continuity_capable,
-            );
+            ToolCallRecorderMetadata::from_business_arguments(&request.arguments);
+        recorder_metadata.ack_session_message_ids = invocation_metadata.ack_session_message_ids;
+        recorder_metadata.session_message_resolution =
+            invocation_metadata.session_message_resolution;
+        recorder_metadata.ack_session_context_revision = if context_continuity_capable {
+            invocation_metadata.ack_session_context_revision
+        } else {
+            SessionContextRevisionAck::Unsupported
+        };
         // One trusted identity per real kernel request. The outer recorder and
         // inner business ledger pairs inherit it, but it never affects execution.
         recorder_metadata.assign_logical_invocation();
@@ -496,7 +549,7 @@ impl ToolRuntime {
         }
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
         let context_request = if capabilities.context_sidecar {
-            super::context_projection::context_request_from_arguments(&request.arguments)
+            invocation_metadata.context_request
         } else {
             Vec::new()
         };
@@ -1255,21 +1308,13 @@ mod tests {
                 false,
             )
             .unwrap();
-        let mut arguments = json!({
+        let arguments = json!({
             "project": "demo",
             "path": "README.md"
         });
-        arguments.as_object_mut().unwrap().insert(
-            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD
-                .to_string(),
-            json!({
-                "message_id": message.message_id,
-                "resolution": "handled"
-            }),
-        );
 
         let outcome = runtime
-            .call_tool_with_context(
+            .call_tool_with_invocation_metadata(
                 ToolCallRequest {
                     tool_name: "read_file".to_string(),
                     arguments,
@@ -1282,6 +1327,14 @@ mod tests {
                     record_oauth_scope_denials: false,
                     host_file_import_trust: HostFileImportTrust::Untrusted,
                 },
+                ToolInvocationMetadata {
+                    session_message_resolution: Some(ToolCallSessionMessageResolution {
+                        message_id: message.message_id.clone(),
+                        resolution: "handled".to_string(),
+                    }),
+                    ..Default::default()
+                },
+                ToolProtocolCapabilities::default(),
             )
             .await;
 

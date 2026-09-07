@@ -8,7 +8,6 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 
 pub(crate) const TOOL_CALL_CONTEXT_REQUEST_FIELD: &str = "context_request";
-pub(crate) use webcodex_core::workflow_session_contract::TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD;
 pub(crate) const MAX_CONTEXT_REQUEST_ITEMS: usize = 8;
 pub(crate) const MAX_CONTEXT_REQUEST_KEY_CHARS: usize = 64;
 pub(crate) const MAX_CONTEXT_PROJECTION_BYTES: usize = 20 * 1024;
@@ -106,26 +105,6 @@ fn context_material_scope_available(
             auth.is_some_and(|auth| scopes.iter().all(|scope| auth.has_scope(scope)))
         }
     }
-}
-
-pub(crate) fn context_request_from_arguments(arguments: &Value) -> Vec<String> {
-    let Some(values) = arguments
-        .as_object()
-        .and_then(|object| object.get(TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD))
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
-    let mut seen = HashSet::new();
-    values
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .filter(|key| seen.insert((*key).to_string()))
-        .take(MAX_CONTEXT_REQUEST_ITEMS)
-        .map(str::to_string)
-        .collect()
 }
 
 fn projection_envelope(materials: Vec<Value>, truncated: bool) -> Value {

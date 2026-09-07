@@ -69,10 +69,11 @@ use tools::{
     add_stateless_workflow_recorder_metadata, mcp_host_file_import_trust_decision_from_state,
     mcp_host_file_import_trust_from_state, mcp_tools_list_payload_with_compact,
     mcp_tools_list_payload_with_compact_and_app, mcp_tools_list_payload_with_features_for_auth,
-    project_connector_tools_list_payload_with_compact,
-    strip_stateless_ack_session_context_revision, strip_stateless_ack_session_message_ids,
-    strip_stateless_context_request, strip_stateless_session_message_resolution,
-    take_last_mcp_host_file_import_trust_decision, HostFileImportTrustReason, McpToolCallParams,
+    project_connector_tools_list_payload_with_compact, session_context_revision_ack_from_wire,
+    strip_recording_session_id, strip_stateless_ack_session_context_revision,
+    strip_stateless_ack_session_message_ids, strip_stateless_context_request,
+    strip_stateless_session_message_resolution, take_last_mcp_host_file_import_trust_decision,
+    HostFileImportTrustReason, McpToolCallParams,
 };
 
 /// Hard upper bound on a single MCP JSON-RPC dispatch, applied in `mcp_post`.

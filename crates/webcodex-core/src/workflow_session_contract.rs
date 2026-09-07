@@ -3,20 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 pub const SESSION_ID_PREFIX: &str = "wc_sess_";
-pub const TOOL_CALL_CONTEXT_REQUEST_INTERNAL_FIELD: &str = "__webcodex_stateless_context_request";
 
 pub const MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS: usize =
     crate::runner_protocol::VALIDATION_ASSERTION_NAME_MAX_CHARS;
 pub const TOOL_CALL_RECORDING_SESSION_ID_FIELD: &str = "recording_session_id";
 pub const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: &str = "ack_session_message_ids";
-pub const TOOL_CALL_ACK_SESSION_MESSAGE_IDS_INTERNAL_FIELD: &str =
-    "__webcodex_stateless_ack_session_message_ids";
 pub const TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: &str = "session_message_resolution";
-pub const TOOL_CALL_SESSION_MESSAGE_RESOLUTION_INTERNAL_FIELD: &str =
-    "__webcodex_stateless_session_message_resolution";
 pub const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: &str = "ack_session_context_revision";
-pub const TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD: &str =
-    "__webcodex_stateless_ack_session_context_revision";
 pub const MAX_TOOL_CALL_ACK_MESSAGE_IDS: usize = 8;
 pub const TOOL_EXPECTED_FAILURE_FIELD: &str = "expected_failure";
 pub const TOOL_EXPECTED_FAILURE_KIND_FIELD: &str = "expected_failure_kind";

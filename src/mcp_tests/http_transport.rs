@@ -258,7 +258,7 @@ async fn start_stateless_observation_session(
 }
 
 #[test]
-fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack() {
+fn stateless_full_trace_preserves_raw_context_ack_and_records_clean_effective_arguments() {
     // Full tracing retains the request/response trees plus decoded trace payloads.
     // Keep this integration fixture off the default libtest stack for the same
     // reason as the larger stateless MCP continuity/observation fixtures below.
@@ -271,7 +271,7 @@ fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal
                 .build()
                 .expect("build stateless full-trace test runtime")
                 .block_on(
-                    stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack_body(),
+                    stateless_full_trace_preserves_raw_context_ack_and_records_clean_effective_arguments_body(),
                 );
         })
         .expect("spawn stateless full-trace test thread")
@@ -279,7 +279,8 @@ fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal
         .expect("stateless full-trace test thread panicked");
 }
 
-async fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_internal_ack_body() {
+async fn stateless_full_trace_preserves_raw_context_ack_and_records_clean_effective_arguments_body()
+{
     let trace_root = tempfile::tempdir().unwrap();
     let mut env = crate::test_support::TestEnvGuard::new();
     env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
@@ -336,11 +337,8 @@ async fn stateless_full_trace_preserves_raw_context_ack_and_records_effective_in
     assert!(effective
         .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD)
         .is_none());
-    assert_eq!(
-        effective
-            [crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_INTERNAL_FIELD],
-        42
-    );
+    assert_eq!(effective, json!({}));
+    assert!(!effective.to_string().contains("__webcodex_"));
     let final_response = read_phase("final_response");
     assert_eq!(final_response["result"]["isError"], false);
 }
