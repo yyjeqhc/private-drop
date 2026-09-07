@@ -1,8 +1,7 @@
 use super::RunnerCapabilityRequirement::RunnerConfigControl;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
-    PERMISSION_RISK_WRITE, TOOL_CATEGORY_RUNTIME,
+    def, model_spec, permission_risk, ToolDefinition, PERMISSION_RISK_WRITE, TOOL_CATEGORY_RUNTIME,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -14,8 +13,7 @@ use crate::registry::input_schemas::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    adaptive_runtime_direct(
-        model_spec(
+    model_spec(
             def(
                 "runner_config_check",
                 ModelVisible,
@@ -36,11 +34,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Read, parse, validate, and classify the candidate at one exact caller-visible Runner's startup-bound runner.toml path. This never mutates active config, accepts no filesystem path, and returns only bounded sanitized validation metadata.",
             runner_config_check_input_schema,
-        ),
-        24,
     ),
-    adaptive_runtime_direct(
-        permission_risk(
+    permission_risk(
             model_spec(
                 def(
                     "runner_config_reload",
@@ -64,7 +59,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 runner_config_reload_input_schema,
             ),
             PERMISSION_RISK_WRITE,
-        ),
-        25,
     ),
 ];

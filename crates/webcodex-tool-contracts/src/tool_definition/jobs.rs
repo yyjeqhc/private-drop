@@ -115,8 +115,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         "Run one bounded shell command as an escape hatch for real shell syntax. For persistent cwd/exports/functions, use the persistent shell route; an explicit new SSH target that should persist first goes through ssh_resource onboarding and Runner restart. Prefer structured validation, process, and edit tools when they fit. For longer work, asynchronous shell execution remains Runner-owned. If work must outlive the current Runner process, discover run_detached_process instead (native argv, no shell).",
         run_shell_input_schema,
     ),
-    adaptive_runtime_direct(
-        requires_explicit_business_session(model_spec(
+    requires_explicit_business_session(model_spec(
             def(
                 "open_session_shell",
                 ModelVisible,
@@ -137,11 +136,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Open one bounded long-lived shell for an explicit Workflow Session: local sh/bash, Windows PowerShell, or sh/bash through the active named SSH resource already bound in execution_context.resource. For an explicit new target, use ssh_resource list/register, restart the Runner, list again, then bind with update_session_context; there is no per-shell host/resource parameter. The SSH target does not need WebCodex Runner.",
             open_session_shell_input_schema,
-        )),
-        71,
-    ),
-    adaptive_runtime_direct(
-        requires_explicit_business_session(model_spec(
+    )),
+    requires_explicit_business_session(model_spec(
             def(
                 "session_shell_exec",
                 ModelVisible,
@@ -162,9 +158,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Execute one framed command in an existing Session persistent shell. Reuse it for sequences that need shared cwd, variables, exports, functions, or umask; commands are serialized in the same shell process.",
             session_shell_exec_input_schema,
-        )),
-        72,
-    ),
+    )),
     requires_explicit_business_session(model_spec(
         def(
             "session_shell_status",

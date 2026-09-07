@@ -332,12 +332,17 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
     );
     for long_tail in [
         "list_tools",
+        "runner_config_check",
+        "runner_config_reload",
         "list_projects",
         "project_overview",
         "read_file",
         "run_script",
         "run_shell",
+        "open_session_shell",
+        "session_shell_exec",
         "validation_summary",
+        "go_test",
         "git_status",
         "goto_definition",
         "computer_list_windows",

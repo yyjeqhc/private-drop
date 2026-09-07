@@ -84,8 +84,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )),
         100,
     ),
-    adaptive_runtime_direct(
-        captures_validation_output(model_spec(
+    captures_validation_output(model_spec(
             def(
                 "go_test",
                 ModelVisible,
@@ -106,7 +105,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Preferred structured go test -json (default ./...) with bounded package scopes. Requires Runner Go JSON validation support; long validation continues as the same execution and returns job_id.",
             go_test_input_schema,
-        )),
-        110,
-    ),
+    )),
 ];
