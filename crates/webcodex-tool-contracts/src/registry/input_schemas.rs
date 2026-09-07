@@ -21,6 +21,7 @@ mod projects;
 mod runner_config;
 mod sessions;
 mod skills;
+mod ssh_resources;
 mod text_edits;
 mod validation;
 
@@ -128,6 +129,7 @@ pub(super) use skills::{
     skill_activate_input_schema, skill_install_input_schema, skill_list_input_schema,
     skill_read_file_input_schema, skill_remove_revision_input_schema, skill_versions_input_schema,
 };
+pub use ssh_resources::ssh_resource_input_schema;
 pub use text_edits::write_project_file_input_schema;
 pub use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema, go_test_input_schema,

@@ -168,12 +168,10 @@ fn adaptive_runtime_gateway_target_route(
         }
         _ => {}
     }
-    // MCP/SSH adapters and stateless operator extensions are intentionally not
+    // The MCP adapter and stateless operator extensions are intentionally not
     // registered ToolDefinition routes. Preserve their existing gateway-only
     // admission without teaching ordinary runtime tools a second route table.
-    if target == crate::mcp_gateway::MCP_TOOL_NAME
-        || target == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
-    {
+    if target == crate::mcp_gateway::MCP_TOOL_NAME {
         return AdaptiveRuntimeGatewayTargetRoute::Gateway;
     }
     if adaptive_runtime_gateway_target_specs(stateless_2026)
@@ -579,6 +577,12 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, _app_enabled: bool) -> 
         // Match ToolSpec's camelCase serde so default behavior is unchanged.
         serde_json::to_value(spec).unwrap_or_else(|_| json!({}))
     };
+    if tool_name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
+        if let Some(object) = value.as_object_mut() {
+            // SSH resource actions have action-specific result projections.
+            object.remove("outputSchema");
+        }
+    }
     if tool_name == "import_conversation_files_to_project" {
         if let Some(object) = value.as_object_mut() {
             object.insert(
@@ -649,7 +653,9 @@ pub(super) async fn handle_list(
                     tools.push(crate::mcp_gateway::tool_spec());
                 }
             }
-            if crate::ssh_resource_gateway::authorized(auth) {
+            if model_surface == ModelSurface::LocalCoding
+                && crate::ssh_resource_gateway::authorized(auth)
+            {
                 if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
                     tools.push(crate::ssh_resource_gateway::tool_spec());
                 }
@@ -1438,7 +1444,9 @@ pub(super) async fn handle_call(
             },
         ));
     }
-    if params.name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
+    if params.name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
+        && (model_surface != ModelSurface::AdaptiveRuntime || via_adaptive_runtime_gateway)
+    {
         let recording_session_id = match strip_recording_session_id(&mut params.arguments) {
             Ok(session_id) => session_id,
             Err(message) => {

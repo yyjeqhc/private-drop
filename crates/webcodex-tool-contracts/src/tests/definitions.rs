@@ -77,6 +77,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     for name in [
         "runner_config_check",
         "runner_config_reload",
+        "ssh_resource",
         "open_session_shell",
         "session_shell_exec",
         "session_shell_status",

@@ -25,6 +25,7 @@ mod plugins;
 mod runner_config;
 mod sessions;
 mod skills;
+mod ssh_resources;
 mod testing;
 
 use super::metadata::{
@@ -586,6 +587,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     diagnostics::DEFINITIONS,
     discovery::DEFINITIONS,
     runner_config::DEFINITIONS,
+    ssh_resources::DEFINITIONS,
     plugins::DEFINITIONS,
     jobs::EXECUTION_DEFINITIONS,
     files::SEARCH_DEFINITIONS,

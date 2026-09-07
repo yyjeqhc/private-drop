@@ -181,6 +181,7 @@ pub const COMPUTER_CLIPBOARD_WRITE: &str = webcodex_core::authority::SCOPE_COMPU
 pub const PLUGIN_INSPECT: &str = webcodex_core::authority::SCOPE_PLUGIN_INSPECT;
 pub const PLUGIN_INVOKE: &str = webcodex_core::authority::SCOPE_PLUGIN_INVOKE;
 pub const PLUGIN_MANAGE: &str = webcodex_core::authority::SCOPE_PLUGIN_MANAGE;
+pub const SSH_LOCAL: &str = webcodex_core::authority::SCOPE_SSH_LOCAL;
 
 /// Canonical Rust name for tools executed by a Runner. The serialized
 /// provider_id remains the historical `"agent"` compatibility value.

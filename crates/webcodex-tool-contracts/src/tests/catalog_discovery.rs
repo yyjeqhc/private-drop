@@ -317,12 +317,13 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
         .iter()
         .find(|flow| flow.name == "persistent_shell")
         .expect("persistent shell recommended flow");
+    assert_eq!(persistent.tools.first().copied(), Some("ssh_resource"));
     assert_eq!(
-        persistent.tools.first().copied(),
+        persistent.tools.get(1).copied(),
         Some("update_session_context")
     );
-    assert_eq!(persistent.tools.get(1).copied(), Some("open_session_shell"));
-    assert_eq!(persistent.tools.get(2).copied(), Some("session_shell_exec"));
+    assert_eq!(persistent.tools.get(2).copied(), Some("open_session_shell"));
+    assert_eq!(persistent.tools.get(3).copied(), Some("session_shell_exec"));
     assert!(persistent.tools.contains(&"session_shell_status"));
     assert!(persistent.tools.contains(&"close_session_shell"));
     assert!(persistent.tools.contains(&"run_process"));
@@ -340,6 +341,7 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
         .manifest_purpose
         .contains("ssh_resource register"));
     for tool in [
+        "ssh_resource",
         "update_session_context",
         "open_session_shell",
         "session_shell_exec",

@@ -14,7 +14,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 use webcodex_core::ssh_resource::{
     validate_response_for_request, SshResourceRequest, SshResourceResponse,
-    SSH_RESOURCE_DEFAULT_CWD_MAX_BYTES, SSH_RESOURCE_NAME_MAX_BYTES, SSH_RESOURCE_TARGET_MAX_BYTES,
 };
 
 pub(crate) const SSH_RESOURCE_TOOL_NAME: &str = "ssh_resource";
@@ -228,53 +227,25 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 }
 
 pub(crate) fn tool_spec() -> Value {
+    let definition = webcodex_tool_contracts::lookup_tool_definition(SSH_RESOURCE_TOOL_NAME)
+        .expect("ssh_resource ToolDefinition");
+    let model_spec = definition.model_spec.expect("ssh_resource model spec");
+    let mut input_schema = (model_spec.input_schema)();
+    if let Some(properties) = input_schema["properties"].as_object_mut() {
+        properties.insert(
+            "recording_session_id".to_string(),
+            json!({
+                "type": "string",
+                "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                "description": "Optional explicit Workflow Session used for authority, read-only/guard, permission, and audit governance. It is never inferred from MCP transport identity."
+            }),
+        );
+    }
     json!({
         "name": SSH_RESOURCE_TOOL_NAME,
-        "description": "List and durably manage Runner-local named SSH resources for PersistentShell onboarding. action=list returns safe logical names plus an opaque exact-Runner/revision binding. For an explicit new SSH target, register it with that binding; mutations change durable desired state only. When restart_required=true, restart the Runner before the desired state becomes active; an idempotent operation already aligned with the startup snapshot may return false. Then list again, bind the active logical name with update_session_context, and open_session_shell. For explicit one-shot/no-persistence SSH, run_process remains valid. Targets and authentication details are never returned.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["list", "register", "remove"]},
-                "runner": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "description": "Exact caller-visible Runner client id. Required only for list."
-                },
-                "binding": {
-                    "type": "string",
-                    "pattern": "^wc_sbind_[0-9a-f]{32}$",
-                    "description": "Opaque exact Runner + registry revision observation returned by list. Required for register/remove; never grants authority by itself."
-                },
-                "name": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": SSH_RESOURCE_NAME_MAX_BYTES,
-                    "pattern": "^[A-Za-z0-9_.-]+$",
-                    "description": "Logical Runner-local SSH resource name. Required for register/remove."
-                },
-                "target": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": SSH_RESOURCE_TARGET_MAX_BYTES,
-                    "description": "Single OpenSSH destination argv, for example 17724@w10. Required only for register. It is persisted on the Runner and never echoed. SSH options or credential material are not accepted."
-                },
-                "default_cwd": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": SSH_RESOURCE_DEFAULT_CWD_MAX_BYTES,
-                    "description": "Optional remote default cwd for register."
-                },
-                "recording_session_id": {
-                    "type": "string",
-                    "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                    "description": "Optional explicit Workflow Session used for authority, read-only/guard, permission, and audit governance. It is never inferred from MCP transport identity."
-                }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        },
-        "annotations": {"readOnlyHint": false}
+        "description": model_spec.description,
+        "inputSchema": input_schema,
+        "annotations": webcodex_tool_contracts::tool_annotations(SSH_RESOURCE_TOOL_NAME)
     })
 }
 

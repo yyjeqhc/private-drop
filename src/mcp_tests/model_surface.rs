@@ -283,7 +283,8 @@ async fn local_coding_allows_surface_tools_to_dispatch() {
 #[tokio::test]
 async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
-    let auth = model_surface_direct_auth();
+    let mut auth = model_surface_direct_auth();
+    auth.scopes.push(crate::auth::SCOPE_SSH_LOCAL.to_string());
     let outcome = handle_mcp_request(
         &runtime,
         rpc(
@@ -339,6 +340,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "read_file",
         "run_script",
         "run_shell",
+        "ssh_resource",
         "open_session_shell",
         "session_shell_exec",
         "validation_summary",
@@ -688,6 +690,63 @@ async fn adaptive_runtime_gateway_route_classification_does_not_mask_target_scop
 }
 
 #[tokio::test]
+async fn adaptive_runtime_ssh_resource_is_discovered_and_invoked_only_through_gateway() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let mut auth = model_surface_direct_auth();
+    auth.scopes.push(crate::auth::SCOPE_SSH_LOCAL.to_string());
+
+    let direct = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7235)),
+            mcp_2026_params(json!({
+                "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                "arguments": {"action": "list"}
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::BadRequest(value) = direct else {
+        panic!("adaptive direct ssh_resource must fail closed to gateway discovery");
+    };
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("not a direct adaptive_runtime tool"),
+        "{message}"
+    );
+    assert!(message.contains("adaptive runtime gateway"), "{message}");
+
+    let via_gateway = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7236)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                    "arguments": {"action": "list"}
+                }
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(value) = via_gateway else {
+        panic!("gateway-routed ssh_resource must reach specialized validation");
+    };
+    assert_eq!(
+        value["result"]["structuredContent"]["error"]["code"],
+        "ssh_resource_invalid"
+    );
+    assert!(value["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("requires an exact runner")));
+}
+
+#[tokio::test]
 async fn adaptive_runtime_tool_manifest_exact_projection_is_sparse_and_routes_explicitly() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
     let canonical_direct = runtime
@@ -781,6 +840,35 @@ async fn adaptive_runtime_tool_manifest_exact_projection_is_sparse_and_routes_ex
     assert_eq!(
         gateway_output["route"]["via"],
         crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+
+    let ssh_resource = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7243)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"tool_name": "ssh_resource"}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = ssh_resource else {
+        panic!("ssh_resource must be discoverable through tool_manifest");
+    };
+    let ssh_output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(ssh_output["name"], "ssh_resource");
+    assert_eq!(ssh_output["route"]["mode"], "gateway");
+    assert_eq!(
+        ssh_output["route"]["via"],
+        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+    assert_eq!(ssh_output["authority"]["scopes"], json!(["ssh:local"]));
+    assert_eq!(
+        ssh_output["input_schema"]["properties"]["action"]["enum"],
+        json!(["list", "register", "remove"])
     );
 
     let listed = handle_mcp_request(
