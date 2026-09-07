@@ -35,6 +35,11 @@ jobs:
       needs_macos: ${{ steps.classify.outputs.needs_macos }}
       needs_macos_desktop: ${{ steps.classify.outputs.needs_macos_desktop }}
       needs_linux_arm64: ${{ steps.classify.outputs.needs_linux_arm64 }}
+      # PR classification executes the trusted base copy of ci_path_risk.py. During
+      # this one-field schema rollout, an older base has no dedicated output; only
+      # then inherit its existing native Runner/core/full signal so this PR can prove
+      # the new lane before the updated classifier reaches main.
+      needs_runner_real_process: ${{ steps.classify.outputs.needs_runner_real_process == 'true' || (steps.classify.outputs.needs_runner_real_process == '' && (steps.classify.outputs.needs_windows_runner == 'true' || steps.classify.outputs.needs_windows_core == 'true' || steps.classify.outputs.needs_full_native == 'true')) }}
       needs_desktop_package: ${{ steps.classify.outputs.needs_desktop_package }}
       needs_full_native: ${{ steps.classify.outputs.needs_full_native }}
       categories: ${{ steps.classify.outputs.categories }}
@@ -71,6 +76,7 @@ jobs:
                 needs_macos \
                 needs_macos_desktop \
                 needs_linux_arm64 \
+                needs_runner_real_process \
                 needs_desktop_package \
                 needs_full_native; do
                 echo "$key=true"
@@ -191,6 +197,20 @@ jobs:
       - name: Run ${{ matrix.shard }} Rust tests
         run: cargo test --locked ${{ matrix.packages }}
 
+  test-linux-runner-real-process:
+    needs: changes
+    if: needs.changes.outputs.needs_runner_real_process == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-ci
+      - name: Run Runner real-process lifecycle tests
+        run: cargo test --locked -p webcodex-runner runner_real_process -- --ignored --test-threads=2
+
   test-linux-tooling:
     # Release/tooling checks are mandatory on every PR, but do not need contract
     # output. Start them in parallel; the stable `test` aggregate joins the results.
@@ -241,7 +261,7 @@ jobs:
           cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
 
   test:
-    needs: [contract, test-linux-rust, test-linux-tooling]
+    needs: [contract, changes, test-linux-rust, test-linux-runner-real-process, test-linux-tooling]
     # Preserve the historical aggregate status check and always evaluate upstream
     # results so a failed or unexpectedly skipped Linux lane cannot disappear.
     if: always()
@@ -251,14 +271,25 @@ jobs:
       - name: Require successful Linux lanes
         env:
           CONTRACT_RESULT: ${{ needs.contract.result }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          NEEDS_REAL_PROCESS: ${{ needs.changes.outputs.needs_runner_real_process }}
           RUST_RESULT: ${{ needs.test-linux-rust.result }}
+          REAL_PROCESS_RESULT: ${{ needs.test-linux-runner-real-process.result }}
           TOOLING_RESULT: ${{ needs.test-linux-tooling.result }}
         run: |
-          echo "contract=$CONTRACT_RESULT rust=$RUST_RESULT tooling=$TOOLING_RESULT"
+          set -euo pipefail
+          echo "contract=$CONTRACT_RESULT changes=$CHANGES_RESULT rust=$RUST_RESULT real_process=$REAL_PROCESS_RESULT tooling=$TOOLING_RESULT needs_real_process=$NEEDS_REAL_PROCESS"
           if [ "$CONTRACT_RESULT" != success ] || \
+             [ "$CHANGES_RESULT" != success ] || \
              [ "$RUST_RESULT" != success ] || \
              [ "$TOOLING_RESULT" != success ]; then
             echo "required Linux CI lane did not succeed" >&2
+            exit 1
+          fi
+          expected_real_process=skipped
+          if [ "$NEEDS_REAL_PROCESS" = true ]; then expected_real_process=success; fi
+          if [ "$REAL_PROCESS_RESULT" != "$expected_real_process" ]; then
+            echo "Runner real-process Linux lane expected $expected_real_process, got $REAL_PROCESS_RESULT" >&2
             exit 1
           fi
 
@@ -299,6 +330,40 @@ jobs:
         run: cargo check --locked --workspace
       - name: Run native macOS Runner and Computer tests
         run: cargo test --locked -p webcodex-runner -p webcodex-computer
+
+  test-macos-runner-real-process:
+    needs: changes
+    if: needs.changes.outputs.needs_runner_real_process == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+            host_arch: arm64
+            rust_host: aarch64-apple-darwin
+          - platform: darwin-x64
+            runner: macos-15-intel
+            host_arch: x86_64
+            rust_host: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-runner-real-process-${{ matrix.platform }}
+      - name: Verify native macOS host
+        env:
+          EXPECTED_HOST_ARCH: ${{ matrix.host_arch }}
+          EXPECTED_RUST_HOST: ${{ matrix.rust_host }}
+        run: |
+          test "$(uname -m)" = "$EXPECTED_HOST_ARCH"
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$rust_host" = "$EXPECTED_RUST_HOST"
+      - name: Run Runner real-process lifecycle tests
+        run: cargo test --locked -p webcodex-runner runner_real_process -- --ignored --test-threads=2
 
   test-macos-desktop:
     needs: changes
@@ -426,7 +491,7 @@ jobs:
             --signing-mode adhoc
 
   test-macos:
-    needs: [contract, changes, test-macos-core, test-macos-desktop]
+    needs: [contract, changes, test-macos-core, test-macos-runner-real-process, test-macos-desktop]
     # Stable aggregate context: every configured macOS sublane must either succeed
     # when required by policy or be intentionally skipped when not required.
     if: always()
@@ -438,12 +503,14 @@ jobs:
           CONTRACT_RESULT: ${{ needs.contract.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           NEEDS_CORE: ${{ needs.changes.outputs.needs_macos }}
+          NEEDS_REAL_PROCESS: ${{ needs.changes.outputs.needs_runner_real_process }}
           NEEDS_DESKTOP: ${{ needs.changes.outputs.needs_macos_desktop }}
           CORE_RESULT: ${{ needs.test-macos-core.result }}
+          REAL_PROCESS_RESULT: ${{ needs.test-macos-runner-real-process.result }}
           DESKTOP_RESULT: ${{ needs.test-macos-desktop.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES_RESULT contract=$CONTRACT_RESULT core=$CORE_RESULT desktop=$DESKTOP_RESULT needs_core=$NEEDS_CORE needs_desktop=$NEEDS_DESKTOP"
+          echo "changes=$CHANGES_RESULT contract=$CONTRACT_RESULT core=$CORE_RESULT real_process=$REAL_PROCESS_RESULT desktop=$DESKTOP_RESULT needs_core=$NEEDS_CORE needs_real_process=$NEEDS_REAL_PROCESS needs_desktop=$NEEDS_DESKTOP"
           if [ "$CHANGES_RESULT" != success ] || [ "$CONTRACT_RESULT" != success ]; then
             echo "CI policy or contract classification did not succeed" >&2
             exit 1
@@ -460,15 +527,14 @@ jobs:
             fi
           }
           require_lane core "$NEEDS_CORE" "$CORE_RESULT"
+          require_lane real-process "$NEEDS_REAL_PROCESS" "$REAL_PROCESS_RESULT"
           require_lane desktop "$NEEDS_DESKTOP" "$DESKTOP_RESULT"
 
-  # Keep Windows process-heavy suites isolated on separate hosted VMs. The
-  # webcodex-runner lane caps libtest at two concurrent test functions: default
-  # parallelism can starve real PowerShell/process-tree startup on hosted Windows,
-  # while one thread needlessly serializes the entire mixed-cost Runner suite.
-  # Keep webcodex-computer in the same native lane so platform tests continue
-  # running after the Computer runtime was split out of the Runner crate.
-  # Core/library and packaging coverage can run independently in parallel.
+  # Windows Runner process-tree ownership now has its own explicitly selected
+  # real-process job below. Keep the remaining Runner/Computer suite at two libtest
+  # threads for now because SSH/Plugin/LSP and other subprocess fixtures still share
+  # this default lane; raise concurrency only after those costs are measured/separated.
+  # Core/library, Runner real-process, and packaging coverage run independently.
   test-windows-core:
     needs: changes
     if: needs.changes.outputs.needs_windows_core == 'true'
@@ -507,6 +573,20 @@ jobs:
         # Keep process contention bounded without forcing all 700+ Runner tests
         # through one test thread. Concurrency exercised inside each test is unchanged.
         run: cargo test --locked -p webcodex-runner -p webcodex-computer -- --test-threads=2
+
+  test-windows-runner-real-process:
+    needs: changes
+    if: needs.changes.outputs.needs_runner_real_process == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-runner-real-process-ci
+      - name: Run Runner real-process lifecycle tests
+        run: cargo test --locked -p webcodex-runner runner_real_process -- --ignored --test-threads=2
 
   test-windows-package:
     needs: changes
@@ -653,7 +733,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cargo check failed with exit code $LASTEXITCODE" }
 
   test-windows:
-    needs: [contract, changes, test-windows-core, test-windows-runner, test-windows-package, test-windows-desktop, test-windows-arm64]
+    needs: [contract, changes, test-windows-core, test-windows-runner, test-windows-runner-real-process, test-windows-package, test-windows-desktop, test-windows-arm64]
     # Preserve the stable Windows aggregate while allowing each heavy lane to be
     # selected independently by the deterministic path-risk classifier.
     if: always()
@@ -666,17 +746,19 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           NEEDS_CORE: ${{ needs.changes.outputs.needs_windows_core }}
           NEEDS_RUNNER: ${{ needs.changes.outputs.needs_windows_runner }}
+          NEEDS_REAL_PROCESS: ${{ needs.changes.outputs.needs_runner_real_process }}
           NEEDS_PACKAGE: ${{ needs.changes.outputs.needs_windows_package }}
           NEEDS_DESKTOP: ${{ needs.changes.outputs.needs_windows_desktop }}
           NEEDS_ARM64: ${{ needs.changes.outputs.needs_windows_arm64 }}
           CORE_RESULT: ${{ needs.test-windows-core.result }}
           RUNNER_RESULT: ${{ needs.test-windows-runner.result }}
+          REAL_PROCESS_RESULT: ${{ needs.test-windows-runner-real-process.result }}
           PACKAGE_RESULT: ${{ needs.test-windows-package.result }}
           DESKTOP_RESULT: ${{ needs.test-windows-desktop.result }}
           ARM64_RESULT: ${{ needs.test-windows-arm64.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES_RESULT contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT package=$PACKAGE_RESULT desktop=$DESKTOP_RESULT arm64=$ARM64_RESULT"
+          echo "changes=$CHANGES_RESULT contract=$CONTRACT_RESULT core=$CORE_RESULT runner=$RUNNER_RESULT real_process=$REAL_PROCESS_RESULT package=$PACKAGE_RESULT desktop=$DESKTOP_RESULT arm64=$ARM64_RESULT"
           if [ "$CHANGES_RESULT" != success ] || [ "$CONTRACT_RESULT" != success ]; then
             echo "CI policy or contract classification did not succeed" >&2
             exit 1
@@ -694,6 +776,7 @@ jobs:
           }
           require_lane core "$NEEDS_CORE" "$CORE_RESULT"
           require_lane runner "$NEEDS_RUNNER" "$RUNNER_RESULT"
+          require_lane real-process "$NEEDS_REAL_PROCESS" "$REAL_PROCESS_RESULT"
           require_lane package "$NEEDS_PACKAGE" "$PACKAGE_RESULT"
           require_lane desktop "$NEEDS_DESKTOP" "$DESKTOP_RESULT"
           require_lane arm64 "$NEEDS_ARM64" "$ARM64_RESULT"

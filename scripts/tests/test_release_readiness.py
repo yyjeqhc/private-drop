@@ -249,12 +249,15 @@ class WorkflowContractTests(unittest.TestCase):
             return workflow[start:end]
 
         changes = job_block("changes", "contract")
-        linux_rust = job_block("test-linux-rust", "test-linux-tooling")
+        linux_rust = job_block("test-linux-rust", "test-linux-runner-real-process")
+        linux_real_process = job_block("test-linux-runner-real-process", "test-linux-tooling")
         linux_tooling = job_block("test-linux-tooling", "test-linux-arm64")
         linux_arm64 = job_block("test-linux-arm64", "test")
         aggregate = job_block("test", "test-macos-core")
         self.assertNotIn("pull_request.user.login", linux_rust)
         self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_rust)
+        self.assertIn("needs.changes.outputs.needs_runner_real_process == 'true'", linux_real_process)
+        self.assertIn("runner_real_process -- --ignored --test-threads=2", linux_real_process)
         self.assertNotIn("pull_request.user.login", linux_tooling)
         self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_tooling)
         self.assertIn("runs-on: ubuntu-24.04-arm", linux_arm64)
@@ -274,7 +277,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("--run-ci", changes)
         self.assertNotIn("pull_request_target", workflow)
 
-        macos_core = job_block("test-macos-core", "test-macos-desktop")
+        macos_core = job_block("test-macos-core", "test-macos-runner-real-process")
+        macos_real_process = job_block("test-macos-runner-real-process", "test-macos-desktop")
         macos_desktop = job_block("test-macos-desktop", "test-macos")
         macos_aggregate = job_block("test-macos", "test-windows-core")
         self.assertIn("needs.changes.outputs.needs_macos == 'true'", macos_core)
@@ -284,18 +288,24 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("cargo check --locked --workspace", macos_core)
         self.assertIn("cargo test --locked -p webcodex-runner -p webcodex-computer", macos_core)
         self.assertNotIn("--bundles dmg", macos_core)
+        self.assertIn("needs.changes.outputs.needs_runner_real_process == 'true'", macos_real_process)
+        self.assertIn("platform: darwin-x64", macos_real_process)
+        self.assertIn("runner_real_process -- --ignored --test-threads=2", macos_real_process)
         self.assertIn("needs.changes.outputs.needs_macos_desktop == 'true'", macos_desktop)
         self.assertIn("cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner", macos_desktop)
         self.assertIn("--bin-dir target/dogfood", macos_desktop)
         self.assertIn("--bundles dmg", macos_desktop)
 
         windows_core = job_block("test-windows-core", "test-windows-runner")
-        windows_runner = job_block("test-windows-runner", "test-windows-package")
+        windows_runner = job_block("test-windows-runner", "test-windows-runner-real-process")
+        windows_real_process = job_block("test-windows-runner-real-process", "test-windows-package")
         windows_package = job_block("test-windows-package", "test-windows-desktop")
         windows_desktop = job_block("test-windows-desktop", "test-windows-arm64")
         self.assertIn("needs.changes.outputs.needs_windows_core == 'true'", windows_core)
         self.assertIn("cargo check --locked --workspace", windows_core)
         self.assertIn("needs.changes.outputs.needs_windows_runner == 'true'", windows_runner)
+        self.assertIn("needs.changes.outputs.needs_runner_real_process == 'true'", windows_real_process)
+        self.assertIn("runner_real_process -- --ignored --test-threads=2", windows_real_process)
         self.assertIn("needs.changes.outputs.needs_windows_package == 'true'", windows_package)
         self.assertIn("needs.changes.outputs.needs_windows_desktop == 'true'", windows_desktop)
         self.assertIn("cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner", windows_desktop)
@@ -310,7 +320,9 @@ class WorkflowContractTests(unittest.TestCase):
         for required_aggregate in (aggregate, macos_aggregate, windows_aggregate, native_aggregate):
             self.assertIn("if: always()", required_aggregate)
         self.assertIn("NEEDS_CORE: ${{ needs.changes.outputs.needs_macos }}", macos_aggregate)
+        self.assertIn("NEEDS_REAL_PROCESS: ${{ needs.changes.outputs.needs_runner_real_process }}", macos_aggregate)
         self.assertIn("NEEDS_CORE: ${{ needs.changes.outputs.needs_windows_core }}", windows_aggregate)
+        self.assertIn("NEEDS_REAL_PROCESS: ${{ needs.changes.outputs.needs_runner_real_process }}", windows_aggregate)
         self.assertIn("NEEDS_LINUX_ARM64: ${{ needs.changes.outputs.needs_linux_arm64 }}", native_aggregate)
         self.assertIn("expected=skipped", windows_aggregate)
         self.assertIn("expected_linux_arm64=skipped", native_aggregate)
@@ -321,10 +333,13 @@ class WorkflowContractTests(unittest.TestCase):
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
         pairs = {
             "test-linux-arm64": "needs_linux_arm64",
+            "test-linux-runner-real-process": "needs_runner_real_process",
             "test-macos-core": "needs_macos",
+            "test-macos-runner-real-process": "needs_runner_real_process",
             "test-macos-desktop": "needs_macos_desktop",
             "test-windows-core": "needs_windows_core",
             "test-windows-runner": "needs_windows_runner",
+            "test-windows-runner-real-process": "needs_runner_real_process",
             "test-windows-package": "needs_windows_package",
             "test-windows-desktop": "needs_windows_desktop",
             "test-windows-arm64": "needs_windows_arm64",
@@ -367,6 +382,11 @@ class WorkflowContractTests(unittest.TestCase):
             "reason",
         ):
             self.assertIn(f"{output}: ${{{{ steps.classify.outputs.{output} }}}}", changes)
+        self.assertIn("steps.classify.outputs.needs_runner_real_process == 'true'", changes)
+        self.assertIn("steps.classify.outputs.needs_runner_real_process == ''", changes)
+        self.assertIn("steps.classify.outputs.needs_windows_runner == 'true'", changes)
+        self.assertIn("steps.classify.outputs.needs_windows_core == 'true'", changes)
+        self.assertIn("steps.classify.outputs.needs_full_native == 'true'", changes)
 
     def test_macos_ci_host_check_does_not_use_quiet_grep_under_pipefail(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")

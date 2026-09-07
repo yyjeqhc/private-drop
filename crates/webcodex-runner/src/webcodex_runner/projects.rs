@@ -3348,7 +3348,8 @@ mod git_lifecycle_tests {
     /// A. Normal completion: a short-lived process exits successfully, its
     /// stdout/stderr are collected, and no cleanup stall occurs.
     #[test]
-    fn normal_completion_collects_output_and_returns_bounded() {
+    #[ignore = "runner real-process lane: spawns the Git ManagedChild process-tree fixture"]
+    fn runner_real_process_git_normal_completion_collects_output_and_returns_bounded() {
         let cwd = tempfile::tempdir().unwrap();
         let program = helper_binary();
         let started = Instant::now();
@@ -3377,7 +3378,8 @@ mod git_lifecycle_tests {
     /// its pipe-holding descendant must both die, with the timeout error
     /// unchanged.
     #[test]
-    fn timeout_terminates_whole_tree() {
+    #[ignore = "runner real-process lane: spawns the Git ManagedChild process-tree fixture"]
+    fn runner_real_process_git_timeout_terminates_whole_tree() {
         let parent_marker = unique_temp_path("timeout-parent");
         let alive_marker = unique_temp_path("timeout-desc");
         let cwd = tempfile::tempdir().unwrap();
@@ -3440,7 +3442,8 @@ mod git_lifecycle_tests {
     /// C. Runner shutdown terminates the whole tree with the shutdown error
     /// unchanged. Works on Windows and Linux.
     #[test]
-    fn runner_shutdown_terminates_whole_tree() {
+    #[ignore = "runner real-process lane: spawns the Git ManagedChild process-tree fixture"]
+    fn runner_real_process_git_runner_shutdown_terminates_whole_tree() {
         let parent_marker = unique_temp_path("shutdown-parent");
         let alive_marker = unique_temp_path("shutdown-desc");
         let cwd = tempfile::tempdir().unwrap();
@@ -3508,7 +3511,8 @@ mod git_lifecycle_tests {
     /// the surviving tree is terminated, the readers reach EOF, and
     /// run_git_bounded returns without an indefinite reader wait.
     #[test]
-    fn parent_exit_alone_does_not_finish_cleanup() {
+    #[ignore = "runner real-process lane: spawns the Git ManagedChild process-tree fixture"]
+    fn runner_real_process_git_parent_exit_alone_does_not_finish_cleanup() {
         let parent_marker = unique_temp_path("parent-first");
         let alive_marker = unique_temp_path("parent-first-desc");
         let cwd = tempfile::tempdir().unwrap();
@@ -3570,7 +3574,8 @@ mod git_lifecycle_tests {
     /// is nothing to escalate from there.)
     #[cfg(unix)]
     #[test]
-    fn sigterm_resistant_tree_is_forcefully_escalated() {
+    #[ignore = "runner real-process lane: spawns the Git ManagedChild process-tree fixture"]
+    fn runner_real_process_git_sigterm_resistant_tree_is_forcefully_escalated() {
         let parent_marker = unique_temp_path("resist-parent");
         let alive_marker = unique_temp_path("resist-desc");
         let cwd = tempfile::tempdir().unwrap();

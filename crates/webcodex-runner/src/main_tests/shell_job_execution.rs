@@ -237,7 +237,8 @@ fn shell_job_rejects_cwd_symlink_escape() {
 }
 
 #[test]
-fn shell_job_timeout_returns_timeout_error() {
+#[ignore = "runner real-process lane: waits on a real shell timeout"]
+fn runner_real_process_shell_job_timeout_returns_timeout_error() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
@@ -270,7 +271,8 @@ fn long_lived_descendant_command(pid_file: &Path) -> String {
 
 #[cfg(unix)]
 #[test]
-fn shell_job_timeout_reaps_descendant_process_group() {
+#[ignore = "runner real-process lane: waits on a real shell timeout"]
+fn runner_real_process_shell_job_timeout_reaps_descendant_process_group() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
@@ -305,7 +307,8 @@ fn shell_job_timeout_reaps_descendant_process_group() {
 
 #[cfg(unix)]
 #[test]
-fn shell_job_timeout_profile_reaps_descendant_process_group() {
+#[ignore = "runner real-process lane: waits on a real shell timeout"]
+fn runner_real_process_shell_job_timeout_profile_reaps_descendant_process_group() {
     let tmp = tempfile::tempdir().unwrap();
     let shell = shell_with_profiles(Some("test"), vec![("test", ShellProfileConfig::default())]);
     let policy = unrestricted_test_policy();

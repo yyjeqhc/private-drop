@@ -54,6 +54,7 @@ class Risk:
     needs_macos: bool = False
     needs_macos_desktop: bool = False
     needs_linux_arm64: bool = False
+    needs_runner_real_process: bool = False
     needs_full_native: bool = False
     categories: set[str] = field(default_factory=set)
     changed_count: int = 0
@@ -74,6 +75,7 @@ class Risk:
             self.needs_macos = True
             self.needs_macos_desktop = True
             self.needs_linux_arm64 = True
+            self.needs_runner_real_process = True
         return self
 
     def outputs(self) -> dict[str, str]:
@@ -100,6 +102,7 @@ class Risk:
             "needs_macos": _bool(self.needs_macos),
             "needs_macos_desktop": _bool(self.needs_macos_desktop),
             "needs_linux_arm64": _bool(self.needs_linux_arm64),
+            "needs_runner_real_process": _bool(self.needs_runner_real_process),
             "needs_desktop_package": _bool(needs_desktop_package),
             "needs_full_native": _bool(self.needs_full_native),
             "categories": categories,
@@ -273,6 +276,7 @@ def _classify_path(risk: Risk, path: str) -> None:
     if path.startswith("crates/webcodex-process/"):
         _mark_windows_core(risk, "native-process")
         _mark_macos(risk, "native-process")
+        risk.needs_runner_real_process = True
         return
     if path.startswith("crates/webcodex-persistent-shell/"):
         _mark_windows_core(risk, "persistent-shell")
@@ -283,6 +287,8 @@ def _classify_path(risk: Risk, path: str) -> None:
         _mark_macos(risk, "computer-runtime")
         return
     if path.startswith("crates/webcodex-runner/"):
+        if path == "crates/webcodex-runner/src/main_tests.rs":
+            risk.needs_runner_real_process = True
         runner_native_tokens = (
             "plugin",
             "shell",
@@ -296,12 +302,14 @@ def _classify_path(risk: Risk, path: str) -> None:
             "coding_agent",
             "external_tools",
             "mcp_gateway",
+            "job_manager",
             "projects",
             "validation",
         )
         if any(token in lower for token in runner_native_tokens):
             _mark_windows_runner(risk, "runner-native")
             _mark_macos(risk, "runner-native")
+            risk.needs_runner_real_process = True
             return
 
     # Platform-specific source outside the known ownership crates is still native

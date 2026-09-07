@@ -1,7 +1,8 @@
 use super::*;
 
 #[test]
-fn shell_job_normal_success_preserves_output_and_exit_code() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_normal_success_preserves_output_and_exit_code() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();
@@ -42,7 +43,8 @@ fn shell_job_normal_success_preserves_output_and_exit_code() {
 }
 
 #[test]
-fn shell_job_timeout_kills_whole_tree() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_timeout_kills_whole_tree() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();
@@ -80,7 +82,8 @@ fn shell_job_timeout_kills_whole_tree() {
 }
 
 #[test]
-fn shell_job_stop_kills_whole_tree() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_stop_kills_whole_tree() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();
@@ -119,7 +122,8 @@ fn shell_job_stop_kills_whole_tree() {
 }
 
 #[test]
-fn shell_job_parent_exit_first_descendant_holds_pipe() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_parent_exit_first_descendant_holds_pipe() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();
@@ -175,7 +179,8 @@ fn shell_job_parent_exit_first_descendant_holds_pipe() {
 
 #[cfg(unix)]
 #[test]
-fn shell_job_unix_graceful_sigterm_responsive_tree() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_unix_graceful_sigterm_responsive_tree() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();
@@ -211,7 +216,8 @@ fn shell_job_unix_graceful_sigterm_responsive_tree() {
 
 #[cfg(unix)]
 #[test]
-fn shell_job_unix_sigterm_resistant_tree_escalates() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_unix_sigterm_resistant_tree_escalates() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();
@@ -251,7 +257,8 @@ fn shell_job_unix_sigterm_resistant_tree_escalates() {
 }
 
 #[test]
-fn shell_job_repeated_stop_is_idempotent() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_repeated_stop_is_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();
@@ -300,7 +307,8 @@ fn shell_job_repeated_stop_is_idempotent() {
 }
 
 #[test]
-fn shell_job_timeout_racing_stop_is_bounded() {
+#[ignore = "runner real-process lane: spawns a real shell/process tree"]
+fn runner_real_process_shell_job_timeout_racing_stop_is_bounded() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let helper = shell_tree_helper();

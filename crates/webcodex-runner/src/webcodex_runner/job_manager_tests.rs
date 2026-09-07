@@ -4364,7 +4364,8 @@ fn seed_running_job_tree(
 /// descendant that inherited the stdout pipe, and the stdout reader reaches
 /// EOF instead of blocking forever.
 #[test]
-fn job_stop_terminates_whole_tree_including_descendant() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_job_stop_terminates_whole_tree_including_descendant() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("stop-grandchild.marker");
     let manager = JobManager::new(1);
@@ -4391,7 +4392,8 @@ fn job_stop_terminates_whole_tree_including_descendant() {
 /// reader join) must kill an orphaned descendant that keeps the stdout pipe
 /// open, and the output reader must reach EOF instead of being detached.
 #[test]
-fn job_cleanup_after_parent_exit_terminates_descendant_and_reaches_eof() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_job_cleanup_after_parent_exit_terminates_descendant_and_reaches_eof() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("orphan.marker");
     let helper = job_tree_helper();
@@ -4472,7 +4474,8 @@ fn job_cleanup_after_parent_exit_terminates_descendant_and_reaches_eof() {
 /// A shutdown drain terminates every running job's whole tree, leaves a
 /// completed job untouched, and is bounded.
 #[test]
-fn job_stop_all_terminates_all_trees_and_preserves_completed_jobs() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_job_stop_all_terminates_all_trees_and_preserves_completed_jobs() {
     let manager = JobManager::new(2);
     let completed_stop = Arc::new(AtomicBool::new(false));
     {
@@ -4515,7 +4518,8 @@ fn job_stop_all_terminates_all_trees_and_preserves_completed_jobs() {
 /// Repeated stops are idempotent: the second stop must not panic and must not
 /// leave the tree running.
 #[test]
-fn job_stop_twice_is_idempotent() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_job_stop_twice_is_idempotent() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("twice.marker");
     let manager = JobManager::new(1);
@@ -4532,7 +4536,8 @@ fn job_stop_twice_is_idempotent() {
 /// Stopping a job whose tree already exited naturally must not panic and must
 /// report success.
 #[test]
-fn job_stop_after_natural_exit_does_not_panic() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_job_stop_after_natural_exit_does_not_panic() {
     let (managed, _rx) = spawn_helper_raw("sleep", &["0", "0"]);
     let parent_pid = managed.id();
     let child = Arc::new(Mutex::new(managed));
@@ -4556,7 +4561,9 @@ fn job_stop_after_natural_exit_does_not_panic() {
 /// Dropping the last real JobManager owner must terminate an active tree even
 /// while a worker clone still holds the jobs map and ManagedChild Arc.
 #[test]
-fn last_job_manager_owner_drop_terminates_running_tree_with_worker_clone_alive() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_last_job_manager_owner_drop_terminates_running_tree_with_worker_clone_alive()
+{
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("drop.marker");
     let manager = JobManager::new(1);
@@ -4577,7 +4584,8 @@ fn last_job_manager_owner_drop_terminates_running_tree_with_worker_clone_alive()
 
 /// Cleanup on an already-exited tree must be a no-op that never panics.
 #[test]
-fn cleanup_managed_tree_on_exited_tree_does_not_panic() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_cleanup_managed_tree_on_exited_tree_does_not_panic() {
     let (managed, _rx) = spawn_helper_raw("sleep", &["0", "0"]);
     let child = Arc::new(Mutex::new(managed));
     assert!(wait_until(Duration::from_secs(30), || lock_unpoison(
@@ -4596,7 +4604,8 @@ fn cleanup_managed_tree_on_exited_tree_does_not_panic() {
 /// A user stop racing Runner shutdown must not deadlock or panic, and both
 /// paths must converge on a fully-terminated tree.
 #[test]
-fn job_stop_racing_shutdown_does_not_panic() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_job_stop_racing_shutdown_does_not_panic() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("race.marker");
     let manager = JobManager::new(1);
@@ -4620,7 +4629,8 @@ fn job_stop_racing_shutdown_does_not_panic() {
 /// a real `sh` for the full worker path, so it runs on Linux.
 #[cfg(target_os = "linux")]
 #[test]
-fn job_timeout_terminates_the_whole_tree() {
+#[ignore = "runner real-process lane: spawns the JobManager process-tree fixture"]
+fn runner_real_process_job_timeout_terminates_the_whole_tree() {
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("timeout-grandchild.marker");
     let helper = job_tree_helper();

@@ -585,7 +585,8 @@ mod tests {
 
     /// A. Normal completion: real exit code, stdout/stderr capture, no errors.
     #[test]
-    fn normal_completion_preserves_exit_code_and_capture() {
+    #[ignore = "runner real-process lane: spawns the validation process-tree fixture"]
+    fn runner_real_process_validation_normal_completion_preserves_exit_code_and_capture() {
         let cwd = tempfile::tempdir().unwrap();
         let captured = run_bounded(
             &helper_binary(),
@@ -609,7 +610,8 @@ mod tests {
     /// B. Timeout terminates the entire tree: parent AND descendant must both
     /// be gone, with the timeout semantics unchanged.
     #[test]
-    fn timeout_terminates_entire_tree() {
+    #[ignore = "runner real-process lane: spawns the validation process-tree fixture"]
+    fn runner_real_process_validation_timeout_terminates_entire_tree() {
         let parent_marker = unique_temp_path("timeout-parent");
         let alive_marker = unique_temp_path("timeout-desc");
         let cwd = tempfile::tempdir().unwrap();
@@ -666,7 +668,8 @@ mod tests {
     /// cleanup: the descendant is terminated, the reader reaches EOF, and
     /// run_bounded stays bounded.
     #[test]
-    fn parent_exit_alone_does_not_finish_cleanup() {
+    #[ignore = "runner real-process lane: spawns the validation process-tree fixture"]
+    fn runner_real_process_validation_parent_exit_alone_does_not_finish_cleanup() {
         let parent_marker = unique_temp_path("parent-first");
         let alive_marker = unique_temp_path("parent-first-desc");
         let cwd = tempfile::tempdir().unwrap();
@@ -716,7 +719,8 @@ mod tests {
     /// D. Runner shutdown terminates the whole tree with the shutdown
     /// semantics unchanged.
     #[test]
-    fn runner_shutdown_terminates_whole_tree() {
+    #[ignore = "runner real-process lane: spawns the validation process-tree fixture"]
+    fn runner_real_process_validation_runner_shutdown_terminates_whole_tree() {
         let parent_marker = unique_temp_path("shutdown-parent");
         let alive_marker = unique_temp_path("shutdown-desc");
         let cwd = tempfile::tempdir().unwrap();
@@ -780,7 +784,8 @@ mod tests {
     /// gets a bounded grace, then the whole tree is killed. Never unbounded.
     #[cfg(unix)]
     #[test]
-    fn sigterm_resistant_tree_is_forcefully_escalated() {
+    #[ignore = "runner real-process lane: spawns the validation process-tree fixture"]
+    fn runner_real_process_validation_sigterm_resistant_tree_is_forcefully_escalated() {
         let parent_marker = unique_temp_path("resist-parent");
         let alive_marker = unique_temp_path("resist-desc");
         let cwd = tempfile::tempdir().unwrap();
@@ -835,7 +840,8 @@ mod tests {
     /// F. Cleanup of an already-exited tree: no panic, no false infrastructure
     /// error, and it is idempotent.
     #[test]
-    fn already_exited_cleanup_is_not_an_error() {
+    #[ignore = "runner real-process lane: spawns the validation process-tree fixture"]
+    fn runner_real_process_validation_already_exited_cleanup_is_not_an_error() {
         // Normal completion runs cleanup after the tree already exited; the
         // AlreadyExited graceful path must not surface as a wait error.
         let cwd = tempfile::tempdir().unwrap();
