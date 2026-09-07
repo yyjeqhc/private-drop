@@ -23,12 +23,13 @@ use super::console::{
     WorkflowSessionConsoleDetail, WorkflowSessionConsoleList,
 };
 use super::events::{
-    actual_failure_kind_for_tool_result, changed_paths_for_tool, changed_paths_for_tool_result,
-    classify_failure_expectation, context_result_summary_for_tool_result,
-    diff_review_like_for_tool, extract_job_id, extract_project, is_valid_session_id,
-    observed_input_paths_for_tool, observed_paths_for_successful_result,
-    persistent_shell_event_evidence_for_tool_result, sanitize_tool_execution_state,
-    session_input_summary_for_tool, validation_output_summary_for_tool_result, SessionToolContract,
+    actual_failure_kind_for_tool_result, changed_paths_for_tool_call,
+    changed_paths_for_tool_result, classify_failure_expectation,
+    context_result_summary_for_tool_result, diff_review_like_for_tool, extract_job_id,
+    extract_project, is_valid_session_id, observed_input_paths_for_tool,
+    observed_paths_for_successful_result, persistent_shell_event_evidence_for_tool_result,
+    sanitize_tool_execution_state, session_input_summary_for_tool,
+    validation_output_summary_for_tool_result, SessionToolContract,
 };
 use super::model::{
     CodingSessionError, CodingSessionOutcome, CodingSessionRequest, ColdSessionRecord,
@@ -1179,7 +1180,7 @@ impl SessionStore {
         let call_id = format!("{CALL_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let classification = contract;
         let risk_class = classification.risk_class.to_string();
-        let changed_paths = changed_paths_for_tool(contract, arguments);
+        let changed_paths = changed_paths_for_tool_call(tool_name, contract, arguments);
         let observed_paths = observed_input_paths_for_tool(tool_name, contract, arguments);
         let diff_review_like = diff_review_like_for_tool(tool_name, arguments);
         let input_summary = Some(session_input_summary_for_tool(tool_name, arguments));

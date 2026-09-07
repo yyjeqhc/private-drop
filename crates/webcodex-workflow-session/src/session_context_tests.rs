@@ -24,6 +24,21 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
     }
 }
 
+fn project_edit_contract(path_hint: SessionPathHint) -> SessionToolContract {
+    SessionToolContract {
+        risk_class: "write",
+        read_like: false,
+        write_like: true,
+        shell_like: false,
+        git_like: false,
+        change_summary_like: false,
+        project_write: true,
+        path_hint,
+        accepts_context_ack: false,
+        advances_context_checkpoint: true,
+    }
+}
+
 fn record_model_facing_result(
     store: &SessionStore,
     session_id: &str,
@@ -56,6 +71,100 @@ fn record_model_facing_result(
             (!success).then_some("business_failure"),
         )
         .expect("recorded model-facing result")
+}
+
+#[test]
+fn dry_run_project_edits_do_not_record_session_changed_paths() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(Some("proj".to_string()), Some("dry run paths".to_string()));
+
+    let dry_text_start = store
+        .record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Mcp,
+            "apply_text_edits",
+            &json!({
+                "project": "proj",
+                "dry_run": true,
+                "changes": [{"kind": "create", "path": "src/would_only.rs", "content": "x"}]
+            }),
+            project_edit_contract(SessionPathHint::PathList),
+        )
+        .expect("dry-run apply_text_edits start");
+    assert!(dry_text_start.changed_paths.is_empty());
+    store
+        .record_tool_call_finished(
+            Some(dry_text_start),
+            true,
+            &json!({
+                "dry_run": true,
+                "state_changed": false,
+                "changed_paths": ["src/would_only.rs"]
+            }),
+            None,
+            None,
+        )
+        .expect("dry-run apply_text_edits finish");
+
+    let dry_patch_start = store
+        .record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Mcp,
+            "apply_patch",
+            &json!({"project": "proj", "dry_run": true, "patch": "*** Begin Patch\n*** End Patch"}),
+            project_edit_contract(SessionPathHint::Patch),
+        )
+        .expect("dry-run apply_patch start");
+    store
+        .record_tool_call_finished(
+            Some(dry_patch_start),
+            true,
+            &json!({
+                "dry_run": true,
+                "state_changed": false,
+                "changed_paths": ["src/would_patch.rs"]
+            }),
+            None,
+            None,
+        )
+        .expect("dry-run apply_patch finish");
+
+    let live_start = store
+        .record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Mcp,
+            "apply_text_edits",
+            &json!({
+                "project": "proj",
+                "dry_run": false,
+                "changes": [{"kind": "create", "path": "src/live.rs", "content": "x"}]
+            }),
+            project_edit_contract(SessionPathHint::PathList),
+        )
+        .expect("live apply_text_edits start");
+    assert_eq!(live_start.changed_paths, vec!["src/live.rs"]);
+    store
+        .record_tool_call_finished(
+            Some(live_start),
+            true,
+            &json!({"dry_run": false, "state_changed": true}),
+            None,
+            None,
+        )
+        .expect("live apply_text_edits finish");
+
+    let summary = store
+        .summary(&session.session_id, Some(100))
+        .expect("session summary");
+    let finished = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_finished")
+        .collect::<Vec<_>>();
+    assert_eq!(finished.len(), 3);
+    assert!(finished[0].changed_paths.is_empty());
+    assert!(finished[1].changed_paths.is_empty());
+    assert_eq!(finished[2].changed_paths, vec!["src/live.rs"]);
 }
 
 #[test]

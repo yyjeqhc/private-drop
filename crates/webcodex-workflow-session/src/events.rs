@@ -770,10 +770,29 @@ pub fn changed_paths_for_tool(contract: SessionToolContract, arguments: &Value) 
     paths
 }
 
+fn is_dry_run_change_projection(tool_name: &str, value: &Value) -> bool {
+    matches!(tool_name, "apply_patch" | "apply_text_edits")
+        && value.get("dry_run").and_then(Value::as_bool) == Some(true)
+}
+
+pub(super) fn changed_paths_for_tool_call(
+    tool_name: &str,
+    contract: SessionToolContract,
+    arguments: &Value,
+) -> Vec<String> {
+    if is_dry_run_change_projection(tool_name, arguments) {
+        return Vec::new();
+    }
+    changed_paths_for_tool(contract, arguments)
+}
+
 /// Add trusted result-side changed paths for canonical mutations whose input
 /// intentionally does not expose a structured path list. Never parses raw diff
 /// text; only authoritative bounded runtime result metadata is accepted.
 pub fn changed_paths_for_tool_result(tool_name: &str, output: &Value) -> Vec<String> {
+    if is_dry_run_change_projection(tool_name, output) {
+        return Vec::new();
+    }
     let key = match tool_name {
         "apply_unified_diff" => "affected_files",
         "apply_patch" => "changed_paths",
