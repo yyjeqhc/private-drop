@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
+- **Total Sessions**: 2
 - **Last Active**: 2026-09-07
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~28 | Active |
+| `journal-1.md` | ~50 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-09-07 | Adaptive operator extension discovery | `4129525501b9b27c1e302063880ed5b2100f15d7` | `dogfood/trellis-window-telemetry` |
 | 1 | 2026-09-07 | Window trace correlation | `19093e5bef9343fc1674b507f990a499303f7cd5` | `dogfood/trellis-window-telemetry` |
 <!-- @@@/auto:session-history -->
 

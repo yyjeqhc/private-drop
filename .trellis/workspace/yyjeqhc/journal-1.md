@@ -26,3 +26,25 @@ Added diagnostic-only hashed ClientWindow correlation metadata to tool-request t
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: Adaptive operator extension discovery
+<!-- trellis-session: v=2 fp=2c2a3be4c9067833 -->
+
+**Date**: 2026-09-07
+**Task**: Adaptive operator extension discovery
+**Branch**: `dogfood/trellis-window-telemetry`
+
+### Summary
+
+Unified Stateless MCP 2026 operator extension ToolSpecs across Full Operator projection, Adaptive gateway admission, and capability-aware tool_manifest discovery while preserving generic ModelHidden and execution authority boundaries.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4129525501b9b27c1e302063880ed5b2100f15d7` | Add surface-aware operator extension discovery |
+
+### Status
+
+[OK] **Completed**
