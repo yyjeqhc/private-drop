@@ -31,30 +31,37 @@ The lanes above define test semantics; workflows decide when to run them.
 
 - `.github/workflows/ci.yml` is the ordinary repository gate. Its cheap `changes`
   job classifies the exact PR base...head path set before native scheduling, while
-  the lightweight `contract` job remains mandatory for every configured pull
-  request and every push to `main`. The classifier is deterministic and local to
-  Git: it does not use commit messages or PR titles, and it emits per-platform and
-  per-package-lane requirements. The contract lane owns frontend
-  install/type/test/dist validation, workspace-boundary self-test/checks,
-  formatting, the heuristic test-inventory self-test/report (without count
-  thresholds), and focused registry/OpenAPI/MCP schema and metadata parity.
+  the `contract` job remains mandatory for every configured pull request and every
+  push to `main`. The classifier is deterministic and local to Git: it does not use
+  commit messages or PR titles, and it emits per-platform and per-package-lane
+  requirements. For changed Rust/Cargo files it searches only bounded platform-marker
+  lines from both the base and head file versions, so body-only changes inside an
+  existing platform cfg remain visible without serializing near-complete file diffs.
+  If that marker scan exceeds its bound, CI fails closed to native core plus
+  architecture compilation while preserving path-derived package/Desktop decisions;
+  only an untrustworthy changed-path inventory falls back to the complete native
+  matrix. The contract lane owns frontend install/type/test/dist validation,
+  workspace-boundary self-test/checks, formatting, the heuristic test-inventory
+  self-test/report (without count thresholds), and focused registry/OpenAPI/MCP
+  schema and metadata parity.
 - The heavy Linux Rust matrix `test-linux-rust` and Linux tooling lane
-  `test-linux-tooling` both depend on a successful `contract` job and now run for
-  every pull request as well as every push to `main`, including owner-authored PRs.
-  Release readiness must not be the first place complete Linux package suites or
-  release-tooling tests execute. The historical `test` job id remains the aggregate
-  Linux status check and always evaluates `contract` plus both Linux lanes, failing
-  unless every required result is `success`. Pushes to `main`, external-contributor
+  `test-linux-tooling` run for every pull request as well as every push to `main`,
+  including owner-authored PRs. They start in parallel with `contract` rather than
+  waiting for unrelated frontend/static work; the historical `test` aggregate still
+  requires `contract` plus both Linux lanes to succeed. Native child lanes likewise
+  wait only for the cheap `changes` classifier, while the stable macOS/Windows/native
+  aggregates retain the mandatory `contract` gate. Release readiness must not be the
+  first place complete Linux package suites or release-tooling tests execute. Pushes
+  to `main`, external-contributor
   PRs, and owner PRs carrying `run-ci` still force the complete native matrix. Other
   owner PRs are upgraded automatically according to changed-path risk: native
   process-owning Runner surfaces, shell, Plugin, Computer, platform-specific, and
   Desktop Rust ownership selects Windows and/or macOS lanes; `npm/webcodex/**`
   selects the native Windows package lane; packaging/signing/release and workflow
   policy surfaces select the corresponding package lanes or the full matrix.
-  For changed Rust files and Cargo manifests, classification inspects bounded full
-  diff context so a body-only edit inside an existing platform `cfg`/target section
-  cannot silently look platform-neutral; an over-bound context falls back to full
-  native. Ordinary Rust domain/control changes remain on the mandatory Linux gates.
+  Ordinary Rust domain/control changes remain on the mandatory Linux gates; native
+  package/install lanes are selected only by their own path risks or an explicit
+  full-native policy override, not merely because a broad Rust diff is large.
   The stable `test-macos`,
   `test-windows`, and `test-native` aggregates always resolve and verify each child
   lane is `success` when required or `skipped` when not required, avoiding a skipped

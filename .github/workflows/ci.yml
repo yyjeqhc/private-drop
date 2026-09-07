@@ -103,8 +103,9 @@ jobs:
 
   contract:
     # Mandatory contract lane for every workflow invocation: pull requests and
-    # pushes to main. It runs independently of the cheap changes classifier.
-    # Keep it limited to deterministic, in-process/static checks so feedback stays fast.
+    # pushes to main. Heavy Rust/native jobs intentionally do not depend on this
+    # lane: they start in parallel, while the stable aggregate jobs below still
+    # require contract success before the workflow can pass.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -164,8 +165,8 @@ jobs:
 
   test-linux-rust:
     # Complete Linux Rust coverage is mandatory before merge, including owner PRs.
-    # Release readiness must not be the first place these package suites execute.
-    needs: contract
+    # Start it immediately in parallel with contract/frontend work; the stable
+    # `test` aggregate still requires both surfaces to succeed.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -191,9 +192,8 @@ jobs:
         run: cargo test --locked ${{ matrix.packages }}
 
   test-linux-tooling:
-    # Release/tooling checks are cheap relative to native platform builds and are
-    # mandatory on every PR so release-prep failures are caught before merge.
-    needs: contract
+    # Release/tooling checks are mandatory on every PR, but do not need contract
+    # output. Start them in parallel; the stable `test` aggregate joins the results.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -223,7 +223,7 @@ jobs:
   # Linux arm64 cfg/target coverage here so release-readiness does not need a
   # duplicate release-profile build merely to prove the native architecture.
   test-linux-arm64:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_linux_arm64 == 'true'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
@@ -263,7 +263,7 @@ jobs:
           fi
 
   test-macos-core:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_macos == 'true'
     # Native macOS core gates cover both published architectures plus the Runner
     # and Computer platform suites without mechanically building Desktop packages.
@@ -301,7 +301,7 @@ jobs:
         run: cargo test --locked -p webcodex-runner -p webcodex-computer
 
   test-macos-desktop:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_macos_desktop == 'true'
     # Keep Desktop package validation separate so process/plugin changes receive
     # native macOS coverage without paying the DMG build cost unless needed.
@@ -470,7 +470,7 @@ jobs:
   # running after the Computer runtime was split out of the Runner crate.
   # Core/library and packaging coverage can run independently in parallel.
   test-windows-core:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_windows_core == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
@@ -493,7 +493,7 @@ jobs:
         run: cargo test --locked -p webcodex-runner-config -p webcodex-process -p webcodex-cli
 
   test-windows-runner:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_windows_runner == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
@@ -509,7 +509,7 @@ jobs:
         run: cargo test --locked -p webcodex-runner -p webcodex-computer -- --test-threads=2
 
   test-windows-package:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_windows_package == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
@@ -534,7 +534,7 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/npm_install_windows_smoke.ps1
 
   test-windows-desktop:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_windows_desktop == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
@@ -633,7 +633,7 @@ jobs:
   # Keep native ARM64 compile coverage path-aware as well; full-native overrides
   # and explicit aarch64 cfg/target changes still require it before merge.
   test-windows-arm64:
-    needs: [contract, changes]
+    needs: changes
     if: needs.changes.outputs.needs_windows_arm64 == 'true'
     runs-on: windows-11-arm
     timeout-minutes: 30

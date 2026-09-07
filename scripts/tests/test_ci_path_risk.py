@@ -221,19 +221,75 @@ class GitRangeIntegrationTests(unittest.TestCase):
             ["git", "rev-parse", "HEAD"], cwd=root, text=True
         ).strip()
 
-    def test_platform_diff_bound_falls_back_to_full_native(self) -> None:
+    def test_platform_context_bound_falls_back_to_native_core_without_packaging(self) -> None:
         change = risk.Change(status="M", path="src/runtime.rs")
         with (
             mock.patch.object(risk, "_git_changes", return_value=[change]),
             mock.patch.object(
                 risk,
-                "_git_platform_diff",
+                "_git_platform_context",
                 side_effect=risk.DiffLimitExceeded("fixture bound"),
             ),
         ):
             result = risk.classify_git_range("0" * 40, "1" * 40).outputs()
+        self.assertEqual(result["needs_full_native"], "false")
+        self.assertEqual(result["needs_windows_core"], "true")
+        self.assertEqual(result["needs_macos"], "true")
+        self.assertEqual(result["needs_linux_arm64"], "true")
+        self.assertEqual(result["needs_windows_arm64"], "true")
+        self.assertEqual(result["needs_windows_package"], "false")
+        self.assertEqual(result["needs_windows_desktop"], "false")
+        self.assertEqual(result["needs_macos_desktop"], "false")
+        self.assertIn("platform-context-bounded", result["categories"])
+
+    def test_changed_path_bound_still_falls_back_to_full_native(self) -> None:
+        with mock.patch.object(
+            risk,
+            "_git_changes",
+            side_effect=risk.DiffLimitExceeded("fixture path bound"),
+        ):
+            result = risk.classify_git_range("0" * 40, "1" * 40).outputs()
         self.assertEqual(result["needs_full_native"], "true")
-        self.assertIn("bounded-fallback", result["categories"])
+        self.assertIn("changed-path-bounded-fallback", result["categories"])
+
+    def test_broad_rust_change_does_not_escalate_to_packaging_or_arm64(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.init_repo(root)
+            sources = []
+            for index in range(14):
+                source = root / "src" / f"wide_{index:02}.rs"
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(
+                    f"pub const VALUE_{index}: usize = {index};\n" + "// filler\n" * 18000,
+                    encoding="utf-8",
+                )
+                sources.append(source)
+            runner = root / "crates" / "webcodex-runner" / "src" / "webcodex_runner" / "projects.rs"
+            runner.parent.mkdir(parents=True, exist_ok=True)
+            runner.write_text("pub fn managed() -> usize { 1 }\n" + "// runner filler\n" * 12000, encoding="utf-8")
+            sources.append(runner)
+            base = self.commit(root, "broad base")
+
+            for source in sources:
+                source.write_text(source.read_text(encoding="utf-8") + "// changed\n", encoding="utf-8")
+            head = self.commit(root, "broad rust change")
+
+            previous = Path.cwd()
+            try:
+                os.chdir(root)
+                result = risk.classify_git_range(base, head).outputs()
+            finally:
+                os.chdir(previous)
+
+            self.assertEqual(result["needs_full_native"], "false")
+            self.assertEqual(result["needs_windows_runner"], "true")
+            self.assertEqual(result["needs_macos"], "true")
+            self.assertEqual(result["needs_windows_package"], "false")
+            self.assertEqual(result["needs_windows_desktop"], "false")
+            self.assertEqual(result["needs_macos_desktop"], "false")
+            self.assertEqual(result["needs_linux_arm64"], "false")
+            self.assertEqual(result["needs_windows_arm64"], "false")
 
     def test_real_git_rename_is_observed_as_delete_plus_add_and_upgrades_risk(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -338,8 +338,23 @@ class WorkflowContractTests(unittest.TestCase):
             end = min(following) if following else len(workflow)
             block = workflow[start:end]
             with self.subTest(job=job_name):
-                self.assertIn("needs: [contract, changes]", block)
+                self.assertIn("needs: changes", block)
+                self.assertNotIn("needs: [contract, changes]", block)
                 self.assertIn(f"if: needs.changes.outputs.{output_name} == 'true'", block)
+
+        for job_name in ("test-linux-rust", "test-linux-tooling"):
+            start = workflow.index(f"  {job_name}:\n")
+            end = workflow.find("\n  test-", start + 1)
+            block = workflow[start : end if end != -1 else len(workflow)]
+            with self.subTest(job=job_name):
+                self.assertNotIn("needs: contract", block)
+
+        for aggregate in ("test", "test-macos", "test-windows", "test-native"):
+            start = workflow.index(f"  {aggregate}:\n")
+            line_end = workflow.index("\n", workflow.index("    needs:", start))
+            needs_line = workflow[workflow.index("    needs:", start) : line_end]
+            with self.subTest(aggregate=aggregate):
+                self.assertIn("contract", needs_line)
 
         changes = workflow[workflow.index("  changes:\n"):workflow.index("  contract:\n")]
         for output in (

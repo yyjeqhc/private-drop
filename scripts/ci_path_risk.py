@@ -15,10 +15,12 @@ from pathlib import PurePosixPath
 MAX_CHANGED_PATHS = 2048
 MAX_PATH_BYTES = 4096
 MAX_NAME_STATUS_BYTES = 1024 * 1024
-MAX_PLATFORM_DIFF_BYTES = 2 * 1024 * 1024
+MAX_PLATFORM_CONTEXT_BYTES = 2 * 1024 * 1024
+MAX_GIT_PATH_BATCH_BYTES = 64 * 1024
 MAX_GIT_STDERR_BYTES = 64 * 1024
 
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+PLATFORM_CONTEXT_GREP_RE = r"windows|macos|aarch64|target_os|target_family|target_arch"
 WINDOWS_CFG_RE = re.compile(
     r"(?:\bcfg!?\s*\([^\n)]*\bwindows\b|\btarget_(?:os|family)\s*=\s*\"windows\")"
 )
@@ -135,6 +137,15 @@ def _mark_macos(risk: Risk, category: str, *, desktop: bool = False) -> None:
     if desktop:
         risk.needs_macos_desktop = True
     risk.categories.add(category)
+
+
+def _mark_platform_context_bounded(risk: Risk) -> None:
+    """Fail closed on platform semantics without pulling in unrelated packaging."""
+    category = "platform-context-bounded"
+    _mark_windows_core(risk, category)
+    _mark_macos(risk, category)
+    risk.needs_linux_arm64 = True
+    risk.needs_windows_arm64 = True
 
 
 def _is_docs_or_text(path: str) -> bool:
@@ -320,11 +331,10 @@ def classify_changes(changes: list[Change], platform_diff: str = "") -> Risk:
         _validate_path(change.path)
         _classify_path(risk, change.path)
 
-    # `platform_diff` deliberately contains the complete bounded context of every
-    # changed Rust/Cargo manifest file, not only +/- lines. A body-only edit inside
-    # an existing `#[cfg(windows)]` block or target-specific Cargo dependency is
-    # still platform risk even when the cfg declaration itself is unchanged.
-    # Oversized context fails safe to full native in `classify_git_range`.
+    # `platform_diff` contains only platform-marker lines observed from the base and
+    # head versions of changed Rust/Cargo files. Looking at both revisions keeps a
+    # body-only edit inside an existing `#[cfg(windows)]` block or target-specific
+    # Cargo section visible even when the marker line itself did not change.
     if WINDOWS_CFG_RE.search(platform_diff) or MACOS_CFG_RE.search(platform_diff):
         _mark_windows_core(risk, "platform-cfg")
         _mark_macos(risk, "platform-cfg")
@@ -367,7 +377,12 @@ def _validate_path(path: str) -> None:
         raise DiffLimitExceeded("changed path is not a bounded repository-relative path")
 
 
-def _run_git_bounded(args: list[str], *, max_stdout_bytes: int) -> bytes:
+def _run_git_bounded(
+    args: list[str],
+    *,
+    max_stdout_bytes: int,
+    accepted_return_codes: tuple[int, ...] = (0,),
+) -> bytes:
     with subprocess.Popen(
         ["git", *args],
         stdout=subprocess.PIPE,
@@ -378,9 +393,9 @@ def _run_git_bounded(args: list[str], *, max_stdout_bytes: int) -> bytes:
         if len(stdout) > max_stdout_bytes:
             process.kill()
             process.wait()
-            raise DiffLimitExceeded("git diff output exceeds classifier bounds")
+            raise DiffLimitExceeded("git output exceeds classifier bounds")
         return_code = process.wait()
-        if return_code != 0:
+        if return_code not in accepted_return_codes:
             message = stdout[:MAX_GIT_STDERR_BYTES].decode("utf-8", errors="replace").strip()
             raise GitDiffError(message or f"git exited with status {return_code}")
         return stdout
@@ -420,26 +435,61 @@ def _git_changes(base: str, head: str) -> list[Change]:
     return changes
 
 
-def _git_platform_diff(base: str, head: str) -> str:
-    raw = _run_git_bounded(
-        [
-            "diff",
-            "--unified=1000000",
-            "--no-renames",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-color",
-            f"{base}...{head}",
-            "--",
-            "*.rs",
-            ":(glob)**/Cargo.toml",
-            ":(exclude)docs/**",
-            ":(exclude)frontend/**",
-            ":(exclude)apps/desktop/src/**",
-        ],
-        max_stdout_bytes=MAX_PLATFORM_DIFF_BYTES,
+def _platform_context_paths(changes: list[Change], *, excluded_status: str) -> list[str]:
+    return sorted(
+        {
+            change.path
+            for change in changes
+            if change.status != excluded_status
+            and (change.path.endswith(".rs") or PurePosixPath(change.path).name == "Cargo.toml")
+            and not _is_docs_or_text(change.path)
+            and not _is_frontend_only(change.path)
+        }
     )
-    return raw.decode("utf-8", errors="replace")
+
+
+def _path_batches(paths: list[str]) -> list[list[str]]:
+    batches: list[list[str]] = []
+    batch: list[str] = []
+    batch_bytes = 0
+    for path in paths:
+        path_bytes = len(path.encode("utf-8")) + 1
+        if batch and batch_bytes + path_bytes > MAX_GIT_PATH_BATCH_BYTES:
+            batches.append(batch)
+            batch = []
+            batch_bytes = 0
+        batch.append(path)
+        batch_bytes += path_bytes
+    if batch:
+        batches.append(batch)
+    return batches
+
+
+def _git_platform_context(base: str, head: str, changes: list[Change]) -> str:
+    chunks: list[bytes] = []
+    remaining = MAX_PLATFORM_CONTEXT_BYTES
+    for revision, excluded_status in ((base, "A"), (head, "D")):
+        paths = _platform_context_paths(changes, excluded_status=excluded_status)
+        for batch in _path_batches(paths):
+            raw = _run_git_bounded(
+                [
+                    "grep",
+                    "-h",
+                    "-I",
+                    "-E",
+                    "-e",
+                    PLATFORM_CONTEXT_GREP_RE,
+                    revision,
+                    "--",
+                    *batch,
+                ],
+                max_stdout_bytes=remaining,
+                # git grep uses 1 for a valid search with no matches.
+                accepted_return_codes=(0, 1),
+            )
+            chunks.append(raw)
+            remaining -= len(raw)
+    return b"\n".join(chunks).decode("utf-8", errors="replace")
 
 
 def classify_git_range(base: str, head: str) -> Risk:
@@ -447,14 +497,28 @@ def classify_git_range(base: str, head: str) -> Risk:
         raise GitDiffError("base and head must be exact 40-hex Git commit ids")
     try:
         changes = _git_changes(base, head)
-        needs_platform_context = any(
-            change.path.endswith(".rs") or PurePosixPath(change.path).name == "Cargo.toml"
-            for change in changes
-        )
-        platform_diff = _git_platform_diff(base, head) if needs_platform_context else ""
-        return classify_changes(changes, platform_diff)
     except DiffLimitExceeded:
-        return Risk.full("bounded-fallback")
+        # If even the changed-path inventory is outside the trusted bound, there is
+        # no safe way to know which product surfaces changed.
+        return Risk.full("changed-path-bounded-fallback")
+
+    needs_platform_context = any(
+        change.path.endswith(".rs") or PurePosixPath(change.path).name == "Cargo.toml"
+        for change in changes
+    )
+    if not needs_platform_context:
+        return classify_changes(changes)
+
+    try:
+        platform_context = _git_platform_context(base, head, changes)
+    except DiffLimitExceeded:
+        # We still know the exact changed paths, so preserve their package/desktop
+        # classification and fail closed only for unknown native cfg/architecture
+        # semantics. Packaging lanes are not a substitute for platform compilation.
+        risk = classify_changes(changes)
+        _mark_platform_context_bounded(risk)
+        return risk.finalize()
+    return classify_changes(changes, platform_context)
 
 
 def _parse_bool(value: str) -> bool:
