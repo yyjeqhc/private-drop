@@ -39,27 +39,37 @@ never be cross-wired to either session system below. On such a stateful adapter,
 isolated, write upgrades recheck project-write authority, and a terminal task
 advances only that exact mapping while preserving history.
 
-**Stateless MCP 2026 deliberately supplies no stable `ClientWindow`.** Every
-`task_start` therefore starts independent durable work; even a caller-supplied
-legacy `Mcp-Session-Id` must not create hidden continuity. Existing work is
-continued explicitly with its durable `task_id` through `task_resume` (and may be
-discovered with `task_list`). This stateless path never falls back to a user,
-credential, project identity, connection, or prior request.
+**Stateless MCP 2026 itself never treats `Mcp-Session-Id` as a stable window.**
+ChatGPT-hosted stateless requests may instead carry the host-owned
+`_meta["openai/session"]` value. The MCP adapter validates and immediately
+domain-separates/hashes that opaque value into a `ClientWindow`; the raw value is
+never persisted or exposed. When present, Project Connector `task_start` may
+therefore resolve the exact mapping above for the same authenticated subject,
+Connector project, and canonical root. Missing or malformed OpenAI session
+metadata yields no implicit continuity, and a caller-supplied legacy
+`Mcp-Session-Id` still must not create hidden continuity.
+
+Existing work remains explicitly addressable by durable `task_id` through
+`task_resume` (and discoverable with `task_list`). This explicit recovery path is
+required when host window identity is absent or lost, or when a specific older
+task must be selected. The stateless path never falls back to a user, credential,
+project identity, connection, or prior request.
 
 Legacy/stateful MCP and first-party/hosted HTTP adapters may have their own
 explicit window sources, such as the older server-minted MCP session header, a
-conversation-scoped request header, or a first-party HttpOnly window cookie.
-Those are adapter-local `ClientWindow` inputs, not a general property of HTTP or
-MCP and never proof of Workflow Session identity, model-context retention, or
+conversation-scoped request header, or a first-party HttpOnly window cookie. The
+ChatGPT stateless `openai/session` projection is another adapter-local
+`ClientWindow` input. None of these is a general property of HTTP or MCP, and
+none is proof of Workflow Session identity, model-context retention, or
 authority. Raw window values are not stored; only their domain-separated hash is
 used where that adapter contract permits window binding.
 
 Restart recovery follows the same boundary: durable Connector Task history always
-survives; only adapters with an explicit stable window may restore an exact
-window/repository mapping automatically. Stateless callers recover explicitly by
-`task_id`. `task_resume` may rebind only when the current adapter actually
-supplies a new stable `ClientWindow`; otherwise the durable Connector Task resumes without
-manufacturing one.
+survives; adapters with an explicit stable window may restore an exact
+window/repository mapping automatically. Stateless callers without a valid
+OpenAI session recover explicitly by `task_id`. `task_resume` may rebind only
+when the current adapter actually supplies a new stable `ClientWindow`; otherwise
+the durable Connector Task resumes without manufacturing one.
 
 The durable Agent/Conversation/Wake domain is also not a session type. A
 Server-minted Agent may participate in Conversations and later own asynchronous
@@ -99,7 +109,7 @@ handoff, and finish can reason about the same unit of work.
 
 ### Storage and ownership
 
-Stateless MCP 2026 does not have a reliable Workflow Session or ChatGPT-window transport identity. Its `tools/list` schema therefore projects `recording_session_id` as explicit wrapper metadata for runtime tools. A call may carry `recording_session_id=W` while the concrete tool body carries business `session_id=C`; the MCP adapter removes the recorder field before concrete parsing and the kernel independently authorizes `W` before it can record evidence or supply trusted collaboration provenance. This does not revive legacy `mcp-session-id`, grant target authority, or infer a recorder from credentials, project identity, or connection state.
+Stateless MCP 2026 never derives a Workflow Session or recorder identity from transport/window continuity. ChatGPT may supply `_meta["openai/session"]` as a hashed `ClientWindow` for Project Connector task continuity, but that identity is intentionally not a Workflow Session selector or trusted provenance source. Its `tools/list` schema therefore projects `recording_session_id` as explicit wrapper metadata for runtime tools. A call may carry `recording_session_id=W` while the concrete tool body carries business `session_id=C`; the MCP adapter removes the recorder field before concrete parsing and the kernel independently authorizes `W` before it can record evidence or supply trusted collaboration provenance. This does not revive legacy `mcp-session-id`, grant target authority, or infer a recorder from credentials, project identity, connection state, or `ClientWindow`.
 
 One real kernel tool request also receives one trusted runtime-generated logical invocation correlation id. The outer recorder event pair and any inner concrete business-execution event pair inherit that id while retaining independent pair-level `call_id` values. A small recorder/business role discriminator lets Session-local semantic projections deterministically prefer authoritative business execution facts when both pairs land in the same Workflow Session. Raw ledger facts remain intact. Correlation never grants authority and is not a permission identity, retry token, idempotency key, execution identity, lifecycle key, or model-supplied input. If recorder Session `W` and business Session `C` differ, each Session keeps its own one-invocation semantic evidence; correlation is never used for cross-Session global deduplication. Current-v2 ledger events without the additive correlation fields remain uncorrelated and are projected conservatively per event; restore never invents an id or rewrites persisted history.
 
