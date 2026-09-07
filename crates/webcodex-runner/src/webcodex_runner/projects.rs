@@ -1558,6 +1558,36 @@ fn choose_managed_worktree_root(
     Err("managed_worktree_root_unavailable")
 }
 
+/// Render an already-authorized managed-worktree destination for Git's CLI.
+///
+/// Rust canonicalization commonly returns `\\?\C:\...` on Windows. Win32
+/// filesystem APIs accept that identity, but Git for Windows does not reliably
+/// accept the verbatim-disk spelling as a `git worktree add` destination. Keep
+/// canonical PathBuf values for policy, registry, recovery, and identity checks;
+/// only the child-process argv gets the equivalent ordinary local-disk spelling.
+fn managed_worktree_git_cli_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+
+        let mut components = path.components();
+        if let Some(Component::Prefix(prefix)) = components.next() {
+            if let Prefix::VerbatimDisk(drive) = prefix.kind() {
+                let mut rendered = PathBuf::from(format!("{}:\\", char::from(drive)));
+                for component in components {
+                    match component {
+                        Component::RootDir => {}
+                        Component::Normal(part) => rendered.push(part),
+                        _ => return path.to_string_lossy().into_owned(),
+                    }
+                }
+                return rendered.to_string_lossy().into_owned();
+            }
+        }
+    }
+    path.to_string_lossy().into_owned()
+}
+
 fn source_mentions_worktree_path(source: &Path, worktree: &Path) -> Result<bool, &'static str> {
     let listing = managed_worktree_git_text(source, &["worktree", "list", "--porcelain"])?;
     Ok(listing
@@ -2100,7 +2130,7 @@ pub(crate) fn handle_prepare_managed_worktree(
                 )
             }
         }
-        let destination_string = destination.to_string_lossy().to_string();
+        let destination_string = managed_worktree_git_cli_path(&destination);
         let add_result = run_git_bounded(
             &source_root,
             &[
@@ -3048,6 +3078,23 @@ pub(crate) fn handle_project_op(
 #[cfg(test)]
 mod durability_tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn managed_worktree_git_cli_path_normalizes_only_verbatim_local_disk_paths() {
+        assert_eq!(
+            managed_worktree_git_cli_path(Path::new(r"\\?\C:\workspace\managed")),
+            r"C:\workspace\managed"
+        );
+        assert_eq!(
+            managed_worktree_git_cli_path(Path::new(r"C:\workspace\managed")),
+            r"C:\workspace\managed"
+        );
+        assert_eq!(
+            managed_worktree_git_cli_path(Path::new(r"\\server\share\managed")),
+            r"\\server\share\managed"
+        );
+    }
 
     /// Unix-only: verifies the POSIX directory-fsync contract (opening a
     /// directory as a file). On Windows directory sync is intentionally

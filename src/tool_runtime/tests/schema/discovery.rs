@@ -1215,23 +1215,25 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
     assert_eq!(no_patch["filtered"], true);
     assert_recommended_flows_subset_of_manifest_tools(&no_patch, "startup no-patch");
     let no_patch_tools = serde_json::to_string(&no_patch["tools"]).unwrap();
-    let no_patch_flows = serde_json::to_string(&no_patch["recommended_flows"]).unwrap();
     assert!(
         !no_patch_tools.contains("apply_patch"),
         "without patch category, tools must not include apply_patch"
     );
     assert!(
-        !no_patch_flows.contains("apply_patch"),
-        "without patch category, recommended_flows must not include apply_patch"
-    );
-    assert!(
         !no_patch_tools.contains("apply_unified_diff"),
         "without patch category, tools must not include apply_unified_diff"
     );
-    assert!(
-        !no_patch_flows.contains("apply_unified_diff"),
-        "without patch category, recommended_flows must not include apply_unified_diff"
-    );
+    for forbidden in ["apply_patch", "apply_unified_diff"] {
+        assert!(
+            no_patch["recommended_flows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|flow| flow["tools"].as_array().into_iter().flatten())
+                .all(|tool| tool.as_str() != Some(forbidden)),
+            "without patch category, recommended flow tool references must not include {forbidden}"
+        );
+    }
 
     // same filter with patch
     let with_patch = runtime

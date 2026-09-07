@@ -44,8 +44,11 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "{description}"
     );
     assert!(description.contains("Git not required"), "{description}");
+    assert!(description.contains("mode=worktree"), "{description}");
+    assert!(description.contains("exact Git base"), "{description}");
+    assert!(description.contains("ordinary Project"), "{description}");
     assert!(
-        description.contains("exact Session continuation"),
+        description.contains("without bypassing Project authority"),
         "{description}"
     );
 
@@ -65,6 +68,8 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "project",
         "client_id",
         "path",
+        "mode",
+        "base_ref",
         "instruction",
         "include_project_instructions",
         "include_workflow_guidance",
@@ -74,6 +79,8 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
     }
     assert_eq!(work_props["include_project_instructions"]["default"], true);
     assert_eq!(work_props["include_workflow_guidance"]["default"], true);
+    assert_eq!(work_props["mode"]["enum"], json!(["checkout", "worktree"]));
+    assert_eq!(work_props["mode"]["default"], "checkout");
     assert_eq!(work_schema["required"], json!(["instruction"]));
     assert_eq!(work_schema["additionalProperties"], false);
     for keyword in [

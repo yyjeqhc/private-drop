@@ -4872,6 +4872,7 @@ mod envelope_tests {
                 "lsp_call_hierarchy",
                 "project_lifecycle",
                 "project_path_registration",
+                "managed_worktree",
                 "skill_store_read",
                 "skill_store_manage",
                 "computer_observe",

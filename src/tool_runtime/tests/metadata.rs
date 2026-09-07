@@ -1990,7 +1990,6 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
 
     for field in [
         "temporary_project_name",
-        "mode",
         "deny_write_tools",
         "deny_shell_tools",
         "detail",
@@ -2007,8 +2006,16 @@ async fn tool_manifest_model_fields_and_hidden_start_compatibility_stay_separate
             "retired start-only flattened arg {field} must not remain in ToolCallRequest"
         );
     }
-    assert!(accepted_fields.contains("execution_context"));
-    assert!(properties.contains_key("execution_context"));
+    for field in ["mode", "base_ref", "execution_context"] {
+        assert!(
+            accepted_fields.contains(field),
+            "current model-visible flattened field {field} must be owned by the manifest"
+        );
+        assert!(
+            properties.contains_key(field),
+            "current model-visible flattened field {field} must be declared by ToolCallRequest"
+        );
+    }
 
     for field in properties.keys() {
         if TOOL_CALL_WRAPPER_FIELDS.contains(&field.as_str()) {

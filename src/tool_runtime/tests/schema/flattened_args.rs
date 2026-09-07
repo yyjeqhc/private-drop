@@ -166,7 +166,6 @@ fn openapi_generic_call_runtime_tool_schema_remains_strict_model_visible_surface
         .contains("start_coding_task"));
     for field in [
         "temporary_project_name",
-        "mode",
         "deny_write_tools",
         "deny_shell_tools",
         "detail",
@@ -179,7 +178,12 @@ fn openapi_generic_call_runtime_tool_schema_remains_strict_model_visible_surface
             "hidden start-only field {field} must not enter model-facing ToolCallRequest"
         );
     }
-    assert!(properties.contains_key("execution_context"));
+    for field in ["mode", "base_ref", "execution_context"] {
+        assert!(
+            properties.contains_key(field),
+            "current model-visible flattened field {field} must remain in ToolCallRequest"
+        );
+    }
 }
 
 fn accepted_flattened_action_fields() -> BTreeSet<String> {
