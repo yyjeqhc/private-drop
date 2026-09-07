@@ -108,7 +108,7 @@ fn adaptive_runtime_gateway_target_specs(stateless_2026: bool) -> Vec<ToolSpec> 
 fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     ToolSpec {
         name: ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string(),
-        description: "Call one model-visible long-tail runtime tool through the adaptive surface. Runtime argument validation, OAuth scope checks, project authority, permission gates, and tool effects remain unchanged.".to_string(),
+        description: "Call one model-visible gateway-only long-tail runtime tool through the adaptive surface. Tools discovered with availability=direct must be invoked directly; if the host has not loaded that callable, rediscover/load it instead of retrying through this gateway. Runtime argument validation, OAuth scope checks, project authority, permission gates, and tool effects remain unchanged.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -116,7 +116,7 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128,
-                    "description": "Exact model-visible runtime tool name obtained from bounded runtime discovery."
+                    "description": "Exact gateway-only model-visible runtime tool name obtained from bounded runtime discovery. Do not pass tools whose discovery availability is direct."
                 },
                 "arguments": {
                     "type": "object",
@@ -233,18 +233,21 @@ fn unwrap_adaptive_runtime_gateway_arguments(
 
 fn adaptive_runtime_gateway_route_failure(target: &str) -> ToolResult {
     ToolResult::err_with_output(
-        format!("tool '{target}' must be invoked directly on the adaptive runtime surface"),
+        format!("tool '{target}' is direct on the adaptive runtime surface; invoke its direct callable. If the host has not loaded it, rediscover/load that direct tool instead of retrying through call_runtime_tool"),
         json!({
             "error_kind": "wrong_invocation_route",
             "execution_state": "not_started",
             "state_changed": false,
             "target_tool": target,
             "correct_route": {
-                "mode": "direct"
+                "mode": "direct",
+                "availability": "direct"
             },
             "recovery": {
                 "tool": target,
-                "route": {"mode": "direct"}
+                "route": {"mode": "direct"},
+                "rediscover_if_unloaded": true,
+                "retry_via_gateway": false
             },
             "recovery_kind": "fix_input"
         }),

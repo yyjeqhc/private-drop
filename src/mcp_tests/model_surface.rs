@@ -579,8 +579,11 @@ async fn adaptive_runtime_gateway_returns_exact_route_recovery_without_dispatchi
         assert_eq!(output["state_changed"], false);
         assert_eq!(output["target_tool"], target);
         assert_eq!(output["correct_route"]["mode"], "direct");
+        assert_eq!(output["correct_route"]["availability"], "direct");
         assert_eq!(output["recovery"]["tool"], target);
         assert_eq!(output["recovery"]["route"]["mode"], "direct");
+        assert_eq!(output["recovery"]["rediscover_if_unloaded"], true);
+        assert_eq!(output["recovery"]["retry_via_gateway"], false);
         assert_eq!(output["recovery_kind"], "fix_input");
     }
 

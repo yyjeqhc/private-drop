@@ -62,7 +62,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
             "Verify Project, branch, HEAD, and existing changes; read nested rules for changed paths and recover truncated instructions.",
             "Preserve unrelated work; make the smallest coherent change. Push/publish/deploy/restart need an explicit action and target.",
             "Use structured tools and edit guards; apply model_protocol only where the exposed schema supports it.",
-            "Use the smallest meaningful validation; reuse unchanged-source/input evidence. Zero tests are not test coverage.",
+            "Use the smallest meaningful validation. When the selected worktree will definitely need compilation or tests, start one bounded compile/check early so its build cache can warm while independent inspection continues; reuse unchanged-source/input evidence. Zero tests are not test coverage.",
             "Observe existing Jobs; inspect state before retrying an unknown outcome. Timeout does not prove no effect.",
             "Review the diff; report evidence, limits, and Jobs. finish_coding_task is advisory evidence, not proof."
         ],
