@@ -580,10 +580,12 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, _app_enabled: bool) -> 
         // Match ToolSpec's camelCase serde so default behavior is unchanged.
         serde_json::to_value(spec).unwrap_or_else(|_| json!({}))
     };
-    if tool_name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
+    if !compact && tool_name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
         if let Some(object) = value.as_object_mut() {
-            // SSH resource actions have action-specific result projections.
-            object.remove("outputSchema");
+            object.insert(
+                "outputSchema".to_string(),
+                crate::ssh_resource_gateway::mcp_output_schema(),
+            );
         }
     }
     if tool_name == "import_conversation_files_to_project" {
@@ -660,7 +662,7 @@ pub(super) async fn handle_list(
                 && crate::ssh_resource_gateway::authorized(auth)
             {
                 if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
-                    tools.push(crate::ssh_resource_gateway::tool_spec());
+                    tools.push(crate::ssh_resource_gateway::tool_spec(compact_schemas));
                 }
             }
             result
@@ -1486,18 +1488,40 @@ pub(super) async fn handle_call(
             }
         };
         let audit = crate::ssh_resource_gateway::audit_arguments(&params.arguments);
-        let permit = match runtime
-            .govern_specialized_invocation(
-                &params.name,
-                policy,
-                crate::tool_runtime::sessions::SessionTransport::Mcp,
-                recording_session_id.as_deref(),
-                auth,
-                &audit,
-            )
-            .await
+        let request = match serde_json::from_value::<crate::tool_runtime::SshResourceToolCall>(
+            params.arguments.clone(),
+        ) {
+            Ok(request) if request.validate().is_ok() => request,
+            _ => {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.capture_payload("effective_arguments", &audit);
+                }
+                let result =
+                    crate::ssh_resource_gateway::call(runtime, params.arguments, auth).await;
+                let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
+                }
+                return McpOutcome::Ok(rpc_result(
+                    id,
+                    if stateless_2026 {
+                        mcp_stateless_result(result, false)
+                    } else {
+                        result
+                    },
+                ));
+            }
+        };
+        let invocation = match crate::ssh_resource_gateway::invoke(
+            runtime,
+            request,
+            recording_session_id.as_deref(),
+            auth,
+            crate::tool_runtime::sessions::SessionTransport::Mcp,
+        )
+        .await
         {
-            Ok(permit) => permit,
+            Ok(invocation) => invocation,
             Err(SpecializedGovernanceDenial::Scope {
                 required_scope,
                 description,
@@ -1526,23 +1550,16 @@ pub(super) async fn handle_call(
                 ));
             }
         };
+        let ok = invocation.success();
         if let Some(lc) = lifecycle.as_deref() {
             lc.capture_payload("effective_arguments", &audit);
-            lc.capture_payload("specialized_governance", &permit.audit_projection());
-        }
-        let result = crate::ssh_resource_gateway::call(runtime, params.arguments, auth).await;
-        let ok = result.get("isError").and_then(Value::as_bool) != Some(true);
-        let failure_kind = result
-            .pointer("/structuredContent/error/code")
-            .and_then(Value::as_str);
-        let dispatch_certainty = result
-            .pointer("/structuredContent/dispatchState")
-            .and_then(Value::as_str)
-            .unwrap_or("completed");
-        runtime.finish_specialized_invocation(permit, ok, dispatch_certainty, failure_kind);
-        if let Some(lc) = lifecycle.as_deref() {
+            lc.capture_payload(
+                "specialized_governance",
+                &invocation.policy().audit_projection(),
+            );
             lc.dispatch_finished(true, Some(ok), if ok { "success" } else { "tool_error" });
         }
+        let result = invocation.to_mcp_result();
         return McpOutcome::Ok(rpc_result(
             id,
             if stateless_2026 {

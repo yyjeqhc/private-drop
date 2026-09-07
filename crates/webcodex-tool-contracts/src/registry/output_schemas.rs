@@ -20,6 +20,7 @@ mod projects;
 mod runner_config;
 mod sessions;
 mod skills;
+mod ssh_resources;
 mod testing;
 
 use common::default_output_schema;
@@ -80,6 +81,9 @@ pub fn output_schema_for_tool(name: &str) -> Value {
         return schema;
     }
     if let Some(schema) = lsp::output_schema_for_tool(name) {
+        return schema;
+    }
+    if let Some(schema) = ssh_resources::output_schema_for_tool(name) {
         return schema;
     }
     if let Some(schema) = testing::output_schema_for_tool(name) {

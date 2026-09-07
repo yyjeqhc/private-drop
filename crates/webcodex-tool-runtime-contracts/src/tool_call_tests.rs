@@ -124,6 +124,51 @@ fn runner_config_tools_parse_closed_contracts_and_keep_governance_split() {
 }
 
 #[test]
+fn ssh_resource_parses_as_canonical_gateway_with_closed_action_vocabulary() {
+    let list = ToolCall::from_tool_name(
+        "ssh_resource",
+        json!({"action": "list", "runner": "special"}),
+    )
+    .unwrap();
+    assert!(matches!(
+        list,
+        ToolCall::SshResource(SshResourceToolCall {
+            ref action,
+            runner: Some(ref runner),
+            ..
+        }) if action == "list" && runner == "special"
+    ));
+
+    let register = ToolCall::from_tool_name(
+        "ssh_resource",
+        json!({
+            "action": "register",
+            "binding": "wc_sbind_0123456789abcdef0123456789abcdef",
+            "name": "spe",
+            "target": "root@spe",
+            "default_cwd": "/root/git"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        register,
+        ToolCall::SshResource(SshResourceToolCall {
+            ref action,
+            name: Some(ref name),
+            target: Some(ref target),
+            ..
+        }) if action == "register" && name == "spe" && target == "root@spe"
+    ));
+
+    for invalid in [
+        json!({"action": "probe", "runner": "special"}),
+        json!({"action": "list", "runner": "special", "unknown": true}),
+    ] {
+        assert!(ToolCall::from_tool_name("ssh_resource", invalid).is_err());
+    }
+}
+
+#[test]
 fn legacy_list_agents_alias_parses_to_canonical_list_runners() {
     let call = ToolCall::from_tool_name(
         "list_agents",

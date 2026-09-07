@@ -1006,6 +1006,33 @@ impl ToolRuntime {
                 )) => result,
             };
         }
+        if let ToolCall::SshResource(ssh_resource) = call {
+            return match crate::ssh_resource_gateway::invoke(
+                self,
+                ssh_resource,
+                recorder_metadata.recording_session_id.as_deref(),
+                auth,
+                transport,
+            )
+            .await
+            {
+                Ok(invocation) => invocation.to_tool_result(),
+                Err(crate::tool_runtime::specialized::SpecializedGovernanceDenial::Scope {
+                    required_scope,
+                    description,
+                }) => ToolResult::err_with_output(
+                    description,
+                    serde_json::json!({
+                        "failure_kind": "insufficient_scope",
+                        "required_scope": required_scope,
+                        "dispatch_certainty": "not_started",
+                    }),
+                ),
+                Err(crate::tool_runtime::specialized::SpecializedGovernanceDenial::Tool(
+                    result,
+                )) => result,
+            };
+        }
         // Kernel requests arrive with the same trusted logical identity already
         // used by the outer recorder. Mark only this concrete ledger path as the
         // authoritative business role; direct/internal dispatch without a kernel
@@ -1510,6 +1537,12 @@ impl ToolRuntime {
             ToolCall::PluginTool(_) => {
                 unreachable!(
                     "plugin_tool is dispatched before generic static ToolDefinition policy"
+                )
+            }
+
+            ToolCall::SshResource(_) => {
+                unreachable!(
+                    "ssh_resource is dispatched before generic static ToolDefinition policy"
                 )
             }
 

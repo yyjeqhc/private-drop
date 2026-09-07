@@ -455,6 +455,27 @@ fn model_visible_tool_definitions_have_explicit_output_schema_coverage() {
 }
 
 #[test]
+fn ssh_resource_declares_explicit_canonical_action_output_fields() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "ssh_resource");
+    let fields = output_schema_field_names(spec);
+    for field in [
+        "runner",
+        "binding",
+        "resources",
+        "resource",
+        "persisted",
+        "active",
+        "restart_required",
+        "error_kind",
+        "dispatch_state",
+    ] {
+        assert!(fields.contains(field), "ssh_resource missing {field}");
+    }
+    assert_ne!(fields, default_output_schema_field_names());
+}
+
+#[test]
 fn key_tool_output_schemas_include_expected_fields() {
     let specs = registered_tool_specs();
     let has_output_field = |name: &str, field: &str| {

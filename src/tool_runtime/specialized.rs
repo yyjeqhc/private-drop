@@ -1,5 +1,5 @@
-//! Server-owned governance for specialized operations that intentionally do not
-//! enter the static ToolDefinition / ToolCall catalog.
+//! Server-owned governance for canonical gateway tools whose exact action policy
+//! cannot be represented by one static ToolDefinition contract.
 //!
 //! Plugin and managed SSH gateways keep their native execution protocols. This
 //! layer owns only the authority facts that must be resolved before any effect:
@@ -160,23 +160,6 @@ pub(crate) struct SpecializedInvocationPermit {
     policy: SpecializedOperationPolicy,
     session_start: Option<ToolCallStart>,
     permission: Option<PermissionDecision>,
-}
-
-impl SpecializedInvocationPermit {
-    pub(crate) fn audit_projection(&self) -> Value {
-        let mut audit = self.policy.audit_projection();
-        audit["decision"] = match self.permission.as_ref() {
-            Some(permission) => json!({
-                "required": permission.required,
-                "status": permission.status,
-                "policy": permission.policy,
-                "reason": permission.reason,
-            }),
-            None => json!({"required": false, "status": "not_required"}),
-        };
-        audit["dispatch_certainty"] = Value::String("not_started".to_string());
-        audit
-    }
 }
 
 fn bounded_ledger_arguments(policy: SpecializedOperationPolicy, identity: &Value) -> Value {

@@ -245,6 +245,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "runner_config_reload",
             "tool_manifest",
             "plugin_tool",
+            "ssh_resource",
         ],
     },
     ToolDiscoveryGroup {

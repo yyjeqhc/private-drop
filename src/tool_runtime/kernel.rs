@@ -431,6 +431,69 @@ impl ToolRuntime {
                 },
             };
         }
+        // `ssh_resource` is the Adaptive secondary gateway for managed
+        // Runner-local SSH resources. Like plugin_tool, its static definition
+        // is worst-case policy while exact list/register/remove governance is
+        // derived from the validated action before generic static policy.
+        if request.tool_name == crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME {
+            let concrete_arguments =
+                strip_tool_call_expectation_metadata(request.arguments.clone());
+            let call = match ToolCall::from_tool_name(&request.tool_name, concrete_arguments) {
+                Ok(call) => call,
+                Err(message) => {
+                    return ToolCallOutcome {
+                        success: false,
+                        result: None,
+                        error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
+                        project: None,
+                        model_ergonomics: None,
+                    }
+                }
+            };
+            let ToolCall::SshResource(ssh_resource) = call else {
+                unreachable!("ssh_resource parser must yield ToolCall::SshResource");
+            };
+            return match crate::ssh_resource_gateway::invoke(
+                self,
+                ssh_resource,
+                context.session_id,
+                context.auth,
+                context.transport.into(),
+            )
+            .await
+            {
+                Ok(invocation) => {
+                    let result = invocation.to_tool_result();
+                    ToolCallOutcome {
+                        success: result.success,
+                        result: Some(result),
+                        error_status: None,
+                        project: None,
+                        model_ergonomics: None,
+                    }
+                }
+                Err(SpecializedGovernanceDenial::Scope {
+                    required_scope,
+                    description,
+                }) => ToolCallOutcome {
+                    success: false,
+                    result: None,
+                    error_status: Some(ToolCallErrorStatus::InsufficientScope {
+                        required_scope: Some(required_scope),
+                        description,
+                    }),
+                    project: None,
+                    model_ergonomics: None,
+                },
+                Err(SpecializedGovernanceDenial::Tool(result)) => ToolCallOutcome {
+                    success: result.success,
+                    result: Some(result),
+                    error_status: None,
+                    project: None,
+                    model_ergonomics: None,
+                },
+            };
+        }
         let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
         let context_request = if capabilities.context_sidecar {
             super::context_projection::context_request_from_arguments(&request.arguments)

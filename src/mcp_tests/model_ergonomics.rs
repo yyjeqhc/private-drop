@@ -38,16 +38,10 @@ async fn http_mcp_tools_list_success() {
         assert!(tool["name"].is_string());
         assert!(tool["description"].is_string());
         assert!(tool["inputSchema"].is_object());
-        if matches!(
-            tool["name"].as_str(),
-            Some(
-                crate::mcp_gateway::MCP_TOOL_NAME
-                    | crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
-            )
-        ) {
+        if tool["name"].as_str() == Some(crate::mcp_gateway::MCP_TOOL_NAME) {
             assert!(
                 tool.get("outputSchema").is_none(),
-                "adapter gateway tools must not claim a fixed schema for provider-defined structuredContent"
+                "provider-defined MCP gateway must not claim a fixed structuredContent schema"
             );
         } else {
             assert!(
