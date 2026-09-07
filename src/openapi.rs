@@ -673,6 +673,17 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "instruction": "Complete the development task"
                             }
                         },
+                        "workOnManagedWorktree": {
+                            "summary": "Bootstrap an isolated Runner-managed worktree, register it, then start coding",
+                            "value": {
+                                "tool": "work_on_project",
+                                "client_id": "special",
+                                "path": "/root/git/source-checkout",
+                                "mode": "worktree",
+                                "base_ref": "origin/main",
+                                "instruction": "Complete the development task in an isolated worktree"
+                            }
+                        },
                         "recordedGitStatus": {
                             "summary": "Record this wrapper call while passing flattened tool args",
                             "value": {

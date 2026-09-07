@@ -474,6 +474,102 @@ impl ToolRuntime {
         .await
     }
 
+    /// Ask the exact Runner to prepare or re-observe one managed detached
+    /// worktree and register it as an ordinary runtime Project. `operation_id`
+    /// is transport/idempotency identity only and grants no Project authority.
+    pub(crate) async fn prepare_managed_worktree(
+        &self,
+        client_id: String,
+        path: String,
+        base_ref: Option<String>,
+        operation_id: String,
+        resume_project_id: Option<String>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        if let Err(error) = validate_project_op_path(&path) {
+            return ToolResult::err_with_output(
+                error,
+                json!({
+                    "error_kind": "invalid_project_path",
+                    "failure_kind": "invalid_arguments",
+                    "field": "path",
+                    "state_changed": false,
+                }),
+            );
+        }
+        if let Some(client) = self
+            .runner_registry
+            .get_runner_semantic_view_for_auth(&client_id, access.as_ref())
+            .await
+        {
+            if let Err(error) = self
+                .runner_registry
+                .assert_runner_access(access.as_ref(), &client_id)
+                .await
+            {
+                return ToolResult::err(error);
+            }
+            if !client.supports(RunnerFeature::ManagedWorktree) {
+                return ToolResult::err_with_output(
+                    "agent_capability_unavailable: Runner does not support managed worktree bootstrap",
+                    json!({
+                        "error_kind": "agent_capability_unavailable",
+                        "failure_kind": "capability_unavailable",
+                        "capability": crate::runner_protocol::RUNNER_CAPABILITY_MANAGED_WORKTREE,
+                        "state_changed": false,
+                    }),
+                )
+                .with_recovery(RecoveryKind::NoAction, None);
+            }
+        }
+        let fresh_managed_bootstrap = resume_project_id.is_none();
+        let payload = json!({
+            "path": path,
+            "base_ref": base_ref,
+            "operation_id": operation_id,
+            "resume_project_id": resume_project_id,
+        });
+        let first = self
+            .submit_project_op(
+                "prepare_managed_worktree",
+                client_id.clone(),
+                payload.clone(),
+                auth,
+            )
+            .await;
+        let indeterminate = !first.success
+            && ["error_code", "error_kind"].into_iter().any(|field| {
+                first.output.get(field).and_then(Value::as_str) == Some("operation_indeterminate")
+            });
+        if !indeterminate {
+            return first;
+        }
+        // A lost response may have followed either worktree creation or registry
+        // publication. Re-issue the *same* operation identity exactly once: the
+        // Runner only re-observes/converges that deterministic target and never
+        // creates a second worktree for this tool invocation.
+        let mut recovered = self
+            .submit_project_op("prepare_managed_worktree", client_id, payload, auth)
+            .await;
+        if recovered.success
+            && fresh_managed_bootstrap
+            && recovered.output.get("outcome").and_then(Value::as_str)
+                == Some("managed_worktree_recovered")
+            && recovered.output.get("registered").and_then(Value::as_bool) == Some(false)
+        {
+            // This operation_id is freshly generated and never model-supplied.
+            // Seeing its already-registered Project after the first response was
+            // indeterminate proves the mutation happened earlier in this same
+            // work_on_project call, even though the re-observation attempt itself
+            // did not write the registry. Normalize to call-level mutation truth.
+            recovered.output["registered"] = json!(true);
+            recovered.output["created_config"] = json!(true);
+            recovered.output["changed"] = json!(true);
+        }
+        recovered
+    }
+
     /// Shared implementation for both `register_project` and `create_project`.
     /// `kind` is `"register_project"` or `"create_project"`. Fields not
     /// applicable to `register_project` (template, git_init,

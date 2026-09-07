@@ -154,6 +154,8 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
             project: project.clone(),
             client_id: None,
             path: None,
+            mode: None,
+            base_ref: None,
             instruction: "trusted agent smoke".to_string(),
             session_id: None,
             include_project_instructions: true,

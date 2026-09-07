@@ -289,6 +289,7 @@ async fn current_protocol_generation_never_infers_registration_required_host_fea
 
     for feature in [
         RunnerFeature::SshShell,
+        RunnerFeature::ManagedWorktree,
         RunnerFeature::ComputerObserve,
         RunnerFeature::ComputerControl,
         RunnerFeature::ComputerTextInput,

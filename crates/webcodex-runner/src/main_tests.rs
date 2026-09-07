@@ -2,7 +2,8 @@ use super::*;
 use crate::webcodex_runner::config::validate_shell_config;
 use crate::webcodex_runner::run_shell_with_profiles;
 use crate::webcodex_runner::{
-    handle_project_lifecycle_op, handle_project_op, handle_resolve_or_register_project,
+    handle_prepare_managed_worktree, handle_project_lifecycle_op, handle_project_op,
+    handle_resolve_or_register_project,
 };
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1352,6 +1353,224 @@ fn project_error_value(result: CommandResult) -> serde_json::Value {
     );
     assert!(result.error.is_none(), "unexpected raw error: {:?}", result);
     serde_json::from_str(result.stdout.as_deref().expect("error json")).unwrap()
+}
+
+fn managed_git(root: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .expect("run git fixture command");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn seed_managed_worktree_repo(source: &Path) -> (String, String) {
+    std::fs::create_dir_all(source).unwrap();
+    managed_git(source, &["init"]);
+    managed_git(
+        source,
+        &["config", "user.email", "webcodex@example.invalid"],
+    );
+    managed_git(source, &["config", "user.name", "WebCodex Test"]);
+    std::fs::write(source.join("hello.txt"), "first\n").unwrap();
+    managed_git(source, &["add", "hello.txt"]);
+    managed_git(source, &["commit", "-m", "first"]);
+    let first = managed_git(source, &["rev-parse", "HEAD"]);
+    std::fs::write(source.join("hello.txt"), "second\n").unwrap();
+    managed_git(source, &["add", "hello.txt"]);
+    managed_git(source, &["commit", "-m", "second"]);
+    let second = managed_git(source, &["rev-parse", "HEAD"]);
+    (first, second)
+}
+
+fn managed_worktree_request(
+    source: &Path,
+    base_ref: serde_json::Value,
+    operation_id: &str,
+    resume_project_id: Option<&str>,
+) -> RunnerRequest {
+    project_request(
+        "prepare_managed_worktree",
+        serde_json::json!({
+            "path": source.to_string_lossy(),
+            "base_ref": base_ref,
+            "operation_id": operation_id,
+            "resume_project_id": resume_project_id,
+        }),
+    )
+}
+
+#[test]
+fn managed_worktree_bootstrap_is_detached_registered_and_same_operation_recovers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let registry = tmp.path().join("project-registry");
+    let (_first, head) = seed_managed_worktree_repo(&source);
+    let policy = project_policy(tmp.path());
+    let request = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "11111111-1111-4111-8111-111111111111",
+        None,
+    );
+
+    let first = project_ok(handle_prepare_managed_worktree(
+        &policy, &registry, &request,
+    ));
+    assert_eq!(first["managed"], true);
+    assert_eq!(first["base_ref"], "HEAD");
+    assert_eq!(first["base_sha"], head);
+    assert_eq!(first["source_dirty"], false);
+    assert_eq!(first["outcome"], "managed_worktree_created");
+    assert_eq!(first["registered"], true);
+    let worktree = PathBuf::from(first["path"].as_str().unwrap());
+    assert_ne!(
+        worktree.canonicalize().unwrap(),
+        source.canonicalize().unwrap()
+    );
+    assert_eq!(managed_git(&worktree, &["rev-parse", "HEAD"]), head);
+    let detached = std::process::Command::new("git")
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(&worktree)
+        .status()
+        .unwrap();
+    assert!(!detached.success(), "managed worktree must start detached");
+
+    let projects = load_runner_project_summaries_from_dir(&registry);
+    assert_eq!(projects.len(), 1);
+    assert_eq!(Path::new(&projects[0].path), worktree.as_path());
+
+    let recovered = project_ok(handle_prepare_managed_worktree(
+        &policy, &registry, &request,
+    ));
+    assert_eq!(recovered["id"], first["id"]);
+    assert_eq!(recovered["path"], first["path"]);
+    assert_eq!(recovered["outcome"], "managed_worktree_recovered");
+    assert_eq!(recovered["registered"], false);
+    assert_eq!(recovered["changed"], false);
+}
+
+#[test]
+fn managed_worktree_explicit_ref_preserves_dirty_source_and_resume_survives_source_head_move() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let registry = tmp.path().join("project-registry");
+    let (first_sha, _second_sha) = seed_managed_worktree_repo(&source);
+    std::fs::write(source.join("hello.txt"), "dirty source\n").unwrap();
+    std::fs::write(source.join("untracked.txt"), "keep me\n").unwrap();
+    let status_before = managed_git(&source, &["status", "--porcelain"]);
+    let source_before = std::fs::read_to_string(source.join("hello.txt")).unwrap();
+    let policy = project_policy(tmp.path());
+    let request = managed_worktree_request(
+        &source,
+        serde_json::json!("HEAD~1"),
+        "22222222-2222-4222-8222-222222222222",
+        None,
+    );
+
+    let created = project_ok(handle_prepare_managed_worktree(
+        &policy, &registry, &request,
+    ));
+    assert_eq!(created["base_ref"], "HEAD~1");
+    assert_eq!(created["base_sha"], first_sha);
+    assert_eq!(created["source_dirty"], true);
+    let worktree = PathBuf::from(created["path"].as_str().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("hello.txt")).unwrap(),
+        "first\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(source.join("hello.txt")).unwrap(),
+        source_before
+    );
+    assert_eq!(
+        managed_git(&source, &["status", "--porcelain"]),
+        status_before
+    );
+
+    std::fs::write(source.join("hello.txt"), "third committed\n").unwrap();
+    managed_git(&source, &["add", "hello.txt"]);
+    managed_git(&source, &["commit", "-m", "third"]);
+    let moved_head = managed_git(&source, &["rev-parse", "HEAD"]);
+    assert_ne!(moved_head, first_sha);
+    let resume = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "33333333-3333-4333-8333-333333333333",
+        created["agent_project_id"].as_str(),
+    );
+    let resumed = project_ok(handle_prepare_managed_worktree(&policy, &registry, &resume));
+    assert_eq!(resumed["path"], created["path"]);
+    assert_eq!(resumed["base_sha"], first_sha);
+    assert_eq!(resumed["outcome"], "managed_worktree_recovered");
+    assert_eq!(resumed["registered"], false);
+    assert_eq!(load_runner_project_summaries_from_dir(&registry).len(), 1);
+}
+
+#[test]
+fn managed_worktree_non_git_source_fails_without_registration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("plain");
+    let registry = tmp.path().join("project-registry");
+    std::fs::create_dir_all(&source).unwrap();
+    let request = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "44444444-4444-4444-8444-444444444444",
+        None,
+    );
+    let result = handle_prepare_managed_worktree(&project_policy(tmp.path()), &registry, &request);
+    assert_eq!(project_err(result), "source_not_git_repository");
+    assert!(load_runner_project_summaries_from_dir(&registry).is_empty());
+}
+
+#[test]
+fn concurrent_managed_worktree_bootstraps_choose_distinct_runner_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let registry = tmp.path().join("project-registry");
+    seed_managed_worktree_repo(&source);
+    let policy = project_policy(tmp.path());
+    let first_request = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "55555555-5555-4555-8555-555555555555",
+        None,
+    );
+    let second_request = managed_worktree_request(
+        &source,
+        serde_json::Value::Null,
+        "66666666-6666-4666-8666-666666666666",
+        None,
+    );
+    let first_policy = policy.clone();
+    let first_registry = registry.clone();
+    let first = std::thread::spawn(move || {
+        project_ok(handle_prepare_managed_worktree(
+            &first_policy,
+            &first_registry,
+            &first_request,
+        ))
+    });
+    let second_policy = policy.clone();
+    let second_registry = registry.clone();
+    let second = std::thread::spawn(move || {
+        project_ok(handle_prepare_managed_worktree(
+            &second_policy,
+            &second_registry,
+            &second_request,
+        ))
+    });
+    let first = first.join().unwrap();
+    let second = second.join().unwrap();
+    assert_ne!(first["path"], second["path"]);
+    assert_ne!(first["id"], second["id"]);
+    assert_eq!(load_runner_project_summaries_from_dir(&registry).len(), 2);
 }
 
 #[test]

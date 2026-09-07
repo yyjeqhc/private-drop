@@ -260,6 +260,10 @@ pub const RUNNER_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
 /// atomically persist a new project registration record. Missing on older runners and
 /// therefore fails closed.
 pub const RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_registration";
+/// Runner-owned managed detached-worktree bootstrap. The Runner resolves the
+/// source/ref and owns the filesystem destination; missing on older Runners is
+/// false and is never inferred from generic Git or path-registration support.
+pub const RUNNER_CAPABILITY_MANAGED_WORKTREE: &str = "managed_worktree";
 /// Runner-global read-only operator-installed Skill store discovery/read.
 /// Missing on older Runners is false and is never inferred from file_read or
 /// project lifecycle support.
@@ -432,6 +436,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
     RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
     RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
+    RUNNER_CAPABILITY_MANAGED_WORKTREE,
     RUNNER_CAPABILITY_SKILL_STORE_READ,
     RUNNER_CAPABILITY_SKILL_STORE_MANAGE,
     RUNNER_CAPABILITY_COMPUTER_OBSERVE,
@@ -629,6 +634,10 @@ pub struct RunnerCapabilities {
     /// fail-closed.
     #[serde(default)]
     pub project_path_registration: bool,
+    /// Closed Runner-owned worktree/bootstrap mutation capability. Older
+    /// Runners fail closed instead of falling back to Server-side Git/path work.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub managed_worktree: bool,
     /// Read-only operator-installed Skill store support. Missing on older
     /// Runners is false and never follows from generic file_read.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -927,6 +936,7 @@ impl Default for RunnerCapabilities {
             lsp_call_hierarchy: false,
             project_lifecycle: false,
             project_path_registration: false,
+            managed_worktree: false,
             skill_store_read: false,
             skill_store_manage: false,
             computer_observe: false,
@@ -3684,6 +3694,7 @@ mod envelope_tests {
                 lsp_call_hierarchy: false,
                 project_lifecycle: false,
                 project_path_registration: false,
+                managed_worktree: false,
                 skill_store_read: false,
                 skill_store_manage: false,
                 computer_observe: false,

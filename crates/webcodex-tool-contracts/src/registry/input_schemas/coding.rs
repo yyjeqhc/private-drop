@@ -17,7 +17,19 @@ pub fn work_on_project_input_schema() -> Value {
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Runner-owned absolute directory path for the path form. Use with client_id + instruction; do not combine with project. The Runner authoritatively resolves or permanently registers it before exact Workflow Session handling."
+                "description": "Runner-owned absolute directory path for the path form. In checkout mode it is the working checkout to resolve/register; in worktree mode it is the source Git checkout. Use with client_id + instruction; do not combine with project. Runner filesystem authority remains authoritative."
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["checkout", "worktree"],
+                "default": "checkout",
+                "description": "Optional bootstrap mode. Omitted or checkout preserves existing behavior exactly. worktree is supported only with client_id + path and asks the Runner to create/recover an isolated managed detached worktree, register it as an ordinary Project, then start the Workflow Session."
+            },
+            "base_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "description": "Optional Git ref only for mode=worktree. The Runner resolves it inside the source repository to an exact commit SHA before creating the detached worktree. On a fresh bootstrap omission means the source checkout's current HEAD; on exact session resume omission keeps the registered managed worktree's stored exact base. The Server never interprets this ref."
             },
             "instruction": {
                 "type": "string",
@@ -38,7 +50,7 @@ pub fn work_on_project_input_schema() -> Value {
             "session_id": {
                 "type": "string",
                 "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                "description": "Optional explicit Workflow Session to continue exactly. It must match the project and be active and accessible; failure never guesses or creates a replacement Session. This business input is distinct from wrapper recording_session_id."
+                "description": "Optional explicit Workflow Session to continue exactly. It must be active and accessible and remains bound to its exact final Project; in worktree mode the Runner re-observes that registered managed Project and its source provenance instead of creating a second worktree. Failure never guesses or creates a replacement Session. This business input is distinct from wrapper recording_session_id."
             }
         },
         "required": ["instruction"],

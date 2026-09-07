@@ -361,6 +361,27 @@ variant remains for that retired name; `work_on_project` calls the shared coding
 workflow engine directly, with diagnostic projection controls available only to
 tests rather than as a Session-selection or compatibility surface.
 
+`work_on_project` also owns the optional managed-worktree bootstrap without
+creating a new authority or Session concept. On a fresh `client_id + path` call
+with `mode=worktree`, `path` is a source checkout: the selected Runner validates
+the source against its filesystem policy, resolves `base_ref` (or the source
+`HEAD`) to an exact commit, chooses and creates an isolated detached worktree,
+registers that worktree as an ordinary runtime Project, and only then creates the
+Workflow Session on that final Project. The Server never constructs a Runner-host
+worktree path or interprets the Git ref. `work_on_project` hides Project
+registration and managed-worktree bootstrap from the ordinary model workflow;
+Project authority itself is not removed.
+
+An explicit `session_id` in worktree mode resumes only its already-authorized
+final managed Project. The Runner re-observes that registered worktree and its
+source provenance instead of creating another worktree; a provided `base_ref`
+must still resolve to the stored exact base commit. `recording_session_id`,
+`ClientWindow`, ACK metadata, source-path knowledge, and managed operation ids do
+not select or authorize the Project. Finishing or closing the Workflow Session
+does not remove the managed worktree or unregister its Project; later review,
+commit, push, PR, handoff, and investigation remain possible until a future
+explicit lifecycle operation says otherwise.
+
 `work_on_project` deliberately does not use Workflow Session identity, transport
 identity, a client-window key, credentials, project identity, or Server lifetime
 as evidence that the current model still retains static bootstrap content. The

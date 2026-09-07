@@ -58,7 +58,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
             ),
-            "Canonical model entry for ordinary coding/review via an existing project or Runner path; Git not required. Supports exact Session continuation and returns compact workflow plus project instructions.",
+            "Canonical model entry for ordinary coding/review via an existing Project or Runner path; Git not required for checkout mode. Omitted/checkout preserves the existing path flow. mode=worktree with client_id + path asks the Runner to resolve an exact Git base, bootstrap or re-observe an isolated managed worktree, register it as an ordinary Project, and then start or exactly resume the Workflow Session. This hides registration/worktree plumbing without bypassing Project authority and returns compact workflow plus project instructions.",
             work_on_project_input_schema,
         )),
         10,

@@ -63,8 +63,8 @@ pub(crate) use persistent_shell::PersistentShellManager;
 #[cfg(test)]
 pub(crate) use projects::load_runner_project_summaries_from_dir;
 pub(crate) use projects::{
-    handle_project_lifecycle_op, handle_project_op, handle_resolve_or_register_project,
-    RunnerProjectCache,
+    handle_prepare_managed_worktree, handle_project_lifecycle_op, handle_project_op,
+    handle_resolve_or_register_project, RunnerProjectCache,
 };
 #[cfg(test)]
 pub(crate) use projects::{

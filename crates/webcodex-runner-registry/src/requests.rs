@@ -2140,6 +2140,7 @@ impl RunnerRegistry {
             "register_project"
                 | "create_project"
                 | "resolve_or_register_project"
+                | "prepare_managed_worktree"
                 | "project_lifecycle_enable"
                 | "project_lifecycle_disable"
                 | "project_lifecycle_unregister"
@@ -2151,6 +2152,7 @@ impl RunnerRegistry {
         }
         let required_feature = match kind {
             "resolve_or_register_project" => Some(RunnerFeature::ProjectPathRegistration),
+            "prepare_managed_worktree" => Some(RunnerFeature::ManagedWorktree),
             "project_lifecycle_enable"
             | "project_lifecycle_disable"
             | "project_lifecycle_unregister" => Some(RunnerFeature::ProjectLifecycle),

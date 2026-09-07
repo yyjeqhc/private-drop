@@ -597,6 +597,7 @@ mod tests {
             lsp_call_hierarchy: false,
             project_lifecycle: false,
             project_path_registration: false,
+            managed_worktree: false,
             skill_store_read: false,
             skill_store_manage: false,
             computer_observe: false,

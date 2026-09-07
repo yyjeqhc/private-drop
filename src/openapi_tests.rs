@@ -24,7 +24,6 @@ fn openapi_hidden_start_only_fields_do_not_enter_model_facing_flattened_schema()
         .unwrap();
     for field in [
         "temporary_project_name",
-        "mode",
         "deny_write_tools",
         "deny_shell_tools",
         "detail",
@@ -41,6 +40,9 @@ fn openapi_hidden_start_only_fields_do_not_enter_model_facing_flattened_schema()
         properties.contains_key("execution_context"),
         "execution_context stays model-facing because update_session_context uses it"
     );
+    assert!(properties.contains_key("mode"));
+    assert!(properties.contains_key("base_ref"));
+    assert_eq!(properties["mode"]["enum"], json!(["checkout", "worktree"]));
 }
 
 #[test]
@@ -1023,6 +1025,11 @@ fn openapi_call_runtime_tool_params_is_explicit_object() {
     assert_eq!(work_example["tool"], "work_on_project");
     assert_eq!(work_example["client_id"], "special");
     assert_eq!(work_example["instruction"], "Complete the development task");
+    let managed_example = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
+        ["application/json"]["examples"]["workOnManagedWorktree"]["value"];
+    assert_eq!(managed_example["tool"], "work_on_project");
+    assert_eq!(managed_example["mode"], "worktree");
+    assert_eq!(managed_example["base_ref"], "origin/main");
     // `tool` remains required; `params` is optional (advanced callers may
     // omit it for argument-less tools).
     let required = tool_call["required"].as_array().unwrap();

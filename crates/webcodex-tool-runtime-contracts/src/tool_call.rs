@@ -477,6 +477,10 @@ pub enum ToolCall {
         client_id: Option<String>,
         #[serde(default)]
         path: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(default)]
+        base_ref: Option<String>,
         instruction: String,
         #[serde(default = "default_true")]
         include_project_instructions: bool,

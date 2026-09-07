@@ -18,6 +18,7 @@ use crate::tool_runtime::{
     registered_tool_specs, SessionMode, StartupDetail, ToolCall, ToolResult, ToolRuntime,
 };
 use serde_json::{json, Value};
+use std::path::Path;
 
 fn work_on_project_call(project: &str, instruction: &str, session_id: Option<&str>) -> ToolCall {
     work_on_project_call_with_projections(project, instruction, session_id, true, true)
@@ -49,6 +50,8 @@ fn work_on_project_call_with_projections(
         project: project.to_string(),
         client_id: None,
         path: None,
+        mode: None,
+        base_ref: None,
         instruction: instruction.to_string(),
         include_project_instructions,
         include_workflow_guidance,
@@ -66,11 +69,186 @@ fn path_work_on_project_call(
         project: String::new(),
         client_id: Some(client_id.to_string()),
         path: Some(path.to_string()),
+        mode: None,
+        base_ref: None,
         instruction: instruction.to_string(),
         include_project_instructions: true,
         include_workflow_guidance: true,
         session_id: session_id.map(str::to_string),
     }
+}
+
+fn worktree_work_on_project_call(
+    client_id: &str,
+    path: &str,
+    instruction: &str,
+    base_ref: Option<&str>,
+    session_id: Option<&str>,
+) -> ToolCall {
+    ToolCall::WorkOnProject {
+        project: String::new(),
+        client_id: Some(client_id.to_string()),
+        path: Some(path.to_string()),
+        mode: Some("worktree".to_string()),
+        base_ref: base_ref.map(str::to_string),
+        instruction: instruction.to_string(),
+        include_project_instructions: true,
+        include_workflow_guidance: true,
+        session_id: session_id.map(str::to_string),
+    }
+}
+
+fn managed_fixture_git(root: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .expect("run managed-worktree fixture git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn seed_managed_tool_runtime_fixture(source: &Path, worktree: &Path) -> String {
+    std::fs::create_dir_all(source).unwrap();
+    managed_fixture_git(source, &["init"]);
+    managed_fixture_git(
+        source,
+        &["config", "user.email", "webcodex@example.invalid"],
+    );
+    managed_fixture_git(source, &["config", "user.name", "WebCodex Test"]);
+    std::fs::write(source.join("hello.txt"), "committed\n").unwrap();
+    managed_fixture_git(source, &["add", "hello.txt"]);
+    managed_fixture_git(source, &["commit", "-m", "seed"]);
+    let sha = managed_fixture_git(source, &["rev-parse", "HEAD"]);
+    let worktree_arg = worktree.to_string_lossy().to_string();
+    managed_fixture_git(
+        source,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            worktree_arg.as_str(),
+            sha.as_str(),
+        ],
+    );
+    std::fs::write(source.join("hello.txt"), "dirty source only\n").unwrap();
+    sha
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_with_managed_worktree_runner(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    source_path: &str,
+    managed_path: &str,
+    agent_project_id: &str,
+    base_ref: &str,
+    base_sha: &str,
+    source_dirty: bool,
+    outcome: &str,
+    registered: bool,
+    first_indeterminate: bool,
+) -> (ToolResult, Vec<Value>) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth_context(None, true);
+        async move { runtime.dispatch_with_auth(call, Some(&auth)).await }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut prepare_payloads = Vec::new();
+    let mut sent_indeterminate = false;
+    loop {
+        if task.is_finished() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "managed-worktree coding call did not finish within 10 seconds for client {client_id}"
+        );
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
+            if request.kind == "prepare_managed_worktree" {
+                let payload: Value =
+                    serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+                assert_eq!(payload["path"], source_path);
+                prepare_payloads.push(payload);
+                if first_indeterminate && !sent_indeterminate {
+                    sent_indeterminate = true;
+                    let response = json!({
+                        "error_code": "operation_indeterminate",
+                        "error_kind": "operation_indeterminate",
+                        "failure_kind": "operation_indeterminate",
+                        "state_changed": true,
+                    });
+                    complete_patch_agent_request(
+                        runtime,
+                        client_id,
+                        &request.request_id,
+                        1,
+                        &response.to_string(),
+                        "",
+                    )
+                    .await;
+                    continue;
+                }
+                let response = json!({
+                    "id": format!("agent:{client_id}:{agent_project_id}"),
+                    "agent_project_id": agent_project_id,
+                    "client_id": client_id,
+                    "name": agent_project_id,
+                    "path": managed_path,
+                    "kind": "auto_registered",
+                    "registration_source": "auto_registered",
+                    "description": null,
+                    "allow_patch": true,
+                    "disabled": false,
+                    "revision": format!("sha256:{}", "b".repeat(64)),
+                    "source": "managed_worktree",
+                    "outcome": outcome,
+                    "registered": registered,
+                    "created_config": registered,
+                    "changed": registered,
+                    "recovered": !registered,
+                    "managed": true,
+                    "base_ref": base_ref,
+                    "base_sha": base_sha,
+                    "source_dirty": source_dirty,
+                });
+                complete_patch_agent_request(
+                    runtime,
+                    client_id,
+                    &request.request_id,
+                    0,
+                    &response.to_string(),
+                    "",
+                )
+                .await;
+            } else if request.kind == AGENT_LSP_REQUEST_KIND {
+                complete_patch_agent_request(
+                    runtime,
+                    client_id,
+                    &request.request_id,
+                    0,
+                    &RunnerLspResultEnvelope::err(
+                        "lsp_status_unavailable",
+                        "fixture intentionally has no language server",
+                    )
+                    .to_stdout_json(),
+                    "",
+                )
+                .await;
+            } else {
+                complete_agent_request_by_running_locally(runtime, client_id, request).await;
+            }
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    (task.await.unwrap(), prepare_payloads)
 }
 
 /// Drive any coding startup to completion while recording every Runner request.
@@ -419,6 +597,8 @@ fn work_on_project_schema_and_registration() {
         "project",
         "client_id",
         "path",
+        "mode",
+        "base_ref",
         "instruction",
         "include_project_instructions",
         "include_workflow_guidance",
@@ -510,7 +690,6 @@ fn work_on_project_schema_and_registration() {
     // The canonical entry must not expose internal diagnostic controls.
     for hidden in [
         "resume_session_id",
-        "mode",
         "deny_write_tools",
         "deny_shell_tools",
         "execution_context",
@@ -537,6 +716,7 @@ fn work_on_project_schema_and_registration() {
         "execution_context",
         "readiness",
         "workspace",
+        "worktree",
         "repository",
         "workflow",
         "instructions",
@@ -659,6 +839,24 @@ fn work_on_project_tool_call_enforces_authoritative_source_contract() {
     )
     .unwrap();
     assert!(path_call.project().is_none());
+    let worktree_call = ToolCall::from_tool_name(
+        "work_on_project",
+        json!({
+            "client_id": "special",
+            "path": "/root/git/example",
+            "mode": "worktree",
+            "base_ref": "origin/main",
+            "instruction": "do it in isolation"
+        }),
+    )
+    .unwrap();
+    match worktree_call {
+        ToolCall::WorkOnProject { mode, base_ref, .. } => {
+            assert_eq!(mode.as_deref(), Some("worktree"));
+            assert_eq!(base_ref.as_deref(), Some("origin/main"));
+        }
+        _ => panic!("expected WorkOnProject"),
+    }
     for invalid in [
         json!({"instruction": "no source"}),
         json!({"project": SAMPLE_PROJECT, "client_id": "special", "instruction": "mixed"}),
@@ -682,7 +880,6 @@ fn work_on_project_tool_call_enforces_authoritative_source_contract() {
     let props = spec.input_schema["properties"].as_object().unwrap();
     for hidden in [
         "resume_session_id",
-        "mode",
         "deny_write_tools",
         "deny_shell_tools",
         "execution_context",
@@ -1063,6 +1260,348 @@ async fn work_on_project_without_session_id_always_creates_fresh_session() {
             .len(),
         second_before
     );
+}
+
+#[tokio::test]
+async fn managed_worktree_bootstrap_recovers_same_operation_and_binds_session_to_final_project() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let managed = root.path().join("managed");
+    let base_sha = seed_managed_tool_runtime_fixture(&source, &managed);
+    let source_path = source.canonicalize().unwrap().to_string_lossy().to_string();
+    let managed_path = managed
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let source_status_before = managed_fixture_git(&source, &["status", "--porcelain"]);
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "wop-managed";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            file_read: true,
+            file_write: true,
+            project_path_registration: true,
+            managed_worktree: true,
+            internal_posix_script: true,
+            ..Default::default()
+        },
+        Vec::new(),
+    )
+    .await;
+
+    let (first, payloads) = dispatch_with_managed_worktree_runner(
+        &runtime,
+        client_id,
+        worktree_work_on_project_call(
+            client_id,
+            &source_path,
+            "work in an isolated checkout",
+            Some("HEAD"),
+            None,
+        ),
+        &source_path,
+        &managed_path,
+        "managed-a1b2c3d4",
+        "HEAD",
+        &base_sha,
+        true,
+        "managed_worktree_recovered",
+        false,
+        true,
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    assert_eq!(
+        payloads.len(),
+        2,
+        "indeterminate response should re-observe once"
+    );
+    assert_eq!(payloads[0]["operation_id"], payloads[1]["operation_id"]);
+    assert!(payloads[0]["resume_project_id"].is_null());
+    assert_eq!(payloads[0]["base_ref"], "HEAD");
+    let project = "agent:wop-managed:managed-a1b2c3d4";
+    assert_eq!(first.output["resolved_project"], project);
+    assert_eq!(first.output["project"], project);
+    assert_eq!(first.output["worktree"]["managed"], true);
+    assert_eq!(first.output["worktree"]["base_ref"], "HEAD");
+    assert_eq!(first.output["worktree"]["base_sha"], base_sha);
+    assert_eq!(first.output["worktree"]["source_dirty"], true);
+    assert_eq!(
+        first.output["project_resolution"]["source"],
+        "managed_worktree"
+    );
+    assert_eq!(
+        first.output["project_resolution"]["outcome"],
+        "managed_worktree_recovered"
+    );
+    assert_eq!(
+        first.output["project_resolution"]["registered"], true,
+        "lost-response recovery must preserve call-level registration mutation"
+    );
+    assert!(first.output["project_resolution"].get("worktree").is_none());
+    let compact = first.output.to_string();
+    assert!(!compact.contains(&source_path));
+    assert!(!compact.contains(&managed_path));
+    let session_id = first.output["session_id"].as_str().unwrap().to_string();
+    let session = runtime.sessions.summary(&session_id, Some(50)).unwrap();
+    assert_eq!(session.project.as_deref(), Some(project));
+
+    let listed = runtime.list_projects(Some(&auth_context(None, true))).await;
+    assert!(listed.output["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["id"] == project));
+
+    let read = ToolCall::from_tool_name(
+        "read_file",
+        json!({"project": project, "session_id": session_id, "path": "hello.txt"}),
+    )
+    .unwrap();
+    let read =
+        dispatch_startup_without_window(&runtime, client_id, read, Some(&auth_context(None, true)))
+            .await;
+    assert!(read.success, "{:?}", read.error);
+    assert!(read.output["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("committed")));
+    assert_eq!(
+        std::fs::read_to_string(source.join("hello.txt")).unwrap(),
+        "dirty source only\n"
+    );
+    assert_eq!(
+        managed_fixture_git(&source, &["status", "--porcelain"]),
+        source_status_before
+    );
+
+    let (resumed, resume_payloads) = dispatch_with_managed_worktree_runner(
+        &runtime,
+        client_id,
+        worktree_work_on_project_call(
+            client_id,
+            &source_path,
+            "continue the exact isolated checkout",
+            None,
+            Some(&session_id),
+        ),
+        &source_path,
+        &managed_path,
+        "managed-a1b2c3d4",
+        "HEAD",
+        &base_sha,
+        true,
+        "managed_worktree_recovered",
+        false,
+        false,
+    )
+    .await;
+    assert!(resumed.success, "{:?}", resumed.error);
+    assert_eq!(resumed.output["session_id"], session_id);
+    assert_eq!(resumed.output["continuation"], "resumed_explicitly");
+    assert_eq!(resume_payloads.len(), 1);
+    assert_eq!(resume_payloads[0]["resume_project_id"], "managed-a1b2c3d4");
+    assert!(resume_payloads[0]["base_ref"].is_null());
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(&session_id, Some(50))
+            .unwrap()
+            .project
+            .as_deref(),
+        Some(project)
+    );
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
+    let instance = json!({"success": true, "output": first.output});
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| panic!("managed worktree output must match schema: {error}"));
+}
+
+#[tokio::test]
+async fn managed_worktree_invalid_arguments_and_authority_fail_before_runner_mutation() {
+    let runtime = ToolRuntime::new_for_tests();
+    let root = tempfile::tempdir().unwrap();
+    let source_path = root
+        .path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    let invalid = runtime
+        .dispatch(ToolCall::WorkOnProject {
+            project: String::new(),
+            client_id: Some("unresolved-runner".to_string()),
+            path: Some(source_path.clone()),
+            mode: Some("checkout".to_string()),
+            base_ref: Some("main".to_string()),
+            instruction: "must fail before resolution".to_string(),
+            include_project_instructions: true,
+            include_workflow_guidance: true,
+            session_id: None,
+        })
+        .await;
+    assert!(!invalid.success);
+    assert_eq!(invalid.output["error_kind"], "invalid_arguments");
+    assert_eq!(invalid.output["field"], "base_ref");
+    assert_eq!(invalid.output["state_changed"], false);
+
+    let client_id = "wop-managed-no-cap";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            project_path_registration: true,
+            managed_worktree: false,
+            ..Default::default()
+        },
+        Vec::new(),
+    )
+    .await;
+    let unavailable = runtime
+        .dispatch_with_auth(
+            worktree_work_on_project_call(client_id, &source_path, "no mutation", None, None),
+            Some(&auth_context(None, true)),
+        )
+        .await;
+    assert!(!unavailable.success);
+    assert_eq!(
+        unavailable.output["error_kind"],
+        "agent_capability_unavailable"
+    );
+    assert_eq!(unavailable.output["state_changed"], false);
+    assert!(probe_patch_agent_request(&runtime, client_id)
+        .await
+        .is_none());
+
+    let restricted = ToolRuntime::new_for_tests()
+        .with_permission_evaluator(PermissionEvaluator::with_mode(AuthorityMode::Restricted));
+    let restricted_client = "wop-managed-restricted";
+    register_agent_with_projects(
+        &restricted,
+        restricted_client,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            managed_worktree: true,
+            ..Default::default()
+        },
+        Vec::new(),
+    )
+    .await;
+    let denied = restricted
+        .dispatch_with_auth(
+            worktree_work_on_project_call(
+                restricted_client,
+                &source_path,
+                "permission must precede prepare",
+                None,
+                None,
+            ),
+            Some(&auth_context(None, true)),
+        )
+        .await;
+    assert!(!denied.success);
+    assert_eq!(denied.output["error_kind"], "permission_denied");
+    assert!(probe_patch_agent_request(&restricted, restricted_client)
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn source_project_session_cannot_resume_a_managed_worktree() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    init_git_repo(&source);
+    let source_path = source.canonicalize().unwrap().to_string_lossy().to_string();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "wop-managed-source-session";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            file_read: true,
+            file_write: true,
+            managed_worktree: true,
+            ..Default::default()
+        },
+        vec![registered_project("source", &source_path)],
+    )
+    .await;
+    let source_project = format!("agent:{client_id}:source");
+    let auth = auth_context(None, true);
+    let started = dispatch_coding_call_in_window(
+        &runtime,
+        client_id,
+        work_on_project_call(&source_project, "source task", None),
+        Some(&auth),
+        "source-session-window",
+    )
+    .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let source_path = source_path.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    worktree_work_on_project_call(
+                        client_id,
+                        &source_path,
+                        "must not switch workspace",
+                        None,
+                        Some(&session_id),
+                    ),
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "prepare_managed_worktree");
+    let payload: Value = serde_json::from_str(request.stdin.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["resume_project_id"], "source");
+    let error = json!({
+        "error_code": "managed_worktree_resume_mismatch",
+        "error_kind": "managed_worktree_resume_mismatch",
+        "failure_kind": "managed_worktree_resume_mismatch",
+        "state_changed": false,
+    });
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &request.request_id,
+        1,
+        &error.to_string(),
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(
+        result.output["error_kind"],
+        "managed_worktree_resume_mismatch"
+    );
+    assert_eq!(result.output["state_changed"], false);
+    assert_eq!(instruction_events(&runtime, &session_id).len(), 1);
+    assert_eq!(runtime.list_projects(Some(&auth)).await.output["count"], 1);
 }
 
 #[tokio::test]

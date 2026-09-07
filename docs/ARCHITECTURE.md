@@ -57,6 +57,17 @@ is the id registered by that Runner in its `project-registry` registry.
 `allowed_roots` controls where projects may be registered or created (default
 `$HOME`; an explicit list narrows it).
 
+For the regular coding runtime, `work_on_project` can optionally collapse a
+source-checkout bootstrap into the same authority path. With `mode=worktree` and
+`client_id + path`, the Runner resolves the requested Git base to an exact commit,
+chooses a Runner-owned managed-worktree location under its filesystem policy,
+creates a detached worktree, and registers it in the same Project Registry before
+the Workflow Session starts. The resulting workspace is therefore a normal
+registered runtime Project: subsequent read/edit/Git/validation tools do not gain
+a path-based bypass. The Server neither chooses the host path nor interprets the
+Git ref, and Session finish does not implicitly delete the worktree or its
+registration.
+
 ## Durable Agent and asynchronous work
 
 The Server also owns a durable Agent/Conversation domain for communication and asynchronous work. A Durable Agent is separate from a Runner/device, browser window, credential, Project, and Workflow Session.

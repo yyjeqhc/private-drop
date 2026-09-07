@@ -1533,6 +1533,26 @@ fn retired_start_coding_task_is_absent_from_mcp_discovery() {
 }
 
 #[test]
+fn mcp_work_on_project_schema_exposes_managed_worktree_without_internal_operation() {
+    let payload = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
+    let tools = payload["tools"].as_array().expect("tools array");
+    let work = tools
+        .iter()
+        .find(|tool| tool["name"] == "work_on_project")
+        .expect("work_on_project MCP ToolSpec");
+    let properties = work["inputSchema"]["properties"]
+        .as_object()
+        .expect("work_on_project input properties");
+    assert_eq!(properties["mode"]["enum"], json!(["checkout", "worktree"]));
+    assert_eq!(properties["mode"]["default"], "checkout");
+    assert!(properties.contains_key("base_ref"));
+    assert!(work["outputSchema"]["properties"]["output"]["properties"]["worktree"].is_object());
+    assert!(tools
+        .iter()
+        .all(|tool| tool["name"] != "prepare_managed_worktree"));
+}
+
+#[test]
 fn mcp_tools_list_compact_omits_output_schema_only() {
     // Pure renderer with the explicit compact=true switch; the env-adapter
     // path for compact mode is covered end-to-end by

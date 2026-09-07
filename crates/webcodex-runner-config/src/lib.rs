@@ -275,6 +275,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             lsp_call_hierarchy: true,
             project_lifecycle: false,
             project_path_registration: false,
+            managed_worktree: false,
             // Runner-global Skill store support is runtime-only and never
             // inferred from project/file capabilities in generated config.
             skill_store_read: false,

@@ -43,6 +43,11 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "internal Runner path resolution must not become model-visible"
     );
     assert!(!is_known_tool_name("resolve_or_register_project"));
+    assert!(!is_known_tool_name("prepare_managed_worktree"));
+    assert!(
+        !names.contains(&"prepare_managed_worktree"),
+        "managed worktree preparation must remain ModelHidden"
+    );
 
     assert!(
         !is_known_tool_name("start_coding_task"),
@@ -111,7 +116,6 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     let work_props = work.input_schema["properties"].as_object().unwrap();
     for advanced in [
         "temporary_project_name",
-        "mode",
         "deny_write_tools",
         "deny_shell_tools",
         "execution_context",
@@ -125,6 +129,16 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
             "work_on_project must not grow advanced start knob {advanced}"
         );
     }
+    assert_eq!(work_props["mode"]["enum"], json!(["checkout", "worktree"]));
+    assert_eq!(work_props["mode"]["default"], "checkout");
+    assert!(work_props["base_ref"]["description"]
+        .as_str()
+        .is_some_and(|description| description.contains("Runner resolves")));
+    assert!(work.description.contains("managed worktree"));
+    let work_output = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
+    assert!(work_output["properties"]["output"]["properties"]
+        .as_object()
+        .is_some_and(|properties| properties.contains_key("worktree")));
     let start_output =
         crate::tool_runtime::registry::coding_workflow_diagnostic_output_schema_for_test();
     let startup_variants = start_output["properties"]["output"]["oneOf"]
@@ -216,6 +230,8 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "project",
         "client_id",
         "path",
+        "mode",
+        "base_ref",
         "execution_context",
         "include_hygiene",
         "include_handoff",
@@ -231,7 +247,6 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     }
     for field in [
         "temporary_project_name",
-        "mode",
         "deny_write_tools",
         "deny_shell_tools",
         "detail",
@@ -718,6 +733,8 @@ async fn work_on_project_serviced(
                         project,
                         client_id: None,
                         path: None,
+                        mode: None,
+                        base_ref: None,
                         instruction,
                         session_id: None,
                         include_project_instructions: true,

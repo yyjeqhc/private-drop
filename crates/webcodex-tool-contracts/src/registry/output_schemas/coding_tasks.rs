@@ -283,14 +283,16 @@ fn project_resolution_schema() -> Value {
         "properties": {
             "source": {
                 "type": "string",
-                "enum": ["project", "path"]
+                "enum": ["project", "path", "managed_worktree"]
             },
             "outcome": {
                 "type": "string",
                 "enum": [
                     "resolved_existing_project",
                     "reused_existing_registration",
-                    "auto_registered"
+                    "auto_registered",
+                    "managed_worktree_created",
+                    "managed_worktree_recovered"
                 ]
             },
             "resolved_project": {
@@ -300,6 +302,18 @@ fn project_resolution_schema() -> Value {
             "registered": {
                 "type": "boolean",
                 "description": "True only when this call permanently created a registration."
+            },
+            "worktree": {
+                "type": "object",
+                "description": "Path-free managed-worktree bootstrap metadata; present only for managed_worktree source resolution.",
+                "properties": {
+                    "managed": {"type": "boolean", "const": true},
+                    "base_ref": {"type": "string"},
+                    "base_sha": {"type": "string", "pattern": "^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$"},
+                    "source_dirty": {"type": "boolean"}
+                },
+                "required": ["managed", "base_ref", "base_sha", "source_dirty"],
+                "additionalProperties": false
             }
         },
         "required": ["source", "outcome", "resolved_project", "registered"],
@@ -1165,6 +1179,21 @@ fn work_on_project_output_schema() -> Value {
         (
             "workspace",
             compact_workspace,
+        ),
+        (
+            "worktree",
+            json!({
+                "type": "object",
+                "description": "Compact path-free managed-worktree source projection. Omitted for ordinary checkout mode.",
+                "properties": {
+                    "managed": {"type": "boolean", "const": true},
+                    "base_ref": {"type": "string"},
+                    "base_sha": {"type": "string", "pattern": "^[0-9A-Fa-f]{40}([0-9A-Fa-f]{24})?$"},
+                    "source_dirty": {"type": "boolean"}
+                },
+                "required": ["managed", "base_ref", "base_sha", "source_dirty"],
+                "additionalProperties": false
+            }),
         ),
         (
             "repository",

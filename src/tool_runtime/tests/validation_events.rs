@@ -335,6 +335,8 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 project: project.clone(),
                 client_id: None,
                 path: None,
+                mode: None,
+                base_ref: None,
                 instruction: "validation finish".to_string(),
                 session_id: None,
                 include_project_instructions: true,

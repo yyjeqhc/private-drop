@@ -3,9 +3,9 @@ use super::lsp::{handle_lsp_request, is_lsp_request_kind, LspSupervisor};
 use super::transport::ResultSubmission;
 use super::validation::{handle_validation_request, is_validation_request_kind};
 use super::{
-    handle_computer_request, handle_project_lifecycle_op, handle_project_op,
-    handle_resolve_or_register_project, handle_skill_store_request, is_computer_request_kind,
-    run_internal_posix_script_with_profiles_and_execution_state,
+    handle_computer_request, handle_prepare_managed_worktree, handle_project_lifecycle_op,
+    handle_project_op, handle_resolve_or_register_project, handle_skill_store_request,
+    is_computer_request_kind, run_internal_posix_script_with_profiles_and_execution_state,
     run_internal_search_script_with_profiles_and_execution_state,
     run_process_with_profiles_and_execution_state, run_script_with_profiles_and_execution_state,
     run_shell_with_profiles_and_execution_state, run_ssh_shell_with_execution_state, CommandResult,
@@ -684,6 +684,12 @@ pub(crate) fn dispatch_request(
             sink.submit_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }
+        "prepare_managed_worktree" => {
+            let request_id = request.request_id.clone();
+            let result = handle_prepare_managed_worktree(policy, project_registry_dir, &request);
+            sink.submit_result_with_metadata(request_id, result, config, runtime)
+                .map(|_| true)
+        }
         "project_lifecycle_enable"
         | "project_lifecycle_disable"
         | "project_lifecycle_unregister" => {
@@ -868,6 +874,7 @@ pub(crate) fn is_project_op(kind: &str) -> bool {
         "register_project"
             | "create_project"
             | "resolve_or_register_project"
+            | "prepare_managed_worktree"
             | "project_lifecycle_enable"
             | "project_lifecycle_disable"
             | "project_lifecycle_unregister"

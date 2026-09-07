@@ -1953,6 +1953,7 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
     capabilities.project_path_registration = true;
+    capabilities.managed_worktree = true;
     // Runner-global operator-installed Skill store read and management are
     // explicit rolling-upgrade capabilities implemented by this binary.
     capabilities.skill_store_read = true;
