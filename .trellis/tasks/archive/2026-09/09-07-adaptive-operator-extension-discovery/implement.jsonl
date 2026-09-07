@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend authoritative-layer and cross-layer pre-development rules"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Focused Rust validation, scope discipline, final review and delivery rules"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail-closed capability and authority boundaries"}
+{"file": ".trellis/tasks/09-07-adaptive-operator-extension-discovery/research/current-discovery-path.md", "reason": "Mapped generic manifest, Stateless extension, gateway admission, and protocol capability data flow"}
