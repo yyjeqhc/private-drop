@@ -605,6 +605,123 @@ async fn http_project_connector_2026_uses_explicit_task_ids_without_transport_wi
 }
 
 #[tokio::test]
+async fn http_project_connector_2026_uses_openai_session_as_host_window_identity() {
+    let config = test_config(Some("secret"));
+    let (tmp, db) = test_db();
+    let project = tmp.path().join("connector-2026-openai-session-project");
+    crate::connector_runtime::tests::init_repo(&project);
+    let user_token = "webcodex_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let runtime = Arc::new(test_runtime_with_exposure(
+        RuntimeExposure::ProjectConnector,
+    ));
+    let service = Service::new(build_connector_test_router(config, db, runtime, &project));
+
+    let start_params = |session: &str, goal: &str| {
+        let mut params = mcp_2026_params(json!({
+            "name": "task_start",
+            "arguments": { "goal": goal, "mode": "read_only" }
+        }));
+        params["_meta"]["openai/session"] = json!(session);
+        params
+    };
+
+    let mut first = TestClient::post("http://localhost/mcp")
+        .bearer_auth(user_token)
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/call", true)
+        .add_header(MCP_NAME_HEADER, "task_start", true)
+        .add_header(
+            crate::client_window::MCP_SESSION_HEADER,
+            "legacy-session-must-not-bind-2026",
+            true,
+        )
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 223,
+            "method": "tools/call",
+            "params": start_params("openai-chat-a", "inspect from ChatGPT conversation A")
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&first), StatusCode::OK);
+    assert!(first
+        .headers
+        .get(crate::client_window::MCP_SESSION_HEADER)
+        .is_none());
+    let first_body: Value = first.take_json().await.unwrap();
+    let first_task_id = first_body["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .expect("OpenAI conversation task_start must return task_id")
+        .to_string();
+
+    let mut continued = TestClient::post("http://localhost/mcp")
+        .bearer_auth(user_token)
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/call", true)
+        .add_header(MCP_NAME_HEADER, "task_start", true)
+        .add_header(
+            crate::client_window::MCP_SESSION_HEADER,
+            "different-legacy-session-still-must-not-bind-2026",
+            true,
+        )
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 224,
+            "method": "tools/call",
+            "params": start_params("openai-chat-a", "continue ChatGPT conversation A")
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&continued), StatusCode::OK);
+    let continued_body: Value = continued.take_json().await.unwrap();
+    assert_eq!(
+        continued_body["result"]["structuredContent"]["task_id"],
+        first_task_id
+    );
+    assert_eq!(
+        continued_body["result"]["structuredContent"]["data"]["continuation"],
+        "continued"
+    );
+
+    let mut other = TestClient::post("http://localhost/mcp")
+        .bearer_auth(user_token)
+        .add_header(
+            MCP_PROTOCOL_VERSION_HEADER,
+            MCP_STATELESS_PROTOCOL_VERSION,
+            true,
+        )
+        .add_header(MCP_METHOD_HEADER, "tools/call", true)
+        .add_header(MCP_NAME_HEADER, "task_start", true)
+        .add_header(
+            crate::client_window::MCP_SESSION_HEADER,
+            "legacy-session-must-not-bind-2026",
+            true,
+        )
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 225,
+            "method": "tools/call",
+            "params": start_params("openai-chat-b", "inspect from ChatGPT conversation B")
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&other), StatusCode::OK);
+    let other_body: Value = other.take_json().await.unwrap();
+    assert_ne!(
+        other_body["result"]["structuredContent"]["task_id"], first_task_id,
+        "different OpenAI conversations must not share connector task state"
+    );
+}
+
+#[tokio::test]
 async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen() {
     let config = test_config(Some("secret"));
     let (tmp, db) = test_db();

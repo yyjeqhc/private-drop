@@ -13,7 +13,8 @@ fn mcp_gateway_tool_call_params_do_not_retain_outer_meta() {
         json!({
             "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
             "io.modelcontextprotocol/clientCapabilities": {"extensions": {}},
-            "io.modelcontextprotocol/clientInfo": {"name": "outer-host", "version": "2026"}
+            "io.modelcontextprotocol/clientInfo": {"name": "outer-host", "version": "2026"},
+            "openai/session": "chat-session-opaque-value"
         }),
     ] {
         let parsed: McpToolCallParams = serde_json::from_value(json!({

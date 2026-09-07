@@ -420,10 +420,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         McpProtocolEra::Legacy => {
             crate::client_window::mcp_window(req, request.method == "initialize")
         }
-        McpProtocolEra::Stateless2026 => crate::client_window::McpWindow {
-            identity: None,
-            issued_session_id: None,
-        },
+        McpProtocolEra::Stateless2026 => {
+            crate::client_window::stateless_mcp_window(&request.params)
+        }
     };
 
     // Chat-window MCP tool calls must land in the action audit exactly like
