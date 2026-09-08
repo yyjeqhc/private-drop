@@ -78,6 +78,42 @@ async fn plugin_registration_needs_only_native_plugin_capability_not_provider_in
 }
 
 #[tokio::test]
+async fn typed_operation_decode_does_not_grant_runner_capability() {
+    let operation = PluginGatewayRequest::Reload;
+    let wire = webcodex_core::runner_protocol::RunnerRequest::from_operation(
+        webcodex_core::runner_operation::RunnerInvocationMetadata {
+            request_id: "typed-operation-capability-proof".to_string(),
+            client_id: "no-plugin-runner".to_string(),
+            requested_by: "test".to_string(),
+            created_at: 0,
+        },
+        webcodex_core::runner_operation::RunnerOperation::PluginGateway(operation.clone()),
+    )
+    .unwrap();
+    assert!(matches!(
+        wire.decode_operation().unwrap(),
+        webcodex_core::runner_operation::RunnerOperation::PluginGateway(_)
+    ));
+
+    let registry = RunnerRegistry::default();
+    let mut registration = plugin_registration("no-plugin-runner", "no-plugin-instance");
+    registration.capabilities.native_tool_plugins = false;
+    registry.register(registration).await.unwrap();
+    let alice = auth_context(Some("alice"), false);
+    let error = registry
+        .enqueue_plugin_gateway(
+            "no-plugin-runner",
+            "no-plugin-instance",
+            operation,
+            Some(&alice),
+            "test".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, "exact Runner does not support native Tool Plugins");
+}
+
+#[tokio::test]
 async fn plugin_reload_can_target_exact_plugin_capable_runner_without_registration_catalog() {
     let registry = RunnerRegistry::default();
     registry

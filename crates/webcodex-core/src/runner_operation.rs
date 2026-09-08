@@ -1627,6 +1627,71 @@ mod tests {
         .unwrap()
     }
 
+    fn job_context(cwd: Option<&str>) -> ShellJobContext {
+        ShellJobContext {
+            runtime_project_id: None,
+            workflow_session_id: None,
+            ssh_resource: None,
+            project_cwd: None,
+            cwd: cwd.map(str::to_string),
+            purpose: Some("operation".to_string()),
+            shell: Some("configured".to_string()),
+            command_preview: "typed operation".to_string(),
+            validation_steps: Vec::new(),
+            validation: None,
+            structured_execution: None,
+        }
+    }
+
+    fn structured_job_context(
+        cwd: Option<&str>,
+        execution_source: &str,
+        language: Option<ShellScriptLanguage>,
+        script_bytes: Option<usize>,
+        arg_count: usize,
+        stdin_present: bool,
+    ) -> ShellJobContext {
+        let mut context = job_context(cwd);
+        context.shell = Some("direct_argv".to_string());
+        context.structured_execution = Some(ShellJobStructuredExecutionMetadata {
+            execution_source: execution_source.to_string(),
+            language,
+            script_bytes,
+            arg_count,
+            stdin_present,
+            validation_identity: None,
+            validation_tool: None,
+            assertion_name: None,
+        });
+        context
+    }
+
+    fn round_trip_kind(operation: RunnerOperation) -> RunnerRequest {
+        let expected_kind = operation.wire_kind();
+        let wire = RunnerRequest::from_operation(metadata(), operation)
+            .unwrap_or_else(|error| panic!("encode {expected_kind}: {error}"));
+        assert_eq!(wire.kind, expected_kind);
+        let decoded = wire
+            .decode_operation()
+            .unwrap_or_else(|error| panic!("decode {expected_kind}: {error}"));
+        assert_eq!(decoded.wire_kind(), expected_kind);
+        wire
+    }
+
+    fn file_payload(content: Option<&str>) -> RunnerFilePayload {
+        RunnerFilePayload {
+            cwd: Some("/repo".to_string()),
+            path: "path.txt".to_string(),
+            content: content.map(str::to_string),
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            create_dirs: false,
+        }
+    }
+
     #[test]
     fn omitted_v2_kind_keeps_legacy_run_shell_default() {
         let value = serde_json::json!({
@@ -1763,5 +1828,594 @@ mod tests {
             wire.decode_operation().unwrap(),
             RunnerOperation::Project(_)
         ));
+    }
+
+    #[test]
+    fn every_current_runner_operation_kind_round_trips_through_v2() {
+        use std::collections::BTreeSet;
+
+        let script = ShellScriptPayload {
+            language: ShellScriptLanguage::Sh,
+            script: "printf ok".to_string(),
+            args: vec!["literal".to_string()],
+        };
+        let validation_step = ShellJobValidationStep {
+            name: "check".to_string(),
+            program: "cargo".to_string(),
+            args: vec!["check".to_string()],
+            env: Vec::new(),
+        };
+        let mut validation_context = job_context(Some("/repo"));
+        validation_context.validation_steps = vec!["check".to_string()];
+        let mut operations = vec![
+            RunnerOperation::RunShell(RunnerShellOperation {
+                cwd: Some("/repo".to_string()),
+                command: "printf ok".to_string(),
+                stdin: None,
+                timeout_secs: 30,
+                job_context: None,
+            }),
+            RunnerOperation::RunProcess(RunnerProcessOperation {
+                cwd: Some("/repo".to_string()),
+                process: ShellProcessArgv {
+                    executable: "printf".to_string(),
+                    args: vec!["ok".to_string()],
+                },
+                stdin: Some("input".to_string()),
+                timeout_secs: 30,
+            }),
+            RunnerOperation::RunScript(RunnerScriptOperation {
+                cwd: Some("/repo".to_string()),
+                script: script.clone(),
+                stdin: None,
+                timeout_secs: 30,
+            }),
+            RunnerOperation::RunInternalPosixScript(RunnerScriptOperation {
+                cwd: Some("/repo".to_string()),
+                script: ShellScriptPayload {
+                    language: ShellScriptLanguage::Sh,
+                    script: "printf internal".to_string(),
+                    args: Vec::new(),
+                },
+                stdin: None,
+                timeout_secs: 30,
+            }),
+            RunnerOperation::Job(RunnerJobOperation::StartShell(RunnerJobShellOperation {
+                job_id: "job-shell".to_string(),
+                cwd: Some("/repo".to_string()),
+                command: "printf job".to_string(),
+                timeout_secs: 60,
+                context: job_context(Some("/repo")),
+            })),
+            RunnerOperation::Job(RunnerJobOperation::StartValidation(
+                RunnerJobValidationOperation {
+                    job_id: "job-validation".to_string(),
+                    cwd: Some("/repo".to_string()),
+                    steps: vec![validation_step],
+                    timeout_secs: 60,
+                    context: validation_context,
+                },
+            )),
+            RunnerOperation::Job(RunnerJobOperation::StartProcess(
+                RunnerJobProcessOperation {
+                    job_id: "job-process".to_string(),
+                    cwd: Some("/repo".to_string()),
+                    process: ShellProcessArgv {
+                        executable: "process".to_string(),
+                        args: vec!["arg".to_string()],
+                    },
+                    stdin: None,
+                    timeout_secs: 60,
+                    context: structured_job_context(
+                        Some("/repo"),
+                        "run_process",
+                        None,
+                        None,
+                        1,
+                        false,
+                    ),
+                },
+            )),
+            RunnerOperation::Job(RunnerJobOperation::StartDetachedProcess(
+                RunnerJobProcessOperation {
+                    job_id: "job-detached".to_string(),
+                    cwd: Some("/repo".to_string()),
+                    process: ShellProcessArgv {
+                        executable: "process".to_string(),
+                        args: vec!["arg".to_string()],
+                    },
+                    stdin: None,
+                    timeout_secs: 60,
+                    context: structured_job_context(
+                        Some("/repo"),
+                        "run_detached_process",
+                        None,
+                        None,
+                        1,
+                        false,
+                    ),
+                },
+            )),
+            RunnerOperation::Job(RunnerJobOperation::StartScript(RunnerJobScriptOperation {
+                job_id: "job-script".to_string(),
+                cwd: Some("/repo".to_string()),
+                script: script.clone(),
+                stdin: None,
+                timeout_secs: 60,
+                context: structured_job_context(
+                    Some("/repo"),
+                    "run_script",
+                    Some(ShellScriptLanguage::Sh),
+                    Some(script.script.len()),
+                    script.args.len(),
+                    false,
+                ),
+            })),
+            RunnerOperation::Job(RunnerJobOperation::Stop {
+                job_id: "job-stop".to_string(),
+            }),
+            RunnerOperation::Validation {
+                payload: ValidationBridgeRequest {
+                    protocol_version: crate::validation_bridge::VALIDATION_BRIDGE_PROTOCOL_VERSION,
+                    adapter_id: "pyright".to_string(),
+                    language: "python".to_string(),
+                    validation_kind: "typecheck".to_string(),
+                    project_id: "demo".to_string(),
+                    cwd: None,
+                    targets: Vec::new(),
+                    timeout_secs: 60,
+                },
+                timeout_secs: 60,
+            },
+            RunnerOperation::Lsp {
+                payload: RunnerLspPayload {
+                    project_id: "demo".to_string(),
+                    request: crate::lsp_bridge::RunnerLspRequest::Status,
+                },
+                timeout_secs: 30,
+            },
+            RunnerOperation::PersistentShell(RunnerPersistentShellOperation {
+                request: PersistentShellRequest {
+                    action: "status".to_string(),
+                    shell_id: "shell-1".to_string(),
+                    workflow_session_id: "wc_sess_123456".to_string(),
+                    runtime_project_id: "agent:runner-1:demo".to_string(),
+                    cwd: None,
+                    shell: None,
+                    command: None,
+                    timeout_secs: None,
+                    purpose: None,
+                },
+                job_context: None,
+            }),
+            RunnerOperation::McpGateway(McpGatewayRequest::ToolsList {
+                provider_id: "provider".to_string(),
+                provider_instance_id: "instance".to_string(),
+            }),
+            RunnerOperation::PluginGateway(PluginGatewayRequest::Reload),
+            RunnerOperation::CodingAgent(crate::coding_agent::CodingAgentRequest::Start(
+                crate::coding_agent::CodingAgentStartRequest {
+                    run_id: "wc_agent_run_0123456789abcdef".to_string(),
+                    intent_fingerprint: "cafebabe".to_string(),
+                    authority_fingerprint: "auth_0123456789abcdef".to_string(),
+                    runtime_project_id: "agent:runner-1:demo".to_string(),
+                    project_root: "/repo".to_string(),
+                    provider_id: "codex".to_string(),
+                    provider_instance_id: "provider_123".to_string(),
+                    instruction: "inspect repository".to_string(),
+                    config: std::collections::BTreeMap::new(),
+                    timeout_secs: 60,
+                },
+            )),
+            RunnerOperation::SkillStore(crate::skill_store::SkillStoreRequest::ListActive),
+            RunnerOperation::SshResource(crate::ssh_resource::SshResourceRequest::List),
+            RunnerOperation::RunnerConfig(RunnerConfigOperationRequest {
+                action: crate::runner_protocol::RunnerConfigAction::Check,
+                expected_generation: None,
+            }),
+        ];
+
+        let file_operations = vec![
+            RunnerFileOperation::Read(file_payload(None)),
+            RunnerFileOperation::Write(file_payload(Some("body"))),
+            RunnerFileOperation::List(file_payload(None)),
+            RunnerFileOperation::ProjectOverview(file_payload(None)),
+            RunnerFileOperation::DeleteProjectFiles(file_payload(None)),
+            RunnerFileOperation::WriteProjectFile(file_payload(None)),
+            RunnerFileOperation::ApplyTextEdits(file_payload(None)),
+            RunnerFileOperation::ApplyPatch(file_payload(None)),
+            RunnerFileOperation::SaveProjectArtifact(file_payload(None)),
+            RunnerFileOperation::ReadProjectArtifactMetadata(file_payload(None)),
+            RunnerFileOperation::ReadProjectArtifact(file_payload(None)),
+            RunnerFileOperation::ReadProjectArtifactExportChunk(file_payload(None)),
+            RunnerFileOperation::ArtifactUploadBegin(file_payload(None)),
+            RunnerFileOperation::ArtifactUploadChunk(file_payload(None)),
+            RunnerFileOperation::ArtifactUploadFinish(file_payload(None)),
+            RunnerFileOperation::ArtifactUploadAbort(file_payload(None)),
+            RunnerFileOperation::CheckpointCreate(file_payload(None)),
+            RunnerFileOperation::CheckpointRestore(file_payload(None)),
+            RunnerFileOperation::SkillListPackages(file_payload(None)),
+            RunnerFileOperation::SkillReadFile(file_payload(None)),
+        ];
+        operations.extend(file_operations.into_iter().map(RunnerOperation::File));
+
+        for kind in [
+            RunnerProjectOperationKind::Register,
+            RunnerProjectOperationKind::Create,
+            RunnerProjectOperationKind::ResolveOrRegister,
+            RunnerProjectOperationKind::PrepareManagedWorktree,
+            RunnerProjectOperationKind::LifecycleEnable,
+            RunnerProjectOperationKind::LifecycleDisable,
+            RunnerProjectOperationKind::LifecycleUnregister,
+        ] {
+            operations.push(RunnerOperation::Project(RunnerProjectOperation {
+                kind,
+                payload: "{}".to_string(),
+            }));
+        }
+
+        for kind in [
+            RunnerComputerOperationKind::ListWindows,
+            RunnerComputerOperationKind::ListApplications,
+            RunnerComputerOperationKind::LaunchApplication,
+            RunnerComputerOperationKind::ListDisplays,
+            RunnerComputerOperationKind::SnapshotDisplay,
+            RunnerComputerOperationKind::ReadClipboard,
+            RunnerComputerOperationKind::WriteClipboard,
+            RunnerComputerOperationKind::PointerMove,
+            RunnerComputerOperationKind::PointerClick,
+            RunnerComputerOperationKind::Snapshot,
+            RunnerComputerOperationKind::SnapshotRegion,
+            RunnerComputerOperationKind::AccessibilityStatus,
+            RunnerComputerOperationKind::AccessibilityTree,
+            RunnerComputerOperationKind::ElementState,
+            RunnerComputerOperationKind::ActivateWindow,
+            RunnerComputerOperationKind::Control,
+            RunnerComputerOperationKind::ScrollToElement,
+            RunnerComputerOperationKind::KeyInput,
+            RunnerComputerOperationKind::InputText,
+        ] {
+            operations.push(RunnerOperation::Computer(RunnerComputerOperation {
+                kind,
+                payload: "{}".to_string(),
+                timeout_secs: 30,
+            }));
+        }
+
+        let expected = BTreeSet::from([
+            "run_shell",
+            "run_process",
+            "run_script",
+            "run_internal_posix_script",
+            "start_job",
+            "start_validation_job",
+            "start_process_job",
+            "start_detached_process_job",
+            "start_script_job",
+            "stop_job",
+            "file_read",
+            "file_write",
+            "file_list",
+            "file_project_overview",
+            "file_delete_project_files",
+            "file_write_project_file",
+            "file_apply_text_edits",
+            "file_apply_patch",
+            "file_save_project_artifact",
+            "file_read_project_artifact_metadata",
+            "file_read_project_artifact",
+            "file_read_project_artifact_export_chunk",
+            "file_artifact_upload_begin",
+            "file_artifact_upload_chunk",
+            "file_artifact_upload_finish",
+            "file_artifact_upload_abort",
+            "file_checkpoint_create",
+            "file_checkpoint_restore",
+            "file_skill_list_packages",
+            "file_skill_read_file",
+            "register_project",
+            "create_project",
+            "resolve_or_register_project",
+            "prepare_managed_worktree",
+            "project_lifecycle_enable",
+            "project_lifecycle_disable",
+            "project_lifecycle_unregister",
+            "computer_list_windows",
+            "computer_list_applications",
+            "computer_launch_application",
+            "computer_list_displays",
+            "computer_snapshot_display",
+            "computer_read_clipboard",
+            "computer_write_clipboard",
+            "computer_pointer_move",
+            "computer_pointer_click",
+            "computer_snapshot",
+            "computer_snapshot_region",
+            "computer_accessibility_status",
+            "computer_accessibility_tree",
+            "computer_element_state",
+            "computer_activate_window",
+            "computer_control",
+            "computer_scroll_to_element",
+            "computer_key_input",
+            "computer_input_text",
+            crate::validation_bridge::AGENT_VALIDATION_REQUEST_KIND,
+            crate::lsp_bridge::AGENT_LSP_REQUEST_KIND,
+            "persistent_shell",
+            "mcp_gateway",
+            "plugin_gateway",
+            "coding_agent",
+            "skill_store",
+            "ssh_resource",
+            RUNNER_CONFIG_REQUEST_KIND,
+        ]);
+        let seen = operations
+            .into_iter()
+            .map(|operation| round_trip_kind(operation).kind)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(seen, expected.into_iter().map(str::to_string).collect());
+    }
+
+    #[test]
+    fn representative_v2_json_shapes_keep_field_names_and_canonical_payload_placement() {
+        let shell = serde_json::to_value(round_trip_kind(RunnerOperation::RunShell(
+            RunnerShellOperation {
+                cwd: Some("/repo".to_string()),
+                command: "printf ok".to_string(),
+                stdin: None,
+                timeout_secs: 30,
+                job_context: None,
+            },
+        )))
+        .unwrap();
+        assert_eq!(shell["kind"], "run_shell");
+        assert_eq!(shell["command"], "printf ok");
+        assert!(shell.get("process").is_none());
+        assert!(shell.get("script").is_none());
+
+        let process = serde_json::to_value(round_trip_kind(RunnerOperation::RunProcess(
+            RunnerProcessOperation {
+                cwd: None,
+                process: ShellProcessArgv {
+                    executable: "printf".to_string(),
+                    args: vec!["ok".to_string()],
+                },
+                stdin: None,
+                timeout_secs: 30,
+            },
+        )))
+        .unwrap();
+        assert_eq!(process["kind"], "run_process");
+        assert!(process.get("process").is_some());
+        assert!(process.get("script").is_none());
+        assert_eq!(process["command"], "");
+
+        let script = ShellScriptPayload {
+            language: ShellScriptLanguage::Sh,
+            script: "printf script".to_string(),
+            args: Vec::new(),
+        };
+        let script_value = serde_json::to_value(round_trip_kind(RunnerOperation::RunScript(
+            RunnerScriptOperation {
+                cwd: None,
+                script,
+                stdin: None,
+                timeout_secs: 30,
+            },
+        )))
+        .unwrap();
+        assert_eq!(script_value["kind"], "run_script");
+        assert!(script_value.get("script").is_some());
+        assert!(script_value.get("process").is_none());
+        assert_eq!(script_value["command"], "");
+
+        let plugin = serde_json::to_value(round_trip_kind(RunnerOperation::PluginGateway(
+            PluginGatewayRequest::Reload,
+        )))
+        .unwrap();
+        assert_eq!(plugin["kind"], "plugin_gateway");
+        assert!(plugin.get("plugin_gateway").is_some());
+        assert!(plugin.get("mcp_gateway").is_none());
+        assert!(plugin.get("coding_agent").is_none());
+    }
+
+    #[test]
+    fn representative_specialized_and_job_v2_json_fields_are_stable() {
+        fn assert_field(operation: RunnerOperation, kind: &str, field: &str) {
+            let value = serde_json::to_value(round_trip_kind(operation)).unwrap();
+            assert_eq!(value["kind"], kind);
+            assert!(
+                value.get(field).is_some(),
+                "{kind} must keep V2 field {field}"
+            );
+        }
+
+        assert_field(
+            RunnerOperation::Validation {
+                payload: ValidationBridgeRequest {
+                    protocol_version: crate::validation_bridge::VALIDATION_BRIDGE_PROTOCOL_VERSION,
+                    adapter_id: "pyright".to_string(),
+                    language: "python".to_string(),
+                    validation_kind: "typecheck".to_string(),
+                    project_id: "demo".to_string(),
+                    cwd: None,
+                    targets: Vec::new(),
+                    timeout_secs: 60,
+                },
+                timeout_secs: 60,
+            },
+            crate::validation_bridge::AGENT_VALIDATION_REQUEST_KIND,
+            "validation",
+        );
+        assert_field(
+            RunnerOperation::Lsp {
+                payload: RunnerLspPayload {
+                    project_id: "demo".to_string(),
+                    request: crate::lsp_bridge::RunnerLspRequest::Status,
+                },
+                timeout_secs: 30,
+            },
+            crate::lsp_bridge::AGENT_LSP_REQUEST_KIND,
+            "lsp",
+        );
+        assert_field(
+            RunnerOperation::Job(RunnerJobOperation::StartShell(RunnerJobShellOperation {
+                job_id: "job-shell-json".to_string(),
+                cwd: Some("/repo".to_string()),
+                command: "printf job".to_string(),
+                timeout_secs: 60,
+                context: job_context(Some("/repo")),
+            })),
+            "start_job",
+            "job_context",
+        );
+        assert_field(
+            RunnerOperation::Job(RunnerJobOperation::StartDetachedProcess(
+                RunnerJobProcessOperation {
+                    job_id: "job-detached-json".to_string(),
+                    cwd: Some("/repo".to_string()),
+                    process: ShellProcessArgv {
+                        executable: "process".to_string(),
+                        args: vec!["arg".to_string()],
+                    },
+                    stdin: None,
+                    timeout_secs: 60,
+                    context: structured_job_context(
+                        Some("/repo"),
+                        "run_detached_process",
+                        None,
+                        None,
+                        1,
+                        false,
+                    ),
+                },
+            )),
+            "start_detached_process_job",
+            "process",
+        );
+        assert_field(
+            RunnerOperation::PersistentShell(RunnerPersistentShellOperation {
+                request: PersistentShellRequest {
+                    action: "status".to_string(),
+                    shell_id: "shell-json".to_string(),
+                    workflow_session_id: "wc_sess_123456".to_string(),
+                    runtime_project_id: "agent:runner-1:demo".to_string(),
+                    cwd: None,
+                    shell: None,
+                    command: None,
+                    timeout_secs: None,
+                    purpose: None,
+                },
+                job_context: None,
+            }),
+            "persistent_shell",
+            "persistent_shell",
+        );
+        assert_field(
+            RunnerOperation::McpGateway(McpGatewayRequest::ToolsList {
+                provider_id: "provider".to_string(),
+                provider_instance_id: "instance".to_string(),
+            }),
+            "mcp_gateway",
+            "mcp_gateway",
+        );
+        assert_field(
+            RunnerOperation::PluginGateway(PluginGatewayRequest::Reload),
+            "plugin_gateway",
+            "plugin_gateway",
+        );
+        assert_field(
+            RunnerOperation::CodingAgent(crate::coding_agent::CodingAgentRequest::Start(
+                crate::coding_agent::CodingAgentStartRequest {
+                    run_id: "wc_agent_run_0123456789abcdef".to_string(),
+                    intent_fingerprint: "cafebabe".to_string(),
+                    authority_fingerprint: "auth_0123456789abcdef".to_string(),
+                    runtime_project_id: "agent:runner-1:demo".to_string(),
+                    project_root: "/repo".to_string(),
+                    provider_id: "codex".to_string(),
+                    provider_instance_id: "provider_123".to_string(),
+                    instruction: "inspect repository".to_string(),
+                    config: std::collections::BTreeMap::new(),
+                    timeout_secs: 60,
+                },
+            )),
+            "coding_agent",
+            "coding_agent",
+        );
+        assert_field(
+            RunnerOperation::File(RunnerFileOperation::Write(file_payload(Some("body")))),
+            "file_write",
+            "path",
+        );
+        assert_field(
+            RunnerOperation::Project(RunnerProjectOperation {
+                kind: RunnerProjectOperationKind::Register,
+                payload: "{}".to_string(),
+            }),
+            "register_project",
+            "stdin",
+        );
+    }
+
+    #[test]
+    fn missing_or_cross_family_payloads_fail_closed() {
+        for (kind, expected) in [
+            ("run_process", "process payload"),
+            ("run_script", "script payload"),
+            (crate::lsp_bridge::AGENT_LSP_REQUEST_KIND, "lsp payload"),
+            ("persistent_shell", "persistent_shell payload"),
+            ("mcp_gateway", "mcp_gateway payload"),
+            ("plugin_gateway", "plugin_gateway payload"),
+            ("coding_agent", "coding_agent payload"),
+        ] {
+            let mut wire = shell_wire();
+            wire.kind = kind.to_string();
+            wire.command.clear();
+            wire.cwd = None;
+            let error = wire.decode_operation().unwrap_err();
+            assert!(error.contains(expected), "{kind}: {error}");
+        }
+
+        let mut raw_shell_with_process = shell_wire();
+        raw_shell_with_process.process = Some(ShellProcessArgv {
+            executable: "printf".to_string(),
+            args: Vec::new(),
+        });
+        assert!(raw_shell_with_process
+            .decode_operation()
+            .unwrap_err()
+            .contains("incompatible"));
+
+        let lsp = RunnerRequest::from_operation(
+            metadata(),
+            RunnerOperation::Lsp {
+                payload: RunnerLspPayload {
+                    project_id: "demo".to_string(),
+                    request: crate::lsp_bridge::RunnerLspRequest::Status,
+                },
+                timeout_secs: 30,
+            },
+        )
+        .unwrap();
+        let mut lsp_with_plugin = lsp;
+        lsp_with_plugin.plugin_gateway = Some(PluginGatewayRequest::Reload);
+        assert!(lsp_with_plugin
+            .decode_operation()
+            .unwrap_err()
+            .contains("conflicting"));
+
+        let mut plugin_with_mcp = RunnerRequest::from_operation(
+            metadata(),
+            RunnerOperation::PluginGateway(PluginGatewayRequest::Reload),
+        )
+        .unwrap();
+        plugin_with_mcp.mcp_gateway = Some(McpGatewayRequest::ToolsList {
+            provider_id: "provider".to_string(),
+            provider_instance_id: "instance".to_string(),
+        });
+        assert!(plugin_with_mcp
+            .decode_operation()
+            .unwrap_err()
+            .contains("conflicting"));
     }
 }
