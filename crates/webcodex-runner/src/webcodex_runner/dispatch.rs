@@ -180,7 +180,7 @@ fn submit_invalid_job_start(sink: &RunnerSink, request: &RunnerRequest, error: S
     } else {
         format!("invalid Runner Job request: {error}")
     };
-    let command_execution_state = crate::structured_prestart_lifecycle(request);
+    let command_execution_state = crate::decode_failure_prestart_lifecycle(request);
     let _ = sink.send_job_update(&RunnerJobUpdateRequest {
         client_id: sink.client_id().to_string(),
         runner_instance_id: sink.runner_instance_id().to_string(),
@@ -370,6 +370,7 @@ pub(crate) fn dispatch_request_with_outcome(
     };
     let project_cache_invalidation_required =
         matches!(&invocation.operation, RunnerOperation::Project(_));
+    let invocation_metadata = invocation.metadata.clone();
     let request_id = invocation.metadata.request_id.clone();
     let client_id = invocation.metadata.client_id.clone();
     let policy = &config.policy;
@@ -636,21 +637,14 @@ pub(crate) fn dispatch_request_with_outcome(
             sink.submit_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }
-        RunnerOperation::Job(operation) => match operation {
-            RunnerJobOperation::Stop { job_id } => {
+        RunnerOperation::Job(operation) => {
+            if let RunnerJobOperation::Stop { job_id } = &operation {
                 jobs.install_sink(sink.clone());
-                if let Err(error) = jobs.stop(&job_id) {
+                if let Err(error) = jobs.stop(job_id) {
                     eprintln!("webcodex-runner stop_job error: {error}");
                 }
                 Ok(true)
-            }
-            RunnerJobOperation::StartShell(_)
-            | RunnerJobOperation::StartValidation(_)
-            | RunnerJobOperation::StartProcess(_)
-            | RunnerJobOperation::StartDetachedProcess(_)
-            | RunnerJobOperation::StartScript(_) => {
-                // Commit 4 removes this temporary wire handoff inside JobManager;
-                // semantic dispatch has already been closed here.
+            } else {
                 jobs.enqueue(
                     sink.clone(),
                     PendingJobStart {
@@ -659,12 +653,13 @@ pub(crate) fn dispatch_request_with_outcome(
                         shell: shell.clone(),
                         ssh: config.ssh.clone(),
                         project_registry_dir: project_registry_dir.to_path_buf(),
-                        request,
+                        metadata: invocation_metadata,
+                        operation,
                     },
                 );
                 Ok(true)
             }
-        },
+        }
     };
     dispatch_result.map(|handled| RunnerDispatchOutcome {
         handled,

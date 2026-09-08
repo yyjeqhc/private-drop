@@ -1120,13 +1120,13 @@ fn enqueue_structured_process_job_with_policy(
     let context = structured_process_context(cwd, args.len(), stdin.is_some());
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
+        PendingJobStart::from_wire(
+            1,
             policy,
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: cwd.join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            cwd.join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": format!("request-{job_id}"),
                 "client_id": "structured-agent",
                 "kind": "start_process_job",
@@ -1145,7 +1145,7 @@ fn enqueue_structured_process_job_with_policy(
                 "job_context": context,
             }))
             .unwrap(),
-        },
+        ),
     );
 }
 
@@ -1162,16 +1162,16 @@ fn enqueue_detached_process_job(
     let context = detached_process_context(cwd, args.len(), stdin.is_some());
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: cwd.join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            cwd.join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": format!("request-{job_id}"),
                 "client_id": "structured-agent",
                 "kind": "start_detached_process_job",
@@ -1189,7 +1189,7 @@ fn enqueue_detached_process_job(
                 "job_context": context,
             }))
             .unwrap(),
-        },
+        ),
     );
 }
 
@@ -1288,16 +1288,16 @@ fn enqueue_shell_job(
 ) {
     manager.enqueue(
         sink.clone(),
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: cwd.join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            cwd.join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": format!("request-{job_id}"),
                 "client_id": "backpressure-agent",
                 "kind": "start_job",
@@ -1310,7 +1310,7 @@ fn enqueue_shell_job(
                 "job_context": test_job_context(cwd, Vec::new()),
             }))
             .unwrap(),
-        },
+        ),
     );
 }
 
@@ -1378,16 +1378,16 @@ fn enqueue_gated_structured_job_for_project(
     context.runtime_project_id = Some(runtime_project_id.to_string());
     manager.enqueue(
         sink.clone(),
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: cwd.join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            cwd.join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": format!("request-{}", job.job_id),
                 "client_id": "structured-agent",
                 "kind": "start_process_job",
@@ -1404,7 +1404,7 @@ fn enqueue_gated_structured_job_for_project(
                 "job_context": context,
             }))
             .unwrap(),
-        },
+        ),
     );
 }
 
@@ -1757,22 +1757,27 @@ fn phase_e2_prestart_structured_failure_releases_slot_for_queued_job() {
         "job_id": failed_job_id,
         "cwd": temp.path(),
         "command": "",
+        "process": {
+            "executable": temp.path().join("missing-prestart-executable"),
+            "args": [],
+        },
         "timeout_secs": 20,
         "requested_by": "test",
         "created_at": chrono::Utc::now().timestamp(),
         "job_context": structured_process_context(temp.path(), 0, false),
     }))
     .unwrap();
-    manager.start_structured_job(
+    manager.start_structured_job(PendingJobStart::from_wire(
         1,
         RunnerPolicy {
             allow_cwd_anywhere: true,
             ..RunnerPolicy::default()
         },
         ShellConfig::default(),
+        SshConfig::default(),
         temp.path().join("project-registry"),
         failed_request,
-    );
+    ));
 
     assert!(
         wait_until(Duration::from_secs(10), || queued.started.exists()),
@@ -1836,7 +1841,7 @@ fn phase_e2_stopped_queued_job_never_executes_after_slot_release() {
     assert!(!stopped.active.exists());
     assert!(lock_unpoison(&manager.queued)
         .iter()
-        .all(|entry| entry.request.job_id.as_deref() != Some(stopped.job_id.as_str())));
+        .all(|entry| entry.operation.job_id() != stopped.job_id));
 }
 
 #[cfg(unix)]
@@ -1875,16 +1880,16 @@ fn phase_e2_validation_job_shares_the_same_job_manager_slot_limit() {
     shell.path_prepend.push(bin);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
             shell,
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "request-validation-shared-slot",
                 "client_id": "structured-agent",
                 "kind": "start_validation_job",
@@ -1897,7 +1902,7 @@ fn phase_e2_validation_job_shares_the_same_job_manager_slot_limit() {
                 "job_context": test_job_context(temp.path(), vec!["check".to_string()]),
             }))
             .unwrap(),
-        },
+        ),
     );
     assert!(!validation_marker.exists());
     assert_eq!(
@@ -2756,16 +2761,16 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
     let marker_arg = marker.to_string_lossy().replace('\'', "''");
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "request-phase-f-stream",
                 "client_id": "structured-agent",
                 "kind": "start_job",
@@ -2778,7 +2783,7 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
                 "job_context": test_job_context(temp.path(), Vec::new()),
             }))
             .unwrap(),
-        },
+        ),
     );
     assert!(
         wait_until(Duration::from_secs(30), || marker.exists()),
@@ -2801,16 +2806,16 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
     let marker_arg = oem_marker.to_string_lossy().replace('\'', "''");
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "request-phase-f-oem-stream",
                 "client_id": "structured-agent",
                 "kind": "start_job",
@@ -2825,7 +2830,7 @@ fn phase_f_windows_shell_job_stream_reconstructs_split_utf8_and_oem() {
                 "job_context": test_job_context(temp.path(), Vec::new()),
             }))
             .unwrap(),
-        },
+        ),
     );
     assert!(
         wait_until(Duration::from_secs(30), || oem_marker.exists()),
@@ -2923,17 +2928,17 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
     assert_eq!(request.script.as_ref().unwrap().script, script);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
+            ShellConfig::default(),
+            SshConfig::default(),
+            temp.path().join("project-registry"),
             request,
-        },
+        ),
     );
 
     assert!(wait_until(Duration::from_secs(30), || {
@@ -3001,17 +3006,17 @@ fn structured_script_job_drains_large_output_without_log_observation_and_runs_on
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 max_output_bytes: 16 * 1024,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "request-structured-script-chatty",
                 "client_id": "structured-agent",
                 "kind": "start_script_job",
@@ -3029,7 +3034,7 @@ fn structured_script_job_drains_large_output_without_log_observation_and_runs_on
                 "job_context": context,
             }))
             .unwrap(),
-        },
+        ),
     );
 
     wait_for_job_workers(&manager);
@@ -3188,18 +3193,18 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 // These tests run jobs in a temp dir; the boundary itself is
                 // covered separately, and RunnerPolicy::default() is fail-closed.
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
             shell,
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": format!("validation-request-{attempt}"),
                 "client_id": "validation-agent",
                 "kind": "start_validation_job",
@@ -3218,7 +3223,7 @@ fn run_fail_fast_validation_job(attempt: usize) -> FailFastAttempt {
                 )
             }))
             .unwrap(),
-        },
+        ),
     );
     let updates = collect_job_updates(&mut rx, Duration::from_secs(120));
     FailFastAttempt {
@@ -3261,16 +3266,16 @@ fn validation_job_exposes_activity_during_silent_step_and_clears_terminal() {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
             shell,
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "silent-validation-request",
                 "client_id": "validation-agent",
                 "kind": "start_validation_job",
@@ -3283,7 +3288,7 @@ fn validation_job_exposes_activity_during_silent_step_and_clears_terminal() {
                 "job_context": test_job_context(temp.path(), vec!["check".to_string()]),
             }))
             .unwrap(),
-        },
+        ),
     );
 
     assert!(
@@ -3721,16 +3726,16 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
             shell,
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "validation-backpressure-request",
                 "client_id": "validation-agent",
                 "kind": "start_validation_job",
@@ -3746,7 +3751,7 @@ fn noisy_validation_progress_delivery_stays_ordered_after_transport_backpressure
                 )
             }))
             .unwrap(),
-        },
+        ),
     );
 
     assert!(
@@ -3925,18 +3930,18 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 // These tests run jobs in a temp dir; the boundary itself is
                 // covered separately, and RunnerPolicy::default() is fail-closed.
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
             shell,
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "spawn-failure-request",
                 "client_id": "validation-agent",
                 "kind": "start_validation_job",
@@ -3954,7 +3959,7 @@ fn validation_spawn_failure_is_infrastructure_without_failed_assertion() {
                 "job_context": test_job_context(temp.path(), vec!["check".to_string()])
             }))
             .unwrap(),
-        },
+        ),
     );
     let update = collect_job_updates(&mut rx, Duration::from_secs(5))
         .into_iter()
@@ -4650,16 +4655,16 @@ fn runner_real_process_job_timeout_terminates_the_whole_tree() {
     let manager = JobManager::new(1);
     manager.enqueue(
         sink,
-        PendingJobStart {
-            generation: 1,
-            policy: RunnerPolicy {
+        PendingJobStart::from_wire(
+            1,
+            RunnerPolicy {
                 allow_cwd_anywhere: true,
                 ..RunnerPolicy::default()
             },
-            shell: ShellConfig::default(),
-            ssh: SshConfig::default(),
-            project_registry_dir: temp.path().join("project-registry"),
-            request: serde_json::from_value(json!({
+            ShellConfig::default(),
+            SshConfig::default(),
+            temp.path().join("project-registry"),
+            serde_json::from_value(json!({
                 "request_id": "timeout-request",
                 "client_id": "timeout-agent",
                 "kind": "start_job",
@@ -4672,7 +4677,7 @@ fn runner_real_process_job_timeout_terminates_the_whole_tree() {
                 "job_context": test_job_context(temp.path(), Vec::new())
             }))
             .unwrap(),
-        },
+        ),
     );
 
     let updates = collect_job_updates(&mut rx, Duration::from_secs(20));
