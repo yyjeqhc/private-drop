@@ -10,10 +10,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[context_recovery_only(def(
     "read_tool_trace",
     ToolAuditPolicy {
         request: AuditRequestPolicy {
-            fields: &[],
+            fields: &[
+                AuditField::new("trace_ref", "trace_ref", AuditValue::Copy),
+                AuditField::new("offset", "offset", AuditValue::Copy),
+                AuditField::new("limit", "limit", AuditValue::Copy),
+                AuditField::new("payload_index", "payload_index", AuditValue::Copy),
+            ],
             transform: AuditTransform::Fields,
-            typed_fields: &[],
-            typed_omit: &[],
+            typed: AuditTypedPolicy::Omit,
         },
         result: AuditResultPolicy::Fields(&[
             AuditField::new("trace_ref", "trace_ref", AuditValue::Nullable),

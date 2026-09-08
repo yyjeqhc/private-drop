@@ -1517,9 +1517,9 @@ fn retired_start_coding_task_wire_name_is_rejected() {
     assert!(error.contains("no longer supported"), "{error}");
     assert!(error.contains("work_on_project"), "{error}");
 
-    // Kernel audit recording happens before ToolCall parsing, so rejected
-    // legacy requests keep a bounded compatibility sanitizer without reviving
-    // a current ToolCall identity or retaining the raw path.
+    // Kernel audit recording happens before ToolCall parsing. A retired name
+    // must not acquire an independent audit identity: unknown policy omits the
+    // request entirely, including the former compatibility-only metadata.
     let audit = crate::tool_audit::session_log_arguments_for_tool_request(
         "start_coding_task",
         &json!({
@@ -1528,7 +1528,7 @@ fn retired_start_coding_task_wire_name_is_rejected() {
             "title": "legacy request"
         }),
     );
-    assert_eq!(audit["path_source_requested"], true);
+    assert_eq!(audit, Value::Null);
     assert!(audit.get("path").is_none());
     assert!(!audit.to_string().contains("/private/legacy/path"));
 }

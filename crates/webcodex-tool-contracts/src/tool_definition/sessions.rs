@@ -42,8 +42,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     ),
                 ],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &["client_id", "detail", "resume_session_id", "session_id"],
+                typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["client_id", "detail", "resume_session_id", "session_id"] },
             },
             result: AuditResultPolicy::SessionEvidence,
         },
@@ -92,12 +91,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[
+                        typed: AuditTypedPolicy::Overrides { fields: &[
                             AuditField::new("mode", "mode", AuditValue::Copy),
                             AuditField::new("base_ref_present", "base_ref", AuditValue::Present),
                             AuditField::new("path_source_requested", "path", AuditValue::Present),
-                        ],
-                        typed_omit: &[],
+                        ], omit: &[] },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -143,8 +141,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -174,10 +171,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "session_summary",
             ToolAuditPolicy {
                 request: AuditRequestPolicy {
-                    fields: &[],
+                    fields: &[
+AuditField::new("session_id", "session_id", AuditValue::Copy),
+AuditField::new("limit", "limit", AuditValue::Copy),
+],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &[],
+                    typed: AuditTypedPolicy::Omit,
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -223,8 +222,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &[
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &[
                         "client_id",
                         "title",
                         "mode",
@@ -232,7 +230,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         "deny_shell_tools",
                         "detail",
                         "resume_session_id",
-                    ],
+                    ] },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -263,10 +261,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "close_session",
             ToolAuditPolicy {
                 request: AuditRequestPolicy {
-                    fields: &[],
+                    fields: &[
+AuditField::new("session_id", "session_id", AuditValue::Copy),
+],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &[],
+                    typed: AuditTypedPolicy::Omit,
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -296,10 +295,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "validation_summary",
             ToolAuditPolicy {
                 request: AuditRequestPolicy {
-                    fields: &[],
+                    fields: &[
+AuditField::new("project", "project", AuditValue::Copy),
+AuditField::new("session_id", "session_id", AuditValue::Copy),
+AuditField::new("limit", "limit", AuditValue::Copy),
+],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &[],
+                    typed: AuditTypedPolicy::Omit,
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -339,8 +341,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("tags_count", "tags", AuditValue::Count),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("success", "success", AuditValue::Nullable),
@@ -394,8 +395,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("limit", "limit", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("success", "success", AuditValue::Nullable),
@@ -433,8 +433,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("message_id", "message_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project", "session_id", "message_id"],
+                    typed: AuditTypedPolicy::Omit,
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("success", "success", AuditValue::Nullable),
@@ -489,8 +488,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("success", "success", AuditValue::Nullable),
@@ -539,8 +537,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("resolution_bytes", "resolution", AuditValue::Bytes),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project", "resolution_bytes"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project", "resolution_bytes"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("success", "success", AuditValue::Nullable),
@@ -601,8 +598,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project", "assignment_fence_present"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project", "assignment_fence_present"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("success", "success", AuditValue::Nullable),
@@ -655,8 +651,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("limit", "limit", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &["project"],
+                        typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("success", "success", AuditValue::Nullable),
@@ -715,8 +710,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("limit", "limit", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &[],
+                    typed: AuditTypedPolicy::Same,
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("session_id", "session_id", AuditValue::Nullable),

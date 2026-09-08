@@ -30,8 +30,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     AuditField::new("query_present", "query", AuditValue::NonemptyString),
                 ],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &["session_id"],
+                typed: AuditTypedPolicy::Overrides {
+                    fields: &[],
+                    omit: &["session_id"],
+                },
             },
             result: AuditResultPolicy::Fields(&[
                 AuditField::new("project", "project", AuditValue::Nullable),
@@ -88,8 +90,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     AuditField::new("session_id", "session_id", AuditValue::Copy),
                 ],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &["session_id"],
+                typed: AuditTypedPolicy::Overrides {
+                    fields: &[],
+                    omit: &["session_id"],
+                },
             },
             result: AuditResultPolicy::Fields(&[
                 AuditField::new("project", "project", AuditValue::Nullable),
@@ -141,8 +145,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     AuditField::new("session_id", "session_id", AuditValue::Copy),
                 ],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &[],
+                typed: AuditTypedPolicy::Same,
             },
             result: AuditResultPolicy::Fields(&[
                 AuditField::new("project", "project", AuditValue::Nullable),
@@ -208,8 +211,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     ),
                 ],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &[],
+                typed: AuditTypedPolicy::Same,
             },
             result: AuditResultPolicy::Fields(&[
                 AuditField::new("project", "project", AuditValue::Nullable),
@@ -275,8 +277,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     ),
                 ],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &[],
+                typed: AuditTypedPolicy::Same,
             },
             result: AuditResultPolicy::Fields(&[
                 AuditField::new("project", "project", AuditValue::Nullable),
@@ -337,8 +338,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     ),
                 ],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &[],
+                typed: AuditTypedPolicy::Same,
             },
             result: AuditResultPolicy::Fields(&[
                 AuditField::new("project", "project", AuditValue::Nullable),

@@ -19,10 +19,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 "runner_config_check",
                 ToolAuditPolicy {
                     request: AuditRequestPolicy {
-                        fields: &[],
+                        fields: &[
+AuditField::new("client_id", "client_id", AuditValue::Copy),
+],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Omit,
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -51,10 +52,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     "runner_config_reload",
                     ToolAuditPolicy {
                         request: AuditRequestPolicy {
-                            fields: &[],
+                            fields: &[
+AuditField::new("client_id", "client_id", AuditValue::Copy),
+AuditField::new("expected_generation", "expected_generation", AuditValue::Copy),
+],
                             transform: AuditTransform::Fields,
-                            typed_fields: &[],
-                            typed_omit: &[],
+                            typed: AuditTypedPolicy::Omit,
                         },
                         result: AuditResultPolicy::SessionEvidence,
                     },

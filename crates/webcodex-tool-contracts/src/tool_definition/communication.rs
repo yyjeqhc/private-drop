@@ -44,8 +44,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("agent_id", "/agent/agent_id", AuditValue::Nullable),
@@ -94,8 +93,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("limit", "limit", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("total_count", "total_count", AuditValue::Nullable),
@@ -158,8 +156,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("agent_id", "/agent/agent_id", AuditValue::Nullable),
@@ -220,8 +217,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("endpoint_id", "/endpoint/endpoint_id", AuditValue::Nullable),
@@ -279,8 +275,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("wake_id", "wake_id", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("agent_id", "/acting_agent/agent_id", AuditValue::Nullable),
@@ -353,8 +348,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("endpoint_id", "/endpoint/endpoint_id", AuditValue::Nullable),
@@ -410,8 +404,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new(
@@ -475,8 +468,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("limit", "limit", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("total_count", "total_count", AuditValue::Nullable),
@@ -528,8 +520,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("limit", "limit", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new(
@@ -607,8 +598,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("message_id", "/message/message_id", AuditValue::Nullable),
@@ -672,8 +662,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("limit", "limit", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("agent_id", "agent_id", AuditValue::Nullable),
@@ -737,8 +726,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("delivery_count", "delivery_ids", AuditValue::Count),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("agent_id", "agent_id", AuditValue::Nullable),
@@ -803,8 +791,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             ),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("wake_id", "wake_id", AuditValue::Nullable),

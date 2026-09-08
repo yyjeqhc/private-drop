@@ -13,8 +13,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
             request: AuditRequestPolicy {
                 fields: &[],
                 transform: AuditTransform::Fields,
-                typed_fields: &[],
-                typed_omit: &[],
+                typed: AuditTypedPolicy::Omit,
             },
             result: AuditResultPolicy::Fields(&[]),
         },

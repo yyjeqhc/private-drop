@@ -36,8 +36,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                                 ),
                             ],
                             transform: AuditTransform::Fields,
-                            typed_fields: &[],
-                            typed_omit: &[],
+                            typed: AuditTypedPolicy::Same,
                         },
                         result: AuditResultPolicy::Fields(&[
                             AuditField::new("run_id", "run_id", AuditValue::Nullable),
@@ -104,8 +103,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::CodingEvents(&[
                     AuditField::new("run_id", "run_id", AuditValue::Nullable),
@@ -169,8 +167,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("run_id", "run_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("run_id", "run_id", AuditValue::Nullable),

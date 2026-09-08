@@ -25,11 +25,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("patch_present", "patch", AuditValue::KeyPresent),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[
+                        typed: AuditTypedPolicy::Overrides { fields: &[
                             AuditField::new("patch_bytes", "patch", AuditValue::Bytes),
                             AuditField::new("patch_present", "patch", AuditValue::Present),
-                        ],
-                        typed_omit: &[],
+                        ], omit: &[] },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -72,8 +71,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("diff_present", "diff", AuditValue::KeyPresent),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[AuditField::new("diff_present", "diff", AuditValue::Present)],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new("diff_present", "diff", AuditValue::Present)], omit: &[] },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },

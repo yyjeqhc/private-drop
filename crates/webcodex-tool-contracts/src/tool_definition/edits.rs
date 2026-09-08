@@ -29,15 +29,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("content_present", "content", AuditValue::KeyPresent),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[
+                    typed: AuditTypedPolicy::Overrides { fields: &[
                         AuditField::new(
                             "expected_sha256_present",
                             "expected_sha256",
                             AuditValue::NonemptyString,
                         ),
                         AuditField::new("content_present", "content", AuditValue::Present),
-                    ],
-                    typed_omit: &["expected_sha256"],
+                    ], omit: &["expected_sha256"] },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -74,8 +73,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("dry_run", "dry_run", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Edits,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },

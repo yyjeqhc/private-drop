@@ -11,9 +11,20 @@ pub struct ToolAuditPolicy {
 pub struct AuditRequestPolicy {
     pub fields: &'static [AuditField],
     pub transform: AuditTransform,
-    /// Overrides only the historical typed recording stage; never execution arguments.
-    pub typed_fields: &'static [AuditField],
-    pub typed_omit: &'static [&'static str],
+    /// The historical typed recording stage is sometimes narrower than the raw
+    /// request boundary. This controls recording only, never execution arguments.
+    pub typed: AuditTypedPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditTypedPolicy {
+    Same,
+    /// Preserve an intentionally empty typed summary even when raw fields evolve.
+    Omit,
+    Overrides {
+        fields: &'static [AuditField],
+        omit: &'static [&'static str],
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +89,7 @@ pub enum AuditValue {
     Bytes,
     Chars,
     Count,
+    OptionalCount,
     ObjectCount,
     NullableCount,
     NullableBytes,
@@ -93,16 +105,14 @@ pub enum AuditValue {
 
 impl ToolAuditPolicy {
     pub fn is_valid(&self) -> bool {
-        self.request
-            .fields
-            .iter()
-            .chain(self.request.typed_fields)
-            .all(AuditField::is_valid)
-            && self
-                .request
-                .typed_omit
-                .iter()
-                .all(|field| !field.is_empty())
+        self.request.fields.iter().all(AuditField::is_valid)
+            && match self.request.typed {
+                AuditTypedPolicy::Same | AuditTypedPolicy::Omit => true,
+                AuditTypedPolicy::Overrides { fields, omit } => {
+                    fields.iter().all(AuditField::is_valid)
+                        && omit.iter().all(|field| !field.is_empty())
+                }
+            }
             && match self.result {
                 AuditResultPolicy::Fields(fields) | AuditResultPolicy::CodingEvents(fields) => {
                     fields.iter().all(AuditField::is_valid)

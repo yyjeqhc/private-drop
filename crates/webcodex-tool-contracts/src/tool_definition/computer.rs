@@ -42,8 +42,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("client_id", "client_id", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &["project", "client_id"],
+                        typed: AuditTypedPolicy::Omit,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("available", "available", AuditValue::Nullable),
@@ -87,8 +86,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("text_bytes", "text", AuditValue::Bytes),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &["project", "client_id", "text_bytes"],
+                        typed: AuditTypedPolicy::Omit,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("text_bytes", "text_bytes", AuditValue::Nullable),
@@ -140,15 +138,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("y", "y", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[
-                            "project",
-                            "client_id",
-                            "display_id",
-                            "snapshot_generation",
-                            "x",
-                            "y",
-                        ],
+                        typed: AuditTypedPolicy::Omit,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("display_id", "display_id", AuditValue::Nullable),
@@ -211,15 +201,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("y", "y", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[
-                            "project",
-                            "client_id",
-                            "display_id",
-                            "snapshot_generation",
-                            "x",
-                            "y",
-                        ],
+                        typed: AuditTypedPolicy::Omit,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("display_id", "display_id", AuditValue::Nullable),
@@ -271,8 +253,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 request: AuditRequestPolicy {
                     fields: &[AuditField::new("project", "project", AuditValue::Copy)],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("count", "count", AuditValue::Nullable),
@@ -310,8 +291,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("limit", "limit", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("count", "count", AuditValue::Nullable),
@@ -349,8 +329,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("limit", "limit", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &["project", "client_id", "limit"],
+                        typed: AuditTypedPolicy::Omit,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("count", "count", AuditValue::Nullable),
@@ -389,8 +368,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("limit", "limit", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("count", "count", AuditValue::Nullable),
@@ -427,8 +405,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("application_id", "application_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("application_id", "application_id", AuditValue::Nullable),
@@ -467,8 +444,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("client_id", "client_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("platform", "platform", AuditValue::Nullable),
@@ -507,8 +483,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("max_nodes", "max_nodes", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -559,8 +534,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("label_present", "label", AuditValue::StringPresent),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -605,8 +579,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("element_id", "element_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -648,8 +621,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("surface_id", "surface_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -689,8 +661,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("action", "action", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -732,8 +703,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("element_id", "element_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -774,8 +744,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("modifiers", "modifiers", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -818,8 +787,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("text_bytes", "text", AuditValue::Bytes),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -861,8 +829,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("region_present", "region", AuditValue::Present),
                     ],
                     transform: AuditTransform::Fields,
-                    typed_fields: &[],
-                    typed_omit: &["project"],
+                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "/surface/surface_id", AuditValue::Nullable),
@@ -913,14 +880,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("max_height", "max_height", AuditValue::Copy),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[
-                            "project",
-                            "client_id",
-                            "display_id",
-                            "max_width",
-                            "max_height",
-                        ],
+                        typed: AuditTypedPolicy::Omit,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("display_id", "display_id", AuditValue::Nullable),
@@ -980,8 +940,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("region_present", "region", AuditValue::Present),
                         ],
                         transform: AuditTransform::Fields,
-                        typed_fields: &[],
-                        typed_omit: &[],
+                        typed: AuditTypedPolicy::Same,
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("project", "project", AuditValue::Nullable),
