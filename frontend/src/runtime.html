@@ -28,13 +28,14 @@
     })();
   </script>
   <title>WebCodex — Runtime Console</title>
+  <link rel="icon" type="image/png" href="/webcodex-logo.png" />
   <link rel="stylesheet" href="/runtime/styles.css" />
 </head>
 <body>
   <main id="runtime-page">
     <header class="auth-topbar">
       <div class="brand-lockup">
-        <span class="brand-mark" aria-hidden="true">W</span>
+        <img class="brand-mark" src="/webcodex-logo.png" alt="" width="40" height="40" />
         <div>
           <h1>WebCodex Runtime Console</h1>
           <p class="muted">A local workspace for Projects, Sessions, and collaboration</p>
@@ -72,6 +73,7 @@
         </div>
         <label class="remember-credential"><input id="runtime-token-remember" type="checkbox" checked /> Keep me signed in for this tab (survives refresh, clears on Lock or tab close)</label>
         <p id="runtime-token-error" class="error" role="alert"></p>
+        <p class="demo-entry"><a href="/demo">Explore the demo workspace</a><span class="muted small">Sample data · no credential required</span></p>
       </form>
     </section>
 
@@ -79,7 +81,7 @@
       <aside id="runtime-sidebar" class="workspace-sidebar" aria-label="Project and Session navigation">
         <header class="sidebar-brand">
           <div class="sidebar-brand-lockup">
-            <span class="sidebar-logo" aria-hidden="true">W</span>
+            <img class="sidebar-logo" src="/webcodex-logo.png" alt="" width="36" height="36" />
             <strong>WebCodex</strong>
           </div>
           <div class="sidebar-brand-tools">

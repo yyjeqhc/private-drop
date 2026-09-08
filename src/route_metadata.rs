@@ -219,6 +219,8 @@ pub(crate) enum RouteId {
     RuntimeWebRoot,
     RuntimeWebAppJs,
     RuntimeWebStylesCss,
+    DemoWebRoot,
+    BrandLogoPng,
     AdminWebRoot,
     AdminWebAppJs,
     AdminWebStylesCss,
@@ -443,7 +445,7 @@ mod tests {
             AdminWebStylesCss as usize + 1,
             "canonical iteration must cover every RouteId exactly once",
         );
-        assert_eq!(iter_routes().count(), 137, "canonical route closure");
+        assert_eq!(iter_routes().count(), 139, "canonical route closure");
         assert_eq!(lookup("GET", "/mcp").unwrap().id, McpGet);
         assert_eq!(lookup("POST", "/mcp").unwrap().id, McpPost);
     }
@@ -481,7 +483,7 @@ mod tests {
             );
             references += 1;
         }
-        assert_eq!(references, 137, "A2 production leaf RouteId closure");
+        assert_eq!(references, 139, "A2 production leaf RouteId closure");
     }
 
     #[test]
@@ -511,7 +513,11 @@ mod tests {
         let routes = iter_routes()
             .filter(|spec| spec.surface == PublicWeb)
             .collect::<Vec<_>>();
-        assert_eq!(routes.len(), 10);
+        assert_eq!(routes.len(), 12);
+        for (id, path) in [(DemoWebRoot, "/demo"), (BrandLogoPng, "/webcodex-logo.png")] {
+            assert_eq!(lookup("GET", path).unwrap().id, id);
+            assert!(lookup("POST", path).is_none());
+        }
         for route in routes {
             assert_eq!(route.method, RouteMethod::Get, "{:?}", route.id);
             assert_eq!(

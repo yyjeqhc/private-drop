@@ -36,6 +36,8 @@ const ADMIN_STYLES_CSS: &str = include_str!("../frontend/dist/admin.css");
 const RUNTIME_HTML: &str = include_str!("../frontend/dist/runtime.html");
 const RUNTIME_APP_JS: &str = include_str!("../frontend/dist/runtime.js");
 const RUNTIME_STYLES_CSS: &str = include_str!("../frontend/dist/runtime.css");
+const DEMO_HTML: &str = include_str!("../frontend/dist/demo.html");
+const BRAND_LOGO_PNG: &[u8] = include_bytes!("../frontend/dist/webcodex-logo.png");
 
 #[derive(Debug, Clone, Copy)]
 enum ConsoleAsset {
@@ -48,6 +50,8 @@ enum ConsoleAsset {
     RuntimeHtml,
     RuntimeJavaScript,
     RuntimeCss,
+    DemoHtml,
+    BrandLogo,
 }
 
 impl ConsoleAsset {
@@ -62,6 +66,8 @@ impl ConsoleAsset {
             Self::RuntimeHtml => "runtime.html",
             Self::RuntimeJavaScript => "runtime.js",
             Self::RuntimeCss => "runtime.css",
+            Self::DemoHtml => "demo.html",
+            Self::BrandLogo => "webcodex-logo.png",
         }
     }
 
@@ -70,24 +76,27 @@ impl ConsoleAsset {
             Self::Html => "text/html; charset=utf-8",
             Self::JavaScript => "application/javascript; charset=utf-8",
             Self::Css | Self::AdminCss | Self::RuntimeCss => "text/css; charset=utf-8",
-            Self::AdminHtml | Self::RuntimeHtml => "text/html; charset=utf-8",
+            Self::AdminHtml | Self::RuntimeHtml | Self::DemoHtml => "text/html; charset=utf-8",
+            Self::BrandLogo => "image/png",
             Self::AdminJavaScript | Self::RuntimeJavaScript => {
                 "application/javascript; charset=utf-8"
             }
         }
     }
 
-    const fn embedded(self) -> &'static str {
+    const fn embedded(self) -> &'static [u8] {
         match self {
-            Self::Html => CONSOLE_HTML,
-            Self::JavaScript => CONSOLE_APP_JS,
-            Self::Css => CONSOLE_STYLES_CSS,
-            Self::AdminHtml => ADMIN_HTML,
-            Self::AdminJavaScript => ADMIN_APP_JS,
-            Self::AdminCss => ADMIN_STYLES_CSS,
-            Self::RuntimeHtml => RUNTIME_HTML,
-            Self::RuntimeJavaScript => RUNTIME_APP_JS,
-            Self::RuntimeCss => RUNTIME_STYLES_CSS,
+            Self::Html => CONSOLE_HTML.as_bytes(),
+            Self::JavaScript => CONSOLE_APP_JS.as_bytes(),
+            Self::Css => CONSOLE_STYLES_CSS.as_bytes(),
+            Self::AdminHtml => ADMIN_HTML.as_bytes(),
+            Self::AdminJavaScript => ADMIN_APP_JS.as_bytes(),
+            Self::AdminCss => ADMIN_STYLES_CSS.as_bytes(),
+            Self::RuntimeHtml => RUNTIME_HTML.as_bytes(),
+            Self::RuntimeJavaScript => RUNTIME_APP_JS.as_bytes(),
+            Self::RuntimeCss => RUNTIME_STYLES_CSS.as_bytes(),
+            Self::DemoHtml => DEMO_HTML.as_bytes(),
+            Self::BrandLogo => BRAND_LOGO_PNG,
         }
     }
 }
@@ -260,12 +269,20 @@ impl ConsoleAssetSource {
         Ok(canonical)
     }
 
-    async fn read(&self, asset: ConsoleAsset) -> Result<String, ConsoleAssetConfigError> {
+    async fn read(&self, asset: ConsoleAsset) -> Result<Vec<u8>, ConsoleAssetConfigError> {
         match self {
-            Self::Embedded => Ok(asset.embedded().to_string()),
+            Self::Embedded => Ok(asset.embedded().to_vec()),
             Self::Directory(_) => {
                 let path = self.validated_path(asset)?;
-                tokio::fs::read_to_string(path).await.map_err(|_| {
+                // Keep UTF-8 validation for text bundles; only the fixed logo is binary.
+                let body = if matches!(asset, ConsoleAsset::BrandLogo) {
+                    tokio::fs::read(path).await
+                } else {
+                    tokio::fs::read_to_string(path)
+                        .await
+                        .map(String::into_bytes)
+                };
+                body.map_err(|_| {
                     ConsoleAssetConfigError::new(format!(
                         "console development asset {} could not be read",
                         asset.file_name()
@@ -324,7 +341,9 @@ async fn serve_asset(depot: &Depot, res: &mut Response, asset: ConsoleAsset) {
     };
     apply_asset_headers(res, source, asset);
     match source.read(asset).await {
-        Ok(body) => res.render(Text::Plain(body)),
+        Ok(body) => {
+            res.body(salvo::http::ResBody::Once(body.into()));
+        }
         Err(error) => {
             tracing::error!(
                 asset = asset.file_name(),
@@ -372,6 +391,17 @@ pub async fn runtime_styles_css(depot: &Depot, res: &mut Response) {
     serve_asset(depot, res, ConsoleAsset::RuntimeCss).await;
 }
 
+/// Public, static feature tour. Its fictional state is confined to page memory.
+#[handler]
+pub async fn demo_html(depot: &Depot, res: &mut Response) {
+    serve_asset(depot, res, ConsoleAsset::DemoHtml).await;
+}
+
+#[handler]
+pub async fn brand_logo_png(depot: &Depot, res: &mut Response) {
+    serve_asset(depot, res, ConsoleAsset::BrandLogo).await;
+}
+
 /// Public admin shell; all data remains protected by `/api/admin/*`.
 #[handler]
 pub async fn admin_html(depot: &Depot, res: &mut Response) {
@@ -390,6 +420,8 @@ pub async fn admin_styles_css(depot: &Depot, res: &mut Response) {
 
 #[cfg(test)]
 mod tests {
+    mod demo_assets;
+
     use super::*;
     use crate::test_support::{test_config, test_db};
     use salvo::test::{ResponseExt, TestClient};
@@ -420,6 +452,8 @@ mod tests {
             .push(Router::with_path("runtime").get(runtime_html))
             .push(Router::with_path("runtime/app.js").get(runtime_app_js))
             .push(Router::with_path("runtime/styles.css").get(runtime_styles_css))
+            .push(Router::with_path("demo").get(demo_html))
+            .push(Router::with_path("webcodex-logo.png").get(brand_logo_png))
             .push(Router::with_path("admin").get(admin_html))
             .push(Router::with_path("admin/app.js").get(admin_app_js))
             .push(Router::with_path("admin/styles.css").get(admin_styles_css))

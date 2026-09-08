@@ -1,0 +1,1110 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="体验 WebCodex：在自己的机器上连接项目、观察 AI 任务、查看执行日志与审查代码。全部使用虚构示例数据。"
+    />
+    <title>WebCodex · 演示工作空间</title>
+    <link rel="icon" type="image/png" href="webcodex-logo.png" />
+    <style>
+      :root{color-scheme:dark;--bg:#0c0f14;--sidebar:#101319;--surface:#13171e;--raised:#191e27;--text:#e7ecf2;--muted:#929bab;--faint:#727d8f;--border:#252c36;--accent:#a6b4ff;--selected:#242b43;--teal:#53d9bb;--green-bg:#17302c;--amber:#edc488;--amber-bg:#332b20;--red:#ef9b9b;--red-bg:#352126;--mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}:root[data-theme="light"]{color-scheme:light;--bg:#f6f7f9;--sidebar:#edf0f4;--surface:#fff;--raised:#f0f3f7;--text:#202a38;--muted:#5e6b7e;--faint:#66758b;--border:#dce1e9;--accent:#495ba9;--selected:#e0e6fa;--teal:#167a68;--green-bg:#e3f2ed;--amber:#8a5c1b;--amber-bg:#fbefd9;--red:#b43b4d;--red-bg:#f9e8ea}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased}button,input,select{font:inherit}button,a,input,select{-webkit-tap-highlight-color:transparent}button{cursor:pointer}button:disabled{cursor:default;opacity:.55}a{color:inherit;text-decoration:none}button{color:inherit}svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}img{object-fit:contain}h1,h2,h3,p{margin:0}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:4px}button,a{transition:background .15s,color .15s}button:hover:not(:disabled),.sidebar a:hover{color:var(--text)}[hidden]{display:none !important}.icon-definitions{position:absolute;width:0;height:0;overflow:hidden}.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.skip-link{position:fixed;top:8px;left:8px;z-index:100;transform:translateY(-150%);padding:10px 18px;background:var(--accent);color:var(--bg)}.skip-link:focus{transform:none}.demo-shell{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;background:var(--sidebar);border-right:1px solid var(--border);padding:26px 16px 16px;overflow-y:auto}.brand{display:flex;align-items:center;gap:9px;margin:0 4px 28px}.brand strong{font-size:21px;letter-spacing:-.7px;font-weight:650}.brand small{display:block;color:var(--faint);font-size:9px;letter-spacing:1.7px;line-height:1.3}.workspace-label{display:flex;align-items:center;gap:10px;margin:0 0 25px;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:12px}.workspace-label small{display:block;color:var(--faint);font-size:10px}.workspace-avatar{display:grid;place-items:center;width:28px;height:28px;background:var(--selected);border-radius:6px;color:var(--accent);font-weight:700}.workspace-tag{margin-left:auto;font-size:8px;letter-spacing:.5px;color:var(--muted)}.main-nav{display:grid;gap:5px}.main-nav button{display:flex;align-items:center;gap:11px;width:100%;height:40px;padding:0 11px;border:0;border-radius:7px;background:transparent;color:var(--muted);text-align:left}.main-nav button[aria-current="page"]{background:var(--selected);color:var(--accent)}.main-nav button:hover{background:var(--raised)}.main-nav kbd,.nav-count{margin-left:auto;font:10px var(--mono);color:var(--faint)}.nav-count.attention{background:var(--amber-bg);color:var(--amber);border-radius:4px;padding:0 6px}.project-nav{margin-top:30px}.section-caption{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;font-weight:550;color:var(--muted);letter-spacing:.3px}.project-nav>.section-caption{padding:0 10px}.section-caption svg{width:14px;height:14px;color:var(--faint)}.project-search{display:flex;align-items:center;gap:7px;margin:12px 5px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;color:var(--faint)}.project-search svg{width:14px;height:14px}.project-search input{background:transparent;border:0;color:var(--text);width:100%;min-width:0;font-size:11px;outline-offset:0}.project-search input::placeholder{color:var(--faint)}.project-button{display:flex;align-items:center;gap:10px;background:transparent;border:0;width:100%;padding:11px 10px;border-radius:7px;text-align:left}.project-button:hover,.project-button[aria-pressed="true"]{background:var(--raised)}.project-button .project-copy{display:grid;gap:2px}.project-copy strong{font-size:12px;font-weight:500}.project-copy small{color:var(--faint);font-size:10px}.project-button>.status-dot{margin-left:auto}.project-monogram{display:grid;place-items:center;width:27px;height:27px;border:1px solid var(--border);border-radius:7px;background:var(--raised);color:var(--accent);font-size:12px;font-weight:600;flex-shrink:0}.sidebar-note{display:flex;gap:9px;margin-top:auto;padding:34px 9px 22px}.sidebar-note>.status-dot{margin-top:7px;flex-shrink:0}.sidebar-note strong{font-size:10px;font-weight:500}.sidebar-note p{font-size:10px;color:var(--faint);margin-top:6px;line-height:1.8}.sidebar-footer{display:flex;gap:16px;border-top:1px solid var(--border);padding:16px 8px 0;font-size:10px;color:var(--muted)}.sidebar-footer>span{margin-left:auto;color:var(--faint)}.main{min-width:0}.topbar{height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 32px;border-bottom:1px solid var(--border)}.breadcrumb{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:11px}.breadcrumb>svg{width:15px;height:15px;color:var(--faint)}.breadcrumb strong{color:var(--text);font-weight:400}.slash{color:var(--faint)}.topbar-actions{display:flex;align-items:center;gap:20px}.demo-badge{display:inline-flex;gap:7px;align-items:center;color:var(--teal);font-size:10px}.status-dot{display:inline-block;width:6px;height:6px;background:var(--teal);border-radius:50%;vertical-align:middle}.status-dot.offline{background:var(--faint)}.icon-button{display:grid;place-items:center;width:30px;height:30px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted)}.icon-button:hover{background:var(--raised)}.connect-link{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted)}.connect-link:hover{color:var(--text)}.connect-link svg{width:14px;height:14px}.mobile-menu{display:none}#demo-content{max-width:1540px;margin:0 auto;padding:32px 32px 20px;outline:none}.page-heading{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:25px}.eyebrow{font-size:9px;letter-spacing:2px;color:var(--faint);margin-bottom:8px}h1{font-size:26px;font-weight:600;letter-spacing:-.8px;line-height:1.4}.page-heading p:not(.eyebrow){color:var(--muted);font-size:11px;margin-top:10px}.snapshot-label{color:var(--faint);font-size:10px;white-space:nowrap}.snapshot-label span{display:block;text-align:right;font:11px var(--mono);color:var(--muted);margin-top:5px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:24px}.metric{padding:15px 20px}.metric + .metric{border-left:1px solid var(--border)}.metric>span{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:10px}.metric svg{width:15px;height:15px;color:var(--faint)}.metric>strong{display:flex;align-items:baseline;gap:9px;font-size:29px;font-weight:550;line-height:1.8;letter-spacing:-1px}.metric small{font-size:10px;color:var(--faint);font-weight:400;letter-spacing:0}.metric-denominator{font-size:20px;color:var(--faint)}.metric p{font-size:9px;color:var(--faint)}.metric .status-dot{width:5px;height:5px;margin-right:5px}.workbench{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:20px;align-items:start}.session{border:1px solid var(--border);border-radius:10px;background:var(--surface);min-width:0;overflow:hidden}.session-project{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 20px;border-bottom:1px solid var(--border);font-size:10px}.session-project>div{display:flex;align-items:center;gap:9px;min-width:0}.session-project strong{font-size:12px;font-weight:500}.session-project>div>span:last-child{color:var(--faint)}.pill{padding:3px 8px;border-radius:5px;background:var(--amber-bg);color:var(--amber);font-size:10px;white-space:nowrap}.pill.approved{background:var(--green-bg);color:var(--teal)}.pill.changes_requested{background:var(--red-bg);color:var(--red)}.session-heading{padding:21px 22px 16px}.session-heading label{display:block;color:var(--faint);font-size:9px;margin-bottom:5px}.session-heading select{display:block;width:100%;border:0;background:var(--surface);color:var(--text);font-size:18px;font-weight:550;padding:3px 25px 3px 0;text-overflow:ellipsis}.session-meta{display:flex;align-items:center;gap:17px;margin-top:9px;font-size:9px;color:var(--faint);flex-wrap:wrap}.session-meta>span:first-child{display:flex;align-items:center;gap:6px;font-family:var(--mono)}.session-meta svg{width:12px;height:12px}.tabs{display:flex;gap:22px;border-bottom:1px solid var(--border);padding:0 22px}.tabs button{display:flex;align-items:center;gap:7px;border:0;border-bottom:2px solid transparent;background:transparent;padding:10px 1px;color:var(--muted);font-size:11px}.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}.tabs span{font:9px var(--mono);padding:0 4px;border-radius:3px;background:var(--raised);color:var(--faint)}.session-panels{min-height:424px;padding:22px}.message + .message{margin-top:22px}.message-author{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:9px;font-size:10px}.message-author strong{font-weight:500}.message-author time{margin-left:auto;color:var(--faint);font-size:9px}.human-avatar{display:grid;place-items:center;width:22px;height:22px;border-radius:6px;background:var(--selected);color:var(--accent);font-size:10px}.message-label{padding:1px 5px;font-size:8px;border:1px solid var(--border);border-radius:4px;color:var(--faint)}.message>p{font-size:11px;line-height:1.9;color:var(--muted)}.user-message>p{padding:11px 14px;background:var(--raised);border-radius:7px;color:var(--text)}.execution-steps{padding:0;margin:12px 0;display:grid;gap:7px;list-style:none;font-size:10px;color:var(--muted)}.execution-steps li{display:flex;align-items:center;gap:8px}.step-indicator{display:grid;place-items:center;width:14px;height:14px;border-radius:50%;background:var(--green-bg);color:var(--teal);font-size:8px}.step-indicator.waiting{background:var(--raised);color:var(--faint)}.step-indicator.active{background:var(--selected);color:var(--accent)}.command-preview{padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg)}.command-preview>span{display:flex;align-items:center;gap:7px;color:var(--faint);font-size:9px}.command-preview svg{width:13px;height:13px}.command-preview code{display:block;font:10px/1.8 var(--mono);margin:6px 0;overflow-wrap:anywhere}.command-preview p{color:var(--teal);font:9px/1.6 var(--mono)}.result-check{color:var(--teal);width:22px;text-align:center}.result-message>p{padding-left:30px}.session-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 20px;border-top:1px solid var(--border);font-size:9px;color:var(--faint)}.button{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--border);border-radius:6px;background:var(--raised);padding:7px 10px;line-height:1.5;font-size:10px;white-space:nowrap;color:var(--text)}.button:hover:not(:disabled){background:var(--selected)}.button.primary{background:var(--text);color:var(--bg);border-color:transparent}.button.primary:hover:not(:disabled){background:var(--accent);color:var(--bg)}.inspector{border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:0 18px}.inspector>section{padding:18px 0}.inspector>section + section{border-top:1px solid var(--border)}.context-facts{margin:16px 0 0;display:grid;gap:12px}.context-facts>div{display:flex;justify-content:space-between;gap:14px;font-size:10px}.context-facts dt{color:var(--faint);flex-shrink:0}.context-facts dd{margin:0;text-align:right;overflow-wrap:anywhere;min-width:0}.context-facts dd.mono{font-size:9px}.context-note{display:flex;gap:7px;align-items:center;color:var(--faint);font-size:9px;margin-top:16px}.context-note svg{width:13px;height:13px}.success-text{font:8px var(--mono);color:var(--teal)}.validation-number{display:flex;align-items:center;gap:12px;margin:12px 0}.validation-number strong{font-size:32px;line-height:1.4;font-weight:500;letter-spacing:-1px}.validation-number>span{color:var(--muted);font-size:10px;line-height:1.8}.validation-number small{color:var(--faint);font-size:8px}.validation-number>svg{margin-left:auto;width:26px;height:26px;padding:4px;border-radius:50%;background:var(--green-bg);color:var(--teal)}.validation-track{height:3px;background:var(--raised);border-radius:2px;overflow:hidden;margin:7px 0 9px}.validation-track span{display:block;height:100%;width:100%;background:var(--teal)}.quiet{color:var(--faint)}.small{font-size:9px}.mono{font-family:var(--mono)}.changed-files{list-style:none;padding:0;margin:13px 0;display:grid;gap:11px;font:9px/1.5 var(--mono)}.changed-files li{display:flex;justify-content:space-between;gap:8px}.changed-files li>span:first-child{min-width:0;overflow-wrap:anywhere}.file-stat{color:var(--teal);white-space:nowrap}.text-button{border:0;padding:0;background:transparent;color:var(--accent);font-size:10px;display:flex;justify-content:space-between;width:100%}.review-icon{width:23px;height:23px;color:var(--accent);margin-bottom:9px}.review-card h2{font-size:13px;font-weight:550}.review-card p{font-size:10px;line-height:1.9;color:var(--muted);margin:8px 0 14px}.review-actions{display:flex;gap:7px;flex-wrap:wrap}.review-disclaimer{display:block;color:var(--faint);font-size:8px;margin-top:10px}.panel-caption{display:flex;justify-content:space-between;gap:10px;font-size:10px;color:var(--faint);margin-bottom:16px}.terminal-output{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/2 var(--mono);color:var(--muted);margin:0}.diff-file{border:1px solid var(--border);border-radius:7px;overflow:hidden;margin-bottom:15px}.diff-file h3{font:10px/1.6 var(--mono);padding:9px 12px;background:var(--raised);overflow-wrap:anywhere}.diff-file pre{padding:9px 0;margin:0;font:10px/1.9 var(--mono);overflow-x:auto}.diff-line{display:block;padding:0 12px;min-width:fit-content}.diff-line.add{background:var(--green-bg);color:var(--teal)}.diff-line.remove{background:var(--red-bg);color:var(--red)}.diff-line.meta{color:var(--faint)}.diff-stat{color:var(--teal);font:10px var(--mono)}.demo-footnote{display:flex;align-items:center;gap:12px;padding-top:22px;color:var(--faint);font-size:9px}.demo-footnote>span{font:8px var(--mono);letter-spacing:1px;white-space:nowrap}.demo-footnote p{flex:1}.demo-footnote button{border:0;background:transparent;color:var(--muted);font-size:10px;white-space:nowrap}.view-section-heading,.jobs-heading{margin:5px 0 22px}.view-section-heading h2,.jobs-heading h2{font-size:18px;font-weight:550}.view-section-heading p,.jobs-heading p{font-size:11px;color:var(--muted);margin-top:6px}.runner-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}.runner-card{padding:24px;background:var(--surface);border:1px solid var(--border);border-radius:10px}.runner-card>svg{width:32px;height:32px;color:var(--accent);margin-bottom:12px}.runner-card h3{font-size:16px;font-weight:550}.runner-card>.pill{display:inline-block;margin-top:12px}.runner-platform{color:var(--faint);font:10px var(--mono);margin-top:5px}.runner-detail{padding-top:20px;margin-top:20px;border-top:1px solid var(--border)}.runner-detail dl{margin:0;display:grid;gap:12px}.runner-detail dl>div{display:flex;justify-content:space-between;gap:12px;font-size:11px}.runner-detail dt{color:var(--faint)}.runner-detail dd{margin:0}.runner-meter{height:4px;background:var(--raised);margin-top:12px;border-radius:4px;overflow:hidden}.runner-meter>span{display:block;height:100%;background:var(--accent)}.runner-detail p{font-size:10px;color:var(--faint);margin-top:12px}.runner-card .button{margin-top:24px;width:100%}.jobs-heading{display:flex;justify-content:space-between;gap:20px;align-items:center}.jobs-heading label{color:var(--muted);font-size:11px}.jobs-heading select{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px;margin-left:7px}.table-scroll{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow-x:auto}table{width:100%;border-collapse:collapse;text-align:left;white-space:nowrap}th{font-size:10px;font-weight:500;color:var(--faint);background:var(--raised)}th,td{padding:18px 15px}td{font-size:11px;border-top:1px solid var(--border)}td strong{font-weight:500}td small{display:block;color:var(--faint);font-size:9px;margin-top:4px}td .text-button{white-space:nowrap}.empty{padding:22px 10px;color:var(--faint);font-size:11px}.review-queue{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}.review-queue button{display:grid;gap:4px;text-align:left;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;padding:12px 16px;font-size:11px}.review-queue button[aria-pressed="true"]{border-color:var(--accent)}.review-queue small{font-size:9px;color:var(--faint)}@media (min-width:1700px){.demo-shell{grid-template-columns:260px minmax(0,1fr)}#demo-content{padding-top:42px}.workbench{grid-template-columns:minmax(0,1fr) 310px;gap:24px}.session-panels{padding:26px 30px}.message>p{font-size:13px}.execution-steps{font-size:12px}}@media (max-width:1200px){.demo-shell{grid-template-columns:210px minmax(0,1fr)}#demo-content{padding:26px 22px 18px}.topbar{padding:0 22px}.workbench{grid-template-columns:minmax(0,1fr) 230px;gap:14px}.metric{padding:14px}.metric small{display:none}.topbar-actions{gap:12px}.snapshot-label{display:none}.session-project{padding:12px 16px}.session-project>div>span:last-child{display:none}.session-heading,.session-panels{padding:18px}.session-heading select{font-size:16px}.tabs{padding:0 18px}.inspector{padding:0 14px}.review-actions{flex-direction:column}.runner-grid{grid-template-columns:1fr}.runner-card{display:grid;grid-template-columns:40px 1fr;gap:0 12px}.runner-card>svg{grid-row:1/3}.runner-card>.pill{justify-self:start}.runner-detail,.runner-card .button{grid-column:1/-1}.demo-footnote>span{display:none}}@media (max-width:960px){.workbench{grid-template-columns:minmax(0,1fr)}.inspector{display:grid;grid-template-columns:1fr 1fr;gap:0 24px;padding:0 20px}.inspector>section:nth-child(2){border-top:0}.review-actions{flex-direction:row}.session-panels{min-height:400px}.metrics{grid-template-columns:1fr 1fr}.metric:nth-child(3){border-left:0;border-top:1px solid var(--border)}.metric:nth-child(4){border-top:1px solid var(--border)}.metric p{display:none}.metric small{display:inline}.page-heading p:not(.eyebrow){max-width:420px}.connect-link{font-size:10px}.connect-link svg{display:none}}@media (max-width:700px){.demo-shell{display:block}.sidebar{display:none;position:static;height:auto;max-height:65vh;border-right:0;border-bottom:1px solid var(--border);padding:18px}.demo-shell.nav-open .sidebar{display:flex}.sidebar .brand{margin-bottom:18px}.workspace-label,.sidebar-note,.sidebar-footer{display:none}.project-nav{margin-top:20px}.main-nav{grid-template-columns:1fr 1fr}.project-nav>#demo-projects{display:flex;flex-wrap:wrap}.project-button{width:auto;flex:1;min-width:140px}.mobile-menu{display:grid}.topbar{height:58px;padding:0 16px;gap:9px}.breadcrumb{font-size:10px;gap:7px;flex:1}.breadcrumb>svg,.breadcrumb>.slash,.breadcrumb>strong{display:none}.topbar-actions{gap:10px}.connect-link{display:none}.demo-badge{font-size:9px}#demo-content{padding:24px 16px 16px}.page-heading{margin-bottom:20px}h1{font-size:22px}.page-heading p:not(.eyebrow){font-size:11px;line-height:1.9}.metrics{margin-bottom:18px}.metric>strong{font-size:27px}.metric small{font-size:9px}.session-heading select{font-size:16px}.session-footer{flex-wrap:wrap;padding:13px 16px}.session-footer>.button{margin-left:auto}.inspector{gap:0 16px;padding:0 16px}.context-facts>div{display:block}.context-facts dd{text-align:left;margin-top:4px}.review-actions{flex-direction:column}.validation-number{gap:8px}.validation-number>svg{display:none}.demo-footnote{align-items:flex-start;gap:14px;line-height:1.8;padding-bottom:env(safe-area-inset-bottom)}.jobs-heading{display:block}.jobs-heading>label{display:block;margin-top:14px}.session-meta{gap:8px;font-size:8px}.tabs{gap:20px}.message-author{font-size:10px}}@media (pointer:coarse){button,.connect-link,.project-button,.sidebar-footer a{min-height:44px}.tabs button{min-height:44px}.project-search{min-height:40px}}@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none !important;scroll-behavior:auto !important}}@media (forced-colors:active){.pill,.project-monogram,.step-indicator,.demo-badge{border:1px solid CanvasText}.status-dot,.validation-track span{background:Highlight}}
+
+    </style>
+  </head>
+  <body>
+    <svg
+      class="icon-definitions"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <symbol id="icon-grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </symbol>
+      <symbol id="icon-device" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="13" rx="2" />
+        <path d="M8 21h8m-4-4v4M7 8h4" />
+      </symbol>
+      <symbol id="icon-terminal" viewBox="0 0 24 24">
+        <path d="m5 6 6 6-6 6m9 0h6" />
+      </symbol>
+      <symbol id="icon-review" viewBox="0 0 24 24">
+        <path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5m-11 6 3 3 5-6" />
+      </symbol>
+      <symbol id="icon-branch" viewBox="0 0 24 24">
+        <circle cx="6" cy="5" r="2" />
+        <circle cx="18" cy="5" r="2" />
+        <circle cx="6" cy="19" r="2" />
+        <path d="M6 7v10m12-10v2c0 4-12 2-12 6" />
+      </symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24">
+        <path d="M3 7V5h7l2 2h9v13H3V7Z" />
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m16 16 5 5" />
+      </symbol>
+      <symbol id="icon-arrow" viewBox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6" />
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="icon-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" />
+        <path
+          d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"
+        />
+      </symbol>
+      <symbol id="icon-menu" viewBox="0 0 24 24">
+        <path d="M4 6h16M4 12h16M4 18h16" />
+      </symbol>
+    </svg>
+    <a class="skip-link" href="#demo-content">跳转到内容</a>
+    <div class="demo-shell">
+      <aside class="sidebar" id="demo-sidebar" aria-label="演示导航">
+        <a class="brand" href="#demo-content" aria-label="WebCodex 演示工作空间"
+          ><img src="webcodex-logo.png" alt="" width="48" height="48" /><span
+            ><strong>WebCodex</strong><small>RUNTIME CONSOLE</small></span
+          ></a
+        >
+        <div class="workspace-label">
+          <span class="workspace-avatar">W</span
+          ><span>演示工作空间<small>Personal workspace</small></span
+          ><span class="workspace-tag">DEMO</span>
+        </div>
+        <nav class="main-nav" aria-label="功能导航">
+          <button type="button" data-view="workspace" aria-current="page">
+            <svg><use href="#icon-grid" /></svg><span>工作空间</span
+            ><kbd>01</kbd>
+          </button>
+          <button type="button" data-view="runners">
+            <svg><use href="#icon-device" /></svg><span>Runner 设备</span
+            ><span class="nav-count">3</span>
+          </button>
+          <button type="button" data-view="jobs">
+            <svg><use href="#icon-terminal" /></svg><span>执行记录</span
+            ><span class="nav-count">5</span>
+          </button>
+          <button type="button" data-view="review">
+            <svg><use href="#icon-review" /></svg><span>代码审查</span
+            ><span class="nav-count attention" id="demo-review-count">2</span>
+          </button>
+        </nav>
+        <div class="project-nav">
+          <div class="section-caption"><span>项目</span><span>3</span></div>
+          <label class="project-search"
+            ><svg><use href="#icon-search" /></svg
+            ><input
+              id="demo-search"
+              type="search"
+              maxlength="100"
+              placeholder="搜索项目…"
+              aria-label="搜索演示项目"
+              autocomplete="off"
+          /></label>
+          <div id="demo-projects"></div>
+          <p id="demo-search-empty" class="empty" hidden>没有匹配的项目。</p>
+        </div>
+        <div class="sidebar-note">
+          <span class="status-dot"></span>
+          <div>
+            <strong>代码在本地，工作有迹可循。</strong>
+            <p>从一次 AI 指令，到可审查的代码变化。</p>
+          </div>
+        </div>
+        <footer class="sidebar-footer">
+          <a
+            href="https://github.com/yyjeqhc/webcodex"
+            target="_blank"
+            rel="noreferrer"
+            >GitHub ↗</a
+          ><a
+            href="https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.zh-CN.md"
+            target="_blank"
+            rel="noreferrer"
+            >使用文档 ↗</a
+          ><span>v0.4.0</span>
+        </footer>
+      </aside>
+      <div class="main">
+        <header class="topbar">
+          <button
+            class="icon-button mobile-menu"
+            id="demo-menu"
+            type="button"
+            aria-label="展开导航"
+            aria-controls="demo-sidebar"
+            aria-expanded="false"
+          >
+            <svg><use href="#icon-menu" /></svg>
+          </button>
+          <div class="breadcrumb">
+            <svg><use href="#icon-grid" /></svg><span>演示工作空间</span
+            ><span class="slash">/</span
+            ><strong id="demo-breadcrumb">工作空间</strong>
+          </div>
+          <div class="topbar-actions">
+            <span class="demo-badge"
+              ><span class="status-dot"></span>示例数据</span
+            ><button
+              class="icon-button"
+              id="demo-theme"
+              type="button"
+              aria-label="切换到浅色主题"
+              title="切换到浅色主题"
+            >
+              <svg><use href="#icon-sun" /></svg></button
+            ><a
+              class="connect-link"
+              href="https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.zh-CN.md"
+              target="_blank"
+              rel="noreferrer"
+              >连接自己的机器 <svg><use href="#icon-arrow" /></svg
+            ></a>
+          </div>
+        </header>
+        <main id="demo-content" tabindex="-1">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">YOUR CODE. YOUR MACHINES.</p>
+              <h1 id="demo-title">让 AI 的每一步，都清晰可见。</h1>
+              <p id="demo-description">
+                连接自己的开发环境，观察任务、检查结果，让代码始终掌握在你手中。
+              </p>
+            </div>
+            <span class="snapshot-label"
+              >示例工作日 <span>2026.09.08</span></span
+            >
+          </div>
+          <section class="metrics" aria-label="演示概览">
+            <div class="metric">
+              <span
+                >已接入项目<svg><use href="#icon-folder" /></svg></span
+              ><strong>3<small>个工作空间</small></strong>
+              <p>Rust · TypeScript · Python</p>
+            </div>
+            <div class="metric">
+              <span
+                >在线 Runner<svg><use href="#icon-device" /></svg></span
+              ><strong
+                >2 <span class="metric-denominator">/ 3</span
+                ><small>台设备</small></strong
+              >
+              <p><i class="status-dot"></i> 多设备，统一观察</p>
+            </div>
+            <div class="metric">
+              <span
+                >执行记录<svg><use href="#icon-terminal" /></svg></span
+              ><strong>5<small>个示例任务</small></strong>
+              <p>命令、输出与结果持续保留</p>
+            </div>
+            <div class="metric">
+              <span
+                >等待人工审查<svg><use href="#icon-review" /></svg></span
+              ><strong id="demo-pending-metric">2</strong>
+              <p>查看差异后，由你决定</p>
+            </div>
+          </section>
+          <section
+            id="demo-review-queue"
+            class="review-queue"
+            aria-label="待审查示例任务"
+            hidden
+          ></section>
+          <section
+            id="demo-workbench"
+            class="workbench"
+            aria-label="演示项目工作台"
+          >
+            <div class="session">
+              <div class="session-project">
+                <div>
+                  <span class="project-monogram" id="demo-project-mark">W</span
+                  ><strong id="demo-project-name">WebCodex</strong
+                  ><span class="quiet">/</span><span>Workflow Session</span>
+                </div>
+                <span class="pill" id="demo-session-status">等待审查</span>
+              </div>
+              <div class="session-heading">
+                <label for="demo-task">当前会话</label
+                ><select id="demo-task" aria-label="选择示例会话"></select>
+                <div class="session-meta">
+                  <span
+                    ><svg><use href="#icon-branch" /></svg
+                    ><span id="demo-branch"></span></span
+                  ><span id="demo-session-time"></span>
+                </div>
+              </div>
+              <div class="tabs" role="tablist" aria-label="任务详情">
+                <button
+                  id="tab-conversation"
+                  type="button"
+                  role="tab"
+                  data-tab="conversation"
+                  aria-controls="panel-conversation"
+                  aria-selected="true"
+                >
+                  会话记录<span>3</span></button
+                ><button
+                  id="tab-logs"
+                  type="button"
+                  role="tab"
+                  data-tab="logs"
+                  aria-controls="panel-logs"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  执行日志</button
+                ><button
+                  id="tab-diff"
+                  type="button"
+                  role="tab"
+                  data-tab="diff"
+                  aria-controls="panel-diff"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  代码差异<span id="demo-file-count">2</span>
+                </button>
+              </div>
+              <div class="session-panels">
+                <section
+                  id="panel-conversation"
+                  role="tabpanel"
+                  aria-labelledby="tab-conversation"
+                  tabindex="0"
+                >
+                  <div class="message user-message">
+                    <div class="message-author">
+                      <span class="human-avatar">你</span
+                      ><strong>你的指令</strong><time>14:32</time>
+                    </div>
+                    <p id="demo-prompt"></p>
+                  </div>
+                  <div class="message agent-message">
+                    <div class="message-author">
+                      <img
+                        src="webcodex-logo.png"
+                        alt=""
+                        width="28"
+                        height="28"
+                      /><strong>开发 Agent</strong
+                      ><span class="message-label">示例留言</span
+                      ><time>14:33</time>
+                    </div>
+                    <p id="demo-response"></p>
+                    <ol class="execution-steps" id="demo-steps"></ol>
+                    <div class="command-preview">
+                      <span
+                        ><svg><use href="#icon-terminal" /></svg
+                        >在项目环境中验证</span
+                      ><code id="demo-command"></code>
+                      <p id="demo-test-summary"></p>
+                    </div>
+                  </div>
+                  <div class="message agent-message result-message">
+                    <div class="message-author">
+                      <span class="result-check">✓</span
+                      ><strong>结果已保留</strong><time>14:36</time>
+                    </div>
+                    <p id="demo-result"></p>
+                  </div>
+                </section>
+                <section
+                  id="panel-logs"
+                  role="tabpanel"
+                  aria-labelledby="tab-logs"
+                  tabindex="0"
+                  hidden
+                >
+                  <div class="panel-caption">
+                    <span>标准输出 · 保留的任务日志</span
+                    ><span class="mono">exit 0</span>
+                  </div>
+                  <pre id="demo-logs" class="terminal-output"></pre>
+                </section>
+                <section
+                  id="panel-diff"
+                  role="tabpanel"
+                  aria-labelledby="tab-diff"
+                  tabindex="0"
+                  hidden
+                >
+                  <div class="panel-caption">
+                    <span>工作区变更 · 示例 diff</span
+                    ><span class="diff-stat" id="demo-diff-stat"></span>
+                  </div>
+                  <div id="demo-diff" class="diff-files"></div>
+                </section>
+              </div>
+              <footer class="session-footer">
+                <span id="demo-replay-status" role="status" aria-live="polite"
+                  >示例会话 · 过程与结果均可回看</span
+                ><button type="button" class="button" id="demo-replay">
+                  <span aria-hidden="true">▷</span> 重播执行过程
+                </button>
+              </footer>
+            </div>
+            <aside class="inspector" aria-label="任务上下文">
+              <section>
+                <div class="section-caption">
+                  <span>工作区上下文</span><svg><use href="#icon-grid" /></svg>
+                </div>
+                <dl class="context-facts">
+                  <div>
+                    <dt>Runner</dt>
+                    <dd id="demo-runner"></dd>
+                  </div>
+                  <div>
+                    <dt>开发环境</dt>
+                    <dd id="demo-stack"></dd>
+                  </div>
+                  <div>
+                    <dt>工作目录</dt>
+                    <dd class="mono" id="demo-path"></dd>
+                  </div>
+                </dl>
+                <div class="context-note">
+                  <svg><use href="#icon-device" /></svg
+                  ><span>在仓库所在的机器上执行</span>
+                </div>
+              </section>
+              <section>
+                <div class="section-caption">
+                  <span>验证结果</span><span class="success-text">PASSED</span>
+                </div>
+                <div class="validation-number">
+                  <strong id="demo-test-count">24</strong
+                  ><span>项测试通过<br /><small>来自示例命令输出</small></span
+                  ><svg><use href="#icon-check" /></svg>
+                </div>
+                <div class="validation-track"><span></span></div>
+                <p class="quiet small" id="demo-validation-note"></p>
+              </section>
+              <section>
+                <div class="section-caption">
+                  <span>变更文件</span><span id="demo-changed-count">2</span>
+                </div>
+                <ul class="changed-files" id="demo-files"></ul>
+                <button class="text-button" id="demo-open-diff" type="button">
+                  查看完整差异 <span>↗</span>
+                </button>
+              </section>
+              <section class="review-card">
+                <svg class="review-icon"><use href="#icon-review" /></svg>
+                <h2 id="demo-review-title">最后一步，由你决定。</h2>
+                <p id="demo-review-description">
+                  测试结果和代码差异已就绪。查看后接受变更，或要求继续修改。
+                </p>
+                <div class="review-actions">
+                  <button
+                    class="button primary"
+                    id="demo-approve"
+                    type="button"
+                  >
+                    接受示例变更</button
+                  ><button
+                    class="button"
+                    id="demo-request-changes"
+                    type="button"
+                  >
+                    要求修改
+                  </button>
+                </div>
+                <span class="review-disclaimer">仅模拟审查，不修改仓库</span>
+              </section>
+            </aside>
+          </section>
+          <section id="demo-runners-view" hidden aria-label="示例 Runner 设备">
+            <div class="view-section-heading">
+              <h2>你的机器，都在这里。</h2>
+              <p>查看连接状态、项目与执行容量。</p>
+            </div>
+            <div class="runner-grid" id="demo-runners"></div>
+          </section>
+          <section
+            id="demo-jobs-view"
+            class="jobs-section"
+            hidden
+            aria-label="示例执行记录"
+          >
+            <div class="jobs-heading">
+              <div>
+                <h2>每一次执行，都有记录。</h2>
+                <p>选择一条记录，回看会话、日志和代码变化。</p>
+              </div>
+              <label
+                >筛选状态
+                <select id="demo-job-filter">
+                  <option value="all">全部记录</option>
+                  <option value="pending">待审查</option>
+                  <option value="approved">已接受</option>
+                  <option value="changes_requested">需修改</option>
+                </select></label
+              >
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务</th>
+                    <th>项目 / Runner</th>
+                    <th>审查状态</th>
+                    <th>验证</th>
+                    <th>耗时</th>
+                    <th><span class="visually-hidden">操作</span></th>
+                  </tr>
+                </thead>
+                <tbody id="demo-jobs"></tbody>
+              </table>
+            </div>
+            <p class="empty" id="demo-jobs-empty" hidden>
+              没有符合当前状态的记录。
+            </p>
+          </section>
+          <footer class="demo-footnote">
+            <span>DEMO ENVIRONMENT</span>
+            <p>
+              所有项目、设备、任务与日志均为虚构示例。交互只更新当前页面，不连接实际设备。
+            </p>
+            <button type="button" id="demo-reset">重置演示 ↺</button>
+          </footer>
+        </main>
+      </div>
+    </div>
+    <noscript
+      ><p>
+        此演示需要启用 JavaScript。<a href="https://github.com/yyjeqhc/webcodex"
+          >查看项目文档</a
+        >
+      </p></noscript
+    >
+    <script>
+      const demoProjects = [
+    {
+        id: "webcodex",
+        name: "WebCodex",
+        mark: "W",
+        stack: "Rust · TypeScript",
+        path: "/workspace/webcodex",
+        runner: "dev-linux",
+        description: "AI 开发环境连接与控制台",
+    },
+    {
+        id: "atlas",
+        name: "Atlas API",
+        mark: "A",
+        stack: "Python · FastAPI",
+        path: "/workspace/atlas-api",
+        runner: "build-linux",
+        description: "业务 API 与接口测试",
+    },
+    {
+        id: "studio",
+        name: "Studio UI",
+        mark: "S",
+        stack: "TypeScript · React",
+        path: "/workspace/studio-ui",
+        runner: "design-mac",
+        description: "设计系统与组件库",
+    },
+];
+const demoRunners = [
+    {
+        id: "dev-linux",
+        name: "开发工作站",
+        platform: "Ubuntu 24.04 · x86_64",
+        online: true,
+        memory: "6.2 / 32 GB",
+        cpu: 18,
+        slots: "0 / 4",
+        seen: "刚刚 · 示例快照",
+    },
+    {
+        id: "build-linux",
+        name: "构建服务器",
+        platform: "Debian 12 · x86_64",
+        online: true,
+        memory: "3.1 / 16 GB",
+        cpu: 8,
+        slots: "0 / 2",
+        seen: "刚刚 · 示例快照",
+    },
+    {
+        id: "design-mac",
+        name: "MacBook Pro",
+        platform: "macOS · arm64",
+        online: false,
+        memory: "—",
+        cpu: 0,
+        slots: "—",
+        seen: "2 小时前 · 示例快照",
+    },
+];
+const demoTasks = [
+    {
+        id: "heartbeat",
+        project: "webcodex",
+        title: "为 Runner 心跳补齐边界测试",
+        branch: "feature/heartbeat-tests",
+        duration: "3m 42s",
+        prompt: "检查 Runner 心跳的超时处理，补充断线与重连的边界测试。完成后运行相关测试，把代码差异留给我审查。",
+        response: "已定位心跳状态转换与超时判断。接下来复用现有测试结构，验证超时、重连和重复心跳三个场景。",
+        result: "相关测试全部通过，2 个文件的变更已保留。请查看代码差异，再决定是否接受。",
+        command: "cargo test -p runner heartbeat",
+        tests: 24,
+        review: "pending",
+        steps: [
+            "读取项目结构，确认当前分支",
+            "补齐超时、重连与重复心跳测试",
+            "运行相关测试，保留输出与代码差异",
+        ],
+        files: [
+            {
+                path: "src/runner/heartbeat.rs",
+                diff: "@@ 心跳状态判断（示例） @@\n impl Heartbeat {\n-    fn expired(&self, now: Instant) -> bool {\n-        now > self.deadline\n+    fn expired(&self, now: Instant) -> bool {\n+        now >= self.deadline\n     }\n }",
+            },
+            {
+                path: "tests/heartbeat.rs",
+                diff: "@@ 边界回归测试（示例） @@\n+#[test]\n+fn heartbeat_expires_at_deadline() {\n+    let clock = TestClock::new();\n+    let heartbeat = Heartbeat::new(clock.now());\n+    clock.advance(HEARTBEAT_TIMEOUT);\n+    assert!(heartbeat.expired(clock.now()));\n+}",
+            },
+        ],
+    },
+    {
+        id: "runner-docs",
+        project: "webcodex",
+        title: "补充 Runner 本地接入说明",
+        branch: "docs/runner-setup",
+        duration: "1m 18s",
+        prompt: "整理本地 Runner 的接入步骤，补充连接检查命令，并检查文档里的链接。",
+        response: "已整理 Server 与 Runner 的连接顺序，并给每一步补充可验证的检查点。",
+        result: "说明与链接检查已完成。示例审查已接受，文档变更保留在工作区。",
+        command: "python scripts/check_doc_links.py",
+        tests: 12,
+        review: "approved",
+        steps: ["读取已有接入文档", "补充连接检查与排查步骤", "检查文档链接"],
+        files: [
+            {
+                path: "docs/runner-setup.md",
+                diff: "@@ 连接检查（示例） @@\n ## 验证连接\n+1. 确认 Runner 使用预期的 Server 地址。\n+2. 在控制台查看设备连接状态。\n+3. 选择已注册项目并执行一次只读检查。",
+            },
+        ],
+    },
+    {
+        id: "pagination",
+        project: "atlas",
+        title: "修复分页接口的空结果边界",
+        branch: "fix/pagination-empty",
+        duration: "2m 16s",
+        prompt: "当查询没有结果时，分页接口应该返回空数组和正确的总数。请修复并补充回归测试。",
+        response: "已复现空结果时返回 null 的问题。将保持响应结构一致，补充空集合与越界页码的测试。",
+        result: "18 项相关测试通过。响应结构保持兼容，等待你审查这次修复。",
+        command: "pytest tests/api/test_pagination.py -q",
+        tests: 18,
+        review: "pending",
+        steps: [
+            "复现空结果响应",
+            "修正返回值并新增边界测试",
+            "运行分页接口回归测试",
+        ],
+        files: [
+            {
+                path: "app/api/pagination.py",
+                diff: '@@ 空结果分页（示例） @@\n def paginate(items, total):\n-    return {"items": items or None, "total": total}\n+    return {"items": items or [], "total": total}',
+            },
+            {
+                path: "tests/api/test_pagination.py",
+                diff: '@@ 回归测试（示例） @@\n+def test_empty_page_keeps_response_shape():\n+    page = paginate([], total=0)\n+    assert page == {"items": [], "total": 0}',
+            },
+        ],
+    },
+    {
+        id: "api-health",
+        project: "atlas",
+        title: "验证健康检查接口",
+        branch: "test/health-check",
+        duration: "48s",
+        prompt: "检查健康检查接口的返回内容，确保外部状态页能稳定读取服务状态。",
+        response: "已确认状态字段约定，并补充响应类型与状态码的测试。",
+        result: "9 项接口测试通过，示例审查已接受。",
+        command: "pytest tests/api/test_health.py -q",
+        tests: 9,
+        review: "approved",
+        steps: ["读取健康检查路由", "检查返回字段及状态码", "验证接口契约"],
+        files: [
+            {
+                path: "tests/api/test_health.py",
+                diff: '@@ 健康检查测试（示例） @@\n+def test_health(client):\n+    response = client.get("/health")\n+    assert response.status_code == 200\n+    assert response.json()["status"] == "ok"',
+            },
+        ],
+    },
+    {
+        id: "theme",
+        project: "studio",
+        title: "完善深浅主题下的按钮状态",
+        branch: "fix/button-theme",
+        duration: "1m 54s",
+        prompt: "检查按钮组件在深色主题下的焦点与禁用状态，补充可访问性验证。",
+        response: "已找到硬编码的焦点色。改为使用现有主题变量，并检查键盘导航与禁用态对比度。",
+        result: "16 项组件检查通过。结果已保留，设备离线后仍可回看本次记录。",
+        command: "npm test -- Button.test.tsx",
+        tests: 16,
+        review: "approved",
+        steps: ["检查按钮主题变量", "统一焦点与禁用状态", "验证键盘操作与组件行为"],
+        files: [
+            {
+                path: "src/components/Button.css",
+                diff: "@@ 主题焦点状态（示例） @@\n .button:focus-visible {\n-  outline: 2px solid #000;\n+  outline: 2px solid var(--focus-ring);\n+  outline-offset: 3px;\n }",
+            },
+        ],
+    },
+];
+const demoReviewLabels = {
+    pending: "等待审查",
+    approved: "已接受",
+    changes_requested: "需要修改",
+};
+let demoReviews = new Map(demoTasks.map((task) => [task.id, task.review]));
+let demoProjectId = "webcodex";
+let demoTaskId = "heartbeat";
+let demoActiveTab = "conversation";
+let demoReplayTimer;
+let demoReplayStep = 3;
+function demoEl(id) {
+    const node = document.getElementById(id);
+    if (!node)
+        throw new Error(`Missing demo element: ${id}`);
+    return node;
+}
+function demoNode(tag, text = "", className = "") {
+    const node = document.createElement(tag);
+    node.textContent = text;
+    if (className)
+        node.className = className;
+    return node;
+}
+function demoIcon(name) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", `#icon-${name}`);
+    svg.setAttribute("aria-hidden", "true");
+    svg.append(use);
+    return svg;
+}
+function demoText(id, value) {
+    demoEl(id).textContent = String(value);
+}
+function demoCurrentTask() {
+    return demoTasks.find((task) => task.id === demoTaskId);
+}
+function demoCurrentProject() {
+    return demoProjects.find((project) => project.id === demoProjectId);
+}
+function demoReview(task) {
+    return demoReviews.get(task.id);
+}
+function demoPill(review) {
+    return demoNode("span", demoReviewLabels[review], `pill ${review}`);
+}
+function demoDiffCount(files) {
+    const lines = files.flatMap((file) => file.diff.split("\n"));
+    return {
+        added: lines.filter((line) => line.startsWith("+")).length,
+        removed: lines.filter((line) => line.startsWith("-")).length,
+    };
+}
+function demoCloseNavigation() {
+    document.querySelector(".demo-shell")?.classList.remove("nav-open");
+    demoEl("demo-menu").setAttribute("aria-expanded", "false");
+}
+function demoStopReplay() {
+    if (demoReplayTimer !== undefined)
+        window.clearTimeout(demoReplayTimer);
+    demoReplayTimer = undefined;
+}
+function demoSelectProject(id) {
+    demoProjectId = id;
+    demoSelectTask(demoTasks.find((task) => task.project === id).id);
+}
+function demoSelectTask(id) {
+    demoStopReplay();
+    const task = demoTasks.find((item) => item.id === id);
+    demoTaskId = task.id;
+    demoProjectId = task.project;
+    demoReplayStep = task.steps.length;
+    demoRenderProjects();
+    demoRenderTask();
+    demoCloseNavigation();
+}
+function demoRenderProjects() {
+    const list = demoEl("demo-projects");
+    const query = demoEl("demo-search")
+        .value.trim()
+        .toLowerCase();
+    list.replaceChildren();
+    for (const project of demoProjects.filter((item) => `${item.name} ${item.stack} ${item.description}`
+        .toLowerCase()
+        .includes(query))) {
+        const button = demoNode("button", "", "project-button");
+        button.type = "button";
+        button.setAttribute("aria-pressed", String(project.id === demoProjectId));
+        const copy = demoNode("span", "", "project-copy");
+        copy.append(demoNode("strong", project.name), demoNode("small", project.stack));
+        const runner = demoRunners.find((item) => item.id === project.runner);
+        const dot = demoNode("span", "", `status-dot${runner.online ? "" : " offline"}`);
+        dot.setAttribute("aria-label", runner.online ? "设备在线" : "设备离线，记录可回看");
+        button.append(demoNode("span", project.mark, "project-monogram"), copy, dot);
+        button.addEventListener("click", () => {
+            demoSetView("workspace");
+            demoSelectProject(project.id);
+        });
+        list.append(button);
+    }
+    demoEl("demo-search-empty").hidden = list.childElementCount !== 0;
+}
+function demoSetTab(tab, focus = false) {
+    demoActiveTab = tab;
+    document
+        .querySelectorAll("[data-tab]")
+        .forEach((button) => {
+        const selected = button.dataset.tab === tab;
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+        if (selected && focus)
+            button.focus();
+    });
+    for (const name of ["conversation", "logs", "diff"])
+        demoEl(`panel-${name}`).hidden = name !== tab;
+}
+function demoRenderSteps() {
+    const task = demoCurrentTask();
+    demoEl("demo-steps").replaceChildren(...task.steps.map((step, index) => {
+        const row = demoNode("li");
+        const finished = index < demoReplayStep;
+        row.append(demoNode("span", finished ? "✓" : index === demoReplayStep ? "·" : "○", `step-indicator ${finished ? "" : index === demoReplayStep ? "active" : "waiting"}`), demoNode("span", step));
+        return row;
+    }));
+    const finished = demoReplayStep >= task.steps.length;
+    demoText("demo-test-summary", finished
+        ? `${task.tests} passed · 0 failed · exit code 0`
+        : "示例过程回放中，尚未展示测试结果…");
+    demoText("demo-result", finished ? task.result : "正在回放预设步骤；完成后展示保留结果。");
+    demoText("demo-replay", demoReplayTimer === undefined ? "▷ 重播执行过程" : "Ⅱ 停止回放");
+    const logLines = [
+        "[14:32:00] job started · example data",
+        `[14:32:01] workspace: ${demoCurrentProject().path}`,
+    ];
+    task.steps
+        .slice(0, demoReplayStep)
+        .forEach((step, index) => logLines.push(`[14:3${index + 2}:12] ✓ ${step}`));
+    if (finished)
+        logLines.push("", `$ ${task.command}`, "", `test result: ok. ${task.tests} passed; 0 failed`, `finished in ${task.duration} · exit code: 0`, "", "[14:36:00] output and workspace diff retained", "[demo] No command was executed by this page.");
+    demoText("demo-logs", logLines.join("\n"));
+}
+function demoRenderTask() {
+    const project = demoCurrentProject();
+    const task = demoCurrentTask();
+    demoText("demo-project-mark", project.mark);
+    demoText("demo-project-name", project.name);
+    const select = demoEl("demo-task");
+    select.replaceChildren(...demoTasks
+        .filter((item) => item.project === project.id)
+        .map((item) => {
+        const option = demoNode("option", item.title);
+        option.value = item.id;
+        return option;
+    }));
+    select.value = task.id;
+    demoText("demo-branch", task.branch);
+    demoText("demo-session-time", `09.08 14:32 · 耗时 ${task.duration}`);
+    demoText("demo-prompt", task.prompt);
+    demoText("demo-response", task.response);
+    demoText("demo-command", task.command);
+    demoText("demo-runner", demoRunners.find((runner) => runner.id === project.runner).name);
+    demoText("demo-stack", project.stack);
+    demoText("demo-path", project.path);
+    demoText("demo-test-count", task.tests);
+    demoText("demo-validation-note", `0 项失败 · 示例任务耗时 ${task.duration}`);
+    demoText("demo-file-count", task.files.length);
+    demoText("demo-changed-count", task.files.length);
+    const totals = demoDiffCount(task.files);
+    demoText("demo-diff-stat", `+${totals.added} −${totals.removed}`);
+    demoEl("demo-files").replaceChildren(...task.files.map((file) => {
+        const item = demoNode("li");
+        const count = demoDiffCount([file]);
+        item.append(demoNode("span", file.path), demoNode("span", `+${count.added} −${count.removed}`, "file-stat"));
+        return item;
+    }));
+    demoEl("demo-diff").replaceChildren(...task.files.map((file) => {
+        const article = demoNode("article", "", "diff-file");
+        const pre = demoNode("pre");
+        for (const line of file.diff.split("\n"))
+            pre.append(demoNode("span", line, `diff-line ${line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : line.startsWith("@@") ? "meta" : ""}`));
+        article.append(demoNode("h3", file.path), pre);
+        return article;
+    }));
+    demoText("demo-replay-status", "示例会话 · 过程与结果均可回看");
+    demoRenderSteps();
+    demoRenderReview();
+    demoSetTab(demoActiveTab);
+}
+function demoRenderReview() {
+    const task = demoCurrentTask();
+    const status = demoReview(task);
+    demoText("demo-session-status", demoReviewLabels[status]);
+    demoEl("demo-session-status").className = `pill ${status}`;
+    const pending = demoTasks.filter((item) => demoReview(item) === "pending");
+    demoText("demo-review-count", pending.length);
+    demoText("demo-pending-metric", pending.length);
+    demoText("demo-review-title", status === "pending"
+        ? "最后一步，由你决定。"
+        : status === "approved"
+            ? "示例变更已接受。"
+            : "已要求继续修改。");
+    demoText("demo-review-description", status === "pending"
+        ? "测试结果和代码差异已就绪。查看后接受变更，或要求继续修改。"
+        : status === "approved"
+            ? "审查决定已记录在本次演示中。实际仓库和 Git 分支没有变化。"
+            : "示例任务已标记为需要修改。重置演示可恢复初始状态。");
+    demoEl("demo-approve").disabled = status !== "pending";
+    demoEl("demo-request-changes").disabled =
+        status !== "pending";
+    const queue = demoEl("demo-review-queue");
+    queue.replaceChildren();
+    for (const item of pending) {
+        const button = demoNode("button", item.title);
+        button.type = "button";
+        button.setAttribute("aria-pressed", String(item.id === task.id));
+        button.append(demoNode("small", `${demoProjects.find((project) => project.id === item.project).name} · 等待审查`));
+        button.addEventListener("click", () => {
+            demoSelectTask(item.id);
+            demoSetTab("diff");
+        });
+        queue.append(button);
+    }
+    if (!pending.length)
+        queue.append(demoNode("p", "所有示例变更均已审查。可重置演示，再体验一次。", "empty"));
+}
+function demoSetView(view) {
+    demoStopReplay();
+    demoReplayStep = demoCurrentTask().steps.length;
+    demoRenderSteps();
+    demoText("demo-replay-status", "示例会话 · 过程与结果均可回看");
+    const headings = {
+        workspace: [
+            "工作空间",
+            "让 AI 的每一步，都清晰可见。",
+            "连接自己的开发环境，观察任务、检查结果，让代码始终掌握在你手中。",
+        ],
+        runners: [
+            "Runner 设备",
+            "一个工作空间，连接你的机器。",
+            "每个 Runner 在自己的机器上工作，项目、命令与工具链都留在原处。",
+        ],
+        jobs: [
+            "执行记录",
+            "任务结束了，证据仍然在。",
+            "回看命令、验证结果与代码差异，了解每一次工作的来龙去脉。",
+        ],
+        review: [
+            "代码审查",
+            "AI 负责执行，你来确认结果。",
+            "并排查看代码变化与测试证据，模拟接受变更或提出修改要求。",
+        ],
+    };
+    demoText("demo-breadcrumb", headings[view][0]);
+    demoText("demo-title", headings[view][1]);
+    demoText("demo-description", headings[view][2]);
+    document
+        .querySelectorAll("[data-view]")
+        .forEach((button) => {
+        if (button.dataset.view === view)
+            button.setAttribute("aria-current", "page");
+        else
+            button.removeAttribute("aria-current");
+    });
+    demoEl("demo-workbench").hidden = view === "jobs" || view === "runners";
+    demoEl("demo-runners-view").hidden = view !== "runners";
+    demoEl("demo-jobs-view").hidden = view !== "jobs";
+    demoEl("demo-review-queue").hidden = view !== "review";
+    if (view === "review") {
+        const pending = demoTasks.find((task) => demoReview(task) === "pending");
+        if (pending && demoReview(demoCurrentTask()) !== "pending")
+            demoSelectTask(pending.id);
+        demoSetTab("diff");
+    }
+    if (view === "jobs")
+        demoRenderJobs();
+    demoCloseNavigation();
+}
+function demoRenderRunners() {
+    demoEl("demo-runners").replaceChildren(...demoRunners.map((runner) => {
+        const project = demoProjects.find((item) => item.runner === runner.id);
+        const card = demoNode("article", "", "runner-card");
+        card.append(demoIcon("device"), demoNode("h3", runner.name), demoNode("p", runner.platform, "runner-platform"), demoNode("span", runner.online ? "● 在线" : "○ 离线", `pill ${runner.online ? "approved" : ""}`));
+        const details = demoNode("div", "", "runner-detail");
+        const dl = demoNode("dl");
+        for (const [label, value] of [
+            ["项目", project.name],
+            ["执行槽位", runner.slots],
+            ["内存占用", runner.memory],
+            ["CPU 占用", runner.online ? `${runner.cpu}%` : "—"],
+        ]) {
+            const row = demoNode("div");
+            row.append(demoNode("dt", label), demoNode("dd", value));
+            dl.append(row);
+        }
+        const meter = demoNode("div", "", "runner-meter");
+        const fill = demoNode("span");
+        fill.style.width = `${runner.cpu}%`;
+        meter.append(fill);
+        details.append(dl, meter, demoNode("p", `最近连接：${runner.seen}`));
+        const button = demoNode("button", runner.online ? "查看项目与任务 →" : "回看保留记录 →", "button");
+        button.type = "button";
+        button.addEventListener("click", () => {
+            demoSetView("workspace");
+            demoSelectProject(project.id);
+        });
+        card.append(details, button);
+        return card;
+    }));
+}
+function demoRenderJobs() {
+    const filter = demoEl("demo-job-filter").value;
+    const tasks = demoTasks.filter((task) => filter === "all" || demoReview(task) === filter);
+    demoEl("demo-jobs").replaceChildren(...tasks.map((task) => {
+        const project = demoProjects.find((item) => item.id === task.project);
+        const runner = demoRunners.find((item) => item.id === project.runner);
+        const tr = demoNode("tr");
+        const title = demoNode("td");
+        title.append(demoNode("strong", task.title), demoNode("small", task.branch, "mono"));
+        const where = demoNode("td", project.name);
+        where.append(demoNode("small", runner.name));
+        const status = demoNode("td");
+        status.append(demoPill(demoReview(task)));
+        const action = demoNode("td");
+        const button = demoNode("button", "查看 →", "text-button");
+        button.type = "button";
+        button.setAttribute("aria-label", `查看：${task.title}`);
+        button.addEventListener("click", () => {
+            demoSetView("workspace");
+            demoSelectTask(task.id);
+            demoSetTab("logs");
+        });
+        action.append(button);
+        tr.append(title, where, status, demoNode("td", `${task.tests} passed`, "success-text"), demoNode("td", task.duration, "mono"), action);
+        return tr;
+    }));
+    demoEl("demo-jobs-empty").hidden = tasks.length !== 0;
+}
+function demoStartReplay() {
+    if (demoReplayTimer !== undefined) {
+        demoStopReplay();
+        demoRenderSteps();
+        demoText("demo-replay-status", "回放已停止 · 点击可从头重播");
+        return;
+    }
+    demoReplayStep = 0;
+    demoSetTab("conversation");
+    const advance = () => {
+        demoReplayStep += 1;
+        if (demoReplayStep < demoCurrentTask().steps.length)
+            demoReplayTimer = window.setTimeout(advance, 1000);
+        else
+            demoReplayTimer = undefined;
+        demoRenderSteps();
+        demoText("demo-replay-status", demoReplayTimer === undefined
+            ? "示例回放完成 · 未执行实际命令"
+            : `示例回放 ${demoReplayStep + 1} / 3`);
+    };
+    demoReplayTimer = window.setTimeout(advance, 1000);
+    demoRenderSteps();
+    demoText("demo-replay-status", "示例回放 1 / 3");
+}
+function demoReset() {
+    demoStopReplay();
+    demoReviews = new Map(demoTasks.map((task) => [task.id, task.review]));
+    demoEl("demo-search").value = "";
+    demoEl("demo-job-filter").value = "all";
+    demoSelectTask("heartbeat");
+    demoSetView("workspace");
+    demoSetTab("conversation");
+    demoText("demo-replay-status", "演示已重置");
+}
+document
+    .querySelectorAll("[data-view]")
+    .forEach((button) => button.addEventListener("click", () => demoSetView(button.dataset.view)));
+document.querySelectorAll("[data-tab]").forEach((button) => {
+    button.addEventListener("click", () => demoSetTab(button.dataset.tab));
+    button.addEventListener("keydown", (event) => {
+        const tabs = ["conversation", "logs", "diff"];
+        const index = tabs.indexOf(demoActiveTab);
+        const next = event.key === "ArrowRight"
+            ? (index + 1) % 3
+            : event.key === "ArrowLeft"
+                ? (index + 2) % 3
+                : event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                        ? 2
+                        : null;
+        if (next !== null) {
+            event.preventDefault();
+            demoSetTab(tabs[next], true);
+        }
+    });
+});
+demoEl("demo-search").addEventListener("input", demoRenderProjects);
+demoEl("demo-task").addEventListener("change", (event) => demoSelectTask(event.target.value));
+demoEl("demo-open-diff").addEventListener("click", () => demoSetTab("diff", true));
+demoEl("demo-job-filter").addEventListener("change", demoRenderJobs);
+demoEl("demo-replay").addEventListener("click", demoStartReplay);
+demoEl("demo-reset").addEventListener("click", demoReset);
+for (const [id, decision] of [
+    ["demo-approve", "approved"],
+    ["demo-request-changes", "changes_requested"],
+]) {
+    demoEl(id).addEventListener("click", () => {
+        if (demoReview(demoCurrentTask()) !== "pending")
+            return;
+        demoReviews.set(demoTaskId, decision);
+        demoRenderReview();
+        demoText("demo-replay-status", `模拟审查：${demoReviewLabels[decision]} · 未修改实际仓库`);
+        demoEl("demo-open-diff").focus();
+    });
+}
+demoEl("demo-theme").addEventListener("click", () => {
+    const light = document.documentElement.dataset.theme !== "light";
+    document.documentElement.dataset.theme = light ? "light" : "dark";
+    const label = light ? "切换到深色主题" : "切换到浅色主题";
+    demoEl("demo-theme").setAttribute("aria-label", label);
+    demoEl("demo-theme").title = label;
+});
+demoEl("demo-menu").addEventListener("click", () => {
+    const open = document
+        .querySelector(".demo-shell")
+        .classList.toggle("nav-open");
+    demoEl("demo-menu").setAttribute("aria-expanded", String(open));
+});
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape")
+        demoCloseNavigation();
+});
+window.addEventListener("pagehide", demoStopReplay);
+demoRenderProjects();
+demoRenderTask();
+demoRenderRunners();
+
+    </script>
+  </body>
+</html>

@@ -10,6 +10,26 @@ use webcodex_core::authority::{
 
 pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
     route(
+        DemoWebRoot,
+        Get,
+        "/demo",
+        Public,
+        PublicWeb,
+        Hidden,
+        Other,
+        RouteAuth::Public,
+    ),
+    route(
+        BrandLogoPng,
+        Get,
+        "/webcodex-logo.png",
+        Public,
+        PublicWeb,
+        Hidden,
+        Other,
+        RouteAuth::Public,
+    ),
+    route(
         ConsoleWebRoot,
         Get,
         "/console",

@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="体验 WebCodex：在自己的机器上连接项目、观察 AI 任务、查看执行日志与审查代码。全部使用虚构示例数据。"
+    />
+    <title>WebCodex · 演示工作空间</title>
+    <link rel="icon" type="image/png" href="webcodex-logo.png" />
+    <style>
+      /* WEBCODEX_DEMO_STYLES */
+    </style>
+  </head>
+  <body>
+    <svg
+      class="icon-definitions"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <symbol id="icon-grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </symbol>
+      <symbol id="icon-device" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="13" rx="2" />
+        <path d="M8 21h8m-4-4v4M7 8h4" />
+      </symbol>
+      <symbol id="icon-terminal" viewBox="0 0 24 24">
+        <path d="m5 6 6 6-6 6m9 0h6" />
+      </symbol>
+      <symbol id="icon-review" viewBox="0 0 24 24">
+        <path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5m-11 6 3 3 5-6" />
+      </symbol>
+      <symbol id="icon-branch" viewBox="0 0 24 24">
+        <circle cx="6" cy="5" r="2" />
+        <circle cx="18" cy="5" r="2" />
+        <circle cx="6" cy="19" r="2" />
+        <path d="M6 7v10m12-10v2c0 4-12 2-12 6" />
+      </symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24">
+        <path d="M3 7V5h7l2 2h9v13H3V7Z" />
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m16 16 5 5" />
+      </symbol>
+      <symbol id="icon-arrow" viewBox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6" />
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="icon-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" />
+        <path
+          d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"
+        />
+      </symbol>
+      <symbol id="icon-menu" viewBox="0 0 24 24">
+        <path d="M4 6h16M4 12h16M4 18h16" />
+      </symbol>
+    </svg>
+    <a class="skip-link" href="#demo-content">跳转到内容</a>
+    <div class="demo-shell">
+      <aside class="sidebar" id="demo-sidebar" aria-label="演示导航">
+        <a class="brand" href="#demo-content" aria-label="WebCodex 演示工作空间"
+          ><img src="webcodex-logo.png" alt="" width="48" height="48" /><span
+            ><strong>WebCodex</strong><small>RUNTIME CONSOLE</small></span
+          ></a
+        >
+        <div class="workspace-label">
+          <span class="workspace-avatar">W</span
+          ><span>演示工作空间<small>Personal workspace</small></span
+          ><span class="workspace-tag">DEMO</span>
+        </div>
+        <nav class="main-nav" aria-label="功能导航">
+          <button type="button" data-view="workspace" aria-current="page">
+            <svg><use href="#icon-grid" /></svg><span>工作空间</span
+            ><kbd>01</kbd>
+          </button>
+          <button type="button" data-view="runners">
+            <svg><use href="#icon-device" /></svg><span>Runner 设备</span
+            ><span class="nav-count">3</span>
+          </button>
+          <button type="button" data-view="jobs">
+            <svg><use href="#icon-terminal" /></svg><span>执行记录</span
+            ><span class="nav-count">5</span>
+          </button>
+          <button type="button" data-view="review">
+            <svg><use href="#icon-review" /></svg><span>代码审查</span
+            ><span class="nav-count attention" id="demo-review-count">2</span>
+          </button>
+        </nav>
+        <div class="project-nav">
+          <div class="section-caption"><span>项目</span><span>3</span></div>
+          <label class="project-search"
+            ><svg><use href="#icon-search" /></svg
+            ><input
+              id="demo-search"
+              type="search"
+              maxlength="100"
+              placeholder="搜索项目…"
+              aria-label="搜索演示项目"
+              autocomplete="off"
+          /></label>
+          <div id="demo-projects"></div>
+          <p id="demo-search-empty" class="empty" hidden>没有匹配的项目。</p>
+        </div>
+        <div class="sidebar-note">
+          <span class="status-dot"></span>
+          <div>
+            <strong>代码在本地，工作有迹可循。</strong>
+            <p>从一次 AI 指令，到可审查的代码变化。</p>
+          </div>
+        </div>
+        <footer class="sidebar-footer">
+          <a
+            href="https://github.com/yyjeqhc/webcodex"
+            target="_blank"
+            rel="noreferrer"
+            >GitHub ↗</a
+          ><a
+            href="https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.zh-CN.md"
+            target="_blank"
+            rel="noreferrer"
+            >使用文档 ↗</a
+          ><span>v0.4.0</span>
+        </footer>
+      </aside>
+      <div class="main">
+        <header class="topbar">
+          <button
+            class="icon-button mobile-menu"
+            id="demo-menu"
+            type="button"
+            aria-label="展开导航"
+            aria-controls="demo-sidebar"
+            aria-expanded="false"
+          >
+            <svg><use href="#icon-menu" /></svg>
+          </button>
+          <div class="breadcrumb">
+            <svg><use href="#icon-grid" /></svg><span>演示工作空间</span
+            ><span class="slash">/</span
+            ><strong id="demo-breadcrumb">工作空间</strong>
+          </div>
+          <div class="topbar-actions">
+            <span class="demo-badge"
+              ><span class="status-dot"></span>示例数据</span
+            ><button
+              class="icon-button"
+              id="demo-theme"
+              type="button"
+              aria-label="切换到浅色主题"
+              title="切换到浅色主题"
+            >
+              <svg><use href="#icon-sun" /></svg></button
+            ><a
+              class="connect-link"
+              href="https://github.com/yyjeqhc/webcodex/blob/main/docs/PERSONAL_SETUP.zh-CN.md"
+              target="_blank"
+              rel="noreferrer"
+              >连接自己的机器 <svg><use href="#icon-arrow" /></svg
+            ></a>
+          </div>
+        </header>
+        <main id="demo-content" tabindex="-1">
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">YOUR CODE. YOUR MACHINES.</p>
+              <h1 id="demo-title">让 AI 的每一步，都清晰可见。</h1>
+              <p id="demo-description">
+                连接自己的开发环境，观察任务、检查结果，让代码始终掌握在你手中。
+              </p>
+            </div>
+            <span class="snapshot-label"
+              >示例工作日 <span>2026.09.08</span></span
+            >
+          </div>
+          <section class="metrics" aria-label="演示概览">
+            <div class="metric">
+              <span
+                >已接入项目<svg><use href="#icon-folder" /></svg></span
+              ><strong>3<small>个工作空间</small></strong>
+              <p>Rust · TypeScript · Python</p>
+            </div>
+            <div class="metric">
+              <span
+                >在线 Runner<svg><use href="#icon-device" /></svg></span
+              ><strong
+                >2 <span class="metric-denominator">/ 3</span
+                ><small>台设备</small></strong
+              >
+              <p><i class="status-dot"></i> 多设备，统一观察</p>
+            </div>
+            <div class="metric">
+              <span
+                >执行记录<svg><use href="#icon-terminal" /></svg></span
+              ><strong>5<small>个示例任务</small></strong>
+              <p>命令、输出与结果持续保留</p>
+            </div>
+            <div class="metric">
+              <span
+                >等待人工审查<svg><use href="#icon-review" /></svg></span
+              ><strong id="demo-pending-metric">2</strong>
+              <p>查看差异后，由你决定</p>
+            </div>
+          </section>
+          <section
+            id="demo-review-queue"
+            class="review-queue"
+            aria-label="待审查示例任务"
+            hidden
+          ></section>
+          <section
+            id="demo-workbench"
+            class="workbench"
+            aria-label="演示项目工作台"
+          >
+            <div class="session">
+              <div class="session-project">
+                <div>
+                  <span class="project-monogram" id="demo-project-mark">W</span
+                  ><strong id="demo-project-name">WebCodex</strong
+                  ><span class="quiet">/</span><span>Workflow Session</span>
+                </div>
+                <span class="pill" id="demo-session-status">等待审查</span>
+              </div>
+              <div class="session-heading">
+                <label for="demo-task">当前会话</label
+                ><select id="demo-task" aria-label="选择示例会话"></select>
+                <div class="session-meta">
+                  <span
+                    ><svg><use href="#icon-branch" /></svg
+                    ><span id="demo-branch"></span></span
+                  ><span id="demo-session-time"></span>
+                </div>
+              </div>
+              <div class="tabs" role="tablist" aria-label="任务详情">
+                <button
+                  id="tab-conversation"
+                  type="button"
+                  role="tab"
+                  data-tab="conversation"
+                  aria-controls="panel-conversation"
+                  aria-selected="true"
+                >
+                  会话记录<span>3</span></button
+                ><button
+                  id="tab-logs"
+                  type="button"
+                  role="tab"
+                  data-tab="logs"
+                  aria-controls="panel-logs"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  执行日志</button
+                ><button
+                  id="tab-diff"
+                  type="button"
+                  role="tab"
+                  data-tab="diff"
+                  aria-controls="panel-diff"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  代码差异<span id="demo-file-count">2</span>
+                </button>
+              </div>
+              <div class="session-panels">
+                <section
+                  id="panel-conversation"
+                  role="tabpanel"
+                  aria-labelledby="tab-conversation"
+                  tabindex="0"
+                >
+                  <div class="message user-message">
+                    <div class="message-author">
+                      <span class="human-avatar">你</span
+                      ><strong>你的指令</strong><time>14:32</time>
+                    </div>
+                    <p id="demo-prompt"></p>
+                  </div>
+                  <div class="message agent-message">
+                    <div class="message-author">
+                      <img
+                        src="webcodex-logo.png"
+                        alt=""
+                        width="28"
+                        height="28"
+                      /><strong>开发 Agent</strong
+                      ><span class="message-label">示例留言</span
+                      ><time>14:33</time>
+                    </div>
+                    <p id="demo-response"></p>
+                    <ol class="execution-steps" id="demo-steps"></ol>
+                    <div class="command-preview">
+                      <span
+                        ><svg><use href="#icon-terminal" /></svg
+                        >在项目环境中验证</span
+                      ><code id="demo-command"></code>
+                      <p id="demo-test-summary"></p>
+                    </div>
+                  </div>
+                  <div class="message agent-message result-message">
+                    <div class="message-author">
+                      <span class="result-check">✓</span
+                      ><strong>结果已保留</strong><time>14:36</time>
+                    </div>
+                    <p id="demo-result"></p>
+                  </div>
+                </section>
+                <section
+                  id="panel-logs"
+                  role="tabpanel"
+                  aria-labelledby="tab-logs"
+                  tabindex="0"
+                  hidden
+                >
+                  <div class="panel-caption">
+                    <span>标准输出 · 保留的任务日志</span
+                    ><span class="mono">exit 0</span>
+                  </div>
+                  <pre id="demo-logs" class="terminal-output"></pre>
+                </section>
+                <section
+                  id="panel-diff"
+                  role="tabpanel"
+                  aria-labelledby="tab-diff"
+                  tabindex="0"
+                  hidden
+                >
+                  <div class="panel-caption">
+                    <span>工作区变更 · 示例 diff</span
+                    ><span class="diff-stat" id="demo-diff-stat"></span>
+                  </div>
+                  <div id="demo-diff" class="diff-files"></div>
+                </section>
+              </div>
+              <footer class="session-footer">
+                <span id="demo-replay-status" role="status" aria-live="polite"
+                  >示例会话 · 过程与结果均可回看</span
+                ><button type="button" class="button" id="demo-replay">
+                  <span aria-hidden="true">▷</span> 重播执行过程
+                </button>
+              </footer>
+            </div>
+            <aside class="inspector" aria-label="任务上下文">
+              <section>
+                <div class="section-caption">
+                  <span>工作区上下文</span><svg><use href="#icon-grid" /></svg>
+                </div>
+                <dl class="context-facts">
+                  <div>
+                    <dt>Runner</dt>
+                    <dd id="demo-runner"></dd>
+                  </div>
+                  <div>
+                    <dt>开发环境</dt>
+                    <dd id="demo-stack"></dd>
+                  </div>
+                  <div>
+                    <dt>工作目录</dt>
+                    <dd class="mono" id="demo-path"></dd>
+                  </div>
+                </dl>
+                <div class="context-note">
+                  <svg><use href="#icon-device" /></svg
+                  ><span>在仓库所在的机器上执行</span>
+                </div>
+              </section>
+              <section>
+                <div class="section-caption">
+                  <span>验证结果</span><span class="success-text">PASSED</span>
+                </div>
+                <div class="validation-number">
+                  <strong id="demo-test-count">24</strong
+                  ><span>项测试通过<br /><small>来自示例命令输出</small></span
+                  ><svg><use href="#icon-check" /></svg>
+                </div>
+                <div class="validation-track"><span></span></div>
+                <p class="quiet small" id="demo-validation-note"></p>
+              </section>
+              <section>
+                <div class="section-caption">
+                  <span>变更文件</span><span id="demo-changed-count">2</span>
+                </div>
+                <ul class="changed-files" id="demo-files"></ul>
+                <button class="text-button" id="demo-open-diff" type="button">
+                  查看完整差异 <span>↗</span>
+                </button>
+              </section>
+              <section class="review-card">
+                <svg class="review-icon"><use href="#icon-review" /></svg>
+                <h2 id="demo-review-title">最后一步，由你决定。</h2>
+                <p id="demo-review-description">
+                  测试结果和代码差异已就绪。查看后接受变更，或要求继续修改。
+                </p>
+                <div class="review-actions">
+                  <button
+                    class="button primary"
+                    id="demo-approve"
+                    type="button"
+                  >
+                    接受示例变更</button
+                  ><button
+                    class="button"
+                    id="demo-request-changes"
+                    type="button"
+                  >
+                    要求修改
+                  </button>
+                </div>
+                <span class="review-disclaimer">仅模拟审查，不修改仓库</span>
+              </section>
+            </aside>
+          </section>
+          <section id="demo-runners-view" hidden aria-label="示例 Runner 设备">
+            <div class="view-section-heading">
+              <h2>你的机器，都在这里。</h2>
+              <p>查看连接状态、项目与执行容量。</p>
+            </div>
+            <div class="runner-grid" id="demo-runners"></div>
+          </section>
+          <section
+            id="demo-jobs-view"
+            class="jobs-section"
+            hidden
+            aria-label="示例执行记录"
+          >
+            <div class="jobs-heading">
+              <div>
+                <h2>每一次执行，都有记录。</h2>
+                <p>选择一条记录，回看会话、日志和代码变化。</p>
+              </div>
+              <label
+                >筛选状态
+                <select id="demo-job-filter">
+                  <option value="all">全部记录</option>
+                  <option value="pending">待审查</option>
+                  <option value="approved">已接受</option>
+                  <option value="changes_requested">需修改</option>
+                </select></label
+              >
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务</th>
+                    <th>项目 / Runner</th>
+                    <th>审查状态</th>
+                    <th>验证</th>
+                    <th>耗时</th>
+                    <th><span class="visually-hidden">操作</span></th>
+                  </tr>
+                </thead>
+                <tbody id="demo-jobs"></tbody>
+              </table>
+            </div>
+            <p class="empty" id="demo-jobs-empty" hidden>
+              没有符合当前状态的记录。
+            </p>
+          </section>
+          <footer class="demo-footnote">
+            <span>DEMO ENVIRONMENT</span>
+            <p>
+              所有项目、设备、任务与日志均为虚构示例。交互只更新当前页面，不连接实际设备。
+            </p>
+            <button type="button" id="demo-reset">重置演示 ↺</button>
+          </footer>
+        </main>
+      </div>
+    </div>
+    <noscript
+      ><p>
+        此演示需要启用 JavaScript。<a href="https://github.com/yyjeqhc/webcodex"
+          >查看项目文档</a
+        >
+      </p></noscript
+    >
+    <script>
+      /* WEBCODEX_DEMO_SCRIPT */
+    </script>
+  </body>
+</html>

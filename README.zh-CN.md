@@ -1,10 +1,40 @@
-# WebCodex
+<p align="center">
+  <br />
+  <img src="frontend/src/webcodex-logo.png" alt="WebCodex 图标" width="180" height="180" />
+</p>
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+<h1 align="center">WebCodex</h1>
 
-**WebCodex 让 ChatGPT、Claude 和其他 AI Agent 直接使用你自己机器上的代码仓库和开发工具。**
+<p align="center"><strong>让 AI 直接使用你自己机器上的代码仓库和开发工具。</strong></p>
 
-你可以直接让 AI 理解项目、修改代码、运行测试、检查 Git 或排查问题。仓库仍然留在原来的机器上，不需要为了使用 WebCodex 把整个项目搬到托管环境里。
+<p align="center">连接 ChatGPT、Claude 与你的真实开发环境，理解项目、运行测试、审查代码变化。<br />代码留在自己的机器上，每一步工作都清晰可见。</p>
+
+<p align="center">
+  <a href="https://github.com/yyjeqhc/webcodex/releases">v0.4.0</a> ·
+  <a href="docs/PERSONAL_SETUP.zh-CN.md">部署与接入文档</a> ·
+  <a href="docs/demo.md">交互演示</a> ·
+  <a href="README.md">English</a>
+</p>
+
+> [!IMPORTANT]
+> **一个 Server，连接自己的 Runner 与开发环境。** 支持多项目访问、长任务观察、命令输出留存与人工代码审查。日常使用推荐 **普通 Server + Runner**；`share` 适合临时、受限的单项目试用。
+
+## 看得见的开发过程
+
+![WebCodex 功能演示：项目与会话、任务执行、验证结果和代码审查，均为虚构示例数据](docs/images/demo-workspace.png)
+
+<p align="center"><sub>功能导览使用虚构示例数据，不连接实际设备、不执行命令，也不修改仓库。</sub></p>
+
+演示包含 **3 个项目、3 台 Runner、5 个任务**。你可以切换项目、回放任务步骤、查看执行日志与代码差异，并体验模拟审查；也能查看离线设备已经保留的任务记录。
+
+使用本源码构建的 WebCodex Server 可直接访问 **`/demo`**，也可以无需 Server，在本地启动预览：
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run demo
+```
+
+然后打开[本地演示页](http://127.0.0.1:4173/demo)。操作说明见[演示指南](docs/demo.md)。
 
 ## 开始使用
 

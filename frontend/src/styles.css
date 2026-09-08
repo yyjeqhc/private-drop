@@ -700,3 +700,6 @@ input[type="text"] {
   user-select: all;
   overflow-wrap: anywhere;
 }
+/* Shared project identity; the logo is served from the fixed public asset route. */
+.console-brand { display: flex; align-items: center; gap: 12px; }
+.console-brand img { flex: 0 0 auto; object-fit: contain; }

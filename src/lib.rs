@@ -688,6 +688,14 @@ only for local/trusted-network demos."
         .push(openapi_router)
         .push(console_router)
         .push(runtime_console_router)
+        .push(
+            Router::with_path(route_metadata::root_path(RouteId::DemoWebRoot))
+                .get(console_web::demo_html),
+        )
+        .push(
+            Router::with_path(route_metadata::root_path(RouteId::BrandLogoPng))
+                .get(console_web::brand_logo_png),
+        )
         .push(admin_router)
         // OAuth2 token, revocation, and discovery endpoints — public, no
         // AuthMiddleware. Token/revoke clients authenticate via

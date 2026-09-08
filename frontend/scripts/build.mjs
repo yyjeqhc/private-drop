@@ -31,6 +31,10 @@ const watchedSources = new Set([
   "admin_view.ts",
   "admin.css",
   "admin.html",
+  "demo.ts",
+  "demo.css",
+  "demo.html",
+  "webcodex-logo.png",
 ]);
 
 function readSource(sourceDirectory, fileName) {
@@ -205,8 +209,15 @@ export function createOutputs(
       )
   );
   assertClassicScript(resolve(outputDirectory, "admin.js"), adminScript);
+  const demoScript = stripModuleExports(transpileTypeScript(sourceDirectory, "demo.ts"));
+  assertClassicScript(resolve(outputDirectory, "demo.js"), demoScript);
+  const demoHtml = readSource(sourceDirectory, "demo.html")
+    .replace("/* WEBCODEX_DEMO_STYLES */", () => minifyCss(readSource(sourceDirectory, "demo.css")))
+    .replace("/* WEBCODEX_DEMO_SCRIPT */", () => demoScript);
 
   return new Map([
+    ["demo.html", normalizeNewline(demoHtml)],
+    ["webcodex-logo.png", readFileSync(resolve(sourceDirectory, "webcodex-logo.png"))],
     ["review_state.js", reviewStateModule],
     ["workflow_session_state.js", workflowSessionStateModule],
     ["runtime_console_state.js", runtimeConsoleStateModule],
@@ -256,8 +267,8 @@ function checkOutputs(outputDirectory, outputs) {
   const drift = [];
   for (const [name, expected] of outputs) {
     const fullPath = resolve(outputDirectory, name);
-    const actual = existsSync(fullPath) ? readFileSync(fullPath, "utf8") : "";
-    if (actual !== expected) drift.push(name);
+    const actual = existsSync(fullPath) ? readFileSync(fullPath) : Buffer.alloc(0);
+    if (!actual.equals(Buffer.from(expected))) drift.push(name);
   }
   if (drift.length) {
     throw new Error(

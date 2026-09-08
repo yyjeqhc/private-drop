@@ -2,6 +2,11 @@
 
 Open `/runtime` and connect with an existing runtime credential.
 
+The sign-in page also links to `/demo`, a separate interactive feature tour with
+fictional Projects, Runners, task history, logs, and code review. It requires no
+credential and never requests runtime APIs or reads browser credentials. See the
+[demo guide](demo.md) for the local preview and example interactions.
+
 The workspace start page offers **Find a project**, **Runtime overview**, and
 **Durable Agents**. Press **Command+K** on macOS or **Ctrl+K** on Windows/Linux
 while connected to open Projects & Sessions and focus project search. On narrow

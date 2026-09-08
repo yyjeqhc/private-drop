@@ -811,6 +811,8 @@ const MOBILE_NAVIGATION_MEDIA = "(max-width: 900px)";
 const WIDE_CONTEXT_MEDIA = "(min-width: 1280px)";
 let contextUserIntent = null;
 const RUNTIME_ZH_TEXT = {
+    "Explore the demo workspace": "查看演示工作空间",
+    "Sample data · no credential required": "示例数据 · 无需凭证",
     "Your workspace": "你的工作空间",
     "Pick up where work happens": "从这里继续工作",
     "Find a project": "查找项目",

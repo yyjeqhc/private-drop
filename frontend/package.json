@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node scripts/build.mjs --out-dir dist",
     "dev": "node scripts/build.mjs --out-dir .dev-dist --watch",
+    "demo": "node scripts/demo.mjs",
     "check:dist": "node scripts/build.mjs --out-dir dist --check",
     "typecheck": "tsc --noEmit",
     "test": "node --test"

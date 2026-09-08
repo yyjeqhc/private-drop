@@ -13,6 +13,16 @@ The system combines the useful parts of the repositories in the owner's `develop
 
 ## Product character
 
+The user-supplied robot/terminal mark in `src/webcodex-logo.png` is the shared
+brand asset for README, Runtime, Project Review, Admin, and browser icons. Keep
+the source image unchanged and use the fixed public asset path when serving it.
+
+`/demo` is a separate, clearly labeled feature tour with fictional data, rather
+than a credential mode of the Runtime Console. It uses its own page-memory state
+and makes no API calls or browser-storage reads. Its preview of conversation,
+execution evidence, and review is illustrative; it does not merge the real
+Workflow Session and Project Review authorities.
+
 Calm, precise, technical, and quietly premium. The interface should feel like a well-made developer tool, not a dashboard template and not a glass-effect demo.
 
 - Use transparency only for floating functional layers: top bar, composer, menus, inspector.

@@ -1,10 +1,40 @@
-# WebCodex
+<p align="center">
+  <br />
+  <img src="frontend/src/webcodex-logo.png" alt="WebCodex logo" width="180" height="180" />
+</p>
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+<h1 align="center">WebCodex</h1>
 
-**WebCodex lets ChatGPT, Claude, and other AI agents work directly with code and developer tools on your own machines.**
+<p align="center"><strong>A real development environment for your AI agents, on your own machines.</strong></p>
 
-Ask your assistant to inspect a repository, modify code, run tests, use Git, or investigate a failure. Your repository stays on the machine where it already lives; you do not need to move the project into a hosted workspace just to use an AI coding agent.
+<p align="center">Let ChatGPT, Claude, and other AI agents explore code, run tools, and deliver reviewable changes.<br />Your repositories and toolchains stay where they belong.</p>
+
+<p align="center">
+  <a href="https://github.com/yyjeqhc/webcodex/releases">v0.4.0</a> ·
+  <a href="docs/PERSONAL_SETUP.md">Setup guide</a> ·
+  <a href="docs/demo.md">Interactive demo</a> ·
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+> [!IMPORTANT]
+> **One Server, your Runners, your development environment.** Connect multiple projects, observe retained work and command output, and review code changes. For everyday use, start with a regular **Server + Runner**; `share` provides a temporary, restricted single-project trial.
+
+## A workspace you can inspect
+
+![WebCodex feature demo with fictional projects, task history, validation results, and code review](docs/images/demo-workspace.png)
+
+<p align="center"><sub>Interactive feature tour with fictional data. No real devices, commands, credentials, or repository changes.</sub></p>
+
+Explore **3 projects, 3 Runners, and 5 tasks**. Switch projects, replay a task, inspect logs and diffs, or try a simulated review. An offline Runner's retained results remain available in the example.
+
+Open **`/demo`** on a WebCodex Server built from this source, or run the local preview without a Server:
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run demo
+```
+
+Then visit [the local demo](http://127.0.0.1:4173/demo). See the [demo guide](docs/demo.md) for details.
 
 ## Start using WebCodex
 

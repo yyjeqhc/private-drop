@@ -18,6 +18,8 @@ const frontendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(frontendRoot, "..");
 const buildScript = resolve(frontendRoot, "scripts/build.mjs");
 const requiredAssets = [
+  "demo.html",
+  "webcodex-logo.png",
   "console.html",
   "app.js",
   "workflow_session_state.js",
@@ -236,6 +238,10 @@ async function assertRequiredAssets(outputDirectory) {
 async function copySources(sourceDirectory) {
   await mkdir(sourceDirectory, { recursive: true });
   for (const source of [
+    "demo.html",
+    "demo.ts",
+    "demo.css",
+    "webcodex-logo.png",
     "app.ts",
     "review_state.ts",
     "workflow_session_state.ts",
