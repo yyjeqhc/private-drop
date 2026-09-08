@@ -3627,6 +3627,17 @@ fn main() {
         .expect("build Windows SSH job request")
     }
 
+    fn ssh_job_operation(job_id: &str) -> webcodex_core::runner_operation::RunnerJobOperation {
+        let request = ssh_job_request(job_id, "printf ignored", 30);
+        let webcodex_core::runner_operation::RunnerOperation::Job(operation) = request
+            .decode_operation()
+            .expect("Windows SSH start_job fixture must decode")
+        else {
+            panic!("Windows SSH start_job fixture decoded as a non-Job operation");
+        };
+        operation
+    }
+
     fn wait_for_job_update(
         rx: &mut tokio::sync::mpsc::Receiver<crate::runner_protocol::RunnerEnvelope>,
         job_id: &str,
@@ -4340,6 +4351,7 @@ fn main() {
 
     #[test]
     fn windows_background_ssh_post_spawn_rejections_are_outcome_unknown() {
+        let operation = ssh_job_operation("post-spawn-rejection");
         for (shutting_down, stop_requested, job_record_present, expected_error) in [
             (
                 true,
@@ -4362,7 +4374,7 @@ fn main() {
             )
             .expect("post-spawn interruption is rejected");
             assert_eq!(error, expected_error);
-            let delta = crate::post_spawn_interruption_delta("start_job", 7, error);
+            let delta = crate::post_spawn_interruption_delta(&operation, 7, error);
             assert_eq!(delta.status, "failed");
             assert_eq!(delta.exit_code, None);
             assert_eq!(delta.duration_ms, Some(7));
@@ -4379,6 +4391,8 @@ fn main() {
     #[ignore = "runner real-process lane: post-spawn rejection terminates a fake SSH process tree"]
     fn runner_real_process_windows_background_ssh_post_spawn_rejection_reaps_owned_tree() {
         use std::io::{BufRead, BufReader};
+
+        let operation = ssh_job_operation("post-spawn-real-process-rejection");
 
         let temp = tempfile::tempdir().unwrap();
         let marker = temp.path().join("post-spawn-grandchild.marker");
@@ -4417,7 +4431,7 @@ fn main() {
         );
         assert!(!marker.exists(), "terminated grandchild reached marker");
 
-        let delta = crate::post_spawn_interruption_delta("start_job", 0, error);
+        let delta = crate::post_spawn_interruption_delta(&operation, 0, error);
         assert_eq!(
             delta.command_execution_state,
             Some(ShellCommandExecutionState::OutcomeUnknown)

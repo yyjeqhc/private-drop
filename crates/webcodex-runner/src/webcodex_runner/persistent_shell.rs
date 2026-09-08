@@ -1824,8 +1824,15 @@ mod windows_tests {
         };
         let open = request("open", "wc_shell_profile_mapping", None);
         let operation = open.persistent_shell.as_ref().unwrap();
-        let launch =
-            build_launch_at_cwd(&shell, &open, operation, &project, cwd.clone(), 4096).unwrap();
+        let launch = build_launch_at_cwd(
+            &shell,
+            open.client_id.as_str(),
+            operation,
+            &project,
+            cwd.clone(),
+            4096,
+        )
+        .unwrap();
         assert_eq!(launch.program, "pwsh.exe");
         assert_eq!(launch.dialect, "powershell");
         assert_eq!(launch.args, vec!["-NoProfile", "-NonInteractive"]);
@@ -1842,7 +1849,7 @@ mod windows_tests {
         explicit.persistent_shell.as_mut().unwrap().shell = Some("bash".to_string());
         let error = build_launch_at_cwd(
             &ShellConfig::default(),
-            &explicit,
+            explicit.client_id.as_str(),
             explicit.persistent_shell.as_ref().unwrap(),
             &RunnerProjectShellContext {
                 id: "demo".to_string(),
@@ -1865,7 +1872,7 @@ mod windows_tests {
         let invalid = request("open", "wc_shell_bad_args", None);
         let error = build_launch_at_cwd(
             &invalid_shell,
-            &invalid,
+            invalid.client_id.as_str(),
             invalid.persistent_shell.as_ref().unwrap(),
             &default_project,
             cwd,
