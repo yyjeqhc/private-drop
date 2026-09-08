@@ -14,7 +14,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_search",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("catalog_revision"),
+                super::ToolAuditResultField::value("total_count"),
+                super::ToolAuditResultField::value("returned_count"),
+                super::ToolAuditResultField::value("truncated"),
+                super::ToolAuditResultField::value("error_kind"),
+                super::ToolAuditResultField::value("state_changed"),
+            ]),
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -36,7 +44,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_read",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("memory_id"),
+                super::ToolAuditResultField::value("memory_key"),
+                super::ToolAuditResultField::value("revision"),
+                super::ToolAuditResultField::value("bootstrap"),
+                super::ToolAuditResultField::value("priority"),
+                super::ToolAuditResultField::string_bytes("returned_body_bytes", "body"),
+                super::ToolAuditResultField::value("error_kind"),
+                super::ToolAuditResultField::value("state_changed"),
+            ]),
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -58,7 +76,16 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_set",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("memory_id"),
+                super::ToolAuditResultField::value("memory_key"),
+                super::ToolAuditResultField::value("old_revision"),
+                super::ToolAuditResultField::value("revision"),
+                super::ToolAuditResultField::value("created"),
+                super::ToolAuditResultField::value("error_kind"),
+                super::ToolAuditResultField::value("state_changed"),
+            ]),
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -80,7 +107,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_delete",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("memory_id"),
+                super::ToolAuditResultField::value("memory_key"),
+                super::ToolAuditResultField::value("revision"),
+                super::ToolAuditResultField::value("deleted"),
+                super::ToolAuditResultField::value("error_kind"),
+                super::ToolAuditResultField::value("state_changed"),
+            ]),
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -101,7 +136,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "memory_scope_list",
-        super::ToolAuditPolicy::TYPED_CANONICAL,
+        super::ToolAuditPolicy::typed_fields(&[
+            super::ToolAuditResultField::value("total_count"),
+            super::ToolAuditResultField::value("returned_count"),
+            super::ToolAuditResultField::value("truncated"),
+            super::ToolAuditResultField::value("error_kind"),
+            super::ToolAuditResultField::value("state_changed"),
+        ]),
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         None,
@@ -120,7 +161,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "memory_scope_purge",
-        super::ToolAuditPolicy::TYPED_CANONICAL,
+        super::ToolAuditPolicy::typed_fields(&[
+            super::ToolAuditResultField::value("memory_scope_id"),
+            super::ToolAuditResultField::value("catalog_revision"),
+            super::ToolAuditResultField::value("current_catalog_revision"),
+            super::ToolAuditResultField::value("purged_count"),
+            super::ToolAuditResultField::value("error_kind"),
+            super::ToolAuditResultField::value("state_changed"),
+        ]),
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         None,

@@ -7,7 +7,21 @@ use crate::metadata::{ToolPathHint::None as NoPath, ToolRisk::Read, ADMIN, TOOL_
 /// capable Stateless MCP 2026 operator surface.
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[context_recovery_only(def(
     "read_tool_trace",
-    super::ToolAuditPolicy::TYPED_CANONICAL,
+    super::ToolAuditPolicy::typed_fields(&[
+        super::ToolAuditResultField::value("trace_ref"),
+        super::ToolAuditResultField::value("trace_mode"),
+        super::ToolAuditResultField::value("payload_count"),
+        super::ToolAuditResultField::value("returned_count"),
+        super::ToolAuditResultField::value("offset"),
+        super::ToolAuditResultField::value("next_offset"),
+        super::ToolAuditResultField::value("payload_index"),
+        super::ToolAuditResultField::value("phase"),
+        super::ToolAuditResultField::value("payload_bytes"),
+        super::ToolAuditResultField::value("payload_sha256"),
+        super::ToolAuditResultField::value("payload_available"),
+        super::ToolAuditResultField::value("reason"),
+        super::ToolAuditResultField::value("error_kind"),
+    ]),
     ModelHidden,
     TOOL_CATEGORY_RUNTIME,
     None,

@@ -24,7 +24,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_agent_task",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("task_id", "/task/summary/task_id"),
+                    super::ToolAuditResultField::pointer("state", "/task/summary/state"),
+                    super::ToolAuditResultField::pointer("assignee_agent_id", "/task/summary/assignee_agent_id"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -50,7 +58,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_tasks",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("total_count"),
+                    super::ToolAuditResultField::array_len("returned_count", "tasks"),
+                    super::ToolAuditResultField::value("offset"),
+                    super::ToolAuditResultField::value("next_offset"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -76,7 +91,16 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "read_agent_task",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("task_id", "/task/summary/task_id"),
+                    super::ToolAuditResultField::pointer("state", "/task/summary/state"),
+                    super::ToolAuditResultField::pointer("assignee_agent_id", "/task/summary/assignee_agent_id"),
+                    super::ToolAuditResultField::pointer("latest_attempt_id", "/task/summary/latest_attempt/attempt_id"),
+                    super::ToolAuditResultField::pointer("latest_attempt_state", "/task/summary/latest_attempt/state"),
+                    super::ToolAuditResultField::pointer("latest_attempt_number", "/task/summary/latest_attempt/attempt_number"),
+                    super::ToolAuditResultField::pointer("controller_generation", "/task/summary/latest_attempt/attempt_controller_generation"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -103,7 +127,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "assign_agent_task",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("task_id", "/task/summary/task_id"),
+                    super::ToolAuditResultField::pointer("state", "/task/summary/state"),
+                    super::ToolAuditResultField::pointer("assignee_agent_id", "/task/summary/assignee_agent_id"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -131,7 +163,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "start_agent_task_attempt",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("task_id", "/task/task_id"),
+                    super::ToolAuditResultField::pointer("task_state", "/task/state"),
+                    super::ToolAuditResultField::pointer("attempt_id", "/attempt/attempt_id"),
+                    super::ToolAuditResultField::pointer("attempt_number", "/attempt/attempt_number"),
+                    super::ToolAuditResultField::pointer("attempt_state", "/attempt/state"),
+                    super::ToolAuditResultField::pointer("controller_generation", "/attempt/attempt_controller_generation"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -158,7 +200,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                     "start_agent_task_coding_run",
-                    super::ToolAuditPolicy::TYPED_CANONICAL,
+                    super::ToolAuditPolicy::typed_fields(&[
+                        super::ToolAuditResultField::value("task_id"),
+                        super::ToolAuditResultField::value("attempt_id"),
+                        super::ToolAuditResultField::value("run_id"),
+                        super::ToolAuditResultField::value("project"),
+                        super::ToolAuditResultField::value("provider_id"),
+                        super::ToolAuditResultField::value("dispatch_state"),
+                        super::ToolAuditResultField::value("run_state"),
+                        super::ToolAuditResultField::value("execution_state"),
+                        super::ToolAuditResultField::value("execution_status"),
+                        super::ToolAuditResultField::value("execution_recovery"),
+                        super::ToolAuditResultField::value("task_state"),
+                        super::ToolAuditResultField::value("attempt_state"),
+                        super::ToolAuditResultField::value("replayed"),
+                        super::ToolAuditResultField::value("state_changed"),
+                        super::ToolAuditResultField::value("error_kind"),
+                    ]),
                     ModelVisible,
                     TOOL_CATEGORY_AGENT_TASK,
                     Some(CodingAgentRuns),
@@ -192,7 +250,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                 "reconcile_agent_task_coding_run",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("task_id"),
+                    super::ToolAuditResultField::value("attempt_id"),
+                    super::ToolAuditResultField::value("run_id"),
+                    super::ToolAuditResultField::value("project"),
+                    super::ToolAuditResultField::value("provider_id"),
+                    super::ToolAuditResultField::value("dispatch_state"),
+                    super::ToolAuditResultField::value("run_state"),
+                    super::ToolAuditResultField::value("execution_state"),
+                    super::ToolAuditResultField::value("execution_status"),
+                    super::ToolAuditResultField::value("execution_recovery"),
+                    super::ToolAuditResultField::value("task_state"),
+                    super::ToolAuditResultField::value("attempt_state"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -221,7 +295,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "heartbeat_agent_task_attempt",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("task_id", "/task/task_id"),
+                    super::ToolAuditResultField::pointer("task_state", "/task/state"),
+                    super::ToolAuditResultField::pointer("attempt_id", "/attempt/attempt_id"),
+                    super::ToolAuditResultField::pointer("attempt_number", "/attempt/attempt_number"),
+                    super::ToolAuditResultField::pointer("attempt_state", "/attempt/state"),
+                    super::ToolAuditResultField::pointer("controller_generation", "/attempt/attempt_controller_generation"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -250,7 +334,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "complete_agent_task_attempt",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("task_id", "/task/task_id"),
+                    super::ToolAuditResultField::pointer("task_state", "/task/state"),
+                    super::ToolAuditResultField::pointer("attempt_id", "/attempt/attempt_id"),
+                    super::ToolAuditResultField::pointer("attempt_number", "/attempt/attempt_number"),
+                    super::ToolAuditResultField::pointer("attempt_state", "/attempt/state"),
+                    super::ToolAuditResultField::pointer("controller_generation", "/attempt/attempt_controller_generation"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,

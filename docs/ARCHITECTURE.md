@@ -170,6 +170,30 @@ Session provenance is supported, while generic invocation continuity metadata
 receives no specialized semantics. Adding another heterogeneous gateway extends
 this closed dispatch boundary without adding a concrete Kernel policy branch.
 
+### Tool audit and privacy policy
+
+`ToolDefinition` is the canonical declaration point for Tool Audit privacy
+policy. Request audit first resolves the canonical definition, then parses the
+request through the typed `ToolCall` boundary and consumes its exhaustive
+bounded projection. Unknown tools, retired names without an explicit
+compatibility sanitizer, and requests that cannot be projected fail closed to
+an empty audit object; raw business arguments are never the fallback.
+
+Result audit follows the same definition-owned policy. Most privacy-sensitive
+results declare bounded field selectors directly in their ToolDefinition;
+projections that require derived semantics use a small semantic policy rather
+than a second tool-name registry. Ordinary tools that intentionally retain their
+established canonical audit evidence do so through an explicit policy, not an
+unknown-tool fallback. Missing/unknown policy therefore cannot widen persisted
+ActionAudit or Workflow Session evidence.
+
+The audit projector is observational only. Its output is consumed by ActionAudit
+and bounded Workflow Session ledger extraction, but audit policy never feeds
+ToolCall parsing for execution, OAuth/scope checks, permission decisions,
+Runner authority, retry identity, or protocol/model-facing results. Adding a
+runtime ToolDefinition requires an audit policy at construction time, and the
+registry invariant tests reject incomplete declarations.
+
 ### Cargo workspace ownership layers
 
 The checked-in [`workspace-boundaries.toml`](../workspace-boundaries.toml) is the

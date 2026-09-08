@@ -34,7 +34,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_read_clipboard",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("available"),
+                    super::ToolAuditResultField::value("text_bytes"),
+                    super::ToolAuditResultField::value("success"),
+                    super::ToolAuditResultField::value("error_kind"),
+                    super::ToolAuditResultField::value("execution_state"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardRead),
@@ -61,7 +67,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "computer_write_clipboard",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("text_bytes"),
+                    super::ToolAuditResultField::value("success"),
+                    super::ToolAuditResultField::value("error_kind"),
+                    super::ToolAuditResultField::value("execution_state"),
+                    super::ToolAuditResultField::value("state_changed"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardWrite),
@@ -89,7 +101,16 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_pointer_move",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("display_id"),
+                    super::ToolAuditResultField::value("snapshot_generation"),
+                    super::ToolAuditResultField::value("x"),
+                    super::ToolAuditResultField::value("y"),
+                    super::ToolAuditResultField::value("success"),
+                    super::ToolAuditResultField::value("error_kind"),
+                    super::ToolAuditResultField::value("execution_state"),
+                    super::ToolAuditResultField::value("state_changed"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
@@ -121,7 +142,16 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "computer_pointer_click",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("display_id"),
+                    super::ToolAuditResultField::value("snapshot_generation"),
+                    super::ToolAuditResultField::value("x"),
+                    super::ToolAuditResultField::value("y"),
+                    super::ToolAuditResultField::value("success"),
+                    super::ToolAuditResultField::value("error_kind"),
+                    super::ToolAuditResultField::value("execution_state"),
+                    super::ToolAuditResultField::value("state_changed"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
@@ -153,7 +183,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     unit_arguments(model_spec(
         def(
             "computer_list_targets",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("count"),
+                super::ToolAuditResultField::value("total_count"),
+                super::ToolAuditResultField::value("truncated"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             std::option::Option::None,
@@ -176,7 +210,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_list_windows",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("count"),
+                super::ToolAuditResultField::value("truncated"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
@@ -200,7 +237,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_list_displays",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("count"),
+                    super::ToolAuditResultField::value("truncated"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
@@ -225,7 +265,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_list_applications",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("count"),
+                super::ToolAuditResultField::value("truncated"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationDiscovery),
@@ -248,7 +291,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_launch_application",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("application_id"),
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("error_kind"),
+                super::ToolAuditResultField::value("execution_state"),
+                super::ToolAuditResultField::value("state_changed"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationLaunch),
@@ -271,7 +320,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_accessibility_status",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("platform"),
+                super::ToolAuditResultField::value("trusted"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -294,7 +346,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_accessibility_tree",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("observation_generation"),
+                super::ToolAuditResultField::value("node_count"),
+                super::ToolAuditResultField::value("truncated"),
+                super::ToolAuditResultField::value("max_depth"),
+                super::ToolAuditResultField::value("max_nodes"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -317,7 +376,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_find_elements",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("observation_generation"),
+                super::ToolAuditResultField::value("count"),
+                super::ToolAuditResultField::value("scanned_nodes"),
+                super::ToolAuditResultField::value("truncated"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -340,7 +405,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_element_state",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("element_id"),
+                super::ToolAuditResultField::value("observation_generation"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerElementState),
@@ -363,7 +432,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_activate_window",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("success"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerWindowActivate),
@@ -387,7 +459,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "computer_control",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("element_id"),
+                super::ToolAuditResultField::value("action"),
+                super::ToolAuditResultField::value("success"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerControl),
@@ -412,7 +489,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_scroll_to_element",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("element_id"),
+                super::ToolAuditResultField::value("success"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerScrollToElement),
@@ -436,7 +517,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "computer_key_input",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("key"),
+                super::ToolAuditResultField::value("modifiers"),
+                super::ToolAuditResultField::value("success"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerKeyInput),
@@ -461,7 +547,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_input_text",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("surface_id"),
+                super::ToolAuditResultField::value("element_id"),
+                super::ToolAuditResultField::value("text_bytes"),
+                super::ToolAuditResultField::value("success"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerTextInput),
@@ -484,7 +575,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_snapshot",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::pointer("surface_id", "/surface/surface_id"),
+                super::ToolAuditResultField::value("source_width"),
+                super::ToolAuditResultField::value("source_height"),
+                super::ToolAuditResultField::presence("region_present", "region"),
+                super::ToolAuditResultField::value("width"),
+                super::ToolAuditResultField::value("height"),
+                super::ToolAuditResultField::value("mime_type"),
+                super::ToolAuditResultField::value("file_bytes"),
+                super::ToolAuditResultField::value("captured_at_unix_ms"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
@@ -508,7 +609,18 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_snapshot_display",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("display_id"),
+                    super::ToolAuditResultField::value("snapshot_generation"),
+                    super::ToolAuditResultField::value("source_width"),
+                    super::ToolAuditResultField::value("source_height"),
+                    super::ToolAuditResultField::value("width"),
+                    super::ToolAuditResultField::value("height"),
+                    super::ToolAuditResultField::value("mime_type"),
+                    super::ToolAuditResultField::value("file_bytes"),
+                    super::ToolAuditResultField::value("sha256"),
+                    super::ToolAuditResultField::value("captured_at_unix_ms"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
@@ -534,7 +646,20 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_save_snapshot",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("project"),
+                    super::ToolAuditResultField::value("path"),
+                    super::ToolAuditResultField::value("client_id"),
+                    super::ToolAuditResultField::value("surface_id"),
+                    super::ToolAuditResultField::value("source_width"),
+                    super::ToolAuditResultField::value("source_height"),
+                    super::ToolAuditResultField::presence("region_present", "region"),
+                    super::ToolAuditResultField::value("width"),
+                    super::ToolAuditResultField::value("height"),
+                    super::ToolAuditResultField::value("mime_type"),
+                    super::ToolAuditResultField::value("file_bytes"),
+                    super::ToolAuditResultField::value("saved"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(FileWrite),

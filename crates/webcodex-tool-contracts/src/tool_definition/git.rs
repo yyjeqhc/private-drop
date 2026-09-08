@@ -43,7 +43,19 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "git_review_summary",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("project"),
+                    super::ToolAuditResultField::value("scope"),
+                    super::ToolAuditResultField::value("stats"),
+                    super::ToolAuditResultField::value("coverage"),
+                    super::ToolAuditResultField::value("truncation"),
+                    super::ToolAuditResultField::value("deterministic"),
+                    super::ToolAuditResultField::value("llm_summary"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("reason_code"),
+                    super::ToolAuditResultField::array_len("signal_count", "signals"),
+                    super::ToolAuditResultField::array_len("file_count", "files"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -167,7 +179,19 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "git_diff_hunks",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("project"),
+                    super::ToolAuditResultField::value("scope"),
+                    super::ToolAuditResultField::value("cached"),
+                    super::ToolAuditResultField::value("hunk_count"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("truncation_reasons"),
+                    super::ToolAuditResultField::value("has_more"),
+                    super::ToolAuditResultField::value("exit_code"),
+                    super::ToolAuditResultField::value("error_kind"),
+                    super::ToolAuditResultField::value("reason_code"),
+                    super::ToolAuditResultField::array_len("file_count", "files"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),

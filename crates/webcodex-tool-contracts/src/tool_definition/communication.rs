@@ -24,7 +24,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_agent_identity",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("agent_id", "/agent/agent_id"),
+                    super::ToolAuditResultField::pointer("profile_revision", "/agent/profile_revision"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -50,7 +57,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_identities",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("total_count"),
+                    super::ToolAuditResultField::array_len("returned_count", "agents"),
+                    super::ToolAuditResultField::value("offset"),
+                    super::ToolAuditResultField::value("next_offset"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -77,7 +91,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "update_agent_identity",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("agent_id", "/agent/agent_id"),
+                    super::ToolAuditResultField::pointer("profile_revision", "/agent/profile_revision"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -106,7 +127,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "attach_agent_endpoint",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
+                    super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
+                    super::ToolAuditResultField::pointer_non_null("detached", "/endpoint/detached_at_unix_ms"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -134,7 +163,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "bootstrap_agent_conversation",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("agent_id", "/acting_agent/agent_id"),
+                    super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
+                    super::ToolAuditResultField::pointer("controller_generation", "/endpoint/controller_generation"),
+                    super::ToolAuditResultField::pointer("conversation_id", "/selected_conversation/conversation_id"),
+                    super::ToolAuditResultField::pointer("queued_delivery_count", "/inbox/queued_delivery_count"),
+                    super::ToolAuditResultField::pointer("wake_id", "/wake/wake_id"),
+                    super::ToolAuditResultField::pointer("wake_state", "/wake/state"),
+                    super::ToolAuditResultField::pointer("adapter_kind", "/host_binding/adapter_kind"),
+                    super::ToolAuditResultField::pointer("runtime_wake_capable", "/host_binding/runtime_wake_capable"),
+                    super::ToolAuditResultField::pointer("production_auto_resume_available", "/host_binding/production_auto_resume_available"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -161,7 +202,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "detach_agent_endpoint",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
+                    super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
+                    super::ToolAuditResultField::pointer_non_null("detached", "/endpoint/detached_at_unix_ms"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -189,7 +238,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_conversation",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("conversation_id", "/conversation/conversation/conversation_id"),
+                    super::ToolAuditResultField::pointer_array_len("participant_count", "/conversation/participants"),
+                    super::ToolAuditResultField::pointer_array_len("message_count", "/conversation/messages"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -215,7 +272,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_conversations",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("total_count"),
+                    super::ToolAuditResultField::array_len("returned_count", "conversations"),
+                    super::ToolAuditResultField::value("offset"),
+                    super::ToolAuditResultField::value("next_offset"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -241,7 +305,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "read_conversation",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("conversation_id", "/conversation/conversation_id"),
+                    super::ToolAuditResultField::array_len("participant_count", "participants"),
+                    super::ToolAuditResultField::array_len("message_count", "messages"),
+                    super::ToolAuditResultField::value("after_seq"),
+                    super::ToolAuditResultField::value("next_after_seq"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -267,7 +339,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "post_conversation_message",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("message_id", "/message/message_id"),
+                    super::ToolAuditResultField::pointer("conversation_id", "/message/conversation_id"),
+                    super::ToolAuditResultField::pointer("seq", "/message/seq"),
+                    super::ToolAuditResultField::pointer_array_len("delivery_count", "/message/deliveries"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -293,7 +373,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_inbox",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("agent_id"),
+                    super::ToolAuditResultField::value("total_queued_count"),
+                    super::ToolAuditResultField::array_len("returned_count", "deliveries"),
+                    super::ToolAuditResultField::value("after_delivery_order"),
+                    super::ToolAuditResultField::value("next_after_delivery_order"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -320,7 +408,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "consume_agent_deliveries",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("agent_id"),
+                    super::ToolAuditResultField::array_len("consumed_count", "consumed_delivery_ids"),
+                    super::ToolAuditResultField::array_len("already_consumed_count", "already_consumed_delivery_ids"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -349,7 +443,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "consume_agent_wake",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("wake_id"),
+                    super::ToolAuditResultField::value("target_agent_id"),
+                    super::ToolAuditResultField::value("state"),
+                    super::ToolAuditResultField::value("already_consumed"),
+                    super::ToolAuditResultField::value("consumed_at_unix_ms"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,

@@ -192,7 +192,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "post_session_message",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("session_id"),
+                super::ToolAuditResultField::value("message_id"),
+                super::ToolAuditResultField::pointer("kind", "/message/kind"),
+                super::ToolAuditResultField::pointer("status", "/message/status"),
+                super::ToolAuditResultField::pointer("requires_ack", "/message/requires_ack"),
+                super::ToolAuditResultField::pointer("author_session_id", "/message/author_session_id"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -215,7 +223,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "list_session_messages",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("session_id"),
+                super::ToolAuditResultField::array_len("message_count", "messages"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -238,7 +250,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "get_session_assignment",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("session_id"),
+                super::ToolAuditResultField::value("message_id"),
+                super::ToolAuditResultField::array_len("direct_reply_count", "direct_replies"),
+                super::ToolAuditResultField::string_present("assignment_fence_present", "assignment_fence"),
+                super::ToolAuditResultField::value("error_kind"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -261,7 +280,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "observe_session_messages",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("session_id"),
+                super::ToolAuditResultField::array_len("message_count", "messages"),
+                super::ToolAuditResultField::value("changed"),
+                super::ToolAuditResultField::value("history_lost"),
+                super::ToolAuditResultField::value("has_more"),
+                super::ToolAuditResultField::value("wait_outcome"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -285,7 +312,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "resolve_session_message",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("session_id"),
+                super::ToolAuditResultField::value("message_id"),
+                super::ToolAuditResultField::pointer("status", "/message/status"),
+                super::ToolAuditResultField::pointer("resolved_by_message_id", "/message/resolved_by_message_id"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -311,7 +344,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "complete_session_message",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("success"),
+                super::ToolAuditResultField::value("session_id"),
+                super::ToolAuditResultField::value("message_id"),
+                super::ToolAuditResultField::value("answer_message_id"),
+                super::ToolAuditResultField::value("completion_id"),
+                super::ToolAuditResultField::value("replayed"),
+                super::ToolAuditResultField::pointer("author_session_id", "/answer/author_session_id"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -337,7 +378,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         requires_explicit_business_session(model_spec(
             def(
                 "session_discussion_summary",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("success"),
+                    super::ToolAuditResultField::value("session_id"),
+                    super::ToolAuditResultField::value("counts"),
+                    super::ToolAuditResultField::array_len("open_todo_count", "open_todos"),
+                    super::ToolAuditResultField::array_len("recent_answer_count", "recent_answers"),
+                    super::ToolAuditResultField::array_len("recent_completion_count", "recent_completions"),
+                ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -362,7 +410,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "session_handoff_summary",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("session_id"),
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("lifecycle"),
+                super::ToolAuditResultField::value("counts"),
+                super::ToolAuditResultField::array_len("open_todo_count", "open_todos"),
+                super::ToolAuditResultField::array_len("recent_answer_count", "recent_answers"),
+                super::ToolAuditResultField::array_len("recent_completion_count", "recent_completions"),
+                super::ToolAuditResultField::value("summary_only"),
+                super::ToolAuditResultField::value("error_kind"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,

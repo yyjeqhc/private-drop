@@ -838,605 +838,136 @@ fn typed_skill_request_audit(kind: SkillRequestAudit, arguments: &Value) -> Valu
 }
 
 pub fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Value {
-    match tool_name {
-        "read_tool_trace" => serde_json::json!({
-            "trace_ref": output.get("trace_ref").cloned().unwrap_or(Value::Null),
-            "trace_mode": output.get("trace_mode").cloned().unwrap_or(Value::Null),
-            "payload_count": output.get("payload_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
-            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
-            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
-            "payload_index": output.get("payload_index").cloned().unwrap_or(Value::Null),
-            "phase": output.get("phase").cloned().unwrap_or(Value::Null),
-            "payload_bytes": output.get("payload_bytes").cloned().unwrap_or(Value::Null),
-            "payload_sha256": output.get("payload_sha256").cloned().unwrap_or(Value::Null),
-            "payload_available": output.get("payload_available").cloned().unwrap_or(Value::Null),
-            "reason": output.get("reason").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "coding_agent_start" | "coding_agent_cancel" => serde_json::json!({
-            "run_id": output.get("run_id").cloned().unwrap_or(Value::Null),
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "provider_id": output.get("provider_id").cloned().unwrap_or(Value::Null),
-            "state": output.get("state").cloned().unwrap_or(Value::Null),
-            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
-            "cancel_requested": output.get("cancel_requested").cloned().unwrap_or(Value::Null),
-            "terminal_stop_reason": output.pointer("/terminal/stop_reason").cloned().unwrap_or(Value::Null),
-            "terminal_error_code": output.pointer("/terminal/error_code").cloned().unwrap_or(Value::Null),
-            "terminal_completed_at": output.pointer("/terminal/completed_at").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "recovery_kind": output.get("recovery_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "coding_agent_observe" => {
-            let mut kind_counts = serde_json::Map::new();
-            let mut event_count = 0usize;
-            let mut event_body_bytes = 0usize;
-            if let Some(events) = output.get("events").and_then(Value::as_array) {
-                event_count = events.len();
-                for event in events {
-                    if let Some(kind) = event.get("kind").and_then(Value::as_str) {
-                        let count = kind_counts.get(kind).and_then(Value::as_u64).unwrap_or(0) + 1;
-                        kind_counts.insert(kind.to_string(), Value::from(count));
-                    }
-                    event_body_bytes = event_body_bytes.saturating_add(
-                        event
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .map(str::len)
-                            .unwrap_or(0),
-                    );
-                }
-            }
-            serde_json::json!({
-                "run_id": output.get("run_id").cloned().unwrap_or(Value::Null),
-                "project": output.get("project").cloned().unwrap_or(Value::Null),
-                "provider_id": output.get("provider_id").cloned().unwrap_or(Value::Null),
-                "state": output.get("state").cloned().unwrap_or(Value::Null),
-                "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
-                "event_count": event_count,
-                "event_kind_counts": kind_counts,
-                "event_body_bytes": event_body_bytes,
-                "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
-                "history_lost": output.get("history_lost").cloned().unwrap_or(Value::Null),
-                "first_retained_sequence": output.get("first_retained_sequence").cloned().unwrap_or(Value::Null),
-                "terminal_stop_reason": output.pointer("/terminal/stop_reason").cloned().unwrap_or(Value::Null),
-                "terminal_error_code": output.pointer("/terminal/error_code").cloned().unwrap_or(Value::Null),
-                "terminal_completed_at": output.pointer("/terminal/completed_at").cloned().unwrap_or(Value::Null),
-                "recovery_kind": output.get("recovery_kind").cloned().unwrap_or(Value::Null),
-                "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            })
+    let Some(definition) = webcodex_tool_contracts::lookup_tool_definition(tool_name) else {
+        return empty_audit_projection();
+    };
+    match definition.audit_policy().result {
+        webcodex_tool_contracts::ToolAuditResultPolicy::CanonicalLedgerEvidence => output.clone(),
+        webcodex_tool_contracts::ToolAuditResultPolicy::Fields(fields) => {
+            project_declared_result_fields(fields, output)
         }
-        "git_review_summary" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "scope": output.get("scope").cloned().unwrap_or(Value::Null),
-            "stats": output.get("stats").cloned().unwrap_or(Value::Null),
-            "coverage": output.get("coverage").cloned().unwrap_or(Value::Null),
-            "truncation": output.get("truncation").cloned().unwrap_or(Value::Null),
-            "deterministic": output.get("deterministic").cloned().unwrap_or(Value::Null),
-            "llm_summary": output.get("llm_summary").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
-            "signal_count": output.get("signals").and_then(Value::as_array).map(Vec::len),
-            "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
-        }),
-        "git_diff_hunks" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "scope": output.get("scope").cloned().unwrap_or(Value::Null),
-            "cached": output.get("cached").cloned().unwrap_or(Value::Null),
-            "hunk_count": output.get("hunk_count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "truncation_reasons": output.get("truncation_reasons").cloned().unwrap_or(Value::Null),
-            "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
-            "exit_code": output.get("exit_code").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "reason_code": output.get("reason_code").cloned().unwrap_or(Value::Null),
-            "file_count": output.get("files").and_then(Value::as_array).map(Vec::len),
-        }),
-        "post_session_message" => serde_json::json!({
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
-            "kind": output.pointer("/message/kind").cloned().unwrap_or(Value::Null),
-            "status": output.pointer("/message/status").cloned().unwrap_or(Value::Null),
-            "requires_ack": output.pointer("/message/requires_ack").cloned().unwrap_or(Value::Null),
-            "author_session_id": output.pointer("/message/author_session_id").cloned().unwrap_or(Value::Null),
-        }),
-        "list_session_messages" => serde_json::json!({
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "message_count": output.get("messages").and_then(Value::as_array).map(Vec::len),
-        }),
-        "get_session_assignment" => serde_json::json!({
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
-            "direct_reply_count": output.get("direct_replies").and_then(Value::as_array).map(Vec::len),
-            "assignment_fence_present": output.get("assignment_fence").and_then(Value::as_str).is_some(),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "observe_session_messages" => serde_json::json!({
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "message_count": output.get("messages").and_then(Value::as_array).map(Vec::len),
-            "changed": output.get("changed").cloned().unwrap_or(Value::Null),
-            "history_lost": output.get("history_lost").cloned().unwrap_or(Value::Null),
-            "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
-            "wait_outcome": output.get("wait_outcome").cloned().unwrap_or(Value::Null),
-        }),
-        "resolve_session_message" => serde_json::json!({
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
-            "status": output.pointer("/message/status").cloned().unwrap_or(Value::Null),
-            "resolved_by_message_id": output.pointer("/message/resolved_by_message_id").cloned().unwrap_or(Value::Null),
-        }),
-        "complete_session_message" => serde_json::json!({
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "message_id": output.get("message_id").cloned().unwrap_or(Value::Null),
-            "answer_message_id": output.get("answer_message_id").cloned().unwrap_or(Value::Null),
-            "completion_id": output.get("completion_id").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "author_session_id": output.pointer("/answer/author_session_id").cloned().unwrap_or(Value::Null),
-        }),
-        "session_discussion_summary" => serde_json::json!({
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "counts": output.get("counts").cloned().unwrap_or(Value::Null),
-            "open_todo_count": output.get("open_todos").and_then(Value::as_array).map(Vec::len),
-            "recent_answer_count": output.get("recent_answers").and_then(Value::as_array).map(Vec::len),
-            "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
-        }),
-        "session_handoff_summary" => serde_json::json!({
-            "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "lifecycle": output.get("lifecycle").cloned().unwrap_or(Value::Null),
-            "counts": output.get("counts").cloned().unwrap_or(Value::Null),
-            "open_todo_count": output.get("open_todos").and_then(Value::as_array).map(Vec::len),
-            "recent_answer_count": output.get("recent_answers").and_then(Value::as_array).map(Vec::len),
-            "recent_completion_count": output.get("recent_completions").and_then(Value::as_array).map(Vec::len),
-            "summary_only": output.get("summary_only").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "create_agent_task" | "assign_agent_task" => serde_json::json!({
-            "task_id": output.pointer("/task/summary/task_id").cloned().unwrap_or(Value::Null),
-            "state": output.pointer("/task/summary/state").cloned().unwrap_or(Value::Null),
-            "assignee_agent_id": output.pointer("/task/summary/assignee_agent_id").cloned().unwrap_or(Value::Null),
-            "created": output.get("created").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "list_agent_tasks" => serde_json::json!({
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("tasks").and_then(Value::as_array).map(Vec::len),
-            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
-            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "read_agent_task" => serde_json::json!({
-            "task_id": output.pointer("/task/summary/task_id").cloned().unwrap_or(Value::Null),
-            "state": output.pointer("/task/summary/state").cloned().unwrap_or(Value::Null),
-            "assignee_agent_id": output.pointer("/task/summary/assignee_agent_id").cloned().unwrap_or(Value::Null),
-            "latest_attempt_id": output.pointer("/task/summary/latest_attempt/attempt_id").cloned().unwrap_or(Value::Null),
-            "latest_attempt_state": output.pointer("/task/summary/latest_attempt/state").cloned().unwrap_or(Value::Null),
-            "latest_attempt_number": output.pointer("/task/summary/latest_attempt/attempt_number").cloned().unwrap_or(Value::Null),
-            "controller_generation": output.pointer("/task/summary/latest_attempt/attempt_controller_generation").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "start_agent_task_attempt" => serde_json::json!({
-            "task_id": output.pointer("/task/task_id").cloned().unwrap_or(Value::Null),
-            "task_state": output.pointer("/task/state").cloned().unwrap_or(Value::Null),
-            "attempt_id": output.pointer("/attempt/attempt_id").cloned().unwrap_or(Value::Null),
-            "attempt_number": output.pointer("/attempt/attempt_number").cloned().unwrap_or(Value::Null),
-            "attempt_state": output.pointer("/attempt/state").cloned().unwrap_or(Value::Null),
-            "controller_generation": output.pointer("/attempt/attempt_controller_generation").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "start_agent_task_coding_run" | "reconcile_agent_task_coding_run" => serde_json::json!({
-            "task_id": output.get("task_id").cloned().unwrap_or(Value::Null),
-            "attempt_id": output.get("attempt_id").cloned().unwrap_or(Value::Null),
-            "run_id": output.get("run_id").cloned().unwrap_or(Value::Null),
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "provider_id": output.get("provider_id").cloned().unwrap_or(Value::Null),
-            "dispatch_state": output.get("dispatch_state").cloned().unwrap_or(Value::Null),
-            "run_state": output.get("run_state").cloned().unwrap_or(Value::Null),
-            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
-            "execution_status": output.get("execution_status").cloned().unwrap_or(Value::Null),
-            "execution_recovery": output.get("execution_recovery").cloned().unwrap_or(Value::Null),
-            "task_state": output.get("task_state").cloned().unwrap_or(Value::Null),
-            "attempt_state": output.get("attempt_state").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "heartbeat_agent_task_attempt" | "complete_agent_task_attempt" => serde_json::json!({
-            "task_id": output.pointer("/task/task_id").cloned().unwrap_or(Value::Null),
-            "task_state": output.pointer("/task/state").cloned().unwrap_or(Value::Null),
-            "attempt_id": output.pointer("/attempt/attempt_id").cloned().unwrap_or(Value::Null),
-            "attempt_number": output.pointer("/attempt/attempt_number").cloned().unwrap_or(Value::Null),
-            "attempt_state": output.pointer("/attempt/state").cloned().unwrap_or(Value::Null),
-            "controller_generation": output.pointer("/attempt/attempt_controller_generation").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "create_agent_identity" | "update_agent_identity" => serde_json::json!({
-            "agent_id": output.pointer("/agent/agent_id").cloned().unwrap_or(Value::Null),
-            "profile_revision": output.pointer("/agent/profile_revision").cloned().unwrap_or(Value::Null),
-            "created": output.get("created").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "list_agent_identities" => serde_json::json!({
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("agents").and_then(Value::as_array).map(Vec::len),
-            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
-            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "attach_agent_endpoint" | "detach_agent_endpoint" => serde_json::json!({
-            "endpoint_id": output.pointer("/endpoint/endpoint_id").cloned().unwrap_or(Value::Null),
-            "agent_id": output.pointer("/endpoint/agent_id").cloned().unwrap_or(Value::Null),
-            "detached": output.pointer("/endpoint/detached_at_unix_ms").is_some_and(|value| !value.is_null()),
-            "created": output.get("created").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "create_conversation" => serde_json::json!({
-            "conversation_id": output.pointer("/conversation/conversation/conversation_id").cloned().unwrap_or(Value::Null),
-            "participant_count": output.pointer("/conversation/participants").and_then(Value::as_array).map(Vec::len),
-            "message_count": output.pointer("/conversation/messages").and_then(Value::as_array).map(Vec::len),
-            "created": output.get("created").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "list_conversations" => serde_json::json!({
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("conversations").and_then(Value::as_array).map(Vec::len),
-            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
-            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "read_conversation" => serde_json::json!({
-            "conversation_id": output.pointer("/conversation/conversation_id").cloned().unwrap_or(Value::Null),
-            "participant_count": output.get("participants").and_then(Value::as_array).map(Vec::len),
-            "message_count": output.get("messages").and_then(Value::as_array).map(Vec::len),
-            "after_seq": output.get("after_seq").cloned().unwrap_or(Value::Null),
-            "next_after_seq": output.get("next_after_seq").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "post_conversation_message" => serde_json::json!({
-            "message_id": output.pointer("/message/message_id").cloned().unwrap_or(Value::Null),
-            "conversation_id": output.pointer("/message/conversation_id").cloned().unwrap_or(Value::Null),
-            "seq": output.pointer("/message/seq").cloned().unwrap_or(Value::Null),
-            "delivery_count": output.pointer("/message/deliveries").and_then(Value::as_array).map(Vec::len),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "list_agent_inbox" => serde_json::json!({
-            "agent_id": output.get("agent_id").cloned().unwrap_or(Value::Null),
-            "total_queued_count": output.get("total_queued_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("deliveries").and_then(Value::as_array).map(Vec::len),
-            "after_delivery_order": output.get("after_delivery_order").cloned().unwrap_or(Value::Null),
-            "next_after_delivery_order": output.get("next_after_delivery_order").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "consume_agent_deliveries" => serde_json::json!({
-            "agent_id": output.get("agent_id").cloned().unwrap_or(Value::Null),
-            "consumed_count": output.get("consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
-            "already_consumed_count": output.get("already_consumed_delivery_ids").and_then(Value::as_array).map(Vec::len),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "bootstrap_agent_conversation" => serde_json::json!({
-            "agent_id": output.pointer("/acting_agent/agent_id").cloned().unwrap_or(Value::Null),
-            "endpoint_id": output.pointer("/endpoint/endpoint_id").cloned().unwrap_or(Value::Null),
-            "controller_generation": output.pointer("/endpoint/controller_generation").cloned().unwrap_or(Value::Null),
-            "conversation_id": output.pointer("/selected_conversation/conversation_id").cloned().unwrap_or(Value::Null),
-            "queued_delivery_count": output.pointer("/inbox/queued_delivery_count").cloned().unwrap_or(Value::Null),
-            "wake_id": output.pointer("/wake/wake_id").cloned().unwrap_or(Value::Null),
-            "wake_state": output.pointer("/wake/state").cloned().unwrap_or(Value::Null),
-            "adapter_kind": output.pointer("/host_binding/adapter_kind").cloned().unwrap_or(Value::Null),
-            "runtime_wake_capable": output.pointer("/host_binding/runtime_wake_capable").cloned().unwrap_or(Value::Null),
-            "production_auto_resume_available": output.pointer("/host_binding/production_auto_resume_available").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "consume_agent_wake" => serde_json::json!({
-            "wake_id": output.get("wake_id").cloned().unwrap_or(Value::Null),
-            "target_agent_id": output.get("target_agent_id").cloned().unwrap_or(Value::Null),
-            "state": output.get("state").cloned().unwrap_or(Value::Null),
-            "already_consumed": output.get("already_consumed").cloned().unwrap_or(Value::Null),
-            "consumed_at_unix_ms": output.get("consumed_at_unix_ms").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-        }),
-        "memory_search" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "catalog_revision": output.get("catalog_revision").cloned().unwrap_or(Value::Null),
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "memory_read" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "memory_id": output.get("memory_id").cloned().unwrap_or(Value::Null),
-            "memory_key": output.get("memory_key").cloned().unwrap_or(Value::Null),
-            "revision": output.get("revision").cloned().unwrap_or(Value::Null),
-            "bootstrap": output.get("bootstrap").cloned().unwrap_or(Value::Null),
-            "priority": output.get("priority").cloned().unwrap_or(Value::Null),
-            "returned_body_bytes": output.get("body").and_then(Value::as_str).map(str::len),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "memory_set" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "memory_id": output.get("memory_id").cloned().unwrap_or(Value::Null),
-            "memory_key": output.get("memory_key").cloned().unwrap_or(Value::Null),
-            "old_revision": output.get("old_revision").cloned().unwrap_or(Value::Null),
-            "revision": output.get("revision").cloned().unwrap_or(Value::Null),
-            "created": output.get("created").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "memory_delete" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "memory_id": output.get("memory_id").cloned().unwrap_or(Value::Null),
-            "memory_key": output.get("memory_key").cloned().unwrap_or(Value::Null),
-            "revision": output.get("revision").cloned().unwrap_or(Value::Null),
-            "deleted": output.get("deleted").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "memory_scope_list" => serde_json::json!({
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "memory_scope_purge" => serde_json::json!({
-            "memory_scope_id": output.get("memory_scope_id").cloned().unwrap_or(Value::Null),
-            "catalog_revision": output.get("catalog_revision").cloned().unwrap_or(Value::Null),
-            "current_catalog_revision": output.get("current_catalog_revision").cloned().unwrap_or(Value::Null),
-            "purged_count": output.get("purged_count").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "skill_list" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "catalog_revision": output.get("catalog_revision").cloned().unwrap_or(Value::Null),
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "returned_count": output.get("returned_count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "invalid_count": output.get("invalid_count").cloned().unwrap_or(Value::Null),
-            "discovery_truncated": output.get("discovery_truncated").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "skill_read_file" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
-            "source_scope": output.get("source_scope").cloned().unwrap_or(Value::Null),
-            "trust": output.get("trust").cloned().unwrap_or(Value::Null),
-            "package_revision": output.get("package_revision").cloned().unwrap_or(Value::Null),
-            "definition_revision": output.get("definition_revision").cloned().unwrap_or(Value::Null),
-            "path": output.get("path").cloned().unwrap_or(Value::Null),
-            "sha256": output.get("sha256").cloned().unwrap_or(Value::Null),
-            "start_line": output.get("start_line").cloned().unwrap_or(Value::Null),
-            "end_line": output.get("end_line").cloned().unwrap_or(Value::Null),
-            "returned_lines": output.get("returned_lines").cloned().unwrap_or(Value::Null),
-            "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
-            "next_start_line": output.get("next_start_line").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "skill_versions" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
-            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
-            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
-            "active_package_revision": output.get("active_package_revision").cloned().unwrap_or(Value::Null),
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "offset": output.get("offset").cloned().unwrap_or(Value::Null),
-            "next_offset": output.get("next_offset").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "skill_install" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
-            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
-            "package_revision": output.get("package_revision").cloned().unwrap_or(Value::Null),
-            "definition_revision": output.get("definition_revision").cloned().unwrap_or(Value::Null),
-            "artifact_sha256": output.get("artifact_sha256").cloned().unwrap_or(Value::Null),
-            "file_count": output.get("file_count").cloned().unwrap_or(Value::Null),
-            "total_bytes": output.get("total_bytes").cloned().unwrap_or(Value::Null),
-            "installed": output.get("installed").cloned().unwrap_or(Value::Null),
-            "activated": output.get("activated").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
-            "active_package_revision": output.get("active_package_revision").cloned().unwrap_or(Value::Null),
-            "outcome_unknown": output.get("outcome_unknown").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "skill_activate" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
-            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
-            "previous_active_package_revision": output.get("previous_active_package_revision").cloned().unwrap_or(Value::Null),
-            "active_package_revision": output.get("active_package_revision").cloned().unwrap_or(Value::Null),
-            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
-            "changed": output.get("changed").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "outcome_unknown": output.get("outcome_unknown").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "skill_remove_revision" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "skill_id": output.get("skill_id").cloned().unwrap_or(Value::Null),
-            "skill_key": output.get("skill_key").cloned().unwrap_or(Value::Null),
-            "package_revision": output.get("package_revision").cloned().unwrap_or(Value::Null),
-            "state_revision": output.get("state_revision").cloned().unwrap_or(Value::Null),
-            "removed": output.get("removed").cloned().unwrap_or(Value::Null),
-            "replayed": output.get("replayed").cloned().unwrap_or(Value::Null),
-            "outcome_unknown": output.get("outcome_unknown").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_list_targets" => serde_json::json!({
-            "count": output.get("count").cloned().unwrap_or(Value::Null),
-            "total_count": output.get("total_count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_list_windows" => serde_json::json!({
-            "count": output.get("count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_list_applications" => serde_json::json!({
-            "count": output.get("count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_list_displays" => serde_json::json!({
-            "count": output.get("count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_launch_application" => serde_json::json!({
-            "application_id": output.get("application_id").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_pointer_move" | "computer_pointer_click" => serde_json::json!({
-            "display_id": output.get("display_id").cloned().unwrap_or(Value::Null),
-            "snapshot_generation": output.get("snapshot_generation").cloned().unwrap_or(Value::Null),
-            "x": output.get("x").cloned().unwrap_or(Value::Null),
-            "y": output.get("y").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_read_clipboard" => serde_json::json!({
-            "available": output.get("available").cloned().unwrap_or(Value::Null),
-            "text_bytes": output.get("text_bytes").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_write_clipboard" => serde_json::json!({
-            "text_bytes": output.get("text_bytes").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-            "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
-            "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
-            "state_changed": output.get("state_changed").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_snapshot" => serde_json::json!({
-            "surface_id": output.pointer("/surface/surface_id").cloned().unwrap_or(Value::Null),
-            "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
-            "source_height": output.get("source_height").cloned().unwrap_or(Value::Null),
-            "region_present": output.get("region").is_some(),
-            "width": output.get("width").cloned().unwrap_or(Value::Null),
-            "height": output.get("height").cloned().unwrap_or(Value::Null),
-            "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
-            "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
-            "captured_at_unix_ms": output.get("captured_at_unix_ms").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_snapshot_display" => serde_json::json!({
-            "display_id": output.get("display_id").cloned().unwrap_or(Value::Null),
-            "snapshot_generation": output.get("snapshot_generation").cloned().unwrap_or(Value::Null),
-            "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
-            "source_height": output.get("source_height").cloned().unwrap_or(Value::Null),
-            "width": output.get("width").cloned().unwrap_or(Value::Null),
-            "height": output.get("height").cloned().unwrap_or(Value::Null),
-            "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
-            "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
-            "sha256": output.get("sha256").cloned().unwrap_or(Value::Null),
-            "captured_at_unix_ms": output.get("captured_at_unix_ms").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_save_snapshot" => serde_json::json!({
-            "project": output.get("project").cloned().unwrap_or(Value::Null),
-            "path": output.get("path").cloned().unwrap_or(Value::Null),
-            "client_id": output.get("client_id").cloned().unwrap_or(Value::Null),
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "source_width": output.get("source_width").cloned().unwrap_or(Value::Null),
-            "source_height": output.get("source_height").cloned().unwrap_or(Value::Null),
-            "region_present": output.get("region").is_some(),
-            "width": output.get("width").cloned().unwrap_or(Value::Null),
-            "height": output.get("height").cloned().unwrap_or(Value::Null),
-            "mime_type": output.get("mime_type").cloned().unwrap_or(Value::Null),
-            "file_bytes": output.get("file_bytes").cloned().unwrap_or(Value::Null),
-            "saved": output.get("saved").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_accessibility_status" => serde_json::json!({
-            "platform": output.get("platform").cloned().unwrap_or(Value::Null),
-            "trusted": output.get("trusted").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_accessibility_tree" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "observation_generation": output.get("observation_generation").cloned().unwrap_or(Value::Null),
-            "node_count": output.get("node_count").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-            "max_depth": output.get("max_depth").cloned().unwrap_or(Value::Null),
-            "max_nodes": output.get("max_nodes").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_find_elements" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "observation_generation": output.get("observation_generation").cloned().unwrap_or(Value::Null),
-            "count": output.get("count").cloned().unwrap_or(Value::Null),
-            "scanned_nodes": output.get("scanned_nodes").cloned().unwrap_or(Value::Null),
-            "truncated": output.get("truncated").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_element_state" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
-            "observation_generation": output.get("observation_generation").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_activate_window" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_control" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
-            "action": output.get("action").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_scroll_to_element" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_key_input" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "key": output.get("key").cloned().unwrap_or(Value::Null),
-            "modifiers": output.get("modifiers").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-        }),
-        "computer_input_text" => serde_json::json!({
-            "surface_id": output.get("surface_id").cloned().unwrap_or(Value::Null),
-            "element_id": output.get("element_id").cloned().unwrap_or(Value::Null),
-            "text_bytes": output.get("text_bytes").cloned().unwrap_or(Value::Null),
-            "success": output.get("success").cloned().unwrap_or(Value::Null),
-        }),
-        _ => output.clone(),
+        webcodex_tool_contracts::ToolAuditResultPolicy::Semantic(
+            webcodex_tool_contracts::ToolAuditSemanticResultPolicy::CodingAgentObservation,
+        ) => coding_agent_observation_result_audit(output),
     }
+}
+
+fn project_declared_result_fields(
+    fields: &[webcodex_tool_contracts::ToolAuditResultField],
+    output: &Value,
+) -> Value {
+    use webcodex_tool_contracts::ToolAuditResultField;
+
+    let mut projected = serde_json::Map::new();
+    for field in fields {
+        let (key, value) = match *field {
+            ToolAuditResultField::Value {
+                output: key,
+                source,
+            } => (key, output.get(source).cloned().unwrap_or(Value::Null)),
+            ToolAuditResultField::Pointer {
+                output: key,
+                pointer,
+            } => (key, output.pointer(pointer).cloned().unwrap_or(Value::Null)),
+            ToolAuditResultField::ArrayLen {
+                output: key,
+                source,
+            } => (
+                key,
+                output
+                    .get(source)
+                    .and_then(Value::as_array)
+                    .map(|items| Value::from(items.len()))
+                    .unwrap_or(Value::Null),
+            ),
+            ToolAuditResultField::PointerArrayLen {
+                output: key,
+                pointer,
+            } => (
+                key,
+                output
+                    .pointer(pointer)
+                    .and_then(Value::as_array)
+                    .map(|items| Value::from(items.len()))
+                    .unwrap_or(Value::Null),
+            ),
+            ToolAuditResultField::StringBytes {
+                output: key,
+                source,
+            } => (
+                key,
+                output
+                    .get(source)
+                    .and_then(Value::as_str)
+                    .map(|value| Value::from(value.len()))
+                    .unwrap_or(Value::Null),
+            ),
+            ToolAuditResultField::Presence {
+                output: key,
+                source,
+            } => (key, Value::Bool(output.get(source).is_some())),
+            ToolAuditResultField::StringPresent {
+                output: key,
+                source,
+            } => (
+                key,
+                Value::Bool(output.get(source).and_then(Value::as_str).is_some()),
+            ),
+            ToolAuditResultField::PointerNonNull {
+                output: key,
+                pointer,
+            } => (
+                key,
+                Value::Bool(
+                    output
+                        .pointer(pointer)
+                        .is_some_and(|value| !value.is_null()),
+                ),
+            ),
+        };
+        projected.insert(key.to_string(), value);
+    }
+    Value::Object(projected)
+}
+
+fn coding_agent_observation_result_audit(output: &Value) -> Value {
+    let mut kind_counts = serde_json::Map::new();
+    let mut event_count = 0usize;
+    let mut event_body_bytes = 0usize;
+    if let Some(events) = output.get("events").and_then(Value::as_array) {
+        event_count = events.len();
+        for event in events {
+            if let Some(kind) = event.get("kind").and_then(Value::as_str) {
+                let count = kind_counts.get(kind).and_then(Value::as_u64).unwrap_or(0) + 1;
+                kind_counts.insert(kind.to_string(), Value::from(count));
+            }
+            event_body_bytes = event_body_bytes.saturating_add(
+                event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::len)
+                    .unwrap_or(0),
+            );
+        }
+    }
+    serde_json::json!({
+        "run_id": output.get("run_id").cloned().unwrap_or(Value::Null),
+        "project": output.get("project").cloned().unwrap_or(Value::Null),
+        "provider_id": output.get("provider_id").cloned().unwrap_or(Value::Null),
+        "state": output.get("state").cloned().unwrap_or(Value::Null),
+        "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
+        "event_count": event_count,
+        "event_kind_counts": kind_counts,
+        "event_body_bytes": event_body_bytes,
+        "has_more": output.get("has_more").cloned().unwrap_or(Value::Null),
+        "history_lost": output.get("history_lost").cloned().unwrap_or(Value::Null),
+        "first_retained_sequence": output.get("first_retained_sequence").cloned().unwrap_or(Value::Null),
+        "terminal_stop_reason": output.pointer("/terminal/stop_reason").cloned().unwrap_or(Value::Null),
+        "terminal_error_code": output.pointer("/terminal/error_code").cloned().unwrap_or(Value::Null),
+        "terminal_completed_at": output.pointer("/terminal/completed_at").cloned().unwrap_or(Value::Null),
+        "recovery_kind": output.get("recovery_kind").cloned().unwrap_or(Value::Null),
+        "error_kind": output.get("error_kind").cloned().unwrap_or(Value::Null),
+    })
 }
 
 fn bounded_completion_key_fingerprint(value: Option<&str>) -> Value {
@@ -1739,6 +1270,13 @@ mod computer_privacy_tests {
             json!({})
         );
         assert_eq!(malformed, malformed_before);
+
+        let retired_alias = json!({"client_id": "PRIVATE_RETIRED_ALIAS_CLIENT"});
+        assert_eq!(
+            session_log_arguments_for_tool_request("list_agents", &retired_alias),
+            json!({}),
+            "retired aliases must not become a second audit identity"
+        );
     }
 
     #[test]
@@ -1829,6 +1367,26 @@ mod computer_privacy_tests {
         assert!(!serde_json::to_string(&job_summary)
             .unwrap()
             .contains(JOB_TOKEN));
+    }
+
+    #[test]
+    fn result_audit_fails_closed_for_unknown_tools_without_mutating_business_output() {
+        let output = json!({
+            "secret": "UNKNOWN_RESULT_SECRET",
+            "nested": {"token": "PRIVATE_RESULT_TOKEN"}
+        });
+        let before = output.clone();
+        let projected = session_log_result_for_tool("future_unknown_tool", &output);
+        assert_eq!(projected, json!({}));
+        assert_eq!(output, before);
+        assert_eq!(
+            session_log_result_for_tool("list_agents", &output),
+            json!({}),
+            "retired aliases must not inherit a canonical result audit policy"
+        );
+        let serialized = serde_json::to_string(&projected).unwrap();
+        assert!(!serialized.contains("UNKNOWN_RESULT_SECRET"));
+        assert!(!serialized.contains("PRIVATE_RESULT_TOKEN"));
     }
 
     #[test]
@@ -3674,14 +3232,35 @@ impl ToolCall {
                 max_hunks,
                 max_hunk_lines,
                 cached,
+                base_commit,
+                head_commit,
+                continuation,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "paths": paths,
-                "max_hunks": max_hunks,
-                "max_hunk_lines": max_hunk_lines,
-                "cached": cached,
-            }),
+            } => {
+                let base_commit = base_commit
+                    .as_deref()
+                    .and_then(normalized_exact_git_commit_for_audit);
+                let head_commit = head_commit
+                    .as_deref()
+                    .and_then(normalized_exact_git_commit_for_audit);
+                let mut out = serde_json::json!({
+                    "project": project,
+                    "paths": paths,
+                    "max_hunks": max_hunks,
+                    "max_hunk_lines": max_hunk_lines,
+                    "cached": cached,
+                    "base_commit_valid": base_commit.is_some(),
+                    "head_commit_valid": head_commit.is_some(),
+                    "continuation_present": continuation.is_some(),
+                });
+                if let Some(base_commit) = base_commit {
+                    out["base_commit"] = Value::String(base_commit);
+                }
+                if let Some(head_commit) = head_commit {
+                    out["head_commit"] = Value::String(head_commit);
+                }
+                out
+            }
             Self::CargoFmt {
                 project,
                 cwd,
@@ -4740,17 +4319,19 @@ impl ToolCall {
                 message_id,
                 answer,
                 completion_key,
+                expected_assignment_fence: _,
                 tags,
                 priority,
                 ..
             } => serde_json::json!({
                 "session_id": session_id,
                 "message_id": message_id,
-                "body_present": !answer.is_empty(),
+                "body_present": true,
                 "body_bytes": answer.len(),
                 "tags_count": tags.len(),
                 "priority": priority,
                 "completion_id": bounded_completion_key_fingerprint(Some(completion_key)),
+                "assignment_fence_present": true,
             }),
             Self::SessionDiscussionSummary { session_id, limit } => serde_json::json!({
                 "session_id": session_id,

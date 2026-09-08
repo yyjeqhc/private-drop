@@ -20,7 +20,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                     "coding_agent_start",
-                    super::ToolAuditPolicy::TYPED_CANONICAL,
+                    super::ToolAuditPolicy::typed_fields(&[
+                        super::ToolAuditResultField::value("run_id"),
+                        super::ToolAuditResultField::value("project"),
+                        super::ToolAuditResultField::value("provider_id"),
+                        super::ToolAuditResultField::value("state"),
+                        super::ToolAuditResultField::value("execution_state"),
+                        super::ToolAuditResultField::value("cancel_requested"),
+                        super::ToolAuditResultField::pointer("terminal_stop_reason", "/terminal/stop_reason"),
+                        super::ToolAuditResultField::pointer("terminal_error_code", "/terminal/error_code"),
+                        super::ToolAuditResultField::pointer("terminal_completed_at", "/terminal/completed_at"),
+                        super::ToolAuditResultField::value("error_kind"),
+                        super::ToolAuditResultField::value("recovery_kind"),
+                    ]),
                     ModelVisible,
                     TOOL_CATEGORY_CODING_AGENT,
                     Some(CodingAgentRuns),
@@ -47,7 +59,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "coding_agent_observe",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_semantic(
+                super::ToolAuditSemanticResultPolicy::CodingAgentObservation,
+            ),
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,
@@ -71,7 +85,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "coding_agent_cancel",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("run_id"),
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("provider_id"),
+                super::ToolAuditResultField::value("state"),
+                super::ToolAuditResultField::value("execution_state"),
+                super::ToolAuditResultField::value("cancel_requested"),
+                super::ToolAuditResultField::pointer("terminal_stop_reason", "/terminal/stop_reason"),
+                super::ToolAuditResultField::pointer("terminal_error_code", "/terminal/error_code"),
+                super::ToolAuditResultField::pointer("terminal_completed_at", "/terminal/completed_at"),
+                super::ToolAuditResultField::value("error_kind"),
+                super::ToolAuditResultField::value("recovery_kind"),
+            ]),
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,

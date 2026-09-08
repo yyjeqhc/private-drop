@@ -304,21 +304,124 @@ pub enum ToolAuditRequestPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolAuditResultPolicy {
-    /// Supply canonical execution evidence to the existing bounded Session
-    /// ledger projector. This is not permission to persist an arbitrary result
-    /// body; sensitive result families override this policy before the result
-    /// projector migration is completed.
+    /// Preserve the established canonical result as audit evidence for tools
+    /// whose result contract is intentionally audit-safe. This is an explicit
+    /// declaration, never the fallback for an unknown or missing policy.
     CanonicalLedgerEvidence,
+    /// Project only the declared bounded fields. Missing inputs become null so
+    /// the persisted shape stays stable without admitting undeclared content.
+    Fields(&'static [ToolAuditResultField]),
+    /// A genuinely semantic projection that cannot be expressed as independent
+    /// field selectors.
+    Semantic(ToolAuditSemanticResultPolicy),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditResultField {
+    Value {
+        output: &'static str,
+        source: &'static str,
+    },
+    Pointer {
+        output: &'static str,
+        pointer: &'static str,
+    },
+    ArrayLen {
+        output: &'static str,
+        source: &'static str,
+    },
+    PointerArrayLen {
+        output: &'static str,
+        pointer: &'static str,
+    },
+    StringBytes {
+        output: &'static str,
+        source: &'static str,
+    },
+    Presence {
+        output: &'static str,
+        source: &'static str,
+    },
+    StringPresent {
+        output: &'static str,
+        source: &'static str,
+    },
+    PointerNonNull {
+        output: &'static str,
+        pointer: &'static str,
+    },
+}
+
+impl ToolAuditResultField {
+    pub const fn value(key: &'static str) -> Self {
+        Self::Value {
+            output: key,
+            source: key,
+        }
+    }
+
+    pub const fn renamed_value(output: &'static str, source: &'static str) -> Self {
+        Self::Value { output, source }
+    }
+
+    pub const fn pointer(output: &'static str, pointer: &'static str) -> Self {
+        Self::Pointer { output, pointer }
+    }
+
+    pub const fn array_len(output: &'static str, source: &'static str) -> Self {
+        Self::ArrayLen { output, source }
+    }
+
+    pub const fn pointer_array_len(output: &'static str, pointer: &'static str) -> Self {
+        Self::PointerArrayLen { output, pointer }
+    }
+
+    pub const fn string_bytes(output: &'static str, source: &'static str) -> Self {
+        Self::StringBytes { output, source }
+    }
+
+    pub const fn presence(output: &'static str, source: &'static str) -> Self {
+        Self::Presence { output, source }
+    }
+
+    pub const fn string_present(output: &'static str, source: &'static str) -> Self {
+        Self::StringPresent { output, source }
+    }
+
+    pub const fn pointer_non_null(output: &'static str, pointer: &'static str) -> Self {
+        Self::PointerNonNull { output, pointer }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditSemanticResultPolicy {
+    /// Summarize coding-agent event kinds and body byte counts without retaining
+    /// any event body or provider message content.
+    CodingAgentObservation,
 }
 
 impl ToolAuditPolicy {
-    /// Existing behavior baseline used during the staged audit migration.
-    /// Every ToolDefinition must opt in explicitly through `def(...)`; there is
-    /// intentionally no implicit/missing-policy default.
+    /// Existing audit-safe behavior for tools without a narrower result
+    /// projection. Every ToolDefinition must opt in explicitly through `def(...)`;
+    /// there is intentionally no implicit/missing-policy default.
     pub const TYPED_CANONICAL: Self = Self {
         request: ToolAuditRequestPolicy::Typed,
         result: ToolAuditResultPolicy::CanonicalLedgerEvidence,
     };
+
+    pub const fn typed_fields(fields: &'static [ToolAuditResultField]) -> Self {
+        Self {
+            request: ToolAuditRequestPolicy::Typed,
+            result: ToolAuditResultPolicy::Fields(fields),
+        }
+    }
+
+    pub const fn typed_semantic(result: ToolAuditSemanticResultPolicy) -> Self {
+        Self {
+            request: ToolAuditRequestPolicy::Typed,
+            result: ToolAuditResultPolicy::Semantic(result),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

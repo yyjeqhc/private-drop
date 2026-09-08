@@ -59,14 +59,21 @@ fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
             "{} request audit must use the typed canonical boundary",
             definition.name
         );
-        assert_eq!(
-            definition.audit_policy().result,
-            ToolAuditResultPolicy::CanonicalLedgerEvidence,
-            "{} initial result audit migration must declare canonical ledger evidence explicitly",
-            definition.name
-        );
+        if let ToolAuditResultPolicy::Fields(fields) = definition.audit_policy().result {
+            assert!(
+                !fields.is_empty(),
+                "{} narrowed result audit must declare at least one bounded field",
+                definition.name
+            );
+        }
     }
 
+    assert_eq!(
+        runtime_tool_audit_policy("coding_agent_observe").map(|policy| policy.result),
+        Some(ToolAuditResultPolicy::Semantic(
+            ToolAuditSemanticResultPolicy::CodingAgentObservation
+        ))
+    );
     assert_eq!(runtime_tool_audit_policy("unknown_open_world_tool"), None);
     assert_eq!(runtime_tool_audit_policy("start_coding_task"), None);
 }
