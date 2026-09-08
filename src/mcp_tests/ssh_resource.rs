@@ -480,39 +480,73 @@ async fn ssh_resource_does_not_accept_stateless_continuity_wrappers() {
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
     let auth = ssh_auth();
     register_managed_runner(&runtime, "instance-a").await;
-    let outcome = handle_mcp_request(
-        &runtime,
-        rpc(
-            "tools/call",
-            Some(json!(811)),
-            mcp_2026_params(json!({
-                "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
-                "arguments": {
-                    "action":"list",
-                    "runner":"runner-a",
-                    crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: 7,
-                    crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"]
-                }
-            })),
+
+    for (id, arguments) in [
+        (
+            811,
+            json!({
+                "action":"list",
+                "runner":"runner-a",
+                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_cached"]
+            }),
         ),
-        Some(&auth),
-    )
-    .await;
-    let result = tool_result(outcome);
-    assert_eq!(result["isError"], true);
-    assert_eq!(
-        result["structuredContent"]["error"]["code"],
-        "ssh_resource_invalid"
-    );
-    assert!(runtime
-        .runner_registry
-        .poll(RunnerPollRequest {
-            client_id: "runner-a".to_string(),
-            runner_instance_id: "instance-a".to_string(),
-        })
-        .await
-        .unwrap()
-        .is_none());
+        (
+            812,
+            json!({
+                "action":"list",
+                "runner":"runner-a",
+                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: 7
+            }),
+        ),
+        (
+            813,
+            json!({
+                "action":"list",
+                "runner":"runner-a",
+                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"]
+            }),
+        ),
+        (
+            814,
+            json!({
+                "action":"list",
+                "runner":"runner-a",
+                crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+                    "message_id": "wc_msg_cached",
+                    "resolution": "handled"
+                }
+            }),
+        ),
+    ] {
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(id)),
+                mcp_2026_params(json!({
+                    "name": crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                    "arguments": arguments
+                })),
+            ),
+            Some(&auth),
+        )
+        .await;
+        let result = tool_result(outcome);
+        assert_eq!(result["isError"], true, "{result}");
+        assert_eq!(
+            result["structuredContent"]["error"]["code"], "ssh_resource_invalid",
+            "generic wrappers must remain invalid specialized SSH arguments"
+        );
+        assert!(runtime
+            .runner_registry
+            .poll(RunnerPollRequest {
+                client_id: "runner-a".to_string(),
+                runner_instance_id: "instance-a".to_string(),
+            })
+            .await
+            .unwrap()
+            .is_none());
+    }
 }
 
 #[tokio::test]

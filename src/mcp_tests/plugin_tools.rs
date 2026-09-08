@@ -730,37 +730,68 @@ async fn plugin_tool_does_not_accept_stateless_continuity_wrappers() {
         vec![],
     )
     .await;
-    let outcome = handle_mcp_request(
-        &runtime,
-        rpc(
-            "tools/call",
-            Some(json!(694)),
-            mcp_2026_params(json!({
-                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                "arguments": {
-                    "action":"list",
-                    crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_cached"],
-                    crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"]
-                }
-            })),
+
+    for (id, arguments) in [
+        (
+            694,
+            json!({
+                "action":"list",
+                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_cached"]
+            }),
         ),
-        Some(&auth),
-    )
-    .await;
-    let McpOutcome::BadRequest(value) = outcome else {
-        panic!("specialized plugin_tool must reject generic continuity wrappers");
-    };
-    let encoded = serde_json::to_string(&value).unwrap();
-    assert!(encoded.contains("unknown field"), "{encoded}");
-    assert!(runtime
-        .runner_registry
-        .poll(RunnerPollRequest {
-            client_id: "runner-a".to_string(),
-            runner_instance_id: "runner-instance-a".to_string(),
-        })
-        .await
-        .unwrap()
-        .is_none());
+        (
+            695,
+            json!({
+                "action":"list",
+                crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD: 7
+            }),
+        ),
+        (
+            696,
+            json!({
+                "action":"list",
+                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"]
+            }),
+        ),
+        (
+            697,
+            json!({
+                "action":"list",
+                crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
+                    "message_id": "wc_msg_cached",
+                    "resolution": "handled"
+                }
+            }),
+        ),
+    ] {
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(id)),
+                mcp_2026_params(json!({
+                    "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                    "arguments": arguments
+                })),
+            ),
+            Some(&auth),
+        )
+        .await;
+        let McpOutcome::BadRequest(value) = outcome else {
+            panic!("specialized plugin_tool must reject generic continuity wrappers");
+        };
+        let encoded = serde_json::to_string(&value).unwrap();
+        assert!(encoded.contains("unknown field"), "{encoded}");
+        assert!(runtime
+            .runner_registry
+            .poll(RunnerPollRequest {
+                client_id: "runner-a".to_string(),
+                runner_instance_id: "runner-instance-a".to_string(),
+            })
+            .await
+            .unwrap()
+            .is_none());
+    }
 }
 
 #[tokio::test]

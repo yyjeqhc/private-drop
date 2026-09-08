@@ -86,6 +86,16 @@ impl Default for ToolInvocationMetadata {
     }
 }
 
+impl ToolInvocationMetadata {
+    fn effective_context_ack(&self, context_continuity_capable: bool) -> SessionContextRevisionAck {
+        if context_continuity_capable {
+            self.ack_session_context_revision
+        } else {
+            SessionContextRevisionAck::Unsupported
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct ToolProtocolCapabilities {
     pub(crate) context_continuity: bool,
@@ -251,9 +261,10 @@ impl ToolRuntime {
     }
 
     /// Test-only compatibility shim for Phase-2/3 fixtures that predate the
-    /// explicit capability bundle. Production surfaces must call
-    /// `call_tool_with_protocol_capabilities` and set Skill capabilities
-    /// independently. Management is intentionally never enabled here.
+    /// explicit capability bundle. Production adapters with invocation wrapper
+    /// metadata use `call_tool_with_invocation_metadata`; callers without such
+    /// metadata may use `call_tool_with_protocol_capabilities`. Management is
+    /// intentionally never enabled here.
     #[cfg(test)]
     pub(crate) async fn call_tool_with_context_protocol_capability(
         &self,
@@ -301,11 +312,7 @@ impl ToolRuntime {
     ) -> ToolCallOutcome {
         let context_continuity_capable = capabilities.context_continuity
             && super::tool_definition::runtime_tool_accepts_context_ack(&request.tool_name);
-        let context_ack = if context_continuity_capable {
-            invocation_metadata.ack_session_context_revision
-        } else {
-            SessionContextRevisionAck::Unsupported
-        };
+        let context_ack = invocation_metadata.effective_context_ack(context_continuity_capable);
         let telemetry = ModelErgonomicsTimer::start_with_protocol(
             &request.tool_name,
             &request.arguments,
@@ -327,16 +334,14 @@ impl ToolRuntime {
     ) -> ToolCallOutcome {
         let context_continuity_capable = capabilities.context_continuity
             && super::tool_definition::runtime_tool_accepts_context_ack(&request.tool_name);
+        let ack_session_context_revision =
+            invocation_metadata.effective_context_ack(context_continuity_capable);
         let mut recorder_metadata =
             ToolCallRecorderMetadata::from_business_arguments(&request.arguments);
         recorder_metadata.ack_session_message_ids = invocation_metadata.ack_session_message_ids;
         recorder_metadata.session_message_resolution =
             invocation_metadata.session_message_resolution;
-        recorder_metadata.ack_session_context_revision = if context_continuity_capable {
-            invocation_metadata.ack_session_context_revision
-        } else {
-            SessionContextRevisionAck::Unsupported
-        };
+        recorder_metadata.ack_session_context_revision = ack_session_context_revision;
         // One trusted identity per real kernel request. The outer recorder and
         // inner business ledger pairs inherit it, but it never affects execution.
         recorder_metadata.assign_logical_invocation();
@@ -1146,6 +1151,98 @@ mod tests {
             token_kind: Some("oauth2".to_string()),
             ..AuthContext::new(AuthKind::OAuth2Token)
         }
+    }
+
+    #[tokio::test]
+    async fn generic_kernel_uses_typed_invocation_metadata_with_business_only_arguments() {
+        let runtime = test_runtime();
+        let session = runtime
+            .sessions
+            .start_session(None, Some("typed invocation boundary".to_string()));
+        let guidance = runtime
+            .sessions
+            .post_message_with_ack(
+                crate::tool_runtime::sessions::PostSessionMessageInput {
+                    session_id: session.session_id.clone(),
+                    kind: crate::tool_runtime::sessions::SessionMessageKind::Guidance,
+                    message: "retain typed invocation metadata".to_string(),
+                    tags: Vec::new(),
+                    reply_to: None,
+                    priority: crate::tool_runtime::sessions::SessionMessagePriority::High,
+                },
+                true,
+            )
+            .unwrap();
+        let ack_revision = runtime
+            .sessions
+            .context_revision(&session.session_id)
+            .expect("session context revision");
+        let business_arguments = json!({});
+        let business_object = business_arguments.as_object().unwrap();
+        for wrapper in [
+            crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
+            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
+            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
+            crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
+            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_CONTEXT_REVISION_FIELD,
+        ] {
+            assert!(!business_object.contains_key(wrapper));
+        }
+        assert!(business_object
+            .keys()
+            .all(|key| !key.starts_with("__webcodex_")));
+        crate::tool_runtime::ToolCall::from_tool_name("tool_manifest", business_arguments.clone())
+            .expect("typed ToolCall parsing must accept business-only arguments");
+
+        let invocation_metadata = ToolInvocationMetadata {
+            ack_session_message_ids: vec![guidance.message_id],
+            context_request: vec!["webcodex.workflow".to_string()],
+            ack_session_context_revision: SessionContextRevisionAck::Revision(ack_revision),
+            ..Default::default()
+        };
+        assert_eq!(
+            invocation_metadata.effective_context_ack(true),
+            SessionContextRevisionAck::Revision(ack_revision)
+        );
+        assert_eq!(
+            invocation_metadata.effective_context_ack(false),
+            SessionContextRevisionAck::Unsupported,
+            "typed ACK metadata must not bypass trusted capability / ToolDefinition policy"
+        );
+
+        let outcome = runtime
+            .call_tool_with_invocation_metadata(
+                ToolCallRequest {
+                    tool_name: "tool_manifest".to_string(),
+                    arguments: business_arguments,
+                },
+                ToolCallContext {
+                    transport: ToolTransport::Mcp,
+                    session_id: Some(&session.session_id),
+                    auth: None,
+                    window: None,
+                    record_oauth_scope_denials: false,
+                    host_file_import_trust: HostFileImportTrust::Untrusted,
+                },
+                invocation_metadata,
+                ToolProtocolCapabilities {
+                    context_continuity: true,
+                    context_sidecar: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(outcome.error_status.is_none(), "{:?}", outcome.error_status);
+        let result = outcome.result.expect("model-facing result");
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            result.output["session_attention"]["ack"]["accepted_count"],
+            1
+        );
+        assert_eq!(
+            result.output["context_projection"]["materials"][0]["key"],
+            "webcodex.workflow"
+        );
     }
 
     #[tokio::test]
