@@ -11,6 +11,27 @@ pub const VALIDATION_IDENTITY_HEX_LEN: usize = 24;
 pub const GENERIC_VALIDATION_IDENTITY_PREFIX: &str = "command:";
 const ASSERTION_VALIDATION_IDENTITY_PREFIX: &str = "assertion:";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolValidationIdentityKind {
+    None,
+    CargoFmt,
+    CargoCheck,
+    CargoTest,
+    GoTest,
+}
+
+impl ToolValidationIdentityKind {
+    pub const fn tool_name(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::CargoFmt => Some("cargo_fmt"),
+            Self::CargoCheck => Some("cargo_check"),
+            Self::CargoTest => Some("cargo_test"),
+            Self::GoTest => Some("go_test"),
+        }
+    }
+}
+
 pub fn is_structured_validation_target_identity(value: &str) -> bool {
     let Some(hex) = value.strip_prefix(STRUCTURED_VALIDATION_TARGET_PREFIX) else {
         return false;

@@ -76,6 +76,137 @@ fn tool_definitions_are_context_continuity_ssot() {
 }
 
 #[test]
+fn tool_definitions_are_session_evidence_policy_ssot() {
+    use crate::tool_definition::{
+        exploration_tool_names, runtime_tool_session_evidence_policy,
+        PersistentShellEvidenceAction, ToolChangedPathEvidence, ToolDiffReviewEvidence,
+        ToolExplorationEvidence, ToolNavigationEvidenceKind, ToolSessionEvidencePolicy,
+        ToolSessionLifecycleEffect, ToolValidationIdentityKind, TOOL_CATEGORY_FILE,
+        TOOL_CATEGORY_LSP,
+    };
+
+    let exploration_names = exploration_tool_names().collect::<Vec<_>>();
+    let unique_exploration_names = exploration_names.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(exploration_names.len(), unique_exploration_names.len());
+
+    for definition in tool_definitions() {
+        let policy = definition.session_evidence_policy();
+        assert_eq!(
+            runtime_tool_session_evidence_policy(definition.name),
+            policy,
+            "{} Session evidence facade must use ToolDefinition",
+            definition.name
+        );
+
+        match policy.exploration {
+            ToolExplorationEvidence::None => {
+                assert!(!exploration_names.contains(&definition.name));
+            }
+            ToolExplorationEvidence::Read
+            | ToolExplorationEvidence::ReadBatch
+            | ToolExplorationEvidence::Search
+            | ToolExplorationEvidence::SearchBatch => {
+                assert_eq!(
+                    definition.category, TOOL_CATEGORY_FILE,
+                    "{}",
+                    definition.name
+                );
+                assert!(definition.is_read_like(), "{}", definition.name);
+                assert!(exploration_names.contains(&definition.name));
+            }
+            ToolExplorationEvidence::Navigation(_) => {
+                assert_eq!(
+                    definition.category, TOOL_CATEGORY_LSP,
+                    "{}",
+                    definition.name
+                );
+                assert!(definition.is_read_like(), "{}", definition.name);
+                assert!(exploration_names.contains(&definition.name));
+            }
+        }
+
+        if let ToolChangedPathEvidence::ResultField(field) = policy.changed_paths {
+            assert!(!field.is_empty(), "{}", definition.name);
+            assert!(
+                definition.metadata().requires_project,
+                "{}",
+                definition.name
+            );
+        }
+        if policy.persistent_shell.is_some() {
+            assert!(
+                definition.requires_explicit_business_session(),
+                "{} persistent-shell evidence must remain Session-bound",
+                definition.name
+            );
+        }
+        if !matches!(policy.diff_review, ToolDiffReviewEvidence::None) {
+            assert!(definition.is_git_like(), "{}", definition.name);
+        }
+        if !matches!(policy.validation_identity, ToolValidationIdentityKind::None) {
+            assert!(
+                definition.captures_validation_output(),
+                "{}",
+                definition.name
+            );
+        }
+        if matches!(
+            policy.lifecycle,
+            ToolSessionLifecycleEffect::IdempotentClose
+        ) {
+            assert_eq!(definition.name, "close_session");
+        }
+    }
+
+    assert_eq!(
+        runtime_tool_session_evidence_policy("__unknown_session_evidence_tool__"),
+        ToolSessionEvidencePolicy::NONE
+    );
+    assert_eq!(
+        lookup_tool_definition("read_files")
+            .unwrap()
+            .session_evidence
+            .exploration,
+        ToolExplorationEvidence::ReadBatch
+    );
+    assert_eq!(
+        lookup_tool_definition("goto_definition")
+            .unwrap()
+            .session_evidence
+            .exploration,
+        ToolExplorationEvidence::Navigation(ToolNavigationEvidenceKind::Locations)
+    );
+    assert_eq!(
+        lookup_tool_definition("apply_unified_diff")
+            .unwrap()
+            .session_evidence
+            .changed_paths,
+        ToolChangedPathEvidence::ResultField("affected_files")
+    );
+    assert_eq!(
+        lookup_tool_definition("session_shell_exec")
+            .unwrap()
+            .session_evidence
+            .persistent_shell,
+        Some(PersistentShellEvidenceAction::Exec)
+    );
+    assert_eq!(
+        lookup_tool_definition("show_changes")
+            .unwrap()
+            .session_evidence
+            .diff_review,
+        ToolDiffReviewEvidence::ArgumentBool("include_diff")
+    );
+    assert_eq!(
+        lookup_tool_definition("cargo_test")
+            .unwrap()
+            .session_evidence
+            .validation_identity,
+        ToolValidationIdentityKind::CargoTest
+    );
+}
+
+#[test]
 fn tool_definitions_drive_session_and_permission_policy() {
     use crate::metadata::{
         ToolApprovalPolicy, ToolAuthorityPolicy, ToolEffect, ToolIdempotency, ToolRisk,

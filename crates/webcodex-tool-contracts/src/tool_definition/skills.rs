@@ -52,6 +52,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
+        super::ToolSessionEvidencePolicy::NONE,
     ),
     def(
         "skill_read_file",
@@ -101,6 +102,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
+        super::ToolSessionEvidencePolicy::NONE,
     ),
     def(
         "skill_versions",
@@ -131,6 +133,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
+        super::ToolSessionEvidencePolicy::NONE,
     ),
     def(
         "skill_install",
@@ -167,6 +170,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
+        super::ToolSessionEvidencePolicy::NONE,
     ),
     def(
         "skill_activate",
@@ -198,6 +202,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
+        super::ToolSessionEvidencePolicy::NONE,
     ),
     def(
         "skill_remove_revision",
@@ -228,5 +233,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         true,
         false,
+        super::ToolSessionEvidencePolicy::NONE,
     ),
 ];

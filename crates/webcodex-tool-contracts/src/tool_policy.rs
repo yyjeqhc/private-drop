@@ -5,9 +5,9 @@ use super::metadata::{
 };
 use super::tool_definition::{
     tool_definitions, RunnerCapabilityRequirement, ToolAuditPolicy, ToolContextContinuityPolicy,
-    ToolDefinition, ToolEffectAnnotations, PERMISSION_RISK_ARTIFACT_WRITE,
-    PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL,
-    PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
+    ToolDefinition, ToolEffectAnnotations, ToolSessionEvidencePolicy,
+    PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH,
+    PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
 };
 
 impl ToolDefinition {
@@ -69,6 +69,10 @@ impl ToolDefinition {
 
     pub fn context_continuity_policy(self) -> ToolContextContinuityPolicy {
         self.policy.context_continuity
+    }
+
+    pub fn session_evidence_policy(self) -> ToolSessionEvidencePolicy {
+        self.session_evidence
     }
 
     #[cfg(any(test, feature = "root-test-support"))]
@@ -146,6 +150,18 @@ fn fallback_permission_risk(name: &str, metadata: ToolMetadata) -> &'static str 
 
 pub fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
     tool_definitions().find(|definition| definition.name == name)
+}
+
+pub fn runtime_tool_session_evidence_policy(name: &str) -> ToolSessionEvidencePolicy {
+    lookup_tool_definition(name)
+        .map(|definition| definition.session_evidence_policy())
+        .unwrap_or(ToolSessionEvidencePolicy::NONE)
+}
+
+pub fn exploration_tool_names() -> impl Iterator<Item = &'static str> {
+    tool_definitions()
+        .filter(|definition| definition.session_evidence.exploration.is_exploration())
+        .map(|definition| definition.name)
 }
 
 /// Audit policy lookup is intentionally optional. Unknown/non-runtime names

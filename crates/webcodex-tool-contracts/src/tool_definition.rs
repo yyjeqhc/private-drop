@@ -50,16 +50,16 @@ pub use super::tool_catalog::{
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_policy::is_known_tool_name;
 pub use super::tool_policy::{
-    adaptive_runtime_direct_tool_definitions, is_adaptive_runtime_direct_tool,
-    is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
-    model_visible_tool_names_csv, runtime_tool_accepts_context_ack,
+    adaptive_runtime_direct_tool_definitions, exploration_tool_names,
+    is_adaptive_runtime_direct_tool, is_model_visible_tool_name, lookup_tool_definition,
+    model_visible_tool_definitions, model_visible_tool_names_csv, runtime_tool_accepts_context_ack,
     runtime_tool_advances_context_checkpoint, runtime_tool_approval_policy,
     runtime_tool_captures_validation_output, runtime_tool_category, runtime_tool_disabled_message,
     runtime_tool_effect_annotations, runtime_tool_extra_accepted_flattened_args,
     runtime_tool_is_change_summary_like, runtime_tool_is_git_like, runtime_tool_is_read_like,
     runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_metadata,
     runtime_tool_permission_risk, runtime_tool_requires_permission, runtime_tool_runner_capability,
-    runtime_tool_session_risk_class,
+    runtime_tool_session_evidence_policy, runtime_tool_session_risk_class,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_policy::{
@@ -545,6 +545,124 @@ impl ToolAuditPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolNavigationEvidenceKind {
+    DocumentSymbols,
+    DocumentDiagnostics,
+    Hover,
+    WorkspaceSymbols,
+    Locations,
+    CallHierarchy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolExplorationEvidence {
+    None,
+    Read,
+    ReadBatch,
+    Search,
+    SearchBatch,
+    Navigation(ToolNavigationEvidenceKind),
+}
+
+impl ToolExplorationEvidence {
+    pub const fn is_exploration(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolChangedPathEvidence {
+    None,
+    ResultField(&'static str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersistentShellEvidenceAction {
+    Open,
+    Exec,
+    Status,
+    Close,
+}
+
+impl PersistentShellEvidenceAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Exec => "exec",
+            Self::Status => "status",
+            Self::Close => "close",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolDiffReviewEvidence {
+    None,
+    Always,
+    ArgumentBool(&'static str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSessionLifecycleEffect {
+    None,
+    Mutation,
+    IdempotentClose,
+}
+
+pub use webcodex_core::validation_identity::ToolValidationIdentityKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolSessionEvidencePolicy {
+    pub exploration: ToolExplorationEvidence,
+    pub changed_paths: ToolChangedPathEvidence,
+    pub persistent_shell: Option<PersistentShellEvidenceAction>,
+    pub diff_review: ToolDiffReviewEvidence,
+    pub lifecycle: ToolSessionLifecycleEffect,
+    pub validation_identity: ToolValidationIdentityKind,
+}
+
+impl ToolSessionEvidencePolicy {
+    pub const NONE: Self = Self {
+        exploration: ToolExplorationEvidence::None,
+        changed_paths: ToolChangedPathEvidence::None,
+        persistent_shell: None,
+        diff_review: ToolDiffReviewEvidence::None,
+        lifecycle: ToolSessionLifecycleEffect::None,
+        validation_identity: ToolValidationIdentityKind::None,
+    };
+
+    pub const fn exploration(mut self, evidence: ToolExplorationEvidence) -> Self {
+        self.exploration = evidence;
+        self
+    }
+
+    pub const fn changed_paths(mut self, evidence: ToolChangedPathEvidence) -> Self {
+        self.changed_paths = evidence;
+        self
+    }
+
+    pub const fn persistent_shell(mut self, action: PersistentShellEvidenceAction) -> Self {
+        self.persistent_shell = Some(action);
+        self
+    }
+
+    pub const fn diff_review(mut self, evidence: ToolDiffReviewEvidence) -> Self {
+        self.diff_review = evidence;
+        self
+    }
+
+    pub const fn lifecycle(mut self, effect: ToolSessionLifecycleEffect) -> Self {
+        self.lifecycle = effect;
+        self
+    }
+
+    pub const fn validation_identity(mut self, kind: ToolValidationIdentityKind) -> Self {
+        self.validation_identity = kind;
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ToolDefinition {
     pub name: &'static str,
@@ -555,6 +673,7 @@ pub struct ToolDefinition {
     pub category: &'static str,
     pub metadata: ToolMetadata,
     pub policy: ToolDefinitionPolicy,
+    pub session_evidence: ToolSessionEvidencePolicy,
     /// Runner capability/owner requirement before dispatch reaches a Runner-backed
     /// Project. `None` means the tool is not Runner-dispatched or enforces its
     /// ownership boundary inside a specialized handler.
@@ -691,6 +810,7 @@ const fn def(
     path_hint: ToolPathHint,
     destructive: bool,
     shell_like: bool,
+    session_evidence: ToolSessionEvidencePolicy,
 ) -> ToolDefinition {
     ToolDefinition {
         name,
@@ -710,6 +830,7 @@ const fn def(
             shell_like,
         ),
         policy: ToolDefinitionPolicy::DEFAULT,
+        session_evidence,
         runner_capability,
     }
 }
@@ -884,6 +1005,7 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[context_recovery_only(model_sp
         NoPath,
         false,
         false,
+        ToolSessionEvidencePolicy::NONE,
     ),
     "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded GPT Action discovery.",
     list_tools_input_schema,

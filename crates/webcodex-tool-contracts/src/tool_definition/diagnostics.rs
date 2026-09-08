@@ -37,4 +37,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[context_recovery_only(def(
     NoPath,
     false,
     false,
+    super::ToolSessionEvidencePolicy::NONE,
 ))];

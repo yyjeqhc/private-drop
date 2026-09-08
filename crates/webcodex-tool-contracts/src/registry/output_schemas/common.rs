@@ -2,9 +2,10 @@ use serde_json::{json, Value};
 
 use webcodex_core::runtime_contract::{RECOVERY_KIND_VALUES, RECOVERY_TOOL_VALUES};
 use webcodex_core::workflow_session_contract::{
-    EXPLORATION_TOOL_NAMES, SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION,
-    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON,
+    SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION, SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON,
 };
+
+use crate::tool_definition::exploration_tool_names;
 
 pub fn schema_type(kind: &str, description: &str) -> Value {
     json!({
@@ -57,11 +58,12 @@ pub fn job_activity_schema() -> Value {
 }
 
 pub fn exploration_tool_name_schema() -> Value {
+    let names = exploration_tool_names().collect::<Vec<_>>();
     json!({
         "anyOf": [
             {
                 "type": "string",
-                "enum": EXPLORATION_TOOL_NAMES
+                "enum": names
             },
             {"type": "null"}
         ]
