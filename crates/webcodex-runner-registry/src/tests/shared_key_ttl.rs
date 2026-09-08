@@ -102,7 +102,8 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             .jobs_by_id
             .get(&job.job_id)
             .unwrap()
-            .public_revision
+            .observation
+            .revision
             .clone()
     };
     let revision_before = job_revision.load(std::sync::atomic::Ordering::Relaxed);
@@ -167,13 +168,15 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
         let record = inner.jobs_by_id.get(&job.job_id).unwrap();
         (
             record
+                .observation
                 .terminal_observed_at
                 .expect("TTL prune records Server terminal observation time"),
             record.ended_at,
             record.error.clone(),
-            record.recovery_reason_code.clone(),
+            record.recovery.reason,
             record
-                .public_revision
+                .observation
+                .revision
                 .load(std::sync::atomic::Ordering::Relaxed),
         )
     };
@@ -181,18 +184,19 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
     {
         let inner = registry.inner.lock().await;
         let record = inner.jobs_by_id.get(&job.job_id).unwrap();
-        assert_eq!(record.status, "lost");
+        assert_eq!(record.public_status(), "lost");
         assert_eq!(record.ended_at, first_ended_at);
         assert_eq!(record.error, first_error);
-        assert_eq!(record.recovery_reason_code, first_reason);
+        assert_eq!(record.recovery.reason, first_reason);
         assert_eq!(
-            record.terminal_observed_at,
+            record.observation.terminal_observed_at,
             Some(first_terminal_observed_at),
             "repeated TTL prune must not extend retention"
         );
         assert_eq!(
             record
-                .public_revision
+                .observation
+                .revision
                 .load(std::sync::atomic::Ordering::Relaxed),
             first_revision,
             "repeated TTL prune must not publish a duplicate terminal update"
@@ -226,7 +230,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             .jobs_by_id
             .get(&job.job_id)
             .expect("lost Job retained");
-        assert_eq!(retained.status, "lost");
+        assert_eq!(retained.public_status(), "lost");
         assert_eq!(retained.client_id, "ttl-expired");
         assert!(inner
             .unregistering_projects
@@ -268,6 +272,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
             .jobs_by_id
             .get_mut(&job.job_id)
             .unwrap()
+            .observation
             .terminal_observed_at =
             Some(now_ts() - crate::runner_protocol::JOB_TERMINAL_RETENTION_SECS);
     }

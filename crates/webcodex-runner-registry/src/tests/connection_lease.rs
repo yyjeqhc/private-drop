@@ -266,7 +266,7 @@ async fn stale_connection_poll_cannot_steal_new_request() {
             "stale poll must not mark request dispatched"
         );
         assert_eq!(
-            inner.jobs_by_id.get(&job.job_id).unwrap().status,
+            inner.jobs_by_id.get(&job.job_id).unwrap().public_status(),
             "queued",
             "stale poll must not transition the job"
         );

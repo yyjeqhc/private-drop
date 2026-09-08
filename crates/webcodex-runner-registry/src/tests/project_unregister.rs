@@ -66,7 +66,7 @@ async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts(
     {
         let mut inner = registry.inner.lock().await;
         let job = inner.jobs_by_id.get_mut(&target_job.job_id).unwrap();
-        job.status = "completed".to_string();
+        job.lifecycle = super::super::state::JobLifecycleState::Completed;
         job.ended_at = Some(now_ts());
     }
     assert_eq!(

@@ -609,7 +609,8 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
             .jobs_by_id
             .get(&job.job_id)
             .unwrap()
-            .public_revision
+            .observation
+            .revision
             .load(std::sync::atomic::Ordering::Relaxed)
     };
 
@@ -658,7 +659,8 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
             .jobs_by_id
             .get(&job.job_id)
             .unwrap()
-            .public_revision
+            .observation
+            .revision
             .load(std::sync::atomic::Ordering::Relaxed)
     };
     assert!(revision_after > revision_before);

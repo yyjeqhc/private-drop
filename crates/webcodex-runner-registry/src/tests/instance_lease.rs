@@ -642,7 +642,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         crate::runner_protocol::ShellJobSnapshot {
             job_id: record.job_id.clone(),
             request_id: record.request_id.clone().unwrap(),
-            status: record.status.clone(),
+            status: record.public_status().to_string(),
             update_seq: record.last_update_seq,
             created_at: record.created_at,
             started_at: record.started_at,
@@ -703,10 +703,10 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
         let inner = registry.inner.lock().await;
         let record = inner.jobs_by_id.get(&job.job_id).unwrap();
         assert_eq!(record.runner_instance_id, "inst-b");
-        assert_eq!(record.status, "running");
+        assert_eq!(record.public_status(), "running");
         assert_eq!(record.last_update_seq, snapshot.update_seq);
         assert_eq!(
-            record.recovery_reason_code.as_deref(),
+            record.recovery.public_reason(),
             Some("detached_instance_transfer")
         );
     }
