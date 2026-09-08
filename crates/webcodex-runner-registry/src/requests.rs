@@ -1087,6 +1087,7 @@ impl RunnerRegistry {
                 cwd: normalized_cwd,
                 command: body.command.clone(),
                 stdin: body.stdin.clone(),
+                max_bytes: None,
                 timeout_secs: body.timeout_secs,
                 job_context: ssh_context,
             }),

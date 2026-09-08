@@ -26,8 +26,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-#[cfg(test)]
-use webcodex_core::runner_operation::RunnerOperation;
 use webcodex_core::runner_operation::RunnerShellOperation;
 
 use webcodex_process::{GracefulTermination, ManagedChild};
@@ -232,12 +230,18 @@ impl ExternalToolRouter {
 
     #[cfg(test)]
     pub(crate) fn route(&self, policy: &RunnerPolicy, request: &RunnerRequest) -> ExternalRoute {
-        match request.decode_operation() {
-            Ok(RunnerOperation::RunShell(operation)) => {
-                self.route_with_shutdown(policy, &operation, None)
-            }
-            _ => ExternalRoute::Native,
+        if request.kind != "run_shell" {
+            return ExternalRoute::Native;
         }
+        let operation = RunnerShellOperation {
+            cwd: request.cwd.clone(),
+            command: request.command.clone(),
+            stdin: request.stdin.clone(),
+            max_bytes: request.max_bytes,
+            timeout_secs: request.timeout_secs,
+            job_context: request.job_context.clone(),
+        };
+        self.route_with_shutdown(policy, &operation, None)
     }
 
     pub(crate) fn route_with_shutdown(
@@ -286,7 +290,11 @@ impl ExternalToolRouter {
         let context = ToolExecutionContext {
             project_root: &root,
             target,
-            max_output_bytes: MAX_MCP_OUTPUT_BYTES.min(policy.max_output_bytes),
+            max_output_bytes: operation
+                .max_bytes
+                .unwrap_or(MAX_MCP_OUTPUT_BYTES)
+                .min(policy.max_output_bytes)
+                .min(MAX_MCP_OUTPUT_BYTES),
             timeout_secs: operation.timeout_secs.max(1).min(policy.max_timeout_secs),
         };
         match self

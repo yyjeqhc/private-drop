@@ -44,6 +44,9 @@ pub struct RunnerShellOperation {
     pub cwd: Option<String>,
     pub command: String,
     pub stdin: Option<String>,
+    /// Historical V2 `run_shell.max_bytes`, consumed by the external-search
+    /// provider route as a per-request output cap. Native raw shell ignores it.
+    pub max_bytes: Option<usize>,
     pub timeout_secs: u64,
     /// Present only for Session-bound SSH raw-shell execution.
     pub job_context: Option<ShellJobContext>,
@@ -657,6 +660,7 @@ fn encode_operation(
             wire.cwd = operation.cwd;
             wire.command = operation.command;
             wire.stdin = operation.stdin;
+            wire.max_bytes = operation.max_bytes;
             wire.timeout_secs = operation.timeout_secs;
             wire.job_context = operation.job_context;
         }
@@ -871,7 +875,7 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
     match wire.kind.as_str() {
         "run_shell" => {
             no_special()?;
-            ensure_no_file_fields(wire)?;
+            ensure_no_file_fields_except_max_bytes(wire)?;
             if wire.job_id.is_some() {
                 return Err("run_shell does not accept job_id".to_string());
             }
@@ -880,6 +884,7 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
                 cwd: wire.cwd.clone(),
                 command: wire.command.clone(),
                 stdin: wire.stdin.clone(),
+                max_bytes: wire.max_bytes,
                 timeout_secs: wire.timeout_secs,
                 job_context: wire.job_context.clone(),
             }))
@@ -1476,6 +1481,20 @@ fn ensure_no_file_fields(wire: &RunnerRequest) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_no_file_fields_except_max_bytes(wire: &RunnerRequest) -> Result<(), String> {
+    if wire.path.is_some()
+        || wire.content.is_some()
+        || wire.expected_sha256.is_some()
+        || wire.expected_prefix.is_some()
+        || wire.start_line.is_some()
+        || wire.end_line.is_some()
+        || wire.create_dirs
+    {
+        return Err(format!("{} contains incompatible file fields", wire.kind));
+    }
+    Ok(())
+}
+
 fn ensure_special_payloads_absent(wire: &RunnerRequest) -> Result<(), String> {
     if wire.process.is_some()
         || wire.script.is_some()
@@ -1620,6 +1639,7 @@ mod tests {
                 cwd: Some("/tmp".to_string()),
                 command: "printf ok".to_string(),
                 stdin: None,
+                max_bytes: None,
                 timeout_secs: 30,
                 job_context: None,
             }),
@@ -1852,6 +1872,7 @@ mod tests {
                 cwd: Some("/repo".to_string()),
                 command: "printf ok".to_string(),
                 stdin: None,
+                max_bytes: None,
                 timeout_secs: 30,
                 job_context: None,
             }),
@@ -2163,6 +2184,7 @@ mod tests {
                 cwd: Some("/repo".to_string()),
                 command: "printf ok".to_string(),
                 stdin: None,
+                max_bytes: Some(4096),
                 timeout_secs: 30,
                 job_context: None,
             },
@@ -2170,6 +2192,7 @@ mod tests {
         .unwrap();
         assert_eq!(shell["kind"], "run_shell");
         assert_eq!(shell["command"], "printf ok");
+        assert_eq!(shell["max_bytes"], 4096);
         assert!(shell.get("process").is_none());
         assert!(shell.get("script").is_none());
 
