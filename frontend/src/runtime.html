@@ -101,6 +101,11 @@
             <span>Runtime &amp; Agents</span>
             <span id="runtime-navigation-health" class="sidebar-view-meta">Live</span>
           </button>
+          <button id="runtime-view-windows" class="sidebar-view-item" type="button" data-runtime-view="windows">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M8 4v5" /></svg>
+            <span>Windows</span>
+            <span id="runtime-window-navigation-health" class="sidebar-view-meta">Activity</span>
+          </button>
         </nav>
 
         <div class="sidebar-scroll">
@@ -168,6 +173,19 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
                 <span><strong>Durable Agents</strong><small>Agents, inboxes and conversations</small></span>
               </button>
+            </section>
+          </div>
+
+          <div id="runtime-navigation-windows" class="sidebar-view-panel" hidden>
+            <section class="sidebar-section runtime-window-navigation-section">
+              <div class="sidebar-section-head">
+                <h2>WebCodex windows</h2>
+                <span id="runtime-window-list-count" class="count-badge">0</span>
+              </div>
+              <p class="operations-navigation-copy muted small">Host Window liveness and correlation evidence. Window identity never grants execution or Session authority.</p>
+              <span id="runtime-window-list-status" class="muted small" role="status">Window activity has not been loaded yet.</span>
+              <div id="runtime-window-list" class="runtime-window-list" role="group" aria-label="WebCodex Windows"></div>
+              <p id="runtime-window-list-empty" class="muted small empty-copy" hidden>No WebCodex activity is available.</p>
             </section>
           </div>
         </div>
@@ -335,6 +353,54 @@
             </form>
           </article>
         </div>
+
+        <section id="runtime-windows-stage" class="windows-stage" aria-labelledby="runtime-windows-heading" hidden>
+          <div class="windows-scroll">
+            <header class="operations-heading windows-heading">
+              <div>
+                <p class="eyebrow">Window activity</p>
+                <h2 id="runtime-windows-heading">WebCodex host windows</h2>
+                <p class="muted">Shows WebCodex calls and correlations only. It cannot observe model reasoning or determine whether the ChatGPT frontend is frozen.</p>
+              </div>
+              <span id="runtime-window-live-badge" class="operations-live"><i aria-hidden="true"></i><span>3s activity refresh</span></span>
+            </header>
+            <div id="runtime-window-detail-empty" class="conversation-empty compact-empty">
+              <div class="empty-orbit" aria-hidden="true">W</div>
+              <p class="eyebrow">Window axis</p>
+              <h2>Select a Window</h2>
+              <p>Choose a hashed Window identity from the sidebar to inspect active requests, linked Workflow Sessions, and bounded recent activity.</p>
+            </div>
+            <article id="runtime-window-detail" class="window-detail" hidden>
+              <section class="operations-card window-overview-card">
+                <div class="operations-card-head">
+                  <div><span class="eyebrow">Hashed identity</span><h3 id="runtime-window-title">Window</h3></div>
+                  <button id="runtime-window-copy-key" class="btn subtle" type="button">Copy hashed key</button>
+                </div>
+                <code id="runtime-window-key" class="communication-id">—</code>
+                <div class="metric-grid window-metrics">
+                  <div class="metric"><span class="metric-label">Source</span><strong id="runtime-window-source">—</strong></div>
+                  <div class="metric"><span class="metric-label">Active requests</span><strong id="runtime-window-active-count">0</strong></div>
+                  <div class="metric"><span class="metric-label">Last WebCodex call</span><strong id="runtime-window-last-call">—</strong></div>
+                  <div class="metric"><span class="metric-label">Last meaningful work</span><strong id="runtime-window-last-meaningful">—</strong></div>
+                </div>
+              </section>
+              <div class="window-detail-grid">
+                <section class="operations-card">
+                  <div class="operations-card-head"><div><span class="eyebrow">Live</span><h3>Active requests</h3></div><span id="runtime-window-active-status" class="muted small">—</span></div>
+                  <div id="runtime-window-active-requests" class="window-request-list"></div>
+                </section>
+                <section class="operations-card">
+                  <div class="operations-card-head"><div><span class="eyebrow">Correlation</span><h3>Linked Workflow Sessions</h3></div><span id="runtime-window-linked-status" class="muted small">—</span></div>
+                  <div id="runtime-window-linked-sessions" class="window-session-list"></div>
+                </section>
+              </div>
+              <section class="operations-card window-activity-card">
+                <div class="operations-card-head"><div><span class="eyebrow">Bounded history</span><h3>Recent activity</h3></div><span id="runtime-window-activity-status" class="muted small">—</span></div>
+                <div id="runtime-window-activity" class="window-activity-list"></div>
+              </section>
+            </article>
+          </div>
+        </section>
 
         <section id="runtime-operations-stage" class="operations-stage" aria-labelledby="runtime-operations-heading" hidden>
           <div class="operations-scroll">
@@ -531,6 +597,16 @@
                 </div>
               </div>
               <p id="runtime-session-workspace" class="workspace-identity muted small">—</p>
+              <section class="session-window-correlation" aria-labelledby="runtime-linked-windows-heading">
+                <div class="section-head"><h4 id="runtime-linked-windows-heading">Linked Windows</h4><span id="runtime-linked-windows-status" class="muted small">—</span></div>
+                <p id="runtime-linked-windows-unavailable" class="muted small" hidden>Window correlation requires runtime:read; Workflow Session detail remains available.</p>
+                <div id="runtime-linked-windows" class="window-session-list"></div>
+              </section>
+              <section id="runtime-recorder-gap-panel" class="session-window-correlation recorder-gap-panel" hidden aria-labelledby="runtime-recorder-gap-heading">
+                <div class="section-head"><h4 id="runtime-recorder-gap-heading">Recorder continuity gap</h4><span class="chip warn">unrecorded</span></div>
+                <p class="muted small">Same-Window project activity continued after the Session ledger stopped recording. These calls remain Window evidence and are not merged into Session Activity.</p>
+                <div id="runtime-recorder-gap-activity" class="window-activity-list compact"></div>
+              </section>
             </section>
           </section>
 

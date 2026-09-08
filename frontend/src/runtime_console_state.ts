@@ -578,6 +578,23 @@ export function resolveRunnerDisclosure(storedDisclosure: boolean | null, defaul
   return storedDisclosure === null ? defaultOpen : storedDisclosure;
 }
 
+export function runtimeWindowShortKey(value: unknown): string {
+  const key = String(value || "");
+  if (key.length <= 14) return key;
+  return key.slice(0, 8) + "…" + key.slice(-4);
+}
+
+export function runtimeWindowActivityLabel(timestampMs: unknown, nowMs: number): string {
+  const value = Number(timestampMs);
+  if (!Number.isFinite(value) || value <= 0) return "No WebCodex activity";
+  const elapsed = Math.max(0, nowMs - value);
+  if (elapsed < 1000) return "just now";
+  if (elapsed < 60_000) return Math.floor(elapsed / 1000) + "s ago";
+  if (elapsed < 3_600_000) return Math.floor(elapsed / 60_000) + "m ago";
+  if (elapsed < 86_400_000) return Math.floor(elapsed / 3_600_000) + "h ago";
+  return Math.floor(elapsed / 86_400_000) + "d ago";
+}
+
 export type RuntimeContextPresentationMode = "docked" | "popover" | "sheet";
 
 export interface RuntimeContextLayoutOptions {
@@ -585,7 +602,7 @@ export interface RuntimeContextLayoutOptions {
   isWideViewport: boolean;
   isMobileViewport: boolean;
   hasSelectedSession: boolean;
-  workspaceView: "sessions" | "operations";
+  workspaceView: "sessions" | "operations" | "windows";
 }
 
 export interface RuntimeContextResolvedState {

@@ -504,6 +504,27 @@ export function adoptRuntimeWorkflowSessionDetail(state, request, detail) {
 export function resolveRunnerDisclosure(storedDisclosure, defaultOpen) {
     return storedDisclosure === null ? defaultOpen : storedDisclosure;
 }
+export function runtimeWindowShortKey(value) {
+    const key = String(value || "");
+    if (key.length <= 14)
+        return key;
+    return key.slice(0, 8) + "…" + key.slice(-4);
+}
+export function runtimeWindowActivityLabel(timestampMs, nowMs) {
+    const value = Number(timestampMs);
+    if (!Number.isFinite(value) || value <= 0)
+        return "No WebCodex activity";
+    const elapsed = Math.max(0, nowMs - value);
+    if (elapsed < 1000)
+        return "just now";
+    if (elapsed < 60000)
+        return Math.floor(elapsed / 1000) + "s ago";
+    if (elapsed < 3600000)
+        return Math.floor(elapsed / 60000) + "m ago";
+    if (elapsed < 86400000)
+        return Math.floor(elapsed / 3600000) + "h ago";
+    return Math.floor(elapsed / 86400000) + "d ago";
+}
 export function resolveRuntimeContextPresentationMode(isWideViewport, isMobileViewport) {
     if (isMobileViewport)
         return "sheet";

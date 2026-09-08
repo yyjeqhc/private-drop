@@ -46,11 +46,22 @@ import {
   completeRuntimeCollaborationMutationRecovery,
   takeRuntimeCollaborationMutationNotice,
   resolveRunnerDisclosure,
+  runtimeWindowShortKey,
+  runtimeWindowActivityLabel,
   resolveRuntimeContextState,
   resolveRuntimeContextPresentationMode,
   reduceRuntimeContextUserIntent,
   resolveRuntimeContextFocusTransition,
 } from "../dist/runtime_console_state.js";
+
+test("window activity presentation is hashed-id safe and WebCodex-specific", () => {
+  assert.equal(runtimeWindowShortKey("0123456789abcdef0123456789abcdef"), "01234567…cdef");
+  assert.equal(runtimeWindowShortKey("short"), "short");
+  assert.equal(runtimeWindowActivityLabel(null, 10_000), "No WebCodex activity");
+  assert.equal(runtimeWindowActivityLabel(9_500, 10_000), "just now");
+  assert.equal(runtimeWindowActivityLabel(5_000, 10_000), "5s ago");
+  assert.equal(runtimeWindowActivityLabel(0, 10_000), "No WebCodex activity");
+});
 
 test("communication transcript window follows the latest bounded page", () => {
   assert.equal(runtimeCommunicationTranscriptAfterSeq(0), 0);
@@ -936,6 +947,16 @@ test("runtime context resolution separates presentation mode from user visibilit
   });
   assert.equal(operationsView.visible, false);
   assert.equal(operationsView.isDocked, false);
+
+  const windowsView = resolveRuntimeContextState({
+    userIntent: true,
+    isWideViewport: true,
+    isMobileViewport: false,
+    hasSelectedSession: true,
+    workspaceView: "windows",
+  });
+  assert.equal(windowsView.visible, false);
+  assert.equal(windowsView.isDocked, false);
 
   const backToSessions = resolveRuntimeContextState({
     userIntent: true,

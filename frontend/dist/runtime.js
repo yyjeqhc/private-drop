@@ -752,6 +752,27 @@ function adoptRuntimeWorkflowSessionDetail(state, request, detail) {
 function resolveRunnerDisclosure(storedDisclosure, defaultOpen) {
     return storedDisclosure === null ? defaultOpen : storedDisclosure;
 }
+function runtimeWindowShortKey(value) {
+    const key = String(value || "");
+    if (key.length <= 14)
+        return key;
+    return key.slice(0, 8) + "…" + key.slice(-4);
+}
+function runtimeWindowActivityLabel(timestampMs, nowMs) {
+    const value = Number(timestampMs);
+    if (!Number.isFinite(value) || value <= 0)
+        return "No WebCodex activity";
+    const elapsed = Math.max(0, nowMs - value);
+    if (elapsed < 1000)
+        return "just now";
+    if (elapsed < 60000)
+        return Math.floor(elapsed / 1000) + "s ago";
+    if (elapsed < 3600000)
+        return Math.floor(elapsed / 60000) + "m ago";
+    if (elapsed < 86400000)
+        return Math.floor(elapsed / 3600000) + "h ago";
+    return Math.floor(elapsed / 86400000) + "d ago";
+}
 function resolveRuntimeContextPresentationMode(isWideViewport, isMobileViewport) {
     if (isMobileViewport)
         return "sheet";
@@ -798,6 +819,7 @@ function resolveRuntimeContextFocusTransition(options) {
 
 const API_BASE = "/api/runtime-console/";
 const REFRESH_MS = 30000;
+const WINDOW_REFRESH_MS = 3000;
 const COLLABORATION_WAIT_SECS = 25;
 const PROJECT_SEARCH_DEBOUNCE_MS = 200;
 const RUNTIME_CREDENTIAL_SESSION_KEY = "webcodex.runtime.credential.v1";
@@ -1193,6 +1215,12 @@ let projectsAbort = null;
 let sessionsAbort = null;
 let detailAbort = null;
 let collaborationAbort = null;
+let windowsAbort = null;
+let windowDetailAbort = null;
+let windowTimer = 0;
+let windowRows = [];
+let selectedWindowKey = "";
+let selectedWindowDetail = null;
 let projectRows = [];
 let homeProjectRows = [];
 let runnerRows = [];
@@ -1384,7 +1412,7 @@ function applyAppearance(preference, persist = true) {
     catch { /* Appearance remains active when storage is unavailable. */ }
 }
 function workspaceViewPreference(value) {
-    return value === "operations" ? "operations" : "sessions";
+    return value === "operations" || value === "windows" ? value : "sessions";
 }
 function loadWorkspaceViewPreference() {
     try {
@@ -1401,6 +1429,12 @@ function renderWorkspaceHeading() {
         setText("runtime-session-title", tr("Runtime & Agents"));
         return;
     }
+    if (workspaceView === "windows") {
+        setText("runtime-breadcrumb-runner", tr("Runtime workspace"));
+        setText("runtime-breadcrumb-project", tr("Windows"));
+        setText("runtime-session-title", selectedWindowKey ? "Window " + runtimeWindowShortKey(selectedWindowKey) : tr("Window activity"));
+        return;
+    }
     renderWorkspaceBreadcrumb();
     const snapshot = state.workflow?.snapshot;
     setText("runtime-session-title", snapshot?.title ? String(snapshot.title) : tr("Select a Session"));
@@ -1408,14 +1442,19 @@ function renderWorkspaceHeading() {
 function applyWorkspaceView(view, persist = true) {
     workspaceView = workspaceViewPreference(view);
     const operations = workspaceView === "operations";
+    const windows = workspaceView === "windows";
+    const sessions = workspaceView === "sessions";
     const shell = el("runtime-console");
     if (shell)
         shell.dataset.workspaceView = workspaceView;
     document.body.classList.toggle("runtime-operations-view", operations);
-    show("runtime-navigation-sessions", !operations);
+    document.body.classList.toggle("runtime-windows-view", windows);
+    show("runtime-navigation-sessions", sessions);
     show("runtime-navigation-operations", operations);
-    show("runtime-conversation-stage", !operations);
+    show("runtime-navigation-windows", windows);
+    show("runtime-conversation-stage", sessions);
     show("runtime-operations-stage", operations);
+    show("runtime-windows-stage", windows);
     document.querySelectorAll("[data-runtime-view]").forEach((button) => {
         const selected = button.dataset.runtimeView === workspaceView;
         button.classList.toggle("selected", selected);
@@ -1426,6 +1465,13 @@ function applyWorkspaceView(view, persist = true) {
     });
     if (operations && token)
         void refreshCommunication(true);
+    if (windows && token) {
+        void refreshWindows(true);
+        startWindowAuto();
+    }
+    else {
+        stopWindowAuto();
+    }
     renderWorkspaceHeading();
     syncResponsiveNavigation();
     setMobileNavigationOpen(false, false);
@@ -1989,6 +2035,10 @@ function abortAll() {
     projectsAbort = null;
     stopProjectSearchTimer();
     abortProjectWork();
+    abort(windowsAbort);
+    abort(windowDetailAbort);
+    windowsAbort = null;
+    windowDetailAbort = null;
 }
 async function api(path, payload, signal) {
     try {
@@ -2012,6 +2062,350 @@ async function api(path, payload, signal) {
             return null;
         return { ok: false, status: 0, data: null };
     }
+}
+function windowDateTimeLabel(timestampMs) {
+    const value = Number(timestampMs);
+    if (!Number.isFinite(value) || value <= 0)
+        return tr("time unavailable");
+    return new Date(value).toLocaleString(runtimeLanguage === "zh-CN" ? "zh-CN" : "en");
+}
+function windowAgeLabel(timestampMs) {
+    return runtimeWindowActivityLabel(timestampMs, Date.now());
+}
+function runtimeProjectClientId(project) {
+    const value = String(project || "");
+    const parts = value.split(":");
+    return parts.length >= 3 && parts[0] === "agent" ? parts[1] : "";
+}
+async function copyRuntimeValue(value, statusId) {
+    if (!value)
+        return;
+    try {
+        await navigator.clipboard.writeText(value);
+        if (statusId)
+            setText(statusId, tr("Copied"));
+    }
+    catch {
+        if (statusId)
+            setText(statusId, tr("Unable to copy"));
+    }
+}
+function openWindowLinkedSession(session) {
+    const project = String(session?.project || "");
+    const sessionId = String(session?.workflow_session_id || "");
+    const clientId = runtimeProjectClientId(project);
+    if (!project || !sessionId || !clientId)
+        return;
+    applyWorkspaceView("sessions");
+    selectRecentSession({ client_id: clientId, project_id: project, session_id: sessionId });
+}
+function renderWindowActivityRows(node, activities, compact = false) {
+    clearNode(node);
+    if (!node)
+        return;
+    for (const activity of activities) {
+        const item = document.createElement("article");
+        item.className = "window-activity-item" + (compact ? " compact" : "")
+            + (activity?.recorder_gap_session_id ? " recorder-gap" : "");
+        const head = document.createElement("div");
+        head.className = "window-activity-head";
+        const title = document.createElement("strong");
+        title.textContent = String(activity?.tool_name || activity?.method || "WebCodex call");
+        const time = document.createElement("span");
+        time.className = "muted small";
+        time.textContent = windowDateTimeLabel(activity?.started_at_ms);
+        head.appendChild(title);
+        head.appendChild(time);
+        item.appendChild(head);
+        const facts = document.createElement("div");
+        facts.className = "chips window-activity-facts";
+        appendChip(facts, String(activity?.status || "unknown"));
+        if (activity?.project)
+            appendChip(facts, String(activity.project));
+        if (activity?.meaningful)
+            appendChip(facts, "meaningful", "tone-runtime");
+        if (activity?.recorder_gap_session_id)
+            appendChip(facts, "recorder gap", "tone-warn");
+        if (typeof activity?.duration_ms === "number")
+            appendChip(facts, String(activity.duration_ms) + " ms");
+        item.appendChild(facts);
+        const links = Array.isArray(activity?.workflow_sessions) ? activity.workflow_sessions : [];
+        if (links.length) {
+            const relation = document.createElement("div");
+            relation.className = "muted small";
+            relation.textContent = links
+                .map((link) => String(link.workflow_session_id || "") + " · " + String(link.relation || "linked"))
+                .join(" · ");
+            item.appendChild(relation);
+        }
+        if (activity?.recorder_gap_session_id) {
+            const gap = document.createElement("div");
+            gap.className = "window-gap-note small";
+            gap.textContent = "Recording was not continued for " + String(activity.recorder_gap_session_id) + ".";
+            item.appendChild(gap);
+        }
+        if (activity?.server_trace_id) {
+            const trace = document.createElement("button");
+            trace.type = "button";
+            trace.className = "window-trace-copy";
+            trace.textContent = "trace " + String(activity.server_trace_id);
+            trace.title = tr("Copy trace id");
+            trace.addEventListener("click", () => void copyRuntimeValue(String(activity.server_trace_id)));
+            item.appendChild(trace);
+        }
+        node.appendChild(item);
+    }
+}
+function renderWindowList() {
+    const node = el("runtime-window-list");
+    clearNode(node);
+    setText("runtime-window-list-count", String(windowRows.length));
+    show("runtime-window-list-empty", windowRows.length === 0);
+    setText("runtime-window-list-status", windowRows.length ? countLabel(windowRows.length, "Window") : tr("No WebCodex activity"));
+    if (!node)
+        return;
+    for (const row of windowRows) {
+        const key = String(row?.client_window_key || "");
+        if (!key)
+            continue;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "runtime-window-card" + (key === selectedWindowKey ? " selected" : "");
+        if (key === selectedWindowKey)
+            button.setAttribute("aria-current", "true");
+        const head = document.createElement("div");
+        head.className = "runtime-window-card-head";
+        const title = document.createElement("strong");
+        title.textContent = "Window " + runtimeWindowShortKey(key);
+        const active = document.createElement("span");
+        active.className = "chip" + (Number(row?.active_count || 0) > 0 ? " tone-runtime" : "");
+        active.textContent = Number(row?.active_count || 0) > 0
+            ? String(row.active_count) + " active"
+            : String(row?.source || "window");
+        head.appendChild(title);
+        head.appendChild(active);
+        button.appendChild(head);
+        const call = document.createElement("span");
+        call.className = "muted small";
+        call.textContent = row?.last_tool_call_at_ms
+            ? "Last WebCodex call " + windowAgeLabel(row.last_tool_call_at_ms)
+            : "Last WebCodex activity " + windowAgeLabel(row?.last_seen_at_ms);
+        button.appendChild(call);
+        const meaningful = document.createElement("span");
+        meaningful.className = "muted small";
+        meaningful.textContent = row?.last_meaningful_activity_at_ms
+            ? "Last meaningful work " + windowAgeLabel(row.last_meaningful_activity_at_ms)
+            : "No meaningful WebCodex work recorded";
+        button.appendChild(meaningful);
+        const links = document.createElement("span");
+        links.className = "muted small";
+        links.textContent = countLabel(Number(row?.linked_session_count || 0), "linked Session")
+            + (Number(row?.recorder_gap_count || 0) ? " · " + String(row.recorder_gap_count) + " recorder gap" : "");
+        button.appendChild(links);
+        button.addEventListener("click", () => void selectWindow(key));
+        node.appendChild(button);
+    }
+}
+function renderWindowDetail(detail) {
+    selectedWindowDetail = detail;
+    const present = !!detail;
+    show("runtime-window-detail-empty", !present);
+    show("runtime-window-detail", present);
+    if (!detail)
+        return;
+    const key = String(detail.client_window_key || selectedWindowKey || "");
+    setText("runtime-window-title", "Window " + runtimeWindowShortKey(key));
+    setText("runtime-window-key", key || "—");
+    setText("runtime-window-source", String(detail.source || "—"));
+    setText("runtime-window-active-count", String(Number(detail.active_count || 0)));
+    setText("runtime-window-last-call", detail.last_tool_call_at_ms ? windowAgeLabel(detail.last_tool_call_at_ms) : "No completed tools/call activity");
+    setText("runtime-window-last-meaningful", detail.last_meaningful_activity_at_ms
+        ? windowAgeLabel(detail.last_meaningful_activity_at_ms)
+        : "No meaningful WebCodex work recorded");
+    setText("runtime-window-active-status", Number(detail.active_count || 0) ? "Active request" : "No active request");
+    setText("runtime-window-linked-status", countLabel(Number(detail.sessions_returned || 0), "Session") + (detail.sessions_truncated ? " · bounded" : ""));
+    setText("runtime-window-activity-status", countLabel(Number(detail.activity_returned || 0), "event") + (detail.activity_truncated ? " · bounded" : ""));
+    const activeNode = el("runtime-window-active-requests");
+    clearNode(activeNode);
+    const activeRequests = Array.isArray(detail.active_requests) ? detail.active_requests : [];
+    if (activeNode && !activeRequests.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted small";
+        empty.textContent = "No WebCodex request is currently active.";
+        activeNode.appendChild(empty);
+    }
+    for (const request of activeRequests) {
+        const item = document.createElement("article");
+        item.className = "window-request-item";
+        const title = document.createElement("strong");
+        title.textContent = String(request?.tool_name || request?.method || "WebCodex request");
+        item.appendChild(title);
+        const meta = document.createElement("div");
+        meta.className = "muted small";
+        const facts = [
+            request?.project,
+            request?.started_at_ms ? "started " + windowAgeLabel(request.started_at_ms) : null,
+            typeof request?.elapsed_ms === "number" ? String(request.elapsed_ms) + " ms elapsed" : null,
+        ].filter(Boolean).map(String);
+        meta.textContent = facts.join(" · ");
+        item.appendChild(meta);
+        if (request?.server_trace_id) {
+            const trace = document.createElement("button");
+            trace.type = "button";
+            trace.className = "window-trace-copy";
+            trace.textContent = "trace " + String(request.server_trace_id);
+            trace.addEventListener("click", () => void copyRuntimeValue(String(request.server_trace_id)));
+            item.appendChild(trace);
+        }
+        activeNode?.appendChild(item);
+    }
+    const sessionsNode = el("runtime-window-linked-sessions");
+    clearNode(sessionsNode);
+    for (const session of Array.isArray(detail.linked_sessions) ? detail.linked_sessions : []) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "window-session-card";
+        const title = document.createElement("strong");
+        title.textContent = String(session?.title || session?.workflow_session_id || "Workflow Session");
+        const meta = document.createElement("span");
+        meta.className = "muted small";
+        meta.textContent = [
+            session?.workflow_session_id,
+            session?.lifecycle,
+            session?.project,
+            ...(Array.isArray(session?.relations) ? session.relations : []),
+        ].filter(Boolean).map(String).join(" · ");
+        button.appendChild(title);
+        button.appendChild(meta);
+        button.addEventListener("click", () => openWindowLinkedSession(session));
+        sessionsNode?.appendChild(button);
+    }
+    if (sessionsNode && !sessionsNode.childElementCount) {
+        const empty = document.createElement("p");
+        empty.className = "muted small";
+        empty.textContent = "No authorized Workflow Session links.";
+        sessionsNode.appendChild(empty);
+    }
+    renderWindowActivityRows(el("runtime-window-activity"), Array.isArray(detail.activity) ? detail.activity : []);
+    renderWorkspaceHeading();
+}
+async function refreshWindowDetail() {
+    if (!token || !selectedWindowKey)
+        return renderWindowDetail(null);
+    abort(windowDetailAbort);
+    const controller = new AbortController();
+    windowDetailAbort = controller;
+    const key = selectedWindowKey;
+    const response = await api("window", { client_window_key: key, activity_limit: 100, session_limit: 50 }, controller.signal);
+    if (windowDetailAbort === controller)
+        windowDetailAbort = null;
+    if (!response || key !== selectedWindowKey)
+        return;
+    if (response.status === 401)
+        return lock("Credential rejected.");
+    if (response.status === 404) {
+        selectedWindowKey = "";
+        renderWindowList();
+        renderWindowDetail(null);
+        return;
+    }
+    if (!response.ok || !response.data) {
+        setText("runtime-window-list-status", response.status === 403 ? "runtime:read required" : "Could not refresh Window detail.");
+        return;
+    }
+    renderWindowDetail(response.data);
+}
+async function selectWindow(key) {
+    if (!/^[0-9a-fA-F]{64}$/.test(key))
+        return;
+    selectedWindowKey = key;
+    renderWindowList();
+    renderWorkspaceHeading();
+    setMobileNavigationOpen(false, true);
+    await refreshWindowDetail();
+}
+async function refreshWindows(refreshSelected = true) {
+    if (!token || workspaceView !== "windows")
+        return;
+    abort(windowsAbort);
+    const controller = new AbortController();
+    windowsAbort = controller;
+    const response = await api("windows", { limit: 100 }, controller.signal);
+    if (windowsAbort === controller)
+        windowsAbort = null;
+    if (!response)
+        return;
+    if (response.status === 401)
+        return lock("Credential rejected.");
+    if (response.status === 403) {
+        windowRows = [];
+        selectedWindowKey = "";
+        renderWindowList();
+        renderWindowDetail(null);
+        setText("runtime-window-list-status", "runtime:read required");
+        return;
+    }
+    if (!response.ok || !response.data) {
+        setText("runtime-window-list-status", "Could not refresh Window activity.");
+        return;
+    }
+    windowRows = Array.isArray(response.data.windows) ? response.data.windows : [];
+    const selectedStillListed = !!selectedWindowKey
+        && windowRows.some((row) => String(row?.client_window_key || "") === selectedWindowKey);
+    if (!selectedWindowKey && windowRows.length)
+        selectedWindowKey = String(windowRows[0]?.client_window_key || "");
+    renderWindowList();
+    if (refreshSelected && selectedWindowKey && (selectedStillListed || windowRows.length)) {
+        await refreshWindowDetail();
+    }
+    else if (!selectedWindowKey) {
+        renderWindowDetail(null);
+    }
+}
+function renderSessionWindowCorrelation(detail) {
+    const available = detail?.window_activity_available === true;
+    show("runtime-linked-windows-unavailable", !available);
+    const linkedNode = el("runtime-linked-windows");
+    clearNode(linkedNode);
+    const links = available && Array.isArray(detail?.linked_windows) ? detail.linked_windows : [];
+    setText("runtime-linked-windows-status", available ? countLabel(links.length, "Window") : "runtime:read unavailable");
+    for (const link of links) {
+        const key = String(link?.client_window_key || "");
+        if (!key)
+            continue;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "window-session-card" + (Number(link?.recorder_gap_count || 0) ? " recorder-gap" : "");
+        const title = document.createElement("strong");
+        title.textContent = "Window " + runtimeWindowShortKey(key);
+        const meta = document.createElement("span");
+        meta.className = "muted small";
+        meta.textContent = [
+            link?.source,
+            link?.last_seen_at_ms ? "last WebCodex activity " + windowAgeLabel(link.last_seen_at_ms) : null,
+            Number(link?.recorder_gap_count || 0) ? String(link.recorder_gap_count) + " recorder gap" : null,
+        ].filter(Boolean).map(String).join(" · ");
+        button.appendChild(title);
+        button.appendChild(meta);
+        button.addEventListener("click", () => {
+            selectedWindowKey = key;
+            applyWorkspaceView("windows");
+            renderWindowList();
+            void refreshWindowDetail();
+        });
+        linkedNode?.appendChild(button);
+    }
+    if (available && linkedNode && !links.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted small";
+        empty.textContent = "No linked Window evidence.";
+        linkedNode.appendChild(empty);
+    }
+    const gaps = available && Array.isArray(detail?.window_activity_after_last_session_record)
+        ? detail.window_activity_after_last_session_record
+        : [];
+    show("runtime-recorder-gap-panel", gaps.length > 0);
+    renderWindowActivityRows(el("runtime-recorder-gap-activity"), gaps, true);
 }
 function hideDetail() {
     const messageSearch = el("runtime-message-search");
@@ -2078,6 +2472,12 @@ function lock(message = "", clearRemembered = true) {
     collaborationFollowLatest = true;
     collaborationPendingMessages = 0;
     clearSessionSurface();
+    windowRows = [];
+    selectedWindowKey = "";
+    selectedWindowDetail = null;
+    stopWindowAuto();
+    renderWindowList();
+    renderWindowDetail(null);
     resetCommunicationSurface();
     const projectList = el("runtime-project-list");
     const sessionsPanel = el("runtime-workflow-sessions-panel");
@@ -3148,6 +3548,7 @@ function renderDetail(detail, consumeCollaborationNotice = true) {
     setText("runtime-session-created", dateTimeLabel(detail.created_at));
     setText("runtime-session-updated", dateTimeLabel(detail.updated_at));
     renderSessionWorkspaceIdentity();
+    renderSessionWindowCorrelation(detail);
     renderOverview(detail.overview);
     renderCollaboration(undefined, consumeCollaborationNotice);
     syncResponsiveNavigation();
@@ -5053,6 +5454,17 @@ function startAuto() {
 }
 function stopAuto() { if (timer)
     window.clearInterval(timer); timer = 0; }
+function startWindowAuto() {
+    stopWindowAuto();
+    if (!token || workspaceView !== "windows" || document.hidden)
+        return;
+    windowTimer = window.setInterval(() => void refreshWindows(true), WINDOW_REFRESH_MS);
+}
+function stopWindowAuto() {
+    if (windowTimer)
+        window.clearInterval(windowTimer);
+    windowTimer = 0;
+}
 function connectRuntimeCredential(nextToken, rememberForTab) {
     rememberCredentialForTab = rememberForTab;
     token = nextToken;
@@ -5064,6 +5476,10 @@ function connectRuntimeCredential(nextToken, rememberForTab) {
     void fetchOverview(refreshRuntimeOverview(state));
     void fetchProjects(request, true);
     void refreshCommunication(workspaceView === "operations");
+    if (workspaceView === "windows") {
+        void refreshWindows(true);
+        startWindowAuto();
+    }
 }
 el("runtime-token-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -5079,6 +5495,10 @@ el("runtime-token-form")?.addEventListener("submit", (event) => {
     connectRuntimeCredential(nextToken, remember?.checked !== false);
 });
 el("runtime-agent-create-form")?.addEventListener("submit", (event) => void createCommunicationAgent(event));
+el("runtime-window-copy-key")?.addEventListener("click", () => {
+    const key = String(selectedWindowDetail?.client_window_key || selectedWindowKey || "");
+    void copyRuntimeValue(key, "runtime-window-list-status");
+});
 el("runtime-agent-update-form")?.addEventListener("submit", (event) => void updateCommunicationAgent(event));
 el("runtime-agent-attach")?.addEventListener("click", () => void attachCommunicationEndpoint());
 el("runtime-agent-detach")?.addEventListener("click", () => void detachCommunicationEndpoint());
@@ -5310,8 +5730,17 @@ document.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", syncResponsiveNavigation, { passive: true });
 document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && token)
-        refreshAutoSurfaces();
+    if (document.hidden) {
+        stopWindowAuto();
+        return;
+    }
+    if (!token)
+        return;
+    refreshAutoSurfaces();
+    if (workspaceView === "windows") {
+        void refreshWindows(true);
+        startWindowAuto();
+    }
 });
 const syncSystemAppearance = () => {
     if (appearancePreference(document.documentElement.dataset.theme) === "system")
@@ -5333,6 +5762,7 @@ window.addEventListener("pagehide", () => {
     abortAll();
     resetCommunicationSurface();
     stopAuto();
+    stopWindowAuto();
 });
 lock("", false);
 const rememberedRuntimeCredential = loadRememberedRuntimeCredential();

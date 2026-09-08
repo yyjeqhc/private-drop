@@ -579,11 +579,49 @@ h4 { margin-bottom: 5px; color: var(--muted); font-size: .7rem; letter-spacing: 
 .runtime-shell[data-workspace-view="operations"].context-docked { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
 .runtime-shell[data-workspace-view="operations"] .session-state-chips { display: none; }
 
+/* Window activity is a separate observability axis from Workflow Session state. */
+.runtime-shell[data-workspace-view="windows"] .runtime-inspector { display: none; }
+.runtime-shell[data-workspace-view="windows"].context-docked { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
+.runtime-shell[data-workspace-view="windows"] .session-state-chips { display: none; }
+.runtime-shell[data-workspace-view="windows"] .topbar-controls { padding-right: 0; }
+.windows-stage { grid-row: 2; min-width: 0; min-height: 0; overflow: hidden; background: var(--page-surface); }
+.windows-scroll { width: 100%; height: 100%; overflow-y: auto; padding: clamp(24px, 3vw, 44px) var(--content-gutter) 64px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+.windows-heading { width: min(1240px, 100%); }
+.window-detail { width: min(1240px, 100%); margin: 0 auto; display: grid; gap: 14px; }
+.window-overview-card { display: grid; gap: 10px; }
+.window-overview-card .communication-id { display: block; overflow-wrap: anywhere; }
+.window-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 2px; }
+.window-detail-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 14px; }
+.window-request-list, .window-session-list, .window-activity-list, .runtime-window-list { display: grid; gap: 8px; }
+.runtime-window-navigation-section { min-height: 0; }
+.runtime-window-list { margin: 8px 4px 4px; }
+.runtime-window-card, .window-session-card { width: 100%; min-width: 0; display: grid; gap: 5px; border: 1px solid transparent; border-radius: 10px; padding: 9px 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.runtime-window-card:hover, .window-session-card:hover { border-color: var(--border-soft); background: var(--sidebar-hover); }
+.runtime-window-card.selected { border-color: var(--accent-border); background: var(--accent-soft); }
+.runtime-window-card-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.runtime-window-card strong, .window-session-card strong { min-width: 0; overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-window-card > .small, .window-session-card > .small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.window-session-card.recorder-gap, .window-activity-item.recorder-gap { border-color: color-mix(in srgb, var(--warn) 38%, var(--border-soft)); background: color-mix(in srgb, var(--warn) 7%, transparent); }
+.window-request-item, .window-activity-item { min-width: 0; display: grid; gap: 7px; border: 1px solid var(--border-soft); border-radius: 11px; padding: 10px 11px; background: var(--surface-inset); }
+.window-activity-item.compact { padding: 9px 10px; }
+.window-activity-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.window-activity-head strong { min-width: 0; overflow-wrap: anywhere; }
+.window-activity-facts { margin: 0; }
+.window-gap-note { color: var(--warn); }
+.window-trace-copy { width: fit-content; max-width: 100%; overflow: hidden; border: 0; padding: 0; background: transparent; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.window-trace-copy:hover { color: var(--accent); }
+.session-window-correlation { display: grid; gap: 9px; margin-top: 14px; border-top: 1px solid var(--border-soft); padding-top: 13px; }
+.session-window-correlation .section-head { justify-content: space-between; }
+.session-window-correlation h4 { margin: 0; font-size: .78rem; font-weight: 650; }
+.recorder-gap-panel { border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border-soft)); border-radius: 10px; padding: 11px; background: color-mix(in srgb, var(--warn) 6%, transparent); }
+
+
 /* Runtime context is a popover by default and becomes a useful Session rail on wide workspaces. */
 .runtime-inspector { position: absolute; z-index: 50; top: 0; right: 0; }
 .runtime-inspector { display: none; }
 .runtime-has-session .runtime-inspector { display: block; }
-.runtime-operations-view .runtime-inspector { display: none; }
+.runtime-operations-view .runtime-inspector,
+.runtime-windows-view .runtime-inspector { display: none; }
 .runtime-shell[data-workspace-view="operations"] .topbar-controls,
 body:not(.runtime-has-session) .topbar-controls { padding-right: 0; }
 .context-trigger { position: absolute; z-index: 23; top: 16px; right: 18px; display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid transparent; border-radius: 9px; color: var(--muted); cursor: pointer; list-style: none; transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, transform 120ms var(--ease-out); }
@@ -876,7 +914,14 @@ body:not(.runtime-has-session) .topbar-controls { padding-right: 0; }
   .operations-live { align-self: flex-start; }
   .operations-card { padding: 15px; border-radius: 14px; }
   .operations-card-head { gap: 10px; }
+  .window-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .window-detail-grid { grid-template-columns: 1fr; }
   .operations-metrics { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 520px) {
+  .window-metrics { grid-template-columns: 1fr; }
+  .window-activity-head { align-items: flex-start; flex-direction: column; gap: 4px; }
 }
 
 @media (max-width: 380px) {
