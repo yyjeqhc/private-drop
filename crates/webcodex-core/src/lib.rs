@@ -16,6 +16,7 @@ pub mod plugin;
 pub mod project_context_contract;
 pub mod project_instructions;
 pub mod project_listing;
+pub mod runner_operation;
 pub mod runner_protocol;
 pub mod runtime_contract;
 pub mod sensitive_paths;
