@@ -41,6 +41,7 @@ mod sessions_guards;
 mod sessions_instructions;
 mod sessions_resolver;
 mod skills;
+mod specialized_dispatch;
 mod startup_brief;
 mod sync_timeout;
 mod targeted_inventory;

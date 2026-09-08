@@ -18,6 +18,88 @@ use super::sessions::{
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
+/// The closed heterogeneous gateway boundary. `None` leaves ordinary tools
+/// untouched for the kernel's generic lifecycle. Recognized gateways never fall
+/// through, including on parse or governance denial.
+///
+/// Reuse the canonical typed ToolCall parser; action policy and native result
+/// conversion remain gateway-owned. Only trusted recorder/auth/transport context
+/// crosses this boundary: generic InvocationMetadata has no specialized meaning.
+pub(crate) async fn try_dispatch_specialized_gateway(
+    runtime: &ToolRuntime,
+    request: &super::kernel::ToolCallRequest,
+    context: super::kernel::ToolCallContext<'_>,
+) -> Option<super::kernel::ToolCallOutcome> {
+    use super::kernel::{ToolCallErrorStatus, ToolCallOutcome};
+    use super::sessions::strip_tool_call_expectation_metadata;
+    use super::ToolCall;
+
+    if !matches!(
+        request.tool_name.as_str(),
+        crate::plugin_gateway::PLUGIN_TOOL_NAME
+            | crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
+    ) {
+        return None;
+    }
+
+    let arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
+    let call = match ToolCall::from_tool_name(&request.tool_name, arguments) {
+        Ok(call) => call,
+        Err(message) => {
+            return Some(ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
+                project: None,
+                model_ergonomics: None,
+            });
+        }
+    };
+    let invocation = match call {
+        ToolCall::PluginTool(call) => crate::plugin_gateway::invoke(
+            runtime,
+            call,
+            context.session_id,
+            context.auth,
+            context.transport.into(),
+        )
+        .await
+        .map(|invocation| invocation.to_tool_result()),
+        ToolCall::SshResource(call) => crate::ssh_resource_gateway::invoke(
+            runtime,
+            call,
+            context.session_id,
+            context.auth,
+            context.transport.into(),
+        )
+        .await
+        .map(|invocation| invocation.to_tool_result()),
+        _ => unreachable!("specialized gateway name must parse to its canonical ToolCall"),
+    };
+    Some(match invocation {
+        Ok(result) | Err(SpecializedGovernanceDenial::Tool(result)) => ToolCallOutcome {
+            success: result.success,
+            result: Some(result),
+            error_status: None,
+            project: None,
+            model_ergonomics: None,
+        },
+        Err(SpecializedGovernanceDenial::Scope {
+            required_scope,
+            description,
+        }) => ToolCallOutcome {
+            success: false,
+            result: None,
+            error_status: Some(ToolCallErrorStatus::InsufficientScope {
+                required_scope: Some(required_scope),
+                description,
+            }),
+            project: None,
+            model_ergonomics: None,
+        },
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SpecializedSource {
     Plugin,

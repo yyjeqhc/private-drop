@@ -152,6 +152,24 @@ Runtime Console -----------------------> canonical Server HTTP/kernel paths abov
   registry, file/patch/artifact handling, shell execution, and LSP
   navigation.
 
+### Heterogeneous gateway governance
+
+The Kernel routes action-dependent gateways through
+`tool_runtime::specialized::try_dispatch_specialized_gateway` before the generic
+static ToolDefinition Session/permission lifecycle. This closed boundary
+classifies supported gateway names, uses the canonical typed `ToolCall` parser,
+and maps parse failures and shared governance denials to Kernel outcomes once.
+Ordinary tools fall through without specialized parsing or execution.
+
+`plugin_gateway` and `ssh_resource_gateway` own their action vocabulary, exact
+`SpecializedOperationPolicy`, execution protocols, uncertainty/recovery, and
+result conversion. They call the shared `govern_specialized_invocation` and
+`finish_specialized_invocation` lifecycle; the dispatcher does not repeat it.
+Static definitions retain their worst-case discovery policy. Trusted recording
+Session provenance is supported, while generic invocation continuity metadata
+receives no specialized semantics. Adding another heterogeneous gateway extends
+this closed dispatch boundary without adding a concrete Kernel policy branch.
+
 ### Cargo workspace ownership layers
 
 The checked-in [`workspace-boundaries.toml`](../workspace-boundaries.toml) is the

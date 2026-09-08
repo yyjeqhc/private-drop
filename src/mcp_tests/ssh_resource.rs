@@ -600,3 +600,124 @@ async fn restricted_permission_denies_ssh_management_before_runner_dispatch() {
         .unwrap()
         .is_none());
 }
+
+#[tokio::test]
+async fn generic_runtime_ssh_resource_dispatch_preserves_native_requests_and_results() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
+    };
+    use webcodex_core::ssh_resource::SshResourceRequest;
+
+    let runtime = Arc::new(test_runtime());
+    let auth = ssh_auth();
+    register_managed_runner(&runtime, "instance-a").await;
+    let mut binding = String::new();
+    for (arguments, expected, response) in [
+        (
+            json!({"action":"list", "runner":"runner-a"}),
+            SshResourceRequest::List,
+            SshResourceResponse::List {
+                revision: 0,
+                resources: vec![],
+            },
+        ),
+        (
+            json!({"action":"register", "name":"test", "target":"user@host"}),
+            SshResourceRequest::Register {
+                expected_revision: 0,
+                name: "test".into(),
+                target: "user@host".into(),
+                default_cwd: None,
+            },
+            SshResourceResponse::Register {
+                revision: 1,
+                resource: "test".into(),
+                persisted: true,
+                active: false,
+                restart_required: true,
+            },
+        ),
+        (
+            json!({"action":"list", "runner":"runner-a"}),
+            SshResourceRequest::List,
+            SshResourceResponse::List {
+                revision: 1,
+                resources: vec![],
+            },
+        ),
+        (
+            json!({"action":"remove", "name":"test"}),
+            SshResourceRequest::Remove {
+                expected_revision: 1,
+                name: "test".into(),
+            },
+            SshResourceResponse::Remove {
+                revision: 2,
+                resource: "test".into(),
+                persisted: true,
+                active: true,
+                restart_required: true,
+            },
+        ),
+    ] {
+        let mut arguments = arguments;
+        let read = arguments["action"] == "list";
+        if !read {
+            arguments["binding"] = json!(binding);
+        }
+        let task = {
+            let runtime = Arc::clone(&runtime);
+            let auth = auth.clone();
+            tokio::spawn(async move {
+                runtime
+                    .call_tool_with_context(
+                        ToolCallRequest {
+                            tool_name: "ssh_resource".into(),
+                            arguments,
+                        },
+                        ToolCallContext {
+                            transport: ToolTransport::Api,
+                            session_id: None,
+                            auth: Some(&auth),
+                            window: None,
+                            record_oauth_scope_denials: true,
+                            host_file_import_trust: HostFileImportTrust::Untrusted,
+                        },
+                    )
+                    .await
+            })
+        };
+        let request = wait_for_request(&runtime, "instance-a").await;
+        assert_eq!(request.kind, "ssh_resource");
+        assert!(request.plugin_gateway.is_none());
+        assert_eq!(
+            serde_json::from_str::<SshResourceRequest>(request.content.as_deref().unwrap())
+                .unwrap(),
+            expected
+        );
+        complete_response(&runtime, request, "instance-a", response).await;
+        let outcome = task.await.unwrap();
+        assert!(outcome.success, "{outcome:?}");
+        assert!(outcome.error_status.is_none());
+        let output = outcome.result.unwrap().output;
+        if read {
+            binding = output["binding"].as_str().unwrap().to_string();
+        } else {
+            assert_eq!(output["persisted"], true);
+            assert_eq!(output["restart_required"], true);
+            assert!(!output.to_string().contains("user@host"));
+        }
+        assert!(
+            runtime
+                .runner_registry
+                .poll(RunnerPollRequest {
+                    client_id: "runner-a".into(),
+                    runner_instance_id: "instance-a".into(),
+                })
+                .await
+                .unwrap()
+                .is_none(),
+            "one kernel invocation must dispatch exactly once"
+        );
+    }
+}
