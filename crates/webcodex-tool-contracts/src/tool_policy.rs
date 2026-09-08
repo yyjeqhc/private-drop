@@ -6,9 +6,8 @@ use super::metadata::{
 use super::tool_definition::{
     tool_definitions, RunnerCapabilityRequirement, ToolAuditPolicy, ToolContextContinuityPolicy,
     ToolDefinition, ToolEffectAnnotations, PERMISSION_RISK_ARTIFACT_WRITE,
-    PERMISSION_RISK_DESTRUCTIVE,
-    PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION,
-    PERMISSION_RISK_WRITE,
+    PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL,
+    PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
 };
 
 impl ToolDefinition {
