@@ -55,7 +55,8 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::value("reason_code"),
                     super::ToolAuditResultField::array_len("signal_count", "signals"),
                     super::ToolAuditResultField::array_len("file_count", "files"),
-                ]),
+                ])
+                .drop_null_request_values(),
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -109,7 +110,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(git_like(model_spec(
         def(
             "git_commit_paths",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::TYPED_CANONICAL.drop_null_request_values(),
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),

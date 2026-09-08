@@ -300,6 +300,10 @@ pub enum ToolAuditRequestPolicy {
     /// Parse the concrete request into the canonical typed `ToolCall` and use
     /// its bounded audit projection. Parse/projection failure is fail-closed.
     Typed,
+    /// Use the same typed projection, then omit null-valued audit fields. This
+    /// preserves legacy validity-bit + optional-normalized-value contracts
+    /// without teaching the projector which tool emitted those fields.
+    TypedDropNullValues,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -414,6 +418,11 @@ impl ToolAuditPolicy {
             request: ToolAuditRequestPolicy::Typed,
             result: ToolAuditResultPolicy::Fields(fields),
         }
+    }
+
+    pub const fn drop_null_request_values(mut self) -> Self {
+        self.request = ToolAuditRequestPolicy::TypedDropNullValues;
+        self
     }
 
     pub const fn typed_semantic(result: ToolAuditSemanticResultPolicy) -> Self {

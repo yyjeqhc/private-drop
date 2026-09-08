@@ -21,13 +21,25 @@ pub fn session_log_arguments_for_tool_request(tool_name: &str, arguments: &Value
     let Some(definition) = webcodex_tool_contracts::lookup_tool_definition(tool_name) else {
         return empty_audit_projection();
     };
-    if definition.audit_policy().request != webcodex_tool_contracts::ToolAuditRequestPolicy::Typed {
+    let request_policy = definition.audit_policy().request;
+    if !matches!(
+        request_policy,
+        webcodex_tool_contracts::ToolAuditRequestPolicy::Typed
+            | webcodex_tool_contracts::ToolAuditRequestPolicy::TypedDropNullValues
+    ) {
         return empty_audit_projection();
     }
 
-    audit_tool_call_from_request(definition, tool_name, arguments)
-        .map(|call| call.session_log_arguments())
-        .unwrap_or_else(empty_audit_projection)
+    let Some(call) = audit_tool_call_from_request(definition, tool_name, arguments) else {
+        return empty_audit_projection();
+    };
+    let mut projected = call.session_log_arguments();
+    if request_policy == webcodex_tool_contracts::ToolAuditRequestPolicy::TypedDropNullValues {
+        if let Some(projected) = projected.as_object_mut() {
+            projected.retain(|_, value| !value.is_null());
+        }
+    }
+    projected
 }
 
 fn empty_audit_projection() -> Value {

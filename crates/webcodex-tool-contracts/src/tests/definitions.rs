@@ -53,9 +53,11 @@ fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
             "{} audit policy must resolve only through ToolDefinition",
             definition.name
         );
-        assert_eq!(
-            definition.audit_policy().request,
-            ToolAuditRequestPolicy::Typed,
+        assert!(
+            matches!(
+                definition.audit_policy().request,
+                ToolAuditRequestPolicy::Typed | ToolAuditRequestPolicy::TypedDropNullValues
+            ),
             "{} request audit must use the typed canonical boundary",
             definition.name
         );
@@ -74,6 +76,13 @@ fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
             ToolAuditSemanticResultPolicy::CodingAgentObservation
         ))
     );
+    for name in ["git_commit_paths", "git_review_summary"] {
+        assert_eq!(
+            runtime_tool_audit_policy(name).map(|policy| policy.request),
+            Some(ToolAuditRequestPolicy::TypedDropNullValues),
+            "{name} must preserve legacy omission of invalid normalized commit values"
+        );
+    }
     assert_eq!(runtime_tool_audit_policy("unknown_open_world_tool"), None);
     assert_eq!(runtime_tool_audit_policy("start_coding_task"), None);
 }
