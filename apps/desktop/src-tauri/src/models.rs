@@ -98,6 +98,7 @@ pub enum ReadinessSummaryKind {
     RunnerDisconnected,
     ProjectNotReady,
     RuntimeReadyLocalOnly,
+    TunnelReadyWaitingForChatGpt,
     ConnectionUnverified,
     QuickShareStopped,
 }
@@ -332,6 +333,18 @@ pub struct TunnelProxySnapshot {
     pub detected_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct OpenAiTunnelConfigSnapshot {
+    pub tunnel_id_present: bool,
+    pub api_key_present: bool,
+}
+
+impl OpenAiTunnelConfigSnapshot {
+    pub fn is_configured(&self) -> bool {
+        self.tunnel_id_present && self.api_key_present
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
     pub topology: Option<RuntimeTopology>,
@@ -343,6 +356,7 @@ pub struct DesktopStateSnapshot {
     pub current_operation: Option<DesktopOperationSnapshot>,
     pub activity_sequence: u64,
     pub openai_tunnel_configured: bool,
+    pub openai_tunnel_config: OpenAiTunnelConfigSnapshot,
     pub regular_tunnel_available: bool,
     pub runtime_autostart: bool,
     pub preferred_connection: RegularConnectionPreference,
@@ -361,6 +375,7 @@ impl Default for DesktopStateSnapshot {
             current_operation: None,
             activity_sequence: 0,
             openai_tunnel_configured: false,
+            openai_tunnel_config: OpenAiTunnelConfigSnapshot::default(),
             regular_tunnel_available: false,
             runtime_autostart: false,
             preferred_connection: RegularConnectionPreference::NoChatGpt,

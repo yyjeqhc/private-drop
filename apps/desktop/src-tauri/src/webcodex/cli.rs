@@ -895,9 +895,7 @@ mod tests {
             if bytes == size as libc::c_int {
                 return unsafe { info.assume_init() }.pbi_status != libc::SZOMB;
             }
-            if bytes == 0
-                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-            {
+            if bytes == 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
                 return false;
             }
             true

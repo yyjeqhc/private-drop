@@ -739,7 +739,8 @@ mod tests {
     }
 
     #[test]
-    fn regular_tunnel_uses_local_server_bootstrap_auth_and_only_inherits_control_plane_credentials() {
+    fn regular_tunnel_uses_local_server_bootstrap_auth_and_only_inherits_control_plane_credentials()
+    {
         let binaries = ResolvedBinaries {
             directory: PathBuf::from("bin"),
             webcodex: PathBuf::from("webcodex"),
@@ -754,10 +755,7 @@ mod tests {
             bundled_runtime_dir: None,
         };
         let command = adapter
-            .regular_tunnel_command(
-                Path::new("server.env"),
-                Some("http://127.0.0.1:7890"),
-            )
+            .regular_tunnel_command(Path::new("server.env"), Some("http://127.0.0.1:7890"))
             .unwrap();
         let args: Vec<_> = command
             .get_args()

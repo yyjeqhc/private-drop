@@ -34,6 +34,7 @@ enum RuntimeStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionStatus {
     Ready,
+    WaitingForChatGpt,
     NotConnected,
     NeedsAttention,
 }
@@ -86,6 +87,10 @@ impl TrayProjection {
         };
         let connection_status = if snapshot.readiness.ready_for_chatgpt {
             ConnectionStatus::Ready
+        } else if snapshot.regular_tunnel.as_ref().is_some_and(|tunnel| {
+            tunnel.status == crate::models::RegularTunnelStatus::Ready && tunnel.ready_for_chatgpt
+        }) {
+            ConnectionStatus::WaitingForChatGpt
         } else if snapshot.regular_tunnel.is_some() {
             ConnectionStatus::NeedsAttention
         } else {
@@ -247,7 +252,8 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     let connection = MenuItem::new(
         app,
         match projection.connection_status {
-            ConnectionStatus::Ready => "Connection: Ready",
+            ConnectionStatus::Ready => "Connection: Verified",
+            ConnectionStatus::WaitingForChatGpt => "Tunnel: Ready; waiting for ChatGPT",
             ConnectionStatus::NotConnected => "Connection: Not connected",
             ConnectionStatus::NeedsAttention => "Connection: Needs attention",
         },
@@ -282,8 +288,8 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     }
     if let Some(action) = projection.connection_action {
         let (id, text) = match action {
-            ConnectionAction::Connect => (CONNECT_ID, "Connect ChatGPT"),
-            ConnectionAction::Disconnect => (DISCONNECT_ID, "Disconnect ChatGPT"),
+            ConnectionAction::Connect => (CONNECT_ID, "Start OpenAI Secure Tunnel"),
+            ConnectionAction::Disconnect => (DISCONNECT_ID, "Stop OpenAI Secure Tunnel"),
         };
         let item = MenuItem::with_id(app, id, text, !projection.operation_busy, None::<&str>)?;
         if !has_context_action {
@@ -353,8 +359,8 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
         }
         RESUME_RUNTIME_ID => spawn_state_action(app, TrayStateAction::ResumeRuntime),
         STOP_RUNTIME_ID => spawn_state_action(app, TrayStateAction::StopRuntime),
-        CONNECT_ID => spawn_state_action(app, TrayStateAction::ConnectChatGpt),
-        DISCONNECT_ID => spawn_state_action(app, TrayStateAction::DisconnectChatGpt),
+        CONNECT_ID => spawn_state_action(app, TrayStateAction::StartRegularTunnel),
+        DISCONNECT_ID => spawn_state_action(app, TrayStateAction::StopRegularTunnel),
         STOP_QUICK_SHARE_ID => spawn_state_action(app, TrayStateAction::StopQuickShare),
         LAUNCH_AT_LOGIN_ID => match desktop_shell::launch_at_login_enabled(app) {
             Ok(current) => match desktop_shell::set_launch_at_login(app, !current) {
@@ -388,8 +394,8 @@ fn cancel_action_from_menu_id(id: &str) -> Option<TrayStateAction> {
 enum TrayStateAction {
     ResumeRuntime,
     StopRuntime,
-    ConnectChatGpt,
-    DisconnectChatGpt,
+    StartRegularTunnel,
+    StopRegularTunnel,
     StopQuickShare,
     CancelOperation(String),
 }
@@ -401,8 +407,8 @@ fn spawn_state_action(app: &AppHandle, action: TrayStateAction) {
         let result = match action {
             TrayStateAction::ResumeRuntime => state.resume_saved_runtime().await,
             TrayStateAction::StopRuntime => state.stop_local_runtime().await,
-            TrayStateAction::ConnectChatGpt => state.start_regular_tunnel().await,
-            TrayStateAction::DisconnectChatGpt => state.stop_regular_tunnel().await,
+            TrayStateAction::StartRegularTunnel => state.start_regular_tunnel().await,
+            TrayStateAction::StopRegularTunnel => state.stop_regular_tunnel().await,
             TrayStateAction::StopQuickShare => state.stop_quick_share().await,
             // Keep the operation observed by the menu, even if a newer operation
             // starts before this task runs. AppState rejects stale IDs.
@@ -490,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn connected_tunnel_projects_disconnect_action() {
+    fn locally_ready_tunnel_waits_for_chatgpt_and_offers_stop_action() {
         let mut snapshot = local_snapshot();
         snapshot.regular_tunnel = Some(RegularTunnelState {
             provider: "openai".into(),
@@ -499,9 +505,12 @@ mod tests {
             clipboard_contains: "tunnel_id".into(),
             ready_for_chatgpt: true,
         });
-        snapshot.readiness.ready_for_chatgpt = true;
+        snapshot.readiness.ready_for_chatgpt = false;
         let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
-        assert_eq!(projection.connection_status, ConnectionStatus::Ready);
+        assert_eq!(
+            projection.connection_status,
+            ConnectionStatus::WaitingForChatGpt
+        );
         assert_eq!(
             projection.connection_action,
             Some(ConnectionAction::Disconnect)
