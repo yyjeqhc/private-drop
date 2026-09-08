@@ -49,7 +49,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 true,
             ),
-            "Run one isolated one-shot native executable with literal argv and no shell parsing. For repeated shared state, prefer the persistent shell route; for an explicit new SSH target that should persist, use ssh_resource onboarding before persistent shell use. Explicit one-shot/no-persistence SSH remains valid here. Long work continues as the same execution, owned by the current Runner, including Job handoff. If accepted native work must outlive the current Runner process across exit, restart, upgrade, or replacement, discover run_detached_process instead.",
+            "Run one isolated one-shot native executable with literal argv and no shell parsing. Ordinary local command sequences stay on structured tools/run_process; do not open a persistent shell merely to run several commands. Use local persistent shell only when the same local shell process must retain cwd/env/exports/functions/umask. For repeated commands on one named SSH resource with remote state, prefer persistent shell; a new persistent SSH target uses ssh_resource onboarding first. Explicit one-shot/no-persistence SSH remains valid here. Long work continues as the same execution and stays Runner-owned; discover run_detached_process only when accepted native work must outlive the Runner.",
             run_process_input_schema,
         ),
         70,
@@ -143,7 +143,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             true,
             true,
         ),
-        "Run one bounded shell command as an escape hatch for real shell syntax. For persistent cwd/exports/functions, use the persistent shell route; an explicit new SSH target that should persist first goes through ssh_resource onboarding and Runner restart. Prefer structured validation, process, and edit tools when they fit. For longer work, asynchronous shell execution remains Runner-owned. If work must outlive the current Runner process, discover run_detached_process instead (native argv, no shell).",
+        "Run one bounded shell command as an escape hatch for real shell syntax. Ordinary local command sequences should not move to persistent shell merely because several commands are needed; prefer structured validation/process/edit tools, then run_shell when shell syntax is required. Local persistent shell is only for true same-process cwd/env/export/function/umask state. Repeated commands on one named SSH resource are the primary persistent-shell route; new persistent SSH targets use ssh_resource onboarding and Runner restart. Longer shell work stays Runner-owned; use run_detached_process only for native argv work that must outlive the current Runner process.",
         run_shell_input_schema,
     ),
     requires_explicit_business_session(model_spec(
@@ -166,7 +166,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 true,
             ),
-            "Open one bounded long-lived shell for an explicit Workflow Session: local sh/bash, Windows PowerShell, or sh/bash through the active named SSH resource already bound in execution_context.resource. For an explicit new target, use ssh_resource list/register, restart the Runner, list again, then bind with update_session_context; there is no per-shell host/resource parameter. The SSH target does not need WebCodex Runner.",
+            "Open one bounded long-lived shell for an explicit Workflow Session. Primary use: one shell for repeated commands on the active named SSH resource in execution_context.resource, preserving remote cwd/env/exports/functions/umask. Local sh/bash or Windows PowerShell remains supported only when same local shell-process state is actually required, not merely for several commands. New SSH targets use ssh_resource list/register, Runner restart, list again, then update_session_context; no per-shell host/resource parameter. The SSH target does not need WebCodex Runner.",
             open_session_shell_input_schema,
     )),
     requires_explicit_business_session(model_spec(
@@ -194,7 +194,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 true,
             ),
-            "Execute one framed command in an existing Session persistent shell. Reuse it for sequences that need shared cwd, variables, exports, functions, or umask; commands are serialized in the same shell process.",
+            "Execute one framed command in an existing Session persistent shell. Primary route is repeated commands on the same named SSH resource while retaining remote cwd/env/exports/functions/umask. Local persistent execution remains supported only when the same local shell process must retain state; ordinary local command sequences should use structured tools/run_process/run_script, with the shell escape hatch only for real shell syntax. Commands are serialized in the same shell process.",
             session_shell_exec_input_schema,
     )),
     requires_explicit_business_session(model_spec(

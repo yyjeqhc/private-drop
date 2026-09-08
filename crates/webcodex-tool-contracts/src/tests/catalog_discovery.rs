@@ -145,9 +145,28 @@ fn edit_recommended_flow_pairs_reads_with_guarded_exact_edits() {
     assert_eq!(flow.tools.first().copied(), Some("read_files"));
     assert_eq!(flow.tools.get(1).copied(), Some("apply_text_edits"));
     assert_eq!(flow.tools.get(2).copied(), Some("apply_patch"));
-    assert!(flow
-        .summary
-        .starts_with("Edit: after read_file/read_files, prefer apply_text_edits"));
+    assert!(flow.summary.starts_with(
+        "Edit: after read_file/read_files, apply_text_edits with current SHA is the default"
+    ));
+    assert!(flow.summary.contains("even when many lines change"));
+    assert!(flow.summary.contains("Use apply_patch only when"));
+    let guidance = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_lowercase();
+    for phrase in [
+        "canonical default even when many lines change",
+        "stable unique containing function/impl/type/test/module context",
+        "matching_mode_rejected",
+        "do not weaken the guard or switch to first_match",
+        "prefer apply_text_edits if exact edits are easy",
+        "bounded read_files recovery",
+        "regenerate matching_mode=unique with unique context",
+        "context_mismatch requires bounded reread",
+        "never blind retry",
+    ] {
+        assert!(
+            guidance.contains(phrase),
+            "edit flow should mention {phrase}: {guidance}"
+        );
+    }
 }
 
 #[test]
@@ -262,22 +281,21 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     for phrase in [
         "if the user gives an exact runner client_id",
         "runtime_status/list_projects for that runner",
-        "persistent shell: use an active runner-local ssh resource",
-        "ssh_resource list/register persists it",
-        "restart runner, list again",
-        "bind with update_session_context",
-        "explicit one-shot/no-persistence ssh",
+        "persistent shell: primarily reuse one shell for repeated commands on an active named ssh resource",
+        "keep remote shell state",
+        "ssh_resource list/register -> restart -> list -> bind -> open/reuse",
+        "local persistent shell is only for true same-process state",
+        "one-shot ssh uses run_process",
         "execution lifetime: run_process/run_job stay runner-owned",
         "outlive the current runner process",
         "discover run_detached_process",
         "supervisor-owned job",
         "inspect: use search_project_text and read_file before editing",
         "run_shell with rg or git grep is the diagnostic escape hatch",
-        "edit: after read_file/read_files, prefer apply_text_edits",
-        "using the returned current sha",
-        "use apply_patch for contextual or large multi-hunk changes",
-        "apply_unified_diff only for external raw diffs",
-        "write_project_file only for intentional whole-file rewrites",
+        "edit: after read_file/read_files, apply_text_edits with current sha is the default",
+        "even when many lines change",
+        "use apply_patch only when contextual/large multi-hunk patch form is materially clearer",
+        "external diffs use apply_unified_diff",
         "validate: use cargo_check / cargo_test / go_test",
         "raw run_shell is a bounded escape hatch",
         "not the primary validation path",
@@ -331,12 +349,17 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
     assert!(persistent.tools.contains(&"session_shell_status"));
     assert!(persistent.tools.contains(&"close_session_shell"));
     assert!(persistent.tools.contains(&"run_process"));
+    assert!(persistent.summary.contains("primarily reuse one shell"));
+    assert!(persistent.summary.contains("active named SSH resource"));
+    assert!(persistent.summary.contains("remote shell state"));
+    assert!(persistent.summary.contains("ssh_resource list/register"));
     assert!(persistent
         .summary
-        .contains("active Runner-local SSH resource"));
-    assert!(persistent.summary.contains("ssh_resource list/register"));
-    assert!(persistent.summary.contains("restart Runner"));
-    assert!(persistent.summary.contains("one-shot/no-persistence SSH"));
+        .contains("restart -> list -> bind -> open/reuse"));
+    assert!(persistent
+        .summary
+        .contains("Local persistent shell is only for true same-process state"));
+    assert!(persistent.summary.contains("one-shot SSH uses run_process"));
     assert!(persistent
         .manifest_purpose
         .contains("SSH target does not run WebCodex Runner"));
@@ -344,6 +367,22 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
     assert!(persistent
         .manifest_purpose
         .contains("ssh_resource register"));
+    for phrase in [
+        "ssh-resource-primary",
+        "session_shell_exec repeatedly preserves remote cwd/env/exports/functions/umask",
+        "local persistent shell remains supported only when same local-process state is required",
+        "several ordinary local commands are not enough",
+        "explicit one-shot/no-persistence ssh",
+    ] {
+        assert!(
+            persistent
+                .manifest_purpose
+                .to_ascii_lowercase()
+                .contains(phrase),
+            "persistent_shell should mention {phrase}: {}",
+            persistent.manifest_purpose
+        );
+    }
     for tool in [
         "ssh_resource",
         "update_session_context",

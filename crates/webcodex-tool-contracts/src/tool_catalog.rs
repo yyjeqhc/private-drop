@@ -299,9 +299,9 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "persistent_shell",
-        summary: "Persistent shell: use an active Runner-local SSH resource. For a new explicit target, ssh_resource list/register persists it; restart Runner, list again, bind with update_session_context, then open/reuse. Keep run_process for explicit one-shot/no-persistence SSH.",
+        summary: "Persistent shell: primarily reuse one shell for repeated commands on an active named SSH resource and keep remote shell state. New target: ssh_resource list/register -> restart -> list -> bind -> open/reuse. Local persistent shell is only for true same-process state; one-shot SSH uses run_process.",
         manifest_purpose:
-            "Persistent shell route: use ssh_resource list to discover safe logical names. If an explicit new SSH target should persist, ssh_resource register it and stop for Runner restart; after restart list again, then update_session_context binds the active Runner-local named SSH resource, open_session_shell once, and session_shell_exec reuses it. A managed resource is not an arbitrary host; the SSH target does not run WebCodex Runner. Use session_shell_status only when needed and close_session_shell when cleanup is useful. Keep run_process for explicit one-shot/no-persistence SSH.",
+            "Persistent shell is SSH-resource-primary: use ssh_resource list to discover safe logical names. If a new SSH target should persist, ssh_resource register it and stop for Runner restart; after restart list again, update_session_context binds the active Runner-local named SSH resource, open_session_shell once, and session_shell_exec repeatedly preserves remote cwd/env/exports/functions/umask. The SSH target does not run WebCodex Runner. Local persistent shell remains supported only when same local-process state is required; several ordinary local commands are not enough. Use session_shell_status only when needed, close_session_shell for cleanup, and run_process for explicit one-shot/no-persistence SSH.",
         tools: &[
             "ssh_resource",
             "update_session_context",
@@ -344,9 +344,9 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: after read_file/read_files, prefer apply_text_edits for ordinary model-generated changes using the returned current SHA; use apply_patch for contextual or large multi-hunk changes; apply_unified_diff only for external raw diffs; write_project_file only for intentional whole-file rewrites.",
+            "Edit: after read_file/read_files, apply_text_edits with current SHA is the default for ordinary model-generated edits, even when many lines change. Use apply_patch only when contextual/large multi-hunk patch form is materially clearer; external diffs use apply_unified_diff.",
         manifest_purpose:
-            "Read current files first, then use SHA-guarded apply_text_edits by default; use apply_patch when a contextual or large patch is clearer, raw unified diff only for external patch input, and whole-file write only for intentional rewrites.",
+            "Read current files first; SHA-guarded apply_text_edits is the canonical default even when many lines change. Use apply_patch only when contextual or multi-hunk form is materially clearer. Repetitive patch targets need stable unique containing function/impl/type/test/module context. On matching_mode_rejected, do not weaken the guard or switch to first_match: reread, prefer apply_text_edits if exact edits are easy, otherwise consume bounded read_files recovery and regenerate matching_mode=unique with unique context. context_mismatch requires bounded reread and regeneration from current source, never blind retry. External raw diffs use apply_unified_diff; whole-file writes are only for intentional rewrites.",
         tools: &[
             "read_files",
             "apply_text_edits",

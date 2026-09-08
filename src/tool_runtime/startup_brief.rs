@@ -73,7 +73,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
             "session_message_resolution": "For a handled non-todo, send session_message_resolution on the next ordinary call with recording_session_id; ACK guidance also needs ack_session_message_ids. It cannot predict the main call. Todos use complete_session_message.",
             "context_sidecar": "context_request adds bounded context after the main tool and never authorizes effects. Recover lost project.instructions with an observation call before dependent mutation.",
             "runner_targeting": "For exact Runner client_id, use runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent.",
-            "persistent_shell": "For repeated commands in one Workflow Session, especially a named SSH resource, prefer open_session_shell + session_shell_exec; use run_process for isolated commands.",
+            "persistent_shell": "Persistent shell is primarily for repeated remote commands on one named SSH resource, preserving remote cwd/env/exports/functions/umask. Ordinary local coding stays on structured tools -> run_process/run_script -> run_shell for shell syntax; use local persistent shell only when same-process state is required.",
             "normal_closeout": "Normal success: finish_coding_task(summary_only=true); full closeout only for unresolved evidence or handoff/debug."
         },
         "roles": {

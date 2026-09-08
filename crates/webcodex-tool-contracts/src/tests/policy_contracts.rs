@@ -79,6 +79,7 @@ fn tool_definitions_are_context_continuity_ssot() {
 fn tool_definitions_drive_session_and_permission_policy() {
     use crate::metadata::{
         ToolApprovalPolicy, ToolAuthorityPolicy, ToolEffect, ToolIdempotency, ToolRisk,
+        PROJECT_WRITE,
     };
     use crate::tool_definition::{
         runtime_tool_approval_policy, runtime_tool_captures_validation_output,
@@ -108,6 +109,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
     );
 
     for (name, effect, risk) in [
+        ("apply_patch", ToolEffect::Mutate, ToolRisk::ProjectWrite),
         (
             "apply_text_edits",
             ToolEffect::Mutate,
@@ -139,6 +141,18 @@ fn tool_definitions_drive_session_and_permission_policy() {
         assert_eq!(metadata.approval, ToolApprovalPolicy::Standard, "{name}");
         assert!(runtime_tool_requires_permission(name), "{name}");
     }
+
+    let patch_metadata = lookup_tool_definition("apply_patch")
+        .expect("apply_patch definition")
+        .metadata();
+    assert_eq!(
+        patch_metadata.authority,
+        ToolAuthorityPolicy::Require(PROJECT_WRITE)
+    );
+    assert_eq!(patch_metadata.effect, ToolEffect::Mutate);
+    assert_eq!(patch_metadata.risk, ToolRisk::ProjectWrite);
+    assert_eq!(patch_metadata.approval, ToolApprovalPolicy::Standard);
+    assert_eq!(patch_metadata.idempotency, ToolIdempotency::NonIdempotent);
 
     let git_group = TOOL_DISCOVERY_GROUPS
         .iter()

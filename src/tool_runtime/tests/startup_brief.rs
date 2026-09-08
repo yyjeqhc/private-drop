@@ -108,7 +108,7 @@ fn instruction_source<'a>(output: &'a Value, path: &str) -> &'a Value {
 fn assert_builtin_workflow(output: &Value) {
     let workflow = &output["workflow"];
     assert_eq!(workflow["contract"], "webcodex.coding_workflow");
-    assert_eq!(workflow["version"], 8);
+    assert_eq!(workflow["version"], 9);
     assert_eq!(workflow["authority"], "model_guidance_only");
     assert!(workflow["role_selection"]
         .as_str()
@@ -169,11 +169,14 @@ fn assert_builtin_workflow(output: &Value) {
     let persistent_shell_guidance = workflow["model_protocol"]["persistent_shell"]
         .as_str()
         .expect("persistent shell guidance");
-    assert!(persistent_shell_guidance.contains("repeated commands in one Workflow Session"));
-    assert!(persistent_shell_guidance.contains("named SSH resource"));
-    assert!(persistent_shell_guidance.contains("open_session_shell"));
-    assert!(persistent_shell_guidance.contains("session_shell_exec"));
-    assert!(persistent_shell_guidance.contains("run_process"));
+    assert!(persistent_shell_guidance.contains("primarily for repeated remote commands"));
+    assert!(persistent_shell_guidance.contains("one named SSH resource"));
+    assert!(persistent_shell_guidance.contains("remote cwd/env/exports/functions/umask"));
+    assert!(persistent_shell_guidance
+        .contains("structured tools -> run_process/run_script -> run_shell"));
+    assert!(persistent_shell_guidance
+        .contains("local persistent shell only when same-process state is required"));
+    assert!(!persistent_shell_guidance.contains("For repeated commands in one Workflow Session"));
     let closeout_guidance = workflow["model_protocol"]["normal_closeout"]
         .as_str()
         .expect("normal closeout guidance");

@@ -65,6 +65,28 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
 }
 
 #[test]
+fn builtin_coding_workflow_routes_persistent_shell_to_ssh_state_not_local_command_count() {
+    let workflow = builtin_coding_workflow_projection();
+    let guidance = workflow["model_protocol"]["persistent_shell"]
+        .as_str()
+        .expect("persistent shell guidance");
+
+    for boundary in [
+        "primarily for repeated remote commands",
+        "one named SSH resource",
+        "remote cwd/env/exports/functions/umask",
+        "structured tools -> run_process/run_script -> run_shell",
+        "local persistent shell only when same-process state is required",
+    ] {
+        assert!(
+            guidance.contains(boundary),
+            "missing routing boundary: {boundary}"
+        );
+    }
+    assert!(!guidance.contains("For repeated commands in one Workflow Session"));
+}
+
+#[test]
 fn builtin_coding_workflow_review_does_not_implicitly_authorize_edits() {
     let workflow = builtin_coding_workflow_projection();
     let review = workflow["roles"]["independent_review"]["guidance"]
