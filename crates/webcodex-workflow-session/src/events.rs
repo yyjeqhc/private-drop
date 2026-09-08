@@ -9,7 +9,11 @@ use webcodex_core::lsp_bridge::{
     LocationsResult, WorkspaceSymbolsResult,
 };
 use webcodex_core::workflow_session_contract::is_tool_call_expectation_metadata_field as shared_is_tool_call_expectation_metadata_field;
-pub use webcodex_core::workflow_session_contract::{is_valid_session_id, EXPLORATION_TOOL_NAMES};
+pub use webcodex_core::workflow_session_contract::is_valid_session_id;
+use webcodex_tool_contracts::{
+    runtime_tool_session_evidence_policy, ToolChangedPathEvidence, ToolDiffReviewEvidence,
+    ToolExplorationEvidence,
+};
 
 use super::model::{
     PersistentShellEventEvidence, SessionEvent, SessionSummary, ToolCallExpectation,
@@ -718,17 +722,15 @@ pub fn changed_paths_for_tool(contract: SessionToolContract, arguments: &Value) 
     paths
 }
 
-fn is_dry_run_change_projection(tool_name: &str, value: &Value) -> bool {
-    matches!(tool_name, "apply_patch" | "apply_text_edits")
-        && value.get("dry_run").and_then(Value::as_bool) == Some(true)
+fn is_dry_run_change_projection(value: &Value) -> bool {
+    value.get("dry_run").and_then(Value::as_bool) == Some(true)
 }
 
 pub(super) fn changed_paths_for_tool_call(
-    tool_name: &str,
     contract: SessionToolContract,
     arguments: &Value,
 ) -> Vec<String> {
-    if is_dry_run_change_projection(tool_name, arguments) {
+    if contract.project_write && is_dry_run_change_projection(arguments) {
         return Vec::new();
     }
     changed_paths_for_tool(contract, arguments)
@@ -738,15 +740,14 @@ pub(super) fn changed_paths_for_tool_call(
 /// intentionally does not expose a structured path list. Never parses raw diff
 /// text; only authoritative bounded runtime result metadata is accepted.
 pub fn changed_paths_for_tool_result(tool_name: &str, output: &Value) -> Vec<String> {
-    if is_dry_run_change_projection(tool_name, output) {
+    let ToolChangedPathEvidence::ResultField(key) =
+        runtime_tool_session_evidence_policy(tool_name).changed_paths
+    else {
+        return Vec::new();
+    };
+    if is_dry_run_change_projection(output) {
         return Vec::new();
     }
-    let key = match tool_name {
-        "apply_unified_diff" => "affected_files",
-        "apply_patch" => "changed_paths",
-        "workspace_checkpoint_restore" => "changed_paths",
-        _ => return Vec::new(),
-    };
     output
         .get(key)
         .and_then(Value::as_array)
@@ -765,13 +766,15 @@ pub enum ExplorationToolKind {
 }
 
 pub fn exploration_tool_kind(tool_name: &str) -> Option<ExplorationToolKind> {
-    if !EXPLORATION_TOOL_NAMES.contains(&tool_name) {
-        return None;
-    }
-    match tool_name {
-        "read_file" | "read_files" => Some(ExplorationToolKind::Read),
-        "search_project_text" | "search_project_texts" => Some(ExplorationToolKind::Search),
-        _ => Some(ExplorationToolKind::Navigation),
+    match runtime_tool_session_evidence_policy(tool_name).exploration {
+        ToolExplorationEvidence::None => None,
+        ToolExplorationEvidence::Read | ToolExplorationEvidence::ReadBatch => {
+            Some(ExplorationToolKind::Read)
+        }
+        ToolExplorationEvidence::Search | ToolExplorationEvidence::SearchBatch => {
+            Some(ExplorationToolKind::Search)
+        }
+        ToolExplorationEvidence::Navigation(_) => Some(ExplorationToolKind::Navigation),
     }
 }
 
@@ -783,28 +786,28 @@ pub fn observed_input_paths_for_tool(
     contract: SessionToolContract,
     arguments: &Value,
 ) -> Vec<String> {
-    let Some(kind) = exploration_tool_kind(tool_name) else {
-        return Vec::new();
-    };
-    if kind == ExplorationToolKind::Search {
-        return Vec::new();
-    }
-
-    let mut paths = Vec::new();
-    if tool_name == "read_files" {
-        if let Some(items) = arguments.get("items").and_then(Value::as_array) {
-            for item in items.iter().filter_map(Value::as_object) {
-                if let Some(path) = item.get("path").and_then(Value::as_str) {
-                    push_observed_path(&mut paths, path);
+    match runtime_tool_session_evidence_policy(tool_name).exploration {
+        ToolExplorationEvidence::None
+        | ToolExplorationEvidence::Search
+        | ToolExplorationEvidence::SearchBatch => return Vec::new(),
+        ToolExplorationEvidence::ReadBatch => {
+            let mut paths = Vec::new();
+            if let Some(items) = arguments.get("items").and_then(Value::as_array) {
+                for item in items.iter().filter_map(Value::as_object) {
+                    if let Some(path) = item.get("path").and_then(Value::as_str) {
+                        push_observed_path(&mut paths, path);
+                    }
                 }
             }
+            return paths;
         }
-        return paths;
+        ToolExplorationEvidence::Read | ToolExplorationEvidence::Navigation(_) => {}
     }
 
     if contract.path_hint != SessionPathHint::SinglePath {
         return Vec::new();
     }
+    let mut paths = Vec::new();
     if let Some(path) = arguments.get("path").and_then(Value::as_str) {
         push_observed_path(&mut paths, path);
     }
@@ -815,11 +818,11 @@ pub fn persistent_shell_event_evidence_for_tool_result(
     tool_name: &str,
     output: &Value,
 ) -> Option<PersistentShellEventEvidence> {
-    let action = persistent_shell_action(tool_name)?;
+    let action = runtime_tool_session_evidence_policy(tool_name).persistent_shell?;
     sanitize_persistent_shell_event_evidence(
         tool_name,
         PersistentShellEventEvidence {
-            action: action.to_string(),
+            action: action.as_str().to_string(),
             shell_id: output
                 .get("shell_id")
                 .and_then(Value::as_str)
@@ -847,7 +850,10 @@ pub fn sanitize_persistent_shell_event_evidence(
     tool_name: &str,
     mut evidence: PersistentShellEventEvidence,
 ) -> Option<PersistentShellEventEvidence> {
-    evidence.action = persistent_shell_action(tool_name)?.to_string();
+    evidence.action = runtime_tool_session_evidence_policy(tool_name)
+        .persistent_shell?
+        .as_str()
+        .to_string();
     evidence.shell_id = evidence.shell_id.filter(|value| {
         value.starts_with("wc_shell_")
             && value.len() <= 96
@@ -861,17 +867,6 @@ pub fn sanitize_persistent_shell_event_evidence(
         .and_then(sanitize_shell_evidence_atom);
     evidence.error_code = evidence.error_code.and_then(sanitize_shell_evidence_atom);
     Some(evidence)
-}
-
-fn persistent_shell_action(tool_name: &str) -> Option<&'static str> {
-    match tool_name {
-        "open_session_shell" => Some("open"),
-        "session_shell_exec" => Some("exec"),
-        "session_shell_status" => Some("status"),
-        "close_session_shell" => Some("close"),
-        "close_session" => Some("close"),
-        _ => None,
-    }
 }
 
 fn sanitize_shell_evidence_atom(value: String) -> Option<String> {
@@ -896,25 +891,25 @@ pub fn observed_paths_for_successful_result(
     input_paths: Vec<String>,
     output: &Value,
 ) -> Vec<String> {
-    let Some(kind) = exploration_tool_kind(tool_name) else {
-        return Vec::new();
-    };
+    let exploration = runtime_tool_session_evidence_policy(tool_name).exploration;
     let mut paths = sanitize_observed_paths(input_paths);
-    match kind {
-        ExplorationToolKind::Read => {}
-        ExplorationToolKind::Search => {
-            let search_outputs: Vec<&Value> = if tool_name == "search_project_texts" {
-                output
-                    .get("items")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter(|item| item.get("success").and_then(Value::as_bool) == Some(true))
-                    .filter_map(|item| item.get("output"))
-                    .collect()
-            } else {
-                vec![output]
-            };
+    match exploration {
+        ToolExplorationEvidence::None => return Vec::new(),
+        ToolExplorationEvidence::Read | ToolExplorationEvidence::ReadBatch => {}
+        ToolExplorationEvidence::Search | ToolExplorationEvidence::SearchBatch => {
+            let search_outputs: Vec<&Value> =
+                if matches!(exploration, ToolExplorationEvidence::SearchBatch) {
+                    output
+                        .get("items")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter(|item| item.get("success").and_then(Value::as_bool) == Some(true))
+                        .filter_map(|item| item.get("output"))
+                        .collect()
+                } else {
+                    vec![output]
+                };
             for search_output in search_outputs {
                 for key in ["matches", "files"] {
                     for record in search_output
@@ -930,7 +925,7 @@ pub fn observed_paths_for_successful_result(
                 }
             }
         }
-        ExplorationToolKind::Navigation => {
+        ToolExplorationEvidence::Navigation(_) => {
             push_lsp_result_paths(tool_name, output, &mut paths);
         }
     }
@@ -1069,13 +1064,13 @@ pub(super) fn push_path(paths: &mut Vec<String>, path: &str) {
 /// Only reads a safe boolean (`include_diff`) from arguments for `show_changes`.
 /// Does not store raw input, command text, or diff content.
 pub(super) fn diff_review_like_for_tool(tool_name: &str, arguments: &Value) -> bool {
-    match tool_name {
-        "git_diff" | "git_diff_summary" | "git_diff_hunks" => true,
-        "show_changes" => arguments
-            .get("include_diff")
+    match runtime_tool_session_evidence_policy(tool_name).diff_review {
+        ToolDiffReviewEvidence::None => false,
+        ToolDiffReviewEvidence::Always => true,
+        ToolDiffReviewEvidence::ArgumentBool(field) => arguments
+            .get(field)
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        _ => false,
     }
 }
 

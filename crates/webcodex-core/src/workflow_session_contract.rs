@@ -37,20 +37,6 @@ pub fn is_valid_session_id(session_id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
-pub const EXPLORATION_TOOL_NAMES: &[&str] = &[
-    "read_file",
-    "read_files",
-    "search_project_text",
-    "search_project_texts",
-    "document_symbols",
-    "document_diagnostics",
-    "hover",
-    "workspace_symbols",
-    "goto_definition",
-    "find_references",
-    "call_hierarchy",
-];
-
 pub const SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_REASON: &str =
     "high_priority_guidance_requires_ack";
 pub const SESSION_INBOX_HIGH_GUIDANCE_ATTENTION_INSTRUCTION: &str =
