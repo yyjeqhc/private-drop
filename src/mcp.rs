@@ -540,7 +540,8 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         };
     let mut tool_correlation = crate::tool_runtime::ToolCallCorrelation::default();
     let mut model_ergonomics = None;
-    let active_trace_id = guard.active_trace_id();
+    // Window liveness needs request correlation even when trace retention is off.
+    let active_trace_id = Some(server_trace_id.clone());
     // Keep the complete MCP dispatch future off the current thread's stack. The
     // handler state spans every method arm (including Connector task polling),
     // so nesting it inline under tracing + timeout can exhaust the default

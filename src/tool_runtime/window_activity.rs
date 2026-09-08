@@ -148,7 +148,6 @@ impl WindowActivityRegistry {
                 .cmp(&a.started_at_ms)
                 .then_with(|| a.server_trace_id.cmp(&b.server_trace_id))
         });
-        records.truncate(MAX_ACTIVE_REQUESTS_PER_WINDOW);
         records
     }
 

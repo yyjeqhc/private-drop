@@ -1343,6 +1343,9 @@ pub(crate) fn record_runner_request_enqueued<T: Serialize>(
     runner_version: Option<&str>,
     runner_git_commit: Option<&str>,
 ) {
+    if !tool_request_trace_enabled() {
+        return;
+    }
     let Some(trace_id) = current_active_trace_id() else {
         return;
     };
@@ -2541,6 +2544,56 @@ mod tests {
         assert_eq!(mode(&payload_dir), 0o700);
         assert_eq!(mode(&trace_dir.join("events.jsonl")), 0o600);
         assert_eq!(mode(&payload), 0o600);
+    }
+
+    #[tokio::test]
+    async fn window_correlation_without_tracing_does_not_retain_runner_requests() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "off");
+        let guard = ToolRequestLifecycle::new(
+            "mcp",
+            new_trace_id(),
+            "none",
+            "tools/call",
+            Some("read_files".into()),
+        );
+        let runtime = crate::tool_runtime::ToolRuntime::new(
+            std::sync::Arc::new(crate::RunnerRegistry::default()),
+            std::sync::Arc::new(crate::tool_runtime::RuntimeInfo::default()),
+        );
+        let registry = runtime.window_activity_registry();
+        let window = crate::client_window::ClientWindow::for_test("trace-disabled-window");
+        let trace_id = guard.correlation_trace_id();
+        let _active = registry.start(&window, &trace_id, "tools/call", None);
+        assert!(guard.active_trace_id().is_none());
+        scope_active_trace(Some(trace_id), async {
+            let current = current_active_trace_id().unwrap();
+            registry.update(&current, Some("read_files"), Some("agent:r:p"));
+            assert!(current_full_trace_ref().is_none());
+            record_runner_request_enqueued(
+                &json!({}),
+                "window-without-tracing",
+                "r",
+                "read_files",
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+        })
+        .await;
+        assert_eq!(
+            registry.list_for_window(window.key(), None)[0]
+                .project
+                .as_deref(),
+            Some("agent:r:p")
+        );
+        assert!(!correlations()
+            .lock()
+            .unwrap()
+            .requests
+            .contains_key("window-without-tracing"));
     }
 
     #[tokio::test]

@@ -91,7 +91,7 @@ mod validation_events;
 pub(crate) mod validation_parser;
 pub(crate) mod validation_profile;
 mod window_activity;
-pub(crate) use window_activity::ActiveWindowRequest;
+pub(crate) use window_activity::{ActiveWindowRequest, MAX_ACTIVE_REQUESTS_PER_WINDOW};
 
 #[cfg(test)]
 pub(crate) use webcodex_tool_contracts::MODEL_TOOL_DESCRIPTION_MAX_CHARS;

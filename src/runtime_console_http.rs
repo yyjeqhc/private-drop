@@ -1803,6 +1803,25 @@ async fn windows_for_auth(
             if let Some(existing) = by_key.get_mut(&live.client_window_key) {
                 existing.active_count = live.active_count;
                 existing.last_seen_at_ms = existing.last_seen_at_ms.max(live.last_started_at_ms);
+            } else if let Some(summary) = db
+                .get_window_activity_summary(&live.client_window_key, principal_ref)
+                .map_err(|_| RuntimeConsoleError::Internal)?
+            {
+                // A live Window can be older than the bounded durable page.
+                // It is already included in durable_total and retains its history.
+                by_key.insert(
+                    live.client_window_key.clone(),
+                    RuntimeConsoleWindowSummary {
+                        client_window_key: live.client_window_key,
+                        source: live.client_window_source,
+                        last_seen_at_ms: summary.last_seen_at_ms.max(live.last_started_at_ms),
+                        last_tool_call_at_ms: summary.last_tool_call_at_ms,
+                        last_meaningful_activity_at_ms: summary.last_meaningful_activity_at_ms,
+                        active_count: live.active_count,
+                        linked_session_count: summary.linked_session_count,
+                        recorder_gap_count: summary.recorder_gap_count,
+                    },
+                );
             } else {
                 active_only = active_only.saturating_add(1);
                 by_key.insert(
@@ -1931,6 +1950,9 @@ async fn window_for_auth(
         });
     }
 
+    let active_count = active_requests.len();
+    active_requests.truncate(crate::tool_runtime::MAX_ACTIVE_REQUESTS_PER_WINDOW);
+
     let activity_scan_limit = if auth.is_admin_caller() {
         activity_limit
             .saturating_add(1)
@@ -2022,7 +2044,7 @@ async fn window_for_auth(
         last_meaningful_activity_at_ms: summary
             .as_ref()
             .and_then(|summary| summary.last_meaningful_activity_at_ms),
-        active_count: active_requests.len(),
+        active_count,
         active_requests,
         sessions_returned: linked_sessions.len(),
         sessions_truncated,
@@ -4245,6 +4267,73 @@ mod tests {
             .unwrap_err(),
             RuntimeConsoleError::NotFound
         );
+    }
+
+    #[tokio::test]
+    async fn window_activity_counts_all_visible_requests_before_bounding_details() {
+        let (_tmp, _db, runtime) = test_runtime_with_window_db();
+        let auth = test_bootstrap_auth();
+        let client_window = crate::client_window::ClientWindow::for_test("concurrent-window");
+        let guards = (0..12)
+            .map(|index| {
+                runtime.window_activity.start(
+                    &client_window,
+                    &format!("trace-{index}"),
+                    "tools/list",
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        let detail = window_for_auth(
+            &runtime,
+            &auth,
+            WindowInput {
+                client_window_key: client_window.key().to_string(),
+                activity_limit: None,
+                session_limit: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(detail.active_count, guards.len());
+        assert_eq!(
+            detail.active_requests.len(),
+            crate::tool_runtime::MAX_ACTIVE_REQUESTS_PER_WINDOW
+        );
+        let list = windows_for_auth(&runtime, &auth, None).await.unwrap();
+        assert_eq!(list.windows[0].active_count, detail.active_count);
+    }
+
+    #[tokio::test]
+    async fn window_activity_live_history_outside_durable_page_is_not_counted_twice() {
+        let (_tmp, db, runtime) = test_runtime_with_window_db();
+        let auth = test_bootstrap_auth();
+        let old = crate::client_window::ClientWindow::for_test("old-active-window");
+        record_window_event(&db, &auth, old.key(), None, None, 1_000);
+        for index in 0..MAX_WINDOW_LIMIT {
+            record_window_event(
+                &db,
+                &auth,
+                &format!("{index:064x}"),
+                None,
+                None,
+                2_000 + index as i64,
+            );
+        }
+        let _active = runtime
+            .window_activity
+            .start(&old, "old-active", "tools/call", None);
+        let list = windows_for_auth(&runtime, &auth, None).await.unwrap();
+        assert_eq!(list.total, MAX_WINDOW_LIMIT + 1);
+        assert!(list.truncated);
+        let row = list
+            .windows
+            .iter()
+            .find(|row| row.client_window_key == old.key())
+            .unwrap();
+        assert_eq!(row.active_count, 1);
+        assert_eq!(row.last_tool_call_at_ms, Some(1_001));
+        assert_eq!(row.last_meaningful_activity_at_ms, Some(1_001));
     }
 
     #[tokio::test]
