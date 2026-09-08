@@ -6,6 +6,7 @@ import {
   desktopErrorPresentation,
   normalizeDesktopError,
 } from "../../i18n/presentation";
+import { TunnelConfigDiagnostics } from "./TunnelConfigDiagnostics";
 
 type RegularProvider = "local" | "openai" | "cloudflare";
 
@@ -77,7 +78,7 @@ export function ConnectionPanel({
   }
 
   const tunnelEstablished = state.regular_tunnel?.status === "ready";
-  const tunnelReady = tunnelEstablished && state.readiness.ready_for_chatgpt;
+  const tunnelLocallyReady = tunnelEstablished && Boolean(state.regular_tunnel?.ready_for_chatgpt);
   const tunnelError = state.regular_tunnel?.status === "error";
   const canStart = state.readiness.runtime_ready && state.openai_tunnel_configured && provider === "openai";
 
@@ -90,20 +91,22 @@ export function ConnectionPanel({
     >
       <PageHeading />
 
+      <TunnelConfigDiagnostics state={state} onState={onState} />
+
       <article className="connection-current detail-card" aria-labelledby="connection-current-title">
         <h2 id="connection-current-title" className="section-title">{t("connection.current")}</h2>
         <div className="status-value">
-          <i className={`status-dot ${tunnelReady ? "ready" : tunnelError ? "error" : state.regular_tunnel ? "pending" : "unknown"}`} aria-hidden="true" />
-          <strong>{tunnelReady ? t("common.connected") : currentConnection(state, t)}</strong>
+          <i className={`status-dot ${tunnelLocallyReady ? "ready" : tunnelError ? "error" : state.regular_tunnel ? "pending" : "unknown"}`} aria-hidden="true" />
+          <strong>{tunnelLocallyReady ? t("connection.tunnelReady") : currentConnection(state, t)}</strong>
         </div>
-        <p>{tunnelReady ? t("connection.verified") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
+        <p>{tunnelLocallyReady ? t("connection.waitingForChatGpt") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
       </article>
 
       {tunnelEstablished ? (
         <article className="handoff-card" aria-labelledby="regular-tunnel-ready-title">
           <div>
             <span className="section-kicker">OpenAI Secure Tunnel</span>
-            <h2 id="regular-tunnel-ready-title" className="handoff-title">{tunnelReady ? t("connection.tunnelReady") : t("connection.tunnelHandoffNeedsAction")}</h2>
+            <h2 id="regular-tunnel-ready-title" className="handoff-title">{tunnelLocallyReady ? t("connection.tunnelReady") : t("connection.tunnelHandoffNeedsAction")}</h2>
             <span>{state.regular_tunnel?.clipboard_state === "copied" ? t("connection.clipboardReady") : t("clipboard.unavailable")}</span>
           </div>
           <button

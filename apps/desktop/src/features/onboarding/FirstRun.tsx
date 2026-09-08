@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi, type QuickShareProvider } from "../../lib/desktop-api";
 import { useLocale } from "../../i18n/locale";
+import { TunnelConfigDiagnostics } from "../connection/TunnelConfigDiagnostics";
 import {
   desktopErrorPresentation,
   normalizeDesktopError,
@@ -150,6 +151,8 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       <h1 id="setup-title">{setupTitle(mode, t)}</h1>
       <p className="lede">{setupDescription(mode, t)}</p>
 
+      {mode === "local" && <TunnelConfigDiagnostics state={state} onState={onState} />}
+
       {mode === "remote" && (
         <div className="form-card">
           <div className="field-group">
@@ -276,6 +279,20 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
             <code>{error.code}</code>
             <p>{error.message}</p>
           </details>
+          {error.code === "project_not_loaded" && (
+            <div className="setup-recovery-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void run()}
+                disabled={mutationBusy}
+                data-webcodex-action="reload-project"
+              >
+                {t("setup.reloadProject")}
+              </button>
+              <span>{t("setup.reloadProjectHelp")}</span>
+            </div>
+          )}
         </div>
       )}
 

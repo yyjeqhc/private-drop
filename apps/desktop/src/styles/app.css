@@ -66,8 +66,9 @@ h2 { margin: 3px 0 0; font-size: 18px; letter-spacing: -.02em; }
 .form-card { padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px; }
 .field-group { display: grid; gap: 7px; }
 .field-group label, .setting-row label { font-size: 13px; font-weight: 650; color: #565e64; }
-input:not([type="radio"]), select { width: 100%; height: 39px; border: 1px solid #ccd2d5; border-radius: 7px; padding: 0 11px; background: #fafbfb; color: #202529; }
-input:not([type="radio"]):focus, select:focus { border-color: #7e8b90; box-shadow: 0 0 0 2px rgba(81,94,100,.09); }
+input:not([type="radio"]):not([type="checkbox"]), select { width: 100%; height: 39px; border: 1px solid #ccd2d5; border-radius: 7px; padding: 0 11px; background: #fafbfb; color: #202529; }
+input:not([type="radio"]):not([type="checkbox"]):focus, select:focus { border-color: #7e8b90; box-shadow: 0 0 0 2px rgba(81,94,100,.09); }
+input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; accent-color: #5967c4; }
 .field-group [aria-invalid="true"] { border-color: #bc6960; }
 .field-help { font-size: 12px; line-height: 1.35; font-weight: 400; color: #65717a; }
 .enrollment-note { display: grid; align-content: center; gap: 6px; padding: 0 4px; }
@@ -151,6 +152,11 @@ button:disabled { opacity: .48; cursor: default; }
 .tunnel-proxy-settings { display: grid; gap: 14px; }
 .tunnel-proxy-status { margin-top: 0; }
 .tunnel-proxy-save { justify-self: start; }
+.tunnel-config-diagnostics { display: grid; gap: 12px; }
+.tunnel-config-diagnostics .detail-list { margin-top: 0; }
+.tunnel-config-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tunnel-config-guidance { margin: 0; color: #65717a; font-size: 12px; line-height: 1.55; }
+.setup-recovery-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
 
 .detail-card { padding: 18px; margin-top: 12px; }
 .detail-card > strong { display: block; margin-top: 7px; font-size: 14px; }

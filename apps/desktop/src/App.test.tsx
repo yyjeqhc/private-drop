@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopState } from "./models/topology";
 import { LocaleProvider } from "./i18n/locale";
@@ -77,6 +77,10 @@ const readyState: DesktopState = {
   regular_tunnel: null,
   activity_sequence: 0,
   openai_tunnel_configured: true,
+  openai_tunnel_config: {
+    tunnel_id_present: true,
+    api_key_present: true,
+  },
   regular_tunnel_available: true,
   runtime_autostart: false,
   preferred_connection: "no_chat_gpt",
@@ -104,6 +108,10 @@ const firstRunState: DesktopState = {
   },
   activity_sequence: 0,
   openai_tunnel_configured: true,
+  openai_tunnel_config: {
+    tunnel_id_present: true,
+    api_key_present: true,
+  },
   regular_tunnel_available: true,
   runtime_autostart: false,
   preferred_connection: "no_chat_gpt",
@@ -242,6 +250,72 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeDisabled();
   });
 
+  it("surfaces Tunnel configuration as presence-only current-process diagnostics", async () => {
+    const missingKey: DesktopState = {
+      ...readyState,
+      openai_tunnel_configured: false,
+      openai_tunnel_config: {
+        tunnel_id_present: true,
+        api_key_present: false,
+      },
+    };
+    const missingId: DesktopState = {
+      ...missingKey,
+      openai_tunnel_config: {
+        tunnel_id_present: false,
+        api_key_present: true,
+      },
+    };
+    const bothMissing: DesktopState = {
+      ...missingKey,
+      openai_tunnel_config: {
+        tunnel_id_present: false,
+        api_key_present: false,
+      },
+    };
+    const configured: DesktopState = {
+      ...missingKey,
+      openai_tunnel_configured: true,
+      openai_tunnel_config: {
+        tunnel_id_present: true,
+        api_key_present: true,
+      },
+    };
+    api.getState.mockResolvedValue(missingKey);
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+
+    const diagnostics = screen.getByText("OpenAI Tunnel 配置检测").closest("article");
+    expect(diagnostics).not.toBeNull();
+    expect(within(diagnostics!).getByText("Tunnel ID").parentElement).toHaveTextContent("已检测");
+    expect(within(diagnostics!).getByText("Tunnel API key").parentElement).toHaveTextContent("未检测");
+    expect(within(diagnostics!).getByText(/关闭窗口只会隐藏到托盘\/菜单栏/)).toBeInTheDocument();
+    expect(diagnostics).not.toHaveTextContent("CONTROL_PLANE_API_KEY");
+
+    api.getState.mockResolvedValueOnce(missingId);
+    fireEvent.click(within(diagnostics!).getByRole("button", { name: "重新检测配置" }));
+    await waitFor(() => {
+      expect(screen.getByText("Tunnel ID").parentElement).toHaveTextContent("未检测");
+      expect(screen.getByText("Tunnel API key").parentElement).toHaveTextContent("已检测");
+    });
+
+    api.getState.mockResolvedValueOnce(bothMissing);
+    fireEvent.click(within(diagnostics!).getByRole("button", { name: "重新检测配置" }));
+    await waitFor(() => {
+      expect(screen.getByText("Tunnel ID").parentElement).toHaveTextContent("未检测");
+      expect(screen.getByText("Tunnel API key").parentElement).toHaveTextContent("未检测");
+    });
+
+    api.getState.mockResolvedValueOnce(configured);
+    fireEvent.click(within(diagnostics!).getByRole("button", { name: "重新检测配置" }));
+    await waitFor(() => {
+      expect(screen.getByText("Tunnel ID").parentElement).toHaveTextContent("已检测");
+      expect(screen.getByText("Tunnel API key").parentElement).toHaveTextContent("已检测");
+    });
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+  });
+
   it("navigates to existing Activity and Settings pages from the tray host event", async () => {
     api.getState.mockResolvedValue(readyState);
     renderApp();
@@ -281,20 +355,24 @@ describe("semantic Desktop UI", () => {
     await waitFor(() => expect(launchAtLogin).toBeChecked());
   });
 
-  it("bootstraps a fresh Desktop with its default project and keeps setup choices accessible", async () => {
+  it("keeps a fresh Desktop in product setup until the user chooses its real project", async () => {
     api.getState.mockResolvedValue(firstRunState);
-    api.configureLocal.mockResolvedValue(readyState);
     renderApp();
 
-    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith(null));
-    expect(await screen.findByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "更改运行方式" }));
     expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /连接现有 Server/ })).toBeInTheDocument();
-    const quickShare = screen.getByRole("button", { name: /快速共享项目/ });
-    fireEvent.click(quickShare);
+    expect(screen.getByRole("button", { name: /快速共享项目/ })).toBeInTheDocument();
+    expect(api.configureLocal).not.toHaveBeenCalled();
+    expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    expect(await screen.findByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择文件夹" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeInTheDocument();
+    expect(api.configureLocal).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "← 返回全部配置方式" }));
+    fireEvent.click(screen.getByRole("button", { name: /快速共享项目/ }));
     expect(screen.getByRole("radiogroup", { name: "Quick Share 连接方式" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
@@ -310,7 +388,6 @@ describe("semantic Desktop UI", () => {
       })
       .mockReturnValueOnce(retryState.promise)
       .mockResolvedValue(readyState);
-    api.configureLocal.mockResolvedValue(readyState);
     renderApp();
 
     const alert = await screen.findByRole("alert");
@@ -327,8 +404,8 @@ describe("semantic Desktop UI", () => {
     await act(async () => {
       retryState.resolve(firstRunState);
     });
-    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith(null));
-    expect(await screen.findByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
+    expect(api.configureLocal).not.toHaveBeenCalled();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -381,6 +458,28 @@ describe("semantic Desktop UI", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("WebCodex 服务不可用");
     expect(alert).toHaveTextContent("server_unreachable");
+  });
+
+  it("offers a product recovery action when the selected project did not load", async () => {
+    api.getState.mockResolvedValue(readyState);
+    api.configureLocal
+      .mockRejectedValueOnce({
+        code: "project_not_loaded",
+        message: "The selected project did not become ready in the Desktop-owned Runner",
+        next_action: "Retry project setup.",
+      })
+      .mockResolvedValueOnce(readyState);
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    fireEvent.click(screen.getByRole("button", { name: "更改运行方式" }));
+    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("项目尚未就绪");
+    expect(alert).not.toHaveTextContent("registry");
+    fireEvent.click(screen.getByRole("button", { name: "重新加载项目" }));
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(2));
   });
 
   it("uses the backend restart_quick_share presentation identity after a stopped share", async () => {
@@ -451,7 +550,7 @@ describe("semantic Desktop UI", () => {
     await screen.findByRole("heading", { level: 1, name: "WebCodex" });
 
     fireEvent.click(screen.getByRole("button", { name: "连接" }));
-    expect(await screen.findByRole("heading", { level: 2, name: "安全隧道已建立，连接信息需要处理" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "安全隧道正在运行，但连接信息仍需要处理" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动安全隧道" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止安全隧道" })).toBeInTheDocument();
   });
@@ -575,10 +674,10 @@ describe("semantic Desktop UI", () => {
     }
   });
 
-  it("revokes stale connected state from background tunnel ownership observation without manual refresh", async () => {
+  it("never promotes a locally ready Regular Tunnel to ChatGPT-connected state", async () => {
     vi.useFakeTimers();
     try {
-      const connectedTunnel: DesktopState = {
+      const locallyReadyTunnel: DesktopState = {
         ...readyState,
         topology: {
           ...readyState.topology!,
@@ -586,12 +685,12 @@ describe("semantic Desktop UI", () => {
         },
         readiness: {
           ...readyState.readiness,
-          exposure: "remote_ready",
-          ready_for_chatgpt: true,
-          summary: "Ready to use with ChatGPT",
-          summary_kind: "ready_for_chat_gpt",
-          next_action: null,
-          next_action_kind: null,
+          exposure: "local_ready",
+          ready_for_chatgpt: false,
+          summary: "OpenAI Secure Tunnel is ready; waiting for ChatGPT to connect",
+          summary_kind: "tunnel_ready_waiting_for_chat_gpt",
+          next_action: "Connect the Tunnel in ChatGPT, then verify it with one real project read.",
+          next_action_kind: "check_connection",
         },
         regular_tunnel: {
           provider: "openai",
@@ -602,9 +701,9 @@ describe("semantic Desktop UI", () => {
         },
       };
       const failedTunnel: DesktopState = {
-        ...connectedTunnel,
+        ...locallyReadyTunnel,
         readiness: {
-          ...connectedTunnel.readiness,
+          ...locallyReadyTunnel.readiness,
           exposure: "error",
           ready_for_chatgpt: false,
           summary: "ChatGPT connection is not verified",
@@ -613,16 +712,16 @@ describe("semantic Desktop UI", () => {
           next_action_kind: "restart_secure_tunnel",
         },
         regular_tunnel: {
-          ...connectedTunnel.regular_tunnel!,
+          ...locallyReadyTunnel.regular_tunnel!,
           status: "error",
           ready_for_chatgpt: false,
         },
       };
 
       api.getState
-        .mockResolvedValueOnce(connectedTunnel)
+        .mockResolvedValueOnce(locallyReadyTunnel)
         .mockResolvedValueOnce(failedTunnel);
-      api.refresh.mockResolvedValue(connectedTunnel);
+      api.refresh.mockResolvedValue(locallyReadyTunnel);
       const view = renderApp();
       await act(async () => {
         await Promise.resolve();
@@ -631,8 +730,13 @@ describe("semantic Desktop UI", () => {
       });
 
       const readyStatus = screen.getByRole("status");
-      expect(readyStatus).toHaveTextContent("可以使用");
-      expect(screen.getByText("ChatGPT 已就绪")).toBeInTheDocument();
+      expect(readyStatus).toHaveTextContent("OpenAI Secure Tunnel 已就绪，等待 ChatGPT 连接");
+      expect(readyStatus).not.toHaveTextContent("可以使用");
+      expect(screen.queryByText("外部连接已验证")).not.toBeInTheDocument();
+      expect(screen.getByText("Tunnel 已就绪，等待 ChatGPT")).toBeInTheDocument();
+      const connectionCard = screen.getByText("ChatGPT 连接").closest("article");
+      expect(connectionCard).not.toBeNull();
+      expect(connectionCard!.querySelector(".status-dot")).toHaveClass("pending");
       expect(api.getState).toHaveBeenCalledTimes(1);
 
       await act(async () => {
@@ -644,8 +748,8 @@ describe("semantic Desktop UI", () => {
       const failedStatus = screen.getByRole("status");
       expect(failedStatus).toHaveTextContent("ChatGPT 连接尚未验证");
       expect(failedStatus).toHaveTextContent("重新启动安全隧道。");
-      expect(screen.queryByText("ChatGPT 已就绪")).not.toBeInTheDocument();
-      expect(screen.getByText("ChatGPT 连接未完成")).toBeInTheDocument();
+      expect(screen.queryByText("外部连接已验证")).not.toBeInTheDocument();
+      expect(screen.getAllByText("ChatGPT 连接尚未验证").length).toBeGreaterThan(0);
 
       view.unmount();
       const callsAfterUnmount = api.getState.mock.calls.length;

@@ -80,19 +80,20 @@ export default function App() {
         if (cancelled) return;
         commitState(initial);
         if (initial.current_operation) return;
-        const bootstrapLocal = !initial.topology;
         const resumeExisting = Boolean(
           initial.topology
           && initial.runtime_autostart
           && initial.topology.experience === "full",
         );
-        if (!bootstrapLocal && !resumeExisting) return;
+        // A fresh Desktop must stay in product setup until the user chooses
+        // the real project and runtime topology. Silently bootstrapping the
+        // Desktop workspace creates a fake "configured" happy path and makes
+        // users configure the product twice before ChatGPT can use their code.
+        if (!resumeExisting) return;
 
         setRefreshing(true);
         try {
-          let next = bootstrapLocal
-            ? await desktopApi.configureLocal(null)
-            : await desktopApi.resumeSavedRuntime();
+          let next = await desktopApi.resumeSavedRuntime();
           if (cancelled) return;
           commitState(next);
           if (shouldStartPreferredTunnel(next)) {
@@ -264,7 +265,7 @@ export default function App() {
         </div>
         <div className="sidebar-status">
           <i className={`status-dot ${state.readiness.runtime_ready ? "ready" : "unknown"}`} aria-hidden="true" />
-          <div><strong>{state.readiness.runtime_ready ? t("sidebar.runtimeReady") : state.topology ? t("common.stopped") : t("sidebar.needsSetup")}</strong><span>{state.readiness.ready_for_chatgpt ? t("sidebar.chatgptReady") : t("sidebar.connectionIncomplete")}</span></div>
+          <div><strong>{state.readiness.runtime_ready ? t("sidebar.runtimeReady") : state.topology ? t("common.stopped") : t("sidebar.needsSetup")}</strong><span>{sidebarConnectionLabel(state, t)}</span></div>
         </div>
       </aside>
 
@@ -339,6 +340,12 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function sidebarConnectionLabel(state: DesktopState, t: ReturnType<typeof useLocale>["t"]) {
+  if (state.readiness.ready_for_chatgpt) return t("sidebar.chatgptReady");
+  if (state.regular_tunnel?.status === "ready" && state.regular_tunnel.ready_for_chatgpt) return t("sidebar.tunnelWaiting");
+  return t("sidebar.connectionIncomplete");
 }
 
 function shouldStartPreferredTunnel(state: DesktopState) {

@@ -17,6 +17,7 @@ const summaryKeys: Record<ReadinessSummaryKind, MessageKey> = {
   runner_disconnected: "readiness.runnerDisconnected",
   project_not_ready: "readiness.projectNotReady",
   runtime_ready_local_only: "readiness.runtimeReadyLocalOnly",
+  tunnel_ready_waiting_for_chat_gpt: "readiness.tunnelReadyWaitingForChatGpt",
   connection_unverified: "readiness.connectionUnverified",
   quick_share_stopped: "readiness.quickShareStopped",
 };

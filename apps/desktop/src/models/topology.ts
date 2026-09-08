@@ -59,6 +59,7 @@ export type ReadinessSummaryKind =
   | "runner_disconnected"
   | "project_not_ready"
   | "runtime_ready_local_only"
+  | "tunnel_ready_waiting_for_chat_gpt"
   | "connection_unverified"
   | "quick_share_stopped";
 
@@ -151,6 +152,11 @@ export interface DesktopOperation {
   cancellable: boolean;
 }
 
+export interface OpenAiTunnelConfigSnapshot {
+  tunnel_id_present: boolean;
+  api_key_present: boolean;
+}
+
 export interface DesktopState {
   topology?: RuntimeTopology | null;
   readiness: ReadinessSnapshot;
@@ -161,6 +167,7 @@ export interface DesktopState {
   current_operation?: DesktopOperation | null;
   activity_sequence: number;
   openai_tunnel_configured: boolean;
+  openai_tunnel_config: OpenAiTunnelConfigSnapshot;
   regular_tunnel_available: boolean;
   runtime_autostart: boolean;
   preferred_connection: RegularConnectionPreference;

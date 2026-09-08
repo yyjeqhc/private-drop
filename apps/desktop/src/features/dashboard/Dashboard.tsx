@@ -214,6 +214,7 @@ function connectionLabel(state: DesktopState, t: Translate) {
 }
 
 function connectionExplanation(state: DesktopState, t: Translate) {
+  if (state.regular_tunnel?.status === "ready" && state.regular_tunnel.ready_for_chatgpt) return t("home.connectionTunnelReady");
   if (state.readiness.exposure === "remote_ready") return t("home.connectionRemoteReady");
   if (state.readiness.exposure === "local_ready") return t("home.connectionLocalReady");
   return t("home.connectionUnverified");

@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run",
+    "test": "vitest run && node ./scripts/check-form-control-css.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

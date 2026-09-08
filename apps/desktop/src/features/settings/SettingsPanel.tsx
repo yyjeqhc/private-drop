@@ -3,6 +3,7 @@ import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/topology";
 import { useLocale } from "../../i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
+import { TunnelConfigDiagnostics } from "../connection/TunnelConfigDiagnostics";
 
 export function SettingsPanel({
   state,
@@ -101,6 +102,7 @@ export function SettingsPanel({
 
       <section className="settings-section" aria-labelledby="settings-tunnel-title">
         <h2 id="settings-tunnel-title">{t("settings.tunnel")}</h2>
+        <TunnelConfigDiagnostics state={state} onState={onState} />
         <article className="detail-card tunnel-proxy-settings">
           <div className="field-group">
             <label htmlFor="desktop-tunnel-proxy-mode">{t("settings.tunnelProxy")}</label>
