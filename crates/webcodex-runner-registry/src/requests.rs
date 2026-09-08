@@ -158,9 +158,9 @@ pub(super) fn enqueue_pending_request_locked(
     let runner = inner.runners.get(client_id);
     telemetry.request_enqueued(
         &request,
+        &operation,
         &request_id,
         client_id,
-        &request.kind,
         request.job_id.as_deref().or(job_id.as_deref()),
         runner.map(|record| record.runner_instance_id.as_str()),
         runner.map(|record| record.transport.as_str()),

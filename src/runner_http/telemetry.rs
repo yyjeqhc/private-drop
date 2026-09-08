@@ -1,6 +1,7 @@
 use super::RunnerRegistry;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use webcodex_core::runner_operation::RunnerOperation;
 use webcodex_core::runner_protocol::{RunnerJobUpdateRequest, RunnerRequest, RunnerResultPayload};
 use webcodex_core::ssh_resource::SshResourceRequest;
 use webcodex_runner_registry::RunnerRegistryTelemetry;
@@ -12,17 +13,18 @@ impl RunnerRegistryTelemetry for ToolRequestTraceRunnerRegistryTelemetry {
     fn request_enqueued(
         &self,
         request: &RunnerRequest,
+        operation: &RunnerOperation,
         request_id: &str,
         client_id: &str,
-        kind: &str,
         job_id: Option<&str>,
         runner_instance_id: Option<&str>,
         runner_transport: Option<&str>,
         runner_version: Option<&str>,
         runner_git_commit: Option<&str>,
     ) {
-        if kind == "ssh_resource" {
-            let payload = ssh_resource_trace_payload(request);
+        let kind = operation.wire_kind();
+        if let RunnerOperation::SshResource(ssh_operation) = operation {
+            let payload = ssh_resource_trace_payload(request_id, client_id, ssh_operation);
             crate::tool_request_trace::record_runner_request_enqueued(
                 &payload,
                 request_id,
@@ -71,22 +73,21 @@ impl RunnerRegistryTelemetry for ToolRequestTraceRunnerRegistryTelemetry {
     }
 }
 
-fn ssh_resource_trace_payload(request: &RunnerRequest) -> Value {
-    let parsed = request
-        .content
-        .as_deref()
-        .and_then(|content| serde_json::from_str::<SshResourceRequest>(content).ok());
-    let (action, resource_name, target_present, default_cwd_present) = match parsed {
-        Some(SshResourceRequest::List) => ("list", None, false, false),
-        Some(SshResourceRequest::Register {
+fn ssh_resource_trace_payload(
+    request_id: &str,
+    client_id: &str,
+    request: &SshResourceRequest,
+) -> Value {
+    let (action, resource_name, target_present, default_cwd_present) = match request {
+        SshResourceRequest::List => ("list", None, false, false),
+        SshResourceRequest::Register {
             name, default_cwd, ..
-        }) => ("register", Some(name), true, default_cwd.is_some()),
-        Some(SshResourceRequest::Remove { name, .. }) => ("remove", Some(name), false, false),
-        None => ("invalid", None, request.content.is_some(), false),
+        } => ("register", Some(name.as_str()), true, default_cwd.is_some()),
+        SshResourceRequest::Remove { name, .. } => ("remove", Some(name.as_str()), false, false),
     };
     json!({
-        "request_id": request.request_id,
-        "client_id": request.client_id,
+        "request_id": request_id,
+        "client_id": client_id,
         "kind": "ssh_resource",
         "action": action,
         "resource_name": resource_name,
@@ -107,47 +108,19 @@ mod tests {
     fn ssh_resource_trace_projection_never_contains_target_or_default_cwd() {
         let target = "17724@w10";
         let cwd = "C:/private/work";
-        let request = RunnerRequest {
-            request_id: "request-1".to_string(),
-            client_id: "runner-1".to_string(),
-            kind: "ssh_resource".to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: Some(
-                serde_json::to_string(&SshResourceRequest::Register {
-                    expected_revision: 7,
-                    name: "w10".to_string(),
-                    target: target.to_string(),
-                    default_cwd: Some(cwd.to_string()),
-                })
-                .unwrap(),
-            ),
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 60,
-            requested_by: "ssh_resource".to_string(),
-            created_at: 1,
-            validation: None,
-            lsp: None,
-            job_context: None,
-            persistent_shell: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
+        let request = SshResourceRequest::Register {
+            expected_revision: 7,
+            name: "w10".to_string(),
+            target: target.to_string(),
+            default_cwd: Some(cwd.to_string()),
         };
-        let payload = ssh_resource_trace_payload(&request);
+        let payload = ssh_resource_trace_payload("request-1", "runner-1", &request);
         let serialized = serde_json::to_string(&payload).unwrap();
         assert!(!serialized.contains(target));
         assert!(!serialized.contains(cwd));
+        assert_eq!(payload["request_id"], "request-1");
+        assert_eq!(payload["client_id"], "runner-1");
+        assert_eq!(payload["kind"], "ssh_resource");
         assert_eq!(payload["action"], "register");
         assert_eq!(payload["resource_name"], "w10");
         assert_eq!(payload["target_present"], true);

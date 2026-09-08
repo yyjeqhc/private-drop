@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use webcodex_core::runner_operation::RunnerOperation;
 use webcodex_core::runner_protocol::{RunnerJobUpdateRequest, RunnerRequest, RunnerResultPayload};
 
 /// Fail-open telemetry callbacks invoked only from authoritative registry
@@ -10,9 +11,9 @@ pub trait RunnerRegistryTelemetry: Debug + Send + Sync {
     fn request_enqueued(
         &self,
         request: &RunnerRequest,
+        operation: &RunnerOperation,
         request_id: &str,
         client_id: &str,
-        kind: &str,
         job_id: Option<&str>,
         runner_instance_id: Option<&str>,
         runner_transport: Option<&str>,
@@ -41,9 +42,9 @@ impl RunnerRegistryTelemetry for NoopRunnerRegistryTelemetry {
     fn request_enqueued(
         &self,
         _request: &RunnerRequest,
+        _operation: &RunnerOperation,
         _request_id: &str,
         _client_id: &str,
-        _kind: &str,
         _job_id: Option<&str>,
         _agent_instance_id: Option<&str>,
         _runner_transport: Option<&str>,
