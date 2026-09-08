@@ -2,6 +2,12 @@
 
 Open `/runtime` and connect with an existing runtime credential.
 
+The workspace start page offers **Find a project**, **Runtime overview**, and
+**Durable Agents**. Press **Command+K** on macOS or **Ctrl+K** on Windows/Linux
+while connected to open Projects & Sessions and focus project search. On narrow
+screens this also opens the navigation drawer. These shortcuts navigate only;
+they do not create Sessions or send messages.
+
 - **Projects & Sessions** is the collaboration workspace. Select a Project and
   Workflow Session in the sidebar. Recent Sessions starts expanded and can be
   collapsed when more room is needed.
@@ -37,7 +43,9 @@ Project search continues to query authorized Projects by name, id, Runner, or
 workspace path. Separate searches filter the loaded Sessions by title/id/lifecycle
 and retained messages by body, resolution, id, or author Session. Match counts
 refer only to loaded results; these controls do not search unretained history or
-host transcripts and do not change the selected Session.
+host transcripts and do not change the selected Session. Expand **Search retained
+messages** above the board to filter messages. Its match count stays visible when
+collapsed; closing the search keeps the current filter.
 
 The Session board is not a mirrored host chat transcript. An observed ACK records
 an explicit model-context acknowledgement, not a reply, read receipt, or completed

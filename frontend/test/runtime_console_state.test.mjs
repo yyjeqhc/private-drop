@@ -576,7 +576,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(css, /\.device-group/);
   assert.match(css, /@media \(max-width: 900px\)/);
   assert.match(css, /@media \(min-width: 1280px\)/);
-  assert.match(css, /--context-rail-width:\s*clamp\(360px,\s*30vw,\s*560px\)/);
+  assert.match(css, /--context-rail-width:\s*clamp\(320px,\s*26vw,\s*420px\)/);
   assert.match(css, /\.runtime-shell\.context-docked\s*\{[^}]*--content-width:\s*760px[^}]*grid-template-columns:\s*var\(--sidebar-width\)\s+minmax\(0,\s*1fr\)\s+var\(--context-rail-width\)/);
   assert.match(css, /translateX\(-102%\)/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);
@@ -591,7 +591,7 @@ test("runtime collaboration rendering uses textContent and explicitly reloads on
   assert.match(css, /\.workspace-main\s*\{[^}]*background:\s*var\(--page-surface\)/);
   assert.match(css, /--layout-major:\s*61\.8%/);
   assert.match(css, /--layout-minor:\s*38\.2%/);
-  assert.match(css, /--sidebar-width:\s*clamp\(300px,\s*21vw,\s*356px\)/);
+  assert.match(css, /--sidebar-width:\s*clamp\(280px,\s*21vw,\s*320px\)/);
   assert.match(css, /--content-width:\s*760px/);
   assert.match(css, /\.message-card\.message-incoming\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*min\(82%,\s*880px\)/);
   assert.match(css, /\.message-card\.message-neutral\s*\{[^}]*width:\s*fit-content[^}]*max-width:\s*min\(82%,\s*880px\)/);

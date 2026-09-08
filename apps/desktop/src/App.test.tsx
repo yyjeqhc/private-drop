@@ -168,6 +168,37 @@ describe("semantic Desktop UI", () => {
     api.stopRegularTunnel.mockResolvedValue(readyState);
   });
 
+  it("opens dashboard shortcuts and moves keyboard focus into the destination", async () => {
+    api.getState.mockResolvedValue(readyState);
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: /查看项目/ }));
+    expect(screen.getByRole("heading", { level: 1, name: "此电脑上的项目" })).toBeInTheDocument();
+    expect(screen.getByRole("main")).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "选择其他项目" }));
+    expect(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /返回运行概览/ }));
+    fireEvent.click(screen.getByRole("button", { name: "首页" }));
+    fireEvent.click(screen.getByRole("button", { name: /管理连接/ }));
+    expect(screen.getByRole("heading", { level: 1, name: "ChatGPT 连接" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "首页" }));
+    fireEvent.click(screen.getByRole("button", { name: /查看活动/ }));
+    expect(screen.getByRole("button", { name: "活动" })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(api.activity).toHaveBeenCalled());
+    expect(api.configureLocal).not.toHaveBeenCalled();
+  });
+
+  it("takes Add project to setup and returns without reconfiguring the runtime", async () => {
+    api.getState.mockResolvedValue({ ...readyState, project: null });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "项目" }));
+    fireEvent.click(screen.getByRole("button", { name: /添加项目/ }));
+    expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "首页" })).toHaveAttribute("aria-current", "page");
+    fireEvent.click(screen.getByRole("button", { name: /返回运行概览/ }));
+    expect(screen.getByRole("heading", { name: "WebCodex" })).toBeInTheDocument();
+    expect(api.configureLocal).not.toHaveBeenCalled();
+  });
+
   it("navigates by accessible role/name and marks the current page", async () => {
     api.getState.mockResolvedValue(readyState);
     api.refresh.mockResolvedValue(readyState);

@@ -77,6 +77,11 @@ type RuntimeLanguage = "en" | "zh-CN";
 type RuntimeWorkspaceView = "sessions" | "operations";
 
 const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Your workspace": "你的工作空间",
+  "Pick up where work happens": "从这里继续工作",
+  "Find a project": "查找项目",
+  "Find a project…": "查找项目…",
+  "Runtime overview": "运行概览",
   "WebCodex — Runtime Console": "WebCodex — 运行控制台",
   "WebCodex Runtime Console": "WebCodex 运行控制台",
   "A local workspace for Projects, Sessions, and collaboration": "用于管理项目、会话与协作的本地工作空间",
@@ -812,11 +817,10 @@ function closeRuntimeInspector(restoreFocus = false, forceDocked = false): boole
   return true;
 }
 
-function setMobileNavigationOpen(open: boolean, restoreFocus = false): void {
+function setMobileNavigationOpen(open: boolean, restoreFocus = false, focusTarget = "runtime-mobile-nav-close"): void {
   const shell = el("runtime-console");
   const sidebar = el("runtime-sidebar");
   const toggle = el("runtime-mobile-nav-toggle") as HTMLButtonElement | null;
-  const close = el("runtime-mobile-nav-close") as HTMLButtonElement | null;
   const mobile = mobileNavigationViewport();
   const nextOpen = mobile && open;
   shell?.classList.toggle("mobile-nav-open", nextOpen);
@@ -830,11 +834,17 @@ function setMobileNavigationOpen(open: boolean, restoreFocus = false): void {
     closeTopbarMore(false);
     closeRuntimeInspector(false);
     window.setTimeout(() => {
-      if (mobileNavigationViewport() && shell?.classList.contains("mobile-nav-open")) close?.focus();
+      if (mobileNavigationViewport() && shell?.classList.contains("mobile-nav-open")) el(focusTarget)?.focus();
     }, 260);
   } else if (restoreFocus && mobile) {
     window.setTimeout(() => toggle?.focus(), 0);
   }
+}
+
+function focusProjectNavigation(): void {
+  applyWorkspaceView("sessions");
+  if (mobileNavigationViewport()) setMobileNavigationOpen(true, false, "runtime-project-search");
+  else el("runtime-project-search")?.focus();
 }
 
 function syncResponsiveNavigation(): void {
@@ -4012,6 +4022,9 @@ el("runtime-refresh")?.addEventListener("click", () => {
 });
 el("runtime-lock")?.addEventListener("click", () => lock());
 el("runtime-mobile-nav-toggle")?.addEventListener("click", () => setMobileNavigationOpen(true));
+el("runtime-find-project")?.addEventListener("click", focusProjectNavigation);
+el("runtime-welcome-overview")?.addEventListener("click", () => revealOperationsSection("runtime-operations-overview"));
+el("runtime-welcome-agents")?.addEventListener("click", () => revealOperationsSection("runtime-operations-agents"));
 el("runtime-mobile-nav-close")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
 el("runtime-mobile-nav-backdrop")?.addEventListener("click", () => setMobileNavigationOpen(false, true));
 el("runtime-inspector-backdrop")?.addEventListener("click", () => closeRuntimeInspector(true));
@@ -4112,6 +4125,11 @@ document.querySelector(".runtime-inspector")?.addEventListener("toggle", (event)
 });
 document.addEventListener("keydown", (event) => {
   const shell = el("runtime-console");
+  if (!event.isComposing && !event.altKey && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && shell && !shell.hidden) {
+    event.preventDefault();
+    focusProjectNavigation();
+    return;
+  }
   const inspector = document.querySelector(".runtime-inspector") as HTMLDetailsElement | null;
   if (event.key === "Escape") {
     if (closeComposerOptions(true)) {

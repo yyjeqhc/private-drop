@@ -18,11 +18,14 @@ export function ProjectsPanel({ state, onConfigure }: { state: DesktopState; onC
             <div><dt>{t("project.allowedRoot")}</dt><dd>{state.project.allowed_root}</dd></div>
             <div><dt>{t("project.git")}</dt><dd>{state.project.is_git_repository ? t("project.gitDetected") : t("project.gitNotRequired")}</dd></div>
           </dl>
+          <button className="secondary-button" onClick={onConfigure} disabled={Boolean(state.current_operation)} data-webcodex-action="change-project">
+            {t("project.change")}
+          </button>
         </article>
       ) : (
         <div className="empty-state">
           <span>{t("project.none")}</span>
-          <button className="primary-button" onClick={onConfigure} data-webcodex-action="add-project">
+          <button className="primary-button" onClick={onConfigure} disabled={Boolean(state.current_operation)} data-webcodex-action="add-project">
             {t("project.add")}
           </button>
         </div>
@@ -30,4 +33,3 @@ export function ProjectsPanel({ state, onConfigure }: { state: DesktopState; onC
     </section>
   );
 }
-

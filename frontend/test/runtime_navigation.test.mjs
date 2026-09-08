@@ -86,6 +86,86 @@ test("closing mobile navigation fences its delayed focus callback", async () => 
   assert.equal(focused, true);
 });
 
+test("project search opens the correct view and focuses the search on desktop and mobile", async () => {
+  const source = await readFile(new URL("../dist/runtime.js", import.meta.url), "utf8");
+  const start = source.indexOf("function focusProjectNavigation(");
+  const end = source.indexOf("\n}", start) + 2;
+  let mobile = false;
+  const calls = [];
+  const context = vm.createContext({
+    applyWorkspaceView(view) { calls.push(view); },
+    mobileNavigationViewport: () => mobile,
+    setMobileNavigationOpen(...args) { calls.push(args); },
+    el: (id) => ({ focus() { calls.push(id); } }),
+  });
+  vm.runInContext(source.slice(start, end), context);
+  context.focusProjectNavigation();
+  assert.deepEqual(calls.splice(0), ["sessions", "runtime-project-search"]);
+  mobile = true;
+  context.focusProjectNavigation();
+  assert.deepEqual(calls, ["sessions", [true, false, "runtime-project-search"]]);
+});
+
+test("project shortcut respects locked state, composition, and unmodified typing", async () => {
+  const source = await readFile(new URL("../dist/runtime.js", import.meta.url), "utf8");
+  const start = source.indexOf('document.addEventListener("keydown", (event) => {');
+  const end = source.indexOf('\n});', start) + 4;
+  let handler;
+  let opened = 0;
+  let prevented = 0;
+  const shell = { hidden: false, classList: { contains: () => false } };
+  const context = vm.createContext({
+    document: { addEventListener(_name, callback) { handler = callback; }, querySelector: () => null },
+    el: () => shell,
+    focusProjectNavigation() { opened++; },
+  });
+  vm.runInContext(source.slice(start, end), context);
+  const key = (overrides = {}) => handler({ key: "k", preventDefault() { prevented++; }, ...overrides });
+  key();
+  key({ ctrlKey: true, isComposing: true });
+  key({ ctrlKey: true, altKey: true });
+  shell.hidden = true;
+  key({ metaKey: true });
+  assert.equal(opened, 0);
+  assert.equal(prevented, 0);
+  shell.hidden = false;
+  key({ metaKey: true });
+  key({ ctrlKey: true, key: "K" });
+  assert.equal(opened, 2);
+  assert.equal(prevented, 2);
+});
+
+test("mobile project search only receives focus while navigation remains open", async () => {
+  const source = await readFile(new URL("../dist/runtime.js", import.meta.url), "utf8");
+  const start = source.indexOf("function setMobileNavigationOpen(");
+  const end = source.indexOf("\n}", start) + 2;
+  const classes = new Set();
+  const callbacks = [];
+  const focused = [];
+  const context = vm.createContext({
+    el(id) {
+      return {
+        classList: {
+          toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); },
+          contains(name) { return classes.has(name); },
+        },
+        setAttribute() {}, removeAttribute() {}, focus() { focused.push(id); },
+      };
+    },
+    mobileNavigationViewport: () => true,
+    closeAppearanceMenus() {}, closeTopbarMore() {}, closeRuntimeInspector() {},
+    window: { setTimeout(callback) { callbacks.push(callback); } },
+  });
+  vm.runInContext(source.slice(start, end), context);
+  context.setMobileNavigationOpen(true, false, "runtime-project-search");
+  context.setMobileNavigationOpen(false);
+  callbacks.shift()();
+  assert.deepEqual(focused, []);
+  context.setMobileNavigationOpen(true, false, "runtime-project-search");
+  callbacks.shift()();
+  assert.deepEqual(focused, ["runtime-project-search"]);
+});
+
 test("retained message search matches body and resolution without mutating messages", async () => {
   const source = await readFile(new URL("../dist/runtime.js", import.meta.url), "utf8");
   const start = source.indexOf("function runtimeSearchMatches(");

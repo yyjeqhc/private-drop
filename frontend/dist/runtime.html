@@ -67,7 +67,7 @@
         <h2>Connect to your workspace</h2>
         <p class="muted">Enter an existing runtime Bearer credential. Project and Workflow Session views require their existing scopes; durable Agent Chat separately requires communication:read and communication:manage.</p>
         <div class="field-row">
-          <input id="runtime-token-input" type="password" placeholder="Runtime Bearer credential" autocomplete="off" spellcheck="false" />
+          <input id="runtime-token-input" type="password" placeholder="Runtime Bearer credential" aria-label="Runtime Bearer credential" aria-describedby="runtime-token-error" autocomplete="off" spellcheck="false" />
           <button class="btn primary" type="submit">Connect</button>
         </div>
         <label class="remember-credential"><input id="runtime-token-remember" type="checkbox" checked /> Keep me signed in for this tab (survives refresh, clears on Lock or tab close)</label>
@@ -120,7 +120,7 @@
             </div>
             <div class="sidebar-search">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" /></svg>
-              <input id="runtime-project-search" type="search" maxlength="200" placeholder="Filter by Project name, id, Runner, or workspace path" autocomplete="off" spellcheck="false" />
+              <input id="runtime-project-search" type="search" maxlength="200" placeholder="Find a project…" aria-label="Filter by Project name, id, Runner, or workspace path" aria-keyshortcuts="Meta+k Control+k" autocomplete="off" spellcheck="false" />
             </div>
             <span id="runtime-selected-project" class="selected-project muted small">No project selected</span>
             <div id="runtime-project-list" class="project-list" role="group" aria-label="Projects"></div>
@@ -242,8 +242,14 @@
             <div class="empty-orbit" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M5 5h14v11H9l-4 3V5Z" /><path d="M9 9h6m-6 3h4" /></svg>
             </div>
-            <h2>Select a Session</h2>
+            <p class="eyebrow">Your workspace</p>
+            <h2>Pick up where work happens</h2>
             <p>Choose a project and Workflow Session from the sidebar to inspect its context and continue the collaboration.</p>
+            <button id="runtime-find-project" class="btn primary welcome-primary" type="button"><span>Find a project</span><kbd aria-hidden="true">⌘ / Ctrl K</kbd></button>
+            <div class="welcome-destinations">
+              <button id="runtime-welcome-overview" type="button"><strong>Runtime overview</strong><span>Server health and fleet capacity</span><i aria-hidden="true">↗</i></button>
+              <button id="runtime-welcome-agents" type="button"><strong>Durable Agents</strong><span>Agents, inboxes and conversations</span><i aria-hidden="true">↗</i></button>
+            </div>
           </div>
 
           <article id="runtime-session-detail" class="session-conversation" hidden>
@@ -255,8 +261,10 @@
               <p id="runtime-collaboration-unavailable" class="muted small unavailable-note" hidden>Collaboration messages require runtime:read. Existing project/session observability remains available.</p>
               <div id="runtime-chat-scroll" class="chat-scroll">
                 <p class="collaboration-explanation muted small">This board shows retained Session messages. ACK is not a reply or completion. Host chat replies appear here only when explicitly posted to this Session.</p>
-                <label class="runtime-search-field"><span>Search retained messages</span><input id="runtime-message-search" type="search" maxlength="200" placeholder="Message, resolution, or id" /></label>
-                <span id="runtime-message-search-status" class="muted small" role="status"></span>
+                <details class="message-search-disclosure">
+                  <summary><span>Search retained messages</span><span id="runtime-message-search-status" class="muted small" role="status"></span></summary>
+                  <label class="runtime-search-field"><span class="visually-hidden">Search retained messages</span><input id="runtime-message-search" type="search" maxlength="200" placeholder="Message, resolution, or id" /></label>
+                </details>
                 <div id="runtime-collaboration-board" class="collaboration-board" role="log" aria-label="Session conversation"></div>
                 <div id="runtime-collaboration-empty" class="chat-empty" hidden>
                   <span aria-hidden="true">✦</span>
@@ -281,7 +289,7 @@
                 <span id="runtime-message-edit-text"></span>
                 <button id="runtime-message-edit-clear" class="text-button" type="button">Cancel Edit</button>
               </div>
-              <textarea id="runtime-message-body" rows="1" maxlength="4000" enterkeyhint="send" placeholder="Message this Session…"></textarea>
+              <textarea id="runtime-message-body" rows="1" maxlength="4000" enterkeyhint="send" placeholder="Message this Session…" aria-label="Message this Session…"></textarea>
               <div class="composer-toolbar">
                 <div class="composer-fields">
                   <details id="runtime-message-options" class="composer-options">

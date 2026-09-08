@@ -31,9 +31,20 @@ export default function App() {
   const [showSetup, setShowSetup] = useState(false);
   const [startupAttempt, setStartupAttempt] = useState(0);
   const stateVersionRef = useRef(0);
+  const mainRef = useRef<HTMLElement>(null);
   const hasRegularTunnel = Boolean(state?.regular_tunnel);
   const hasCurrentOperation = Boolean(state?.current_operation);
   const hasLoadedState = Boolean(state);
+
+  useEffect(() => {
+    mainRef.current?.focus({ preventScroll: true });
+    mainRef.current?.scrollTo?.({ top: 0 });
+  }, [navigation, showSetup]);
+
+  const openSetup = () => {
+    setShowSetup(true);
+    setNavigation("home");
+  };
 
   const commitState = useCallback((next: DesktopState) => {
     stateVersionRef.current += 1;
@@ -221,6 +232,7 @@ export default function App() {
           <label htmlFor="desktop-sidebar-locale">{t("locale.label")}</label>
           <select
             id="desktop-sidebar-locale"
+            aria-label={t("locale.label")}
             value={locale}
             onChange={(event) => setLocale(event.target.value as typeof locale)}
             data-webcodex-control="locale"
@@ -235,7 +247,12 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main-content">
+      <main className="main-content" ref={mainRef} tabIndex={-1}>
+        {navigation === "home" && showSetup && state.topology && (
+          <button className="back-button" onClick={() => setShowSetup(false)}>
+            <span aria-hidden="true">← </span>{t("home.backToOverview")}
+          </button>
+        )}
         {state.current_operation && (
           <section
             className={`operation-status ${state.current_operation.phase}`}
@@ -286,13 +303,14 @@ export default function App() {
             onRefresh={() => void refresh()}
             onResumeRuntime={() => void resumeRuntime()}
             onConnectChatGpt={() => void runStateOperation(desktopApi.startRegularTunnel)}
-            onChangeSetup={() => setShowSetup(true)}
+            onChangeSetup={openSetup}
+            onNavigate={setNavigation}
             onStopQuickShare={() => void runStateOperation(desktopApi.stopQuickShare)}
             onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)}
           />
         ))}
         {navigation === "projects" && (
-          <ProjectsPanel state={state} onConfigure={() => setShowSetup(true)} />
+          <ProjectsPanel state={state} onConfigure={openSetup} />
         )}
         {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
@@ -344,4 +362,3 @@ function AppError({ error }: { error: DesktopError }) {
     </div>
   );
 }
-

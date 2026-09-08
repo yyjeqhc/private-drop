@@ -190,9 +190,9 @@ async function assertRequiredAssets(outputDirectory) {
   assert.match(runtimeStyles, /workspace-main\{[^}]*background:var\(--page-surface\)/);
   assert.match(runtimeStyles, /--layout-major:61\.8%/);
   assert.match(runtimeStyles, /--layout-minor:38\.2%/);
-  assert.match(runtimeStyles, /--sidebar-width:clamp\(300px,21vw,356px\)/);
+  assert.match(runtimeStyles, /--sidebar-width:clamp\(280px,21vw,320px\)/);
   assert.match(runtimeStyles, /--content-width:760px/);
-  assert.match(runtimeStyles, /--context-rail-width:clamp\(360px,30vw,560px\)/);
+  assert.match(runtimeStyles, /--context-rail-width:clamp\(320px,26vw,420px\)/);
   assert.match(runtimeStyles, /runtime-shell\.context-docked\{--content-width:760px;grid-template-columns:var\(--sidebar-width\) minmax\(0,1fr\) var\(--context-rail-width\)/);
   assert.match(runtimeStyles, /message-card\.message-incoming\{[^}]*width:fit-content[^}]*max-width:min\(82%,880px\)/);
   assert.match(runtimeStyles, /message-card\.message-outgoing\{[^}]*max-width:min\(68%,680px\)[^}]*align-self:flex-end/);

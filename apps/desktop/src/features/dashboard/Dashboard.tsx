@@ -15,6 +15,7 @@ interface DashboardProps {
   onResumeRuntime: () => void;
   onConnectChatGpt: () => void;
   onChangeSetup: () => void;
+  onNavigate: (page: "projects" | "connection" | "activity") => void;
   onStopQuickShare: () => void;
   onStopRuntime: () => void;
 }
@@ -26,6 +27,7 @@ export function Dashboard({
   onResumeRuntime,
   onConnectChatGpt,
   onChangeSetup,
+  onNavigate,
   onStopQuickShare,
   onStopRuntime,
 }: DashboardProps) {
@@ -46,7 +48,7 @@ export function Dashboard({
   );
   return (
     <section
-      className="page-section"
+      className="page-section dashboard-page"
       aria-labelledby="home-title"
       aria-busy={refreshing}
       data-webcodex-page="home"
@@ -65,33 +67,6 @@ export function Dashboard({
         >
           {refreshing ? t("home.checking") : t("home.refresh")}
         </button>
-      </div>
-
-      <div className="status-grid">
-        <StatusCard
-          title={t("home.service")}
-          value={serviceLabel(state, t)}
-          state={state.readiness.server}
-          explanation={serviceExplanation(state, t)}
-        />
-        <StatusCard
-          title={t("home.runner")}
-          value={runnerReadinessLabel(state.readiness.runner, t)}
-          state={state.readiness.runner}
-          explanation={t("home.runnerExplanation")}
-        />
-        <StatusCard
-          title={t("home.projects")}
-          value={state.readiness.project === "ready" ? t("home.projectReady") : projectReadinessLabel(state.readiness.project, t)}
-          state={state.readiness.project}
-          explanation={state.project?.path ?? t("home.noProject")}
-        />
-        <StatusCard
-          title={t("home.connection")}
-          value={connectionLabel(state, t)}
-          state={state.readiness.exposure}
-          explanation={connectionExplanation(state, t)}
-        />
       </div>
 
       <div
@@ -118,6 +93,49 @@ export function Dashboard({
           {nextAction && !canResumeRuntime && !canConnectChatGpt && <span>{nextAction}</span>}
         </div>
       </div>
+
+      <div className="status-grid" aria-label={t("home.components")}>
+        <StatusCard
+          title={t("home.service")}
+          value={serviceLabel(state, t)}
+          state={state.readiness.server}
+          explanation={serviceExplanation(state, t)}
+        />
+        <StatusCard
+          title={t("home.runner")}
+          value={runnerReadinessLabel(state.readiness.runner, t)}
+          state={state.readiness.runner}
+          explanation={t("home.runnerExplanation")}
+        />
+        <StatusCard
+          title={t("home.projects")}
+          value={state.readiness.project === "ready" ? t("home.projectReady") : projectReadinessLabel(state.readiness.project, t)}
+          state={state.readiness.project}
+          explanation={state.project?.path ?? t("home.noProject")}
+        />
+        <StatusCard
+          title={t("home.connection")}
+          value={connectionLabel(state, t)}
+          state={state.readiness.exposure}
+          explanation={connectionExplanation(state, t)}
+        />
+      </div>
+
+      <section className="dashboard-shortcuts" aria-labelledby="home-shortcuts-title">
+        <div className="section-heading">
+          <h2 id="home-shortcuts-title">{t("home.shortcuts")}</h2>
+        </div>
+        <div className="shortcut-grid">
+          {(["projects", "connection", "activity"] as const).map((page) => (
+            <button className="shortcut-card" key={page} onClick={() => onNavigate(page)}>
+              <span className={`nav-icon nav-${page}`} aria-hidden="true" />
+              <strong>{t(`home.open.${page}`)}</strong>
+              <span>{t(`home.hint.${page}`)}</span>
+              <span className="shortcut-arrow" aria-hidden="true">↗</span>
+            </button>
+          ))}
+        </div>
+      </section>
 
       {state.quick_share && (
         <div className="handoff-card">
@@ -200,4 +218,3 @@ function connectionExplanation(state: DesktopState, t: Translate) {
   if (state.readiness.exposure === "local_ready") return t("home.connectionLocalReady");
   return t("home.connectionUnverified");
 }
-
