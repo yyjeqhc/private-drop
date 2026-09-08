@@ -4,6 +4,7 @@ use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_EDIT,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::{PathList, SinglePath},
     ToolRisk::ProjectWrite,
@@ -18,6 +19,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "write_project_file",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("overwrite", "overwrite", AuditValue::Copy),
+                        AuditField::new("expected_sha256", "expected_sha256", AuditValue::Copy),
+                        AuditField::new("content_present", "content", AuditValue::KeyPresent),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[
+                        AuditField::new(
+                            "expected_sha256_present",
+                            "expected_sha256",
+                            AuditValue::NonemptyString,
+                        ),
+                        AuditField::new("content_present", "content", AuditValue::Present),
+                    ],
+                    typed_omit: &["expected_sha256"],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_EDIT,
             Some(FileWrite),
@@ -44,6 +67,18 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
                 def(
                 "apply_text_edits",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("dry_run", "dry_run", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Edits,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_EDIT,
                 Some(FileWrite),

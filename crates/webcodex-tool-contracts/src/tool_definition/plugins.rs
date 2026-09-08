@@ -3,6 +3,7 @@ use super::{
     adaptive_runtime_direct, def, model_spec, require_any_scopes, ToolDefinition,
     TOOL_CATEGORY_RUNTIME,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::RunControl, PLUGIN_INSPECT, PLUGIN_INVOKE,
     PLUGIN_MANAGE, TOOL_PROVIDER_CONTROL,
@@ -16,6 +17,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
         model_spec(
             def(
                 "plugin_tool",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 None,

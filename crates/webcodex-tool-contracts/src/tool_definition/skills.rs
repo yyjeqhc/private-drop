@@ -1,6 +1,7 @@
 use super::RunnerCapabilityRequirement::{FileRead, SkillStoreManage};
 use super::ToolVisibility::ModelHidden;
 use super::{def, ToolDefinition, TOOL_CATEGORY_RUNTIME};
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{Read, SkillManage},
@@ -14,6 +15,40 @@ use crate::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_list",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("offset", "offset", AuditValue::Copy),
+                    AuditField::new("limit", "limit", AuditValue::Copy),
+                    AuditField::new(
+                        "expected_catalog_revision",
+                        "expected_catalog_revision",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    AuditField::new("query_present", "query", AuditValue::NonemptyString),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &["session_id"],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("project", "project", AuditValue::Nullable),
+                AuditField::new("catalog_revision", "catalog_revision", AuditValue::Nullable),
+                AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                AuditField::new("returned_count", "returned_count", AuditValue::Nullable),
+                AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                AuditField::new("invalid_count", "invalid_count", AuditValue::Nullable),
+                AuditField::new(
+                    "discovery_truncated",
+                    "discovery_truncated",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(FileRead),
@@ -32,6 +67,52 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_read_file",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("skill_id", "skill_id", AuditValue::Copy),
+                    AuditField::new("path", "path", AuditValue::Copy),
+                    AuditField::new("start_line", "start_line", AuditValue::Copy),
+                    AuditField::new("limit", "limit", AuditValue::Copy),
+                    AuditField::new(
+                        "expected_definition_revision",
+                        "expected_definition_revision",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new(
+                        "expected_package_revision",
+                        "expected_package_revision",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new("session_id", "session_id", AuditValue::Copy),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &["session_id"],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("project", "project", AuditValue::Nullable),
+                AuditField::new("skill_id", "skill_id", AuditValue::Nullable),
+                AuditField::new("source_scope", "source_scope", AuditValue::Nullable),
+                AuditField::new("trust", "trust", AuditValue::Nullable),
+                AuditField::new("package_revision", "package_revision", AuditValue::Nullable),
+                AuditField::new(
+                    "definition_revision",
+                    "definition_revision",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new("path", "path", AuditValue::Nullable),
+                AuditField::new("sha256", "sha256", AuditValue::Nullable),
+                AuditField::new("start_line", "start_line", AuditValue::Nullable),
+                AuditField::new("end_line", "end_line", AuditValue::Nullable),
+                AuditField::new("returned_lines", "returned_lines", AuditValue::Nullable),
+                AuditField::new("has_more", "has_more", AuditValue::Nullable),
+                AuditField::new("next_start_line", "next_start_line", AuditValue::Nullable),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(FileRead),
@@ -50,6 +131,36 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_versions",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("skill_key", "skill_key", AuditValue::Copy),
+                    AuditField::new("offset", "offset", AuditValue::Copy),
+                    AuditField::new("limit", "limit", AuditValue::Copy),
+                    AuditField::new("session_id", "session_id", AuditValue::Copy),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("project", "project", AuditValue::Nullable),
+                AuditField::new("skill_id", "skill_id", AuditValue::Nullable),
+                AuditField::new("skill_key", "skill_key", AuditValue::Nullable),
+                AuditField::new("state_revision", "state_revision", AuditValue::Nullable),
+                AuditField::new(
+                    "active_package_revision",
+                    "active_package_revision",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                AuditField::new("offset", "offset", AuditValue::Nullable),
+                AuditField::new("next_offset", "next_offset", AuditValue::Nullable),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
@@ -68,6 +179,65 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_install",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("skill_key", "skill_key", AuditValue::Copy),
+                    AuditField::new(
+                        "expected_artifact_sha256",
+                        "expected_artifact_sha256",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new("activate", "activate", AuditValue::Copy),
+                    AuditField::new(
+                        "expected_state_revision",
+                        "expected_state_revision",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    AuditField::new(
+                        "artifact_path_present",
+                        "artifact_path",
+                        AuditValue::StringPresent,
+                    ),
+                    AuditField::new(
+                        "idempotency_key_present",
+                        "idempotency_key",
+                        AuditValue::StringPresent,
+                    ),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("project", "project", AuditValue::Nullable),
+                AuditField::new("skill_id", "skill_id", AuditValue::Nullable),
+                AuditField::new("skill_key", "skill_key", AuditValue::Nullable),
+                AuditField::new("package_revision", "package_revision", AuditValue::Nullable),
+                AuditField::new(
+                    "definition_revision",
+                    "definition_revision",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new("artifact_sha256", "artifact_sha256", AuditValue::Nullable),
+                AuditField::new("file_count", "file_count", AuditValue::Nullable),
+                AuditField::new("total_bytes", "total_bytes", AuditValue::Nullable),
+                AuditField::new("installed", "installed", AuditValue::Nullable),
+                AuditField::new("activated", "activated", AuditValue::Nullable),
+                AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                AuditField::new("state_revision", "state_revision", AuditValue::Nullable),
+                AuditField::new(
+                    "active_package_revision",
+                    "active_package_revision",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new("outcome_unknown", "outcome_unknown", AuditValue::Nullable),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
@@ -86,6 +256,50 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_activate",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("skill_key", "skill_key", AuditValue::Copy),
+                    AuditField::new("package_revision", "package_revision", AuditValue::Copy),
+                    AuditField::new(
+                        "expected_state_revision",
+                        "expected_state_revision",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    AuditField::new(
+                        "idempotency_key_present",
+                        "idempotency_key",
+                        AuditValue::StringPresent,
+                    ),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("project", "project", AuditValue::Nullable),
+                AuditField::new("skill_id", "skill_id", AuditValue::Nullable),
+                AuditField::new("skill_key", "skill_key", AuditValue::Nullable),
+                AuditField::new(
+                    "previous_active_package_revision",
+                    "previous_active_package_revision",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new(
+                    "active_package_revision",
+                    "active_package_revision",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new("state_revision", "state_revision", AuditValue::Nullable),
+                AuditField::new("changed", "changed", AuditValue::Nullable),
+                AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                AuditField::new("outcome_unknown", "outcome_unknown", AuditValue::Nullable),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
@@ -104,6 +318,41 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_remove_revision",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("skill_key", "skill_key", AuditValue::Copy),
+                    AuditField::new("package_revision", "package_revision", AuditValue::Copy),
+                    AuditField::new(
+                        "expected_state_revision",
+                        "expected_state_revision",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    AuditField::new(
+                        "idempotency_key_present",
+                        "idempotency_key",
+                        AuditValue::StringPresent,
+                    ),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("project", "project", AuditValue::Nullable),
+                AuditField::new("skill_id", "skill_id", AuditValue::Nullable),
+                AuditField::new("skill_key", "skill_key", AuditValue::Nullable),
+                AuditField::new("package_revision", "package_revision", AuditValue::Nullable),
+                AuditField::new("state_revision", "state_revision", AuditValue::Nullable),
+                AuditField::new("removed", "removed", AuditValue::Nullable),
+                AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                AuditField::new("outcome_unknown", "outcome_unknown", AuditValue::Nullable),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),

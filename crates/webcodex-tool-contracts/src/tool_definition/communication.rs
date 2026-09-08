@@ -3,6 +3,7 @@ use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_WRITE,
     TOOL_CATEGORY_COMMUNICATION,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{CommunicationManage, Read},
@@ -24,6 +25,41 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_agent_identity",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("handle_chars", "handle", AuditValue::Chars),
+                            AuditField::new("display_name_chars", "display_name", AuditValue::Chars),
+                            AuditField::new("description_bytes", "description", AuditValue::Bytes),
+                            AuditField::new(
+                                "specialty_label_count",
+                                "specialty_labels",
+                                AuditValue::Count,
+                            ),
+                            AuditField::new(
+                                "idempotency_key_present",
+                                "idempotency_key",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("agent_id", "/agent/agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "profile_revision",
+                            "/agent/profile_revision",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -49,6 +85,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_identities",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("offset", "offset", AuditValue::Copy),
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                        AuditField::new("returned_count", "agents", AuditValue::NullableCount),
+                        AuditField::new("offset", "offset", AuditValue::Nullable),
+                        AuditField::new("next_offset", "next_offset", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -75,6 +132,48 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "update_agent_identity",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_profile_revision",
+                                "expected_profile_revision",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("handle_present", "handle", AuditValue::Present),
+                            AuditField::new("display_name_present", "display_name", AuditValue::Present),
+                            AuditField::new("description_present", "description", AuditValue::Present),
+                            AuditField::new(
+                                "specialty_labels_present",
+                                "specialty_labels",
+                                AuditValue::Present,
+                            ),
+                            AuditField::new("description_bytes", "description", AuditValue::Bytes),
+                            AuditField::new(
+                                "specialty_label_count",
+                                "specialty_labels",
+                                AuditValue::Count,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("agent_id", "/agent/agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "profile_revision",
+                            "/agent/profile_revision",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -103,6 +202,41 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "attach_agent_endpoint",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("host", "host", AuditValue::Copy),
+                            AuditField::new(
+                                "client_attachment_id_present",
+                                "client_attachment_id",
+                                AuditValue::Present,
+                            ),
+                            AuditField::new(
+                                "idempotency_key_present",
+                                "idempotency_key",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("endpoint_id", "/endpoint/endpoint_id", AuditValue::Nullable),
+                        AuditField::new("agent_id", "/endpoint/agent_id", AuditValue::Nullable),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        AuditField::new(
+                            "detached",
+                            "/endpoint/detached_at_unix_ms",
+                            AuditValue::Present,
+                        ),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -130,6 +264,62 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "bootstrap_agent_conversation",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_controller_generation",
+                                "expected_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("conversation_id", "conversation_id", AuditValue::Copy),
+                            AuditField::new("wake_id", "wake_id", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("agent_id", "/acting_agent/agent_id", AuditValue::Nullable),
+                        AuditField::new("endpoint_id", "/endpoint/endpoint_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "controller_generation",
+                            "/endpoint/controller_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "conversation_id",
+                            "/selected_conversation/conversation_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "queued_delivery_count",
+                            "/inbox/queued_delivery_count",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("wake_id", "/wake/wake_id", AuditValue::Nullable),
+                        AuditField::new("wake_state", "/wake/state", AuditValue::Nullable),
+                        AuditField::new(
+                            "adapter_kind",
+                            "/host_binding/adapter_kind",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "runtime_wake_capable",
+                            "/host_binding/runtime_wake_capable",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "production_auto_resume_available",
+                            "/host_binding/production_auto_resume_available",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -156,6 +346,30 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "detach_agent_endpoint",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("endpoint_id", "/endpoint/endpoint_id", AuditValue::Nullable),
+                        AuditField::new("agent_id", "/endpoint/agent_id", AuditValue::Nullable),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        AuditField::new(
+                            "detached",
+                            "/endpoint/detached_at_unix_ms",
+                            AuditValue::Present,
+                        ),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -183,6 +397,44 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_conversation",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("title_present", "title", AuditValue::Present),
+                            AuditField::new("agent_count", "agent_ids", AuditValue::Count),
+                            AuditField::new(
+                                "idempotency_key_present",
+                                "idempotency_key",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new(
+                            "conversation_id",
+                            "/conversation/conversation/conversation_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "participant_count",
+                            "/conversation/participants",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new(
+                            "message_count",
+                            "/conversation/messages",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -208,6 +460,33 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_conversations",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_controller_generation",
+                                "expected_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("offset", "offset", AuditValue::Copy),
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                        AuditField::new("returned_count", "conversations", AuditValue::NullableCount),
+                        AuditField::new("offset", "offset", AuditValue::Nullable),
+                        AuditField::new("next_offset", "next_offset", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -233,6 +512,43 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "read_conversation",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("conversation_id", "conversation_id", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_controller_generation",
+                                "expected_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("after_seq", "after_seq", AuditValue::Copy),
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new(
+                            "conversation_id",
+                            "/conversation/conversation_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "participant_count",
+                            "participants",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("message_count", "messages", AuditValue::NullableCount),
+                        AuditField::new("after_seq", "after_seq", AuditValue::Nullable),
+                        AuditField::new("next_after_seq", "next_after_seq", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -258,6 +574,60 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "post_conversation_message",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("conversation_id", "conversation_id", AuditValue::Copy),
+                            AuditField::new("author_agent_id", "author_agent_id", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_controller_generation",
+                                "expected_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("reply_to", "reply_to", AuditValue::Copy),
+                            AuditField::new("wake_reply_id", "wake_reply_id", AuditValue::Copy),
+                            AuditField::new(
+                                "reply_operation_index",
+                                "reply_operation_index",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("body_bytes", "body", AuditValue::Bytes),
+                            AuditField::new(
+                                "recipient_mode",
+                                "recipient_agent_ids",
+                                AuditValue::RecipientMode,
+                            ),
+                            AuditField::new("recipient_count", "recipient_agent_ids", AuditValue::Count),
+                            AuditField::new(
+                                "idempotency_key_present",
+                                "idempotency_key",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("message_id", "/message/message_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "conversation_id",
+                            "/message/conversation_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("seq", "/message/seq", AuditValue::Nullable),
+                        AuditField::new(
+                            "delivery_count",
+                            "/message/deliveries",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -283,6 +653,50 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_inbox",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_controller_generation",
+                                "expected_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new(
+                                "after_delivery_order",
+                                "after_delivery_order",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("agent_id", "agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "total_queued_count",
+                            "total_queued_count",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("returned_count", "deliveries", AuditValue::NullableCount),
+                        AuditField::new(
+                            "after_delivery_order",
+                            "after_delivery_order",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "next_after_delivery_order",
+                            "next_after_delivery_order",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -309,6 +723,39 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "consume_agent_deliveries",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_controller_generation",
+                                "expected_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("delivery_count", "delivery_ids", AuditValue::Count),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("agent_id", "agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "consumed_count",
+                            "consumed_delivery_ids",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new(
+                            "already_consumed_count",
+                            "already_consumed_delivery_ids",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -337,6 +784,42 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "consume_agent_wake",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("agent_id", "agent_id", AuditValue::Copy),
+                            AuditField::new("endpoint_id", "endpoint_id", AuditValue::Copy),
+                            AuditField::new(
+                                "expected_controller_generation",
+                                "expected_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("wake_id", "wake_id", AuditValue::Copy),
+                            AuditField::new(
+                                "consume_token_present",
+                                "consume_token",
+                                AuditValue::ConsumeTokenPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("wake_id", "wake_id", AuditValue::Nullable),
+                        AuditField::new("target_agent_id", "target_agent_id", AuditValue::Nullable),
+                        AuditField::new("state", "state", AuditValue::Nullable),
+                        AuditField::new("already_consumed", "already_consumed", AuditValue::Nullable),
+                        AuditField::new(
+                            "consumed_at_unix_ms",
+                            "consumed_at_unix_ms",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,

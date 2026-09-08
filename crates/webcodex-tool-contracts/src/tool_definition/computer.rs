@@ -9,6 +9,7 @@ use super::{
     def, model_spec, permission_risk, require_all_scopes, unit_arguments, ToolDefinition,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_COMPUTER,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::{Artifact, None},
     ToolRisk::{ComputerControl as ComputerControlRisk, ProjectWrite, Read},
@@ -34,6 +35,24 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_read_clipboard",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &["project", "client_id"],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("available", "available", AuditValue::Nullable),
+                        AuditField::new("text_bytes", "text_bytes", AuditValue::Nullable),
+                        AuditField::new("success", "success", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardRead),
@@ -60,6 +79,25 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "computer_write_clipboard",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                            AuditField::new("text_bytes", "text", AuditValue::Bytes),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &["project", "client_id", "text_bytes"],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("text_bytes", "text_bytes", AuditValue::Nullable),
+                        AuditField::new("success", "success", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardWrite),
@@ -87,6 +125,46 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_pointer_move",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                            AuditField::new("display_id", "display_id", AuditValue::Copy),
+                            AuditField::new(
+                                "snapshot_generation",
+                                "snapshot_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("x", "x", AuditValue::Copy),
+                            AuditField::new("y", "y", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[
+                            "project",
+                            "client_id",
+                            "display_id",
+                            "snapshot_generation",
+                            "x",
+                            "y",
+                        ],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("display_id", "display_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "snapshot_generation",
+                            "snapshot_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("x", "x", AuditValue::Nullable),
+                        AuditField::new("y", "y", AuditValue::Nullable),
+                        AuditField::new("success", "success", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
@@ -118,6 +196,46 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "computer_pointer_click",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                            AuditField::new("display_id", "display_id", AuditValue::Copy),
+                            AuditField::new(
+                                "snapshot_generation",
+                                "snapshot_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("x", "x", AuditValue::Copy),
+                            AuditField::new("y", "y", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[
+                            "project",
+                            "client_id",
+                            "display_id",
+                            "snapshot_generation",
+                            "x",
+                            "y",
+                        ],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("display_id", "display_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "snapshot_generation",
+                            "snapshot_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("x", "x", AuditValue::Nullable),
+                        AuditField::new("y", "y", AuditValue::Nullable),
+                        AuditField::new("success", "success", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
@@ -149,6 +267,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     unit_arguments(model_spec(
         def(
             "computer_list_targets",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[AuditField::new("project", "project", AuditValue::Copy)],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("count", "count", AuditValue::Nullable),
+                    AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                    AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             std::option::Option::None,
@@ -171,6 +302,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_list_windows",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("count", "count", AuditValue::Nullable),
+                    AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
@@ -194,6 +341,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_list_displays",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &["project", "client_id", "limit"],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("count", "count", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
@@ -218,6 +381,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_list_applications",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("count", "count", AuditValue::Nullable),
+                    AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationDiscovery),
@@ -240,6 +419,25 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_launch_application",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("application_id", "application_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("application_id", "application_id", AuditValue::Nullable),
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationLaunch),
@@ -262,6 +460,21 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_accessibility_status",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("platform", "platform", AuditValue::Nullable),
+                    AuditField::new("trusted", "trusted", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -284,6 +497,32 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_accessibility_tree",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("max_depth", "max_depth", AuditValue::Copy),
+                        AuditField::new("max_nodes", "max_nodes", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new(
+                        "observation_generation",
+                        "observation_generation",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new("node_count", "node_count", AuditValue::Nullable),
+                    AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                    AuditField::new("max_depth", "max_depth", AuditValue::Nullable),
+                    AuditField::new("max_nodes", "max_nodes", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -306,6 +545,35 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_find_elements",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("focused", "focused", AuditValue::Copy),
+                        AuditField::new("enabled", "enabled", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new("role_present", "role", AuditValue::StringPresent),
+                        AuditField::new("subrole_present", "subrole", AuditValue::StringPresent),
+                        AuditField::new("label_present", "label", AuditValue::StringPresent),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new(
+                        "observation_generation",
+                        "observation_generation",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new("count", "count", AuditValue::Nullable),
+                    AuditField::new("scanned_nodes", "scanned_nodes", AuditValue::Nullable),
+                    AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -328,6 +596,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_element_state",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("element_id", "element_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new("element_id", "element_id", AuditValue::Nullable),
+                    AuditField::new(
+                        "observation_generation",
+                        "observation_generation",
+                        AuditValue::Nullable,
+                    ),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerElementState),
@@ -350,6 +640,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_activate_window",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerWindowActivate),
@@ -373,6 +679,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "computer_control",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("element_id", "element_id", AuditValue::Copy),
+                        AuditField::new("action", "action", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new("element_id", "element_id", AuditValue::Nullable),
+                    AuditField::new("action", "action", AuditValue::Nullable),
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerControl),
@@ -397,6 +723,24 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_scroll_to_element",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("element_id", "element_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new("element_id", "element_id", AuditValue::Nullable),
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerScrollToElement),
@@ -420,6 +764,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "computer_key_input",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("key", "key", AuditValue::Copy),
+                        AuditField::new("modifiers", "modifiers", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new("key", "key", AuditValue::Nullable),
+                    AuditField::new("modifiers", "modifiers", AuditValue::Nullable),
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerKeyInput),
@@ -444,6 +808,26 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_input_text",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("element_id", "element_id", AuditValue::Copy),
+                        AuditField::new("text_bytes", "text", AuditValue::Bytes),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                    AuditField::new("element_id", "element_id", AuditValue::Nullable),
+                    AuditField::new("text_bytes", "text_bytes", AuditValue::Nullable),
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerTextInput),
@@ -466,6 +850,36 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_snapshot",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                        AuditField::new("max_width", "max_width", AuditValue::Copy),
+                        AuditField::new("max_height", "max_height", AuditValue::Copy),
+                        AuditField::new("region_present", "region", AuditValue::Present),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("surface_id", "/surface/surface_id", AuditValue::Nullable),
+                    AuditField::new("source_width", "source_width", AuditValue::Nullable),
+                    AuditField::new("source_height", "source_height", AuditValue::Nullable),
+                    AuditField::new("region_present", "region", AuditValue::KeyPresent),
+                    AuditField::new("width", "width", AuditValue::Nullable),
+                    AuditField::new("height", "height", AuditValue::Nullable),
+                    AuditField::new("mime_type", "mime_type", AuditValue::Nullable),
+                    AuditField::new("file_bytes", "file_bytes", AuditValue::Nullable),
+                    AuditField::new(
+                        "captured_at_unix_ms",
+                        "captured_at_unix_ms",
+                        AuditValue::Nullable,
+                    ),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
@@ -489,6 +903,46 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_snapshot_display",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                            AuditField::new("display_id", "display_id", AuditValue::Copy),
+                            AuditField::new("max_width", "max_width", AuditValue::Copy),
+                            AuditField::new("max_height", "max_height", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[
+                            "project",
+                            "client_id",
+                            "display_id",
+                            "max_width",
+                            "max_height",
+                        ],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("display_id", "display_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "snapshot_generation",
+                            "snapshot_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("source_width", "source_width", AuditValue::Nullable),
+                        AuditField::new("source_height", "source_height", AuditValue::Nullable),
+                        AuditField::new("width", "width", AuditValue::Nullable),
+                        AuditField::new("height", "height", AuditValue::Nullable),
+                        AuditField::new("mime_type", "mime_type", AuditValue::Nullable),
+                        AuditField::new("file_bytes", "file_bytes", AuditValue::Nullable),
+                        AuditField::new("sha256", "sha256", AuditValue::Nullable),
+                        AuditField::new(
+                            "captured_at_unix_ms",
+                            "captured_at_unix_ms",
+                            AuditValue::Nullable,
+                        ),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
@@ -514,6 +968,36 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_save_snapshot",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("path", "path", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                            AuditField::new("surface_id", "surface_id", AuditValue::Copy),
+                            AuditField::new("max_width", "max_width", AuditValue::Copy),
+                            AuditField::new("max_height", "max_height", AuditValue::Copy),
+                            AuditField::new("region_present", "region", AuditValue::Present),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("project", "project", AuditValue::Nullable),
+                        AuditField::new("path", "path", AuditValue::Nullable),
+                        AuditField::new("client_id", "client_id", AuditValue::Nullable),
+                        AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
+                        AuditField::new("source_width", "source_width", AuditValue::Nullable),
+                        AuditField::new("source_height", "source_height", AuditValue::Nullable),
+                        AuditField::new("region_present", "region", AuditValue::KeyPresent),
+                        AuditField::new("width", "width", AuditValue::Nullable),
+                        AuditField::new("height", "height", AuditValue::Nullable),
+                        AuditField::new("mime_type", "mime_type", AuditValue::Nullable),
+                        AuditField::new("file_bytes", "file_bytes", AuditValue::Nullable),
+                        AuditField::new("saved", "saved", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(FileWrite),

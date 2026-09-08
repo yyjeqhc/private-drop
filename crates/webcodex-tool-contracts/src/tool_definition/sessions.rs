@@ -5,6 +5,7 @@ use super::{
     requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
     TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, PROJECT_WRITE, RUNTIME_READ,
     SESSION_COLLABORATE, TOOL_PROVIDER_CONTROL,
@@ -22,6 +23,30 @@ use crate::registry::input_schemas::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "start_session",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("client_id", "client_id", AuditValue::Copy),
+                    AuditField::new("title", "title", AuditValue::Copy),
+                    AuditField::new("mode", "mode", AuditValue::Copy),
+                    AuditField::new("deny_write_tools", "deny_write_tools", AuditValue::Copy),
+                    AuditField::new("deny_shell_tools", "deny_shell_tools", AuditValue::Copy),
+                    AuditField::new("detail", "detail", AuditValue::Copy),
+                    AuditField::new("resume_session_id", "resume_session_id", AuditValue::Copy),
+                    AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    AuditField::new(
+                        "execution_context",
+                        "execution_context",
+                        AuditValue::ExecutionContext,
+                    ),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &["client_id", "detail", "resume_session_id", "session_id"],
+            },
+            result: AuditResultPolicy::SessionEvidence,
+        },
         ModelHidden,
         TOOL_CATEGORY_SESSION,
         None,
@@ -42,6 +67,40 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "work_on_project",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("client_id", "client_id", AuditValue::Copy),
+                            AuditField::new("session_id", "session_id", AuditValue::Copy),
+                            AuditField::new(
+                                "include_project_instructions",
+                                "include_project_instructions",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new(
+                                "include_workflow_guidance",
+                                "include_workflow_guidance",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("path_source_requested", "path", AuditValue::KeyPresent),
+                            AuditField::new("instruction_summary", "instruction", AuditValue::Preview),
+                            AuditField::new(
+                                "instruction_present",
+                                "instruction",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[
+                            AuditField::new("mode", "mode", AuditValue::Copy),
+                            AuditField::new("base_ref_present", "base_ref", AuditValue::Present),
+                            AuditField::new("path_source_requested", "path", AuditValue::Present),
+                        ],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 "workflow",
                 Some(GitOrShell),
@@ -67,6 +126,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         requires_explicit_business_session(model_spec(
             def(
                 "finish_coding_task",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("session_id", "session_id", AuditValue::Copy),
+                            AuditField::new("summary_only", "summary_only", AuditValue::Copy),
+                            AuditField::new("include_diff", "include_diff", AuditValue::Copy),
+                            AuditField::new("include_workspace", "include_workspace", AuditValue::Copy),
+                            AuditField::new("include_hygiene", "include_hygiene", AuditValue::Copy),
+                            AuditField::new("include_handoff", "include_handoff", AuditValue::Copy),
+                            AuditField::new(
+                                "include_validation_summary",
+                                "include_validation_summary",
+                                AuditValue::Copy,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 "workflow",
                 Some(GitOrShell),
@@ -91,6 +172,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "session_summary",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -114,6 +204,38 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "update_session_context",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("client_id", "client_id", AuditValue::Copy),
+                        AuditField::new("title", "title", AuditValue::Copy),
+                        AuditField::new("mode", "mode", AuditValue::Copy),
+                        AuditField::new("deny_write_tools", "deny_write_tools", AuditValue::Copy),
+                        AuditField::new("deny_shell_tools", "deny_shell_tools", AuditValue::Copy),
+                        AuditField::new("detail", "detail", AuditValue::Copy),
+                        AuditField::new("resume_session_id", "resume_session_id", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new(
+                            "execution_context",
+                            "execution_context",
+                            AuditValue::ExecutionContext,
+                        ),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[
+                        "client_id",
+                        "title",
+                        "mode",
+                        "deny_write_tools",
+                        "deny_shell_tools",
+                        "detail",
+                        "resume_session_id",
+                    ],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             Some(OwnerOnly),
@@ -139,6 +261,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "close_session",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -163,6 +294,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "validation_summary",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_VALIDATION,
             Some(OwnerOnly),
@@ -185,6 +325,41 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "post_session_message",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("kind", "kind", AuditValue::Copy),
+                        AuditField::new("reply_to", "reply_to", AuditValue::Copy),
+                        AuditField::new("priority", "priority", AuditValue::Copy),
+                        AuditField::new("requires_ack", "requires_ack", AuditValue::Copy),
+                        AuditField::new("body_present", "message", AuditValue::StringPresent),
+                        AuditField::new("body_bytes", "message", AuditValue::Bytes),
+                        AuditField::new("tags_count", "tags", AuditValue::Count),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                    AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                    AuditField::new("message_id", "message_id", AuditValue::Nullable),
+                    AuditField::new("kind", "/message/kind", AuditValue::Nullable),
+                    AuditField::new("status", "/message/status", AuditValue::Nullable),
+                    AuditField::new(
+                        "requires_ack",
+                        "/message/requires_ack",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new(
+                        "author_session_id",
+                        "/message/author_session_id",
+                        AuditValue::Nullable,
+                    ),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -207,6 +382,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "list_session_messages",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("kind", "kind", AuditValue::Copy),
+                        AuditField::new("status", "status", AuditValue::Copy),
+                        AuditField::new("message_id", "message_id", AuditValue::Copy),
+                        AuditField::new("reply_to", "reply_to", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                    AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                    AuditField::new("message_count", "messages", AuditValue::NullableCount),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -229,6 +425,34 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "get_session_assignment",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("message_id", "message_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project", "session_id", "message_id"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                    AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                    AuditField::new("message_id", "message_id", AuditValue::Nullable),
+                    AuditField::new(
+                        "direct_reply_count",
+                        "direct_replies",
+                        AuditValue::NullableCount,
+                    ),
+                    AuditField::new(
+                        "assignment_fence_present",
+                        "assignment_fence",
+                        AuditValue::StringPresent,
+                    ),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -251,6 +475,33 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "observe_session_messages",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("wait_secs", "wait_secs", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new(
+                            "token_present",
+                            "after_observation_token",
+                            AuditValue::StringPresent,
+                        ),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                    AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                    AuditField::new("message_count", "messages", AuditValue::NullableCount),
+                    AuditField::new("changed", "changed", AuditValue::Nullable),
+                    AuditField::new("history_lost", "history_lost", AuditValue::Nullable),
+                    AuditField::new("has_more", "has_more", AuditValue::Nullable),
+                    AuditField::new("wait_outcome", "wait_outcome", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -274,6 +525,35 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "resolve_session_message",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("message_id", "message_id", AuditValue::Copy),
+                        AuditField::new(
+                            "resolution_present",
+                            "resolution",
+                            AuditValue::StringPresent,
+                        ),
+                        AuditField::new("resolution_bytes", "resolution", AuditValue::Bytes),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project", "resolution_bytes"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                    AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                    AuditField::new("message_id", "message_id", AuditValue::Nullable),
+                    AuditField::new("status", "/message/status", AuditValue::Nullable),
+                    AuditField::new(
+                        "resolved_by_message_id",
+                        "/message/resolved_by_message_id",
+                        AuditValue::Nullable,
+                    ),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -299,6 +579,49 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "complete_session_message",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("message_id", "message_id", AuditValue::Copy),
+                        AuditField::new("priority", "priority", AuditValue::Copy),
+                        AuditField::new("body_present", "answer", AuditValue::StringPresent),
+                        AuditField::new("body_bytes", "answer", AuditValue::Bytes),
+                        AuditField::new("tags_count", "tags", AuditValue::Count),
+                        AuditField::new(
+                            "completion_id",
+                            "completion_key",
+                            AuditValue::CompletionFingerprint,
+                        ),
+                        AuditField::new(
+                            "assignment_fence_present",
+                            "expected_assignment_fence",
+                            AuditValue::StringPresent,
+                        ),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project", "assignment_fence_present"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("success", "success", AuditValue::Nullable),
+                    AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                    AuditField::new("message_id", "message_id", AuditValue::Nullable),
+                    AuditField::new(
+                        "answer_message_id",
+                        "answer_message_id",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new("completion_id", "completion_id", AuditValue::Nullable),
+                    AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                    AuditField::new(
+                        "author_session_id",
+                        "/answer/author_session_id",
+                        AuditValue::Nullable,
+                    ),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -324,6 +647,34 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         requires_explicit_business_session(model_spec(
             def(
                 "session_discussion_summary",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("session_id", "session_id", AuditValue::Copy),
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &["project"],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("success", "success", AuditValue::Nullable),
+                        AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                        AuditField::new("counts", "counts", AuditValue::Nullable),
+                        AuditField::new("open_todo_count", "open_todos", AuditValue::NullableCount),
+                        AuditField::new(
+                            "recent_answer_count",
+                            "recent_answers",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new(
+                            "recent_completion_count",
+                            "recent_completions",
+                            AuditValue::NullableCount,
+                        ),
+                    ]),
+                },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,
@@ -348,6 +699,45 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "session_handoff_summary",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("include_workspace", "include_workspace", AuditValue::Copy),
+                        AuditField::new(
+                            "include_checkpoints",
+                            "include_checkpoints",
+                            AuditValue::Copy,
+                        ),
+                        AuditField::new("include_validation", "include_validation", AuditValue::Copy),
+                        AuditField::new("summary_only", "summary_only", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("session_id", "session_id", AuditValue::Nullable),
+                    AuditField::new("project", "project", AuditValue::Nullable),
+                    AuditField::new("lifecycle", "lifecycle", AuditValue::Nullable),
+                    AuditField::new("counts", "counts", AuditValue::Nullable),
+                    AuditField::new("open_todo_count", "open_todos", AuditValue::NullableCount),
+                    AuditField::new(
+                        "recent_answer_count",
+                        "recent_answers",
+                        AuditValue::NullableCount,
+                    ),
+                    AuditField::new(
+                        "recent_completion_count",
+                        "recent_completions",
+                        AuditValue::NullableCount,
+                    ),
+                    AuditField::new("summary_only", "summary_only", AuditValue::Nullable),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_SESSION,
             None,

@@ -3,6 +3,7 @@ use super::ToolVisibility::ModelVisible;
 use super::{
     def, model_spec, permission_risk, ToolDefinition, PERMISSION_RISK_WRITE, TOOL_CATEGORY_RUNTIME,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{Read, RunControl},
@@ -16,6 +17,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
             def(
                 "runner_config_check",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 Some(RunnerConfigControl),
@@ -39,6 +49,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
                 def(
                     "runner_config_reload",
+                    ToolAuditPolicy {
+                        request: AuditRequestPolicy {
+                            fields: &[],
+                            transform: AuditTransform::Fields,
+                            typed_fields: &[],
+                            typed_omit: &[],
+                        },
+                        result: AuditResultPolicy::SessionEvidence,
+                    },
                     ModelVisible,
                     TOOL_CATEGORY_RUNTIME,
                     Some(RunnerConfigControl),

@@ -1,5 +1,6 @@
 use super::ToolVisibility::ModelVisible;
 use super::{def, model_spec, ToolDefinition, TOOL_CATEGORY_RUNTIME};
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::RunControl, SSH_LOCAL, TOOL_PROVIDER_CONTROL,
 };
@@ -8,6 +9,15 @@ use crate::registry::input_schemas::ssh_resource_input_schema;
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
     def(
         "ssh_resource",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::Fields(&[]),
+        },
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,
         None,

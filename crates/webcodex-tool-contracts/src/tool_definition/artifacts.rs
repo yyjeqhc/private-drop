@@ -4,6 +4,7 @@ use super::{
     def, model_spec, permission_risk, requires_artifact_upload_path_binding, ToolDefinition,
     PERMISSION_RISK_ARTIFACT_WRITE, TOOL_CATEGORY_ARTIFACT,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::Artifact,
     ToolRisk::{ProjectWrite, Read},
@@ -22,6 +23,29 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "save_project_artifact",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("mime_type", "mime_type", AuditValue::Copy),
+                        AuditField::new("overwrite", "overwrite", AuditValue::Copy),
+                        AuditField::new(
+                            "content_base64_present",
+                            "content_base64",
+                            AuditValue::KeyPresent,
+                        ),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[AuditField::new(
+                        "content_base64_present",
+                        "content_base64",
+                        AuditValue::Present,
+                    )],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -47,6 +71,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "import_conversation_files_to_project",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("output_dir", "output_dir", AuditValue::Copy),
+                        AuditField::new("overwrite", "overwrite", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("file_count", "openaiFileIdRefs", AuditValue::Count),
+                        AuditField::new("targets_count", "targets", AuditValue::Count),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -71,6 +111,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "export_project_artifact",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
@@ -93,6 +142,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "read_project_artifact_metadata",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("allow_missing", "allow_missing", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
@@ -115,6 +177,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "read_project_artifact",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("encoding", "encoding", AuditValue::Copy),
+                        AuditField::new("offset", "offset", AuditValue::Copy),
+                        AuditField::new("length", "length", AuditValue::Copy),
+                        AuditField::new("as_image", "as_image", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
@@ -137,6 +215,30 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "artifact_upload_begin",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("expected_bytes", "expected_bytes", AuditValue::Copy),
+                        AuditField::new("mime_type", "mime_type", AuditValue::Copy),
+                        AuditField::new("overwrite", "overwrite", AuditValue::Copy),
+                        AuditField::new(
+                            "expected_sha256_present",
+                            "expected_sha256",
+                            AuditValue::KeyPresent,
+                        ),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[AuditField::new(
+                        "expected_sha256_present",
+                        "expected_sha256",
+                        AuditValue::Present,
+                    )],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -159,6 +261,29 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_artifact_upload_path_binding(model_spec(
         def(
             "artifact_upload_chunk",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("upload_id", "upload_id", AuditValue::Copy),
+                        AuditField::new("offset", "offset", AuditValue::Copy),
+                        AuditField::new(
+                            "content_base64_present",
+                            "content_base64",
+                            AuditValue::KeyPresent,
+                        ),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[AuditField::new(
+                        "content_base64_present",
+                        "content_base64",
+                        AuditValue::Present,
+                    )],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -182,6 +307,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "artifact_upload_finish",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("upload_id", "upload_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -207,6 +345,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "artifact_upload_abort",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("upload_id", "upload_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),

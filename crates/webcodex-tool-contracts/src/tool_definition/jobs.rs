@@ -6,6 +6,7 @@ use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes,
     requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB, TOOL_CATEGORY_JOB,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read},
@@ -25,6 +26,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "run_process",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[],
+                        transform: AuditTransform::ProcessExecution,
+                        typed_fields: &[AuditField::new(
+                            "sync_wait_secs",
+                            "sync_wait_secs",
+                            AuditValue::Copy,
+                        )],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(StructuredProcess),
@@ -50,6 +64,15 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "run_detached_process",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[],
+                        transform: AuditTransform::DetachedExecution,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(DetachedProcess),
@@ -74,6 +97,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "run_script",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::ScriptExecution,
+                    typed_fields: &[AuditField::new(
+                        "sync_wait_secs",
+                        "sync_wait_secs",
+                        AuditValue::Copy,
+                    )],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(StructuredScript),
@@ -96,6 +132,27 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "run_shell",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("timeout_secs", "timeout_secs", AuditValue::Copy),
+                        AuditField::new("cwd", "cwd", AuditValue::Copy),
+                        AuditField::new("purpose", "purpose", AuditValue::Copy),
+                        AuditField::new("shell", "shell", AuditValue::Copy),
+                        AuditField::new("command_present", "command", AuditValue::KeyPresent),
+                        AuditField::new("command_summary", "command", AuditValue::Preview),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[AuditField::new(
+                        "command_present",
+                        "command",
+                        AuditValue::Present,
+                    )],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(Shell),
@@ -118,6 +175,20 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
             def(
                 "open_session_shell",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("session_id", "session_id", AuditValue::Copy),
+                            AuditField::new("cwd", "cwd", AuditValue::Copy),
+                            AuditField::new("shell", "shell", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(PersistentShell),
@@ -140,6 +211,29 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
             def(
                 "session_shell_exec",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("timeout_secs", "timeout_secs", AuditValue::Copy),
+                            AuditField::new("cwd", "cwd", AuditValue::Copy),
+                            AuditField::new("purpose", "purpose", AuditValue::Copy),
+                            AuditField::new("shell", "shell", AuditValue::Copy),
+                            AuditField::new("session_id", "session_id", AuditValue::Copy),
+                            AuditField::new("shell_id", "shell_id", AuditValue::Copy),
+                            AuditField::new("command_present", "command", AuditValue::KeyPresent),
+                            AuditField::new("command_summary", "command", AuditValue::Preview),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[AuditField::new(
+                            "command_present",
+                            "command",
+                            AuditValue::Present,
+                        )],
+                        typed_omit: &["cwd", "shell"],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(PersistentShell),
@@ -162,6 +256,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "session_shell_status",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("shell_id", "shell_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_JOB,
             Some(PersistentShell),
@@ -185,6 +292,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "close_session_shell",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("session_id", "session_id", AuditValue::Copy),
+                            AuditField::new("shell_id", "shell_id", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(PersistentShell),
@@ -210,6 +330,27 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "run_job",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("timeout_secs", "timeout_secs", AuditValue::Copy),
+                            AuditField::new("cwd", "cwd", AuditValue::Copy),
+                            AuditField::new("purpose", "purpose", AuditValue::Copy),
+                            AuditField::new("shell", "shell", AuditValue::Copy),
+                            AuditField::new("command_present", "command", AuditValue::KeyPresent),
+                            AuditField::new("command_summary", "command", AuditValue::Preview),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[AuditField::new(
+                            "command_present",
+                            "command",
+                            AuditValue::Present,
+                        )],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 Some(AsyncJobs),
@@ -235,6 +376,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "stop_job",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("job_id", "job_id", AuditValue::Copy),
+                            AuditField::new("confirm", "confirm", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 None,
@@ -259,6 +413,15 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "job_status",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_JOB,
             None,
@@ -281,6 +444,15 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "job_log",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_JOB,
             None,
@@ -304,6 +476,15 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "observe_jobs",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[],
+                        transform: AuditTransform::JobObservation,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 None,
@@ -332,6 +513,20 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_jobs",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                            AuditField::new("status", "status", AuditValue::Copy),
+                            AuditField::new("project_present", "project", AuditValue::Present),
+                            AuditField::new("session_id_present", "session_id", AuditValue::Present),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_JOB,
                 None,
@@ -355,6 +550,15 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "job_tail",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::SessionEvidence,
+        },
         ModelHidden,
         TOOL_CATEGORY_JOB,
         None,

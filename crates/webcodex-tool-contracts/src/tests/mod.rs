@@ -69,3 +69,5 @@ mod migration_contracts;
 mod output_schemas;
 mod policy_contracts;
 mod registry_specs;
+
+mod audit_policy;

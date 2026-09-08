@@ -4,6 +4,7 @@ use super::{
     def, git_like, model_spec, permission_risk, ToolDefinition, PERMISSION_RISK_PATCH,
     TOOL_CATEGORY_CHECKPOINT,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::{None as NoPath, Patch},
     ToolRisk::{ProjectWrite, Read},
@@ -18,6 +19,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     git_like(model_spec(
         def(
             "workspace_checkpoint_create",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Checkpoint,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(FileRead),
@@ -40,6 +50,18 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "workspace_checkpoint_list",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(OwnerOnly),
@@ -62,6 +84,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "workspace_checkpoint_show",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("checkpoint_id", "checkpoint_id", AuditValue::Copy),
+                        AuditField::new("include_diff_stat", "include_diff_stat", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(OwnerOnly),
@@ -85,6 +120,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "workspace_checkpoint_restore",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("checkpoint_id", "checkpoint_id", AuditValue::Copy),
+                        AuditField::new("confirm", "confirm", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(FileWrite),
@@ -109,6 +157,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "workspace_checkpoint_delete",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("checkpoint_id", "checkpoint_id", AuditValue::Copy),
+                        AuditField::new("confirm", "confirm", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(OwnerOnly),

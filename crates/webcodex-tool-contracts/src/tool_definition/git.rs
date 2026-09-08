@@ -4,6 +4,7 @@ use super::{
     adaptive_runtime_direct, change_summary_like, context_recovery_only, def, git_like, model_spec,
     require_all_scopes, ToolDefinition, TOOL_CATEGORY_GIT,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::{None as NoPath, PathList},
     ToolRisk::{ProjectWrite, Read},
@@ -19,6 +20,15 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(change_summary_like(git_like(model_spec(
         def(
             "git_diff_summary",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[AuditField::new("project", "project", AuditValue::Copy)],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -42,6 +52,31 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "git_review_summary",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("base_commit", "base_commit", AuditValue::ExactCommit),
+                            AuditField::new("head_commit", "head_commit", AuditValue::ExactCommit),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("project", "project", AuditValue::Nullable),
+                        AuditField::new("scope", "scope", AuditValue::Nullable),
+                        AuditField::new("stats", "stats", AuditValue::Nullable),
+                        AuditField::new("coverage", "coverage", AuditValue::Nullable),
+                        AuditField::new("truncation", "truncation", AuditValue::Nullable),
+                        AuditField::new("deterministic", "deterministic", AuditValue::Nullable),
+                        AuditField::new("llm_summary", "llm_summary", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("reason_code", "reason_code", AuditValue::Nullable),
+                        AuditField::new("signal_count", "signals", AuditValue::NullableCount),
+                        AuditField::new("file_count", "files", AuditValue::NullableCount),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -67,6 +102,25 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "show_changes",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("include_diff", "include_diff", AuditValue::Copy),
+                            AuditField::new("max_hunks", "max_hunks", AuditValue::Copy),
+                            AuditField::new("max_hunk_lines", "max_hunk_lines", AuditValue::Copy),
+                            AuditField::new(
+                                "session_event_limit",
+                                "session_event_limit",
+                                AuditValue::Copy,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -94,6 +148,20 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(git_like(model_spec(
         def(
             "git_commit_paths",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("paths", "paths", AuditValue::Copy),
+                        AuditField::new("message_present", "message", AuditValue::StringPresent),
+                        AuditField::new("expected_head", "expected_head", AuditValue::ExactCommit),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -116,6 +184,15 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(git_like(model_spec(
         def(
             "git_status",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[AuditField::new("project", "project", AuditValue::Copy)],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -138,6 +215,18 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(git_like(model_spec(
         def(
             "git_diff",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("args_count", "args", AuditValue::NullableCount),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -161,6 +250,46 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "git_diff_hunks",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("paths", "paths", AuditValue::Copy),
+                            AuditField::new("max_hunks", "max_hunks", AuditValue::Copy),
+                            AuditField::new("max_hunk_lines", "max_hunk_lines", AuditValue::Copy),
+                            AuditField::new("cached", "cached", AuditValue::Copy),
+                            AuditField::new("continuation_present", "continuation", AuditValue::Present),
+                            AuditField::new("base_commit", "base_commit", AuditValue::ExactCommit),
+                            AuditField::new("head_commit", "head_commit", AuditValue::ExactCommit),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[
+                            "continuation_present",
+                            "base_commit",
+                            "head_commit",
+                            "base_commit_valid",
+                            "head_commit_valid",
+                        ],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("project", "project", AuditValue::Nullable),
+                        AuditField::new("scope", "scope", AuditValue::Nullable),
+                        AuditField::new("cached", "cached", AuditValue::Nullable),
+                        AuditField::new("hunk_count", "hunk_count", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new(
+                            "truncation_reasons",
+                            "truncation_reasons",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("has_more", "has_more", AuditValue::Nullable),
+                        AuditField::new("exit_code", "exit_code", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        AuditField::new("reason_code", "reason_code", AuditValue::Nullable),
+                        AuditField::new("file_count", "files", AuditValue::NullableCount),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -185,6 +314,19 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(git_like(model_spec(
         def(
             "git_log",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new("skip", "skip", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),

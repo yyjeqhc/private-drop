@@ -4,6 +4,7 @@ use super::{
     adaptive_runtime_direct, context_recovery_only, def, model_spec, ToolDefinition,
     TOOL_CATEGORY_FILE, TOOL_CATEGORY_PROJECT,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::{None as NoPath, SinglePath},
     ToolRisk::Read,
@@ -19,6 +20,20 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "project_overview",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("max_depth", "max_depth", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             Some(FileRead),
@@ -41,6 +56,19 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_project_files",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_FILE,
             Some(FileRead),
@@ -63,6 +91,15 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_project_tracked_files",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_FILE,
             // Runs `git ls-files` on the Runner, so the shell capability is what
@@ -87,6 +124,30 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "search_project_text",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new("context_before", "context_before", AuditValue::Copy),
+                        AuditField::new("context_after", "context_after", AuditValue::Copy),
+                        AuditField::new("result_mode", "result_mode", AuditValue::Copy),
+                        AuditField::new("timeout_secs", "timeout_secs", AuditValue::Copy),
+                        AuditField::new("include_glob_count", "include_globs", AuditValue::Count),
+                        AuditField::new("exclude_glob_count", "exclude_globs", AuditValue::Count),
+                        AuditField::new("pattern_present", "pattern", AuditValue::KeyPresent),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[AuditField::new(
+                        "pattern_present",
+                        "pattern",
+                        AuditValue::Present,
+                    )],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_FILE,
             Some(Shell),
@@ -110,6 +171,19 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "search_project_texts",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("query_count", "queries", AuditValue::Count),
+                            AuditField::new("patterns_present", "queries", AuditValue::AnyPattern),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_FILE,
                 Some(Shell),
@@ -137,6 +211,21 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "read_file",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("start_line", "start_line", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new("with_line_numbers", "with_line_numbers", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_FILE,
             Some(FileRead),
@@ -160,6 +249,19 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "read_files",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("items", "items", AuditValue::Copy),
+                            AuditField::new("with_line_numbers", "with_line_numbers", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_FILE,
                 Some(FileRead),

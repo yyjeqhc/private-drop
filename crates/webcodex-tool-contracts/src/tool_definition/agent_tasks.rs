@@ -4,6 +4,7 @@ use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_TASK,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read, WorkflowManage},
@@ -24,6 +25,48 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_agent_task",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("assignee_agent_id", "assignee_agent_id", AuditValue::Copy),
+                            AuditField::new(
+                                "source_conversation_id",
+                                "source_conversation_id",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("source_message_id", "source_message_id", AuditValue::Copy),
+                            AuditField::new(
+                                "referenced_project_id",
+                                "referenced_project_id",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("title_chars", "title", AuditValue::Chars),
+                            AuditField::new("instruction_bytes", "instruction", AuditValue::Bytes),
+                            AuditField::new(
+                                "idempotency_key_present",
+                                "idempotency_key",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("task_id", "/task/summary/task_id", AuditValue::Nullable),
+                        AuditField::new("state", "/task/summary/state", AuditValue::Nullable),
+                        AuditField::new(
+                            "assignee_agent_id",
+                            "/task/summary/assignee_agent_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -49,6 +92,27 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_tasks",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("assignee_agent_id", "assignee_agent_id", AuditValue::Copy),
+                            AuditField::new("offset", "offset", AuditValue::Copy),
+                            AuditField::new("limit", "limit", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                        AuditField::new("returned_count", "tasks", AuditValue::NullableCount),
+                        AuditField::new("offset", "offset", AuditValue::Nullable),
+                        AuditField::new("next_offset", "next_offset", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -74,6 +138,47 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "read_agent_task",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("task_id", "task_id", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("task_id", "/task/summary/task_id", AuditValue::Nullable),
+                        AuditField::new("state", "/task/summary/state", AuditValue::Nullable),
+                        AuditField::new(
+                            "assignee_agent_id",
+                            "/task/summary/assignee_agent_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "latest_attempt_id",
+                            "/task/summary/latest_attempt/attempt_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "latest_attempt_state",
+                            "/task/summary/latest_attempt/state",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "latest_attempt_number",
+                            "/task/summary/latest_attempt/attempt_number",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "controller_generation",
+                            "/task/summary/latest_attempt/attempt_controller_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -100,6 +205,31 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "assign_agent_task",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("task_id", "task_id", AuditValue::Copy),
+                            AuditField::new("assignee_agent_id", "assignee_agent_id", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("task_id", "/task/summary/task_id", AuditValue::Nullable),
+                        AuditField::new("state", "/task/summary/state", AuditValue::Nullable),
+                        AuditField::new(
+                            "assignee_agent_id",
+                            "/task/summary/assignee_agent_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -127,6 +257,42 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "start_agent_task_attempt",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("task_id", "task_id", AuditValue::Copy),
+                            AuditField::new("assignee_agent_id", "assignee_agent_id", AuditValue::Copy),
+                            AuditField::new(
+                                "idempotency_key_present",
+                                "idempotency_key",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("task_id", "/task/task_id", AuditValue::Nullable),
+                        AuditField::new("task_state", "/task/state", AuditValue::Nullable),
+                        AuditField::new("attempt_id", "/attempt/attempt_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "attempt_number",
+                            "/attempt/attempt_number",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("attempt_state", "/attempt/state", AuditValue::Nullable),
+                        AuditField::new(
+                            "controller_generation",
+                            "/attempt/attempt_controller_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -153,6 +319,53 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                     "start_agent_task_coding_run",
+                    ToolAuditPolicy {
+                        request: AuditRequestPolicy {
+                            fields: &[
+                                AuditField::new("project", "project", AuditValue::Copy),
+                                AuditField::new("task_id", "task_id", AuditValue::Copy),
+                                AuditField::new("attempt_id", "attempt_id", AuditValue::Copy),
+                                AuditField::new("assignee_agent_id", "assignee_agent_id", AuditValue::Copy),
+                                AuditField::new(
+                                    "attempt_controller_generation",
+                                    "attempt_controller_generation",
+                                    AuditValue::Copy,
+                                ),
+                                AuditField::new("provider_id", "provider_id", AuditValue::Copy),
+                                AuditField::new("timeout_secs", "timeout_secs", AuditValue::Copy),
+                                AuditField::new(
+                                    "attempt_fence_present",
+                                    "attempt_fence",
+                                    AuditValue::StringPresent,
+                                ),
+                                AuditField::new("config_count", "config", AuditValue::ObjectCount),
+                            ],
+                            transform: AuditTransform::Fields,
+                            typed_fields: &[],
+                            typed_omit: &[],
+                        },
+                        result: AuditResultPolicy::Fields(&[
+                            AuditField::new("task_id", "task_id", AuditValue::Nullable),
+                            AuditField::new("attempt_id", "attempt_id", AuditValue::Nullable),
+                            AuditField::new("run_id", "run_id", AuditValue::Nullable),
+                            AuditField::new("project", "project", AuditValue::Nullable),
+                            AuditField::new("provider_id", "provider_id", AuditValue::Nullable),
+                            AuditField::new("dispatch_state", "dispatch_state", AuditValue::Nullable),
+                            AuditField::new("run_state", "run_state", AuditValue::Nullable),
+                            AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                            AuditField::new("execution_status", "execution_status", AuditValue::Nullable),
+                            AuditField::new(
+                                "execution_recovery",
+                                "execution_recovery",
+                                AuditValue::Nullable,
+                            ),
+                            AuditField::new("task_state", "task_state", AuditValue::Nullable),
+                            AuditField::new("attempt_state", "attempt_state", AuditValue::Nullable),
+                            AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                            AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                            AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                        ]),
+                    },
                     ModelVisible,
                     TOOL_CATEGORY_AGENT_TASK,
                     Some(CodingAgentRuns),
@@ -186,6 +399,39 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                 "reconcile_agent_task_coding_run",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("task_id", "task_id", AuditValue::Copy),
+                            AuditField::new("attempt_id", "attempt_id", AuditValue::Copy),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("task_id", "task_id", AuditValue::Nullable),
+                        AuditField::new("attempt_id", "attempt_id", AuditValue::Nullable),
+                        AuditField::new("run_id", "run_id", AuditValue::Nullable),
+                        AuditField::new("project", "project", AuditValue::Nullable),
+                        AuditField::new("provider_id", "provider_id", AuditValue::Nullable),
+                        AuditField::new("dispatch_state", "dispatch_state", AuditValue::Nullable),
+                        AuditField::new("run_state", "run_state", AuditValue::Nullable),
+                        AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                        AuditField::new("execution_status", "execution_status", AuditValue::Nullable),
+                        AuditField::new(
+                            "execution_recovery",
+                            "execution_recovery",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("task_state", "task_state", AuditValue::Nullable),
+                        AuditField::new("attempt_state", "attempt_state", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -214,6 +460,48 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "heartbeat_agent_task_attempt",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("task_id", "task_id", AuditValue::Copy),
+                            AuditField::new("attempt_id", "attempt_id", AuditValue::Copy),
+                            AuditField::new("assignee_agent_id", "assignee_agent_id", AuditValue::Copy),
+                            AuditField::new(
+                                "attempt_controller_generation",
+                                "attempt_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new(
+                                "attempt_fence_present",
+                                "attempt_fence",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("task_id", "/task/task_id", AuditValue::Nullable),
+                        AuditField::new("task_state", "/task/state", AuditValue::Nullable),
+                        AuditField::new("attempt_id", "/attempt/attempt_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "attempt_number",
+                            "/attempt/attempt_number",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("attempt_state", "/attempt/state", AuditValue::Nullable),
+                        AuditField::new(
+                            "controller_generation",
+                            "/attempt/attempt_controller_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -242,6 +530,64 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "complete_agent_task_attempt",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("task_id", "task_id", AuditValue::Copy),
+                            AuditField::new("attempt_id", "attempt_id", AuditValue::Copy),
+                            AuditField::new("assignee_agent_id", "assignee_agent_id", AuditValue::Copy),
+                            AuditField::new(
+                                "attempt_controller_generation",
+                                "attempt_controller_generation",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("outcome", "outcome", AuditValue::Copy),
+                            AuditField::new(
+                                "attempt_fence_present",
+                                "attempt_fence",
+                                AuditValue::StringPresent,
+                            ),
+                            AuditField::new(
+                                "terminal_result_bytes",
+                                "terminal_result",
+                                AuditValue::Bytes,
+                            ),
+                            AuditField::new(
+                                "terminal_reason_bytes",
+                                "terminal_reason",
+                                AuditValue::Bytes,
+                            ),
+                            AuditField::new(
+                                "completion_key_present",
+                                "completion_key",
+                                AuditValue::StringPresent,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::Fields(&[
+                        AuditField::new("task_id", "/task/task_id", AuditValue::Nullable),
+                        AuditField::new("task_state", "/task/state", AuditValue::Nullable),
+                        AuditField::new("attempt_id", "/attempt/attempt_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "attempt_number",
+                            "/attempt/attempt_number",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("attempt_state", "/attempt/state", AuditValue::Nullable),
+                        AuditField::new(
+                            "controller_generation",
+                            "/attempt/attempt_controller_generation",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                },
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,

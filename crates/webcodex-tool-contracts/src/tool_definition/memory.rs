@@ -1,5 +1,6 @@
 use super::ToolVisibility::ModelHidden;
 use super::{def, require_all_scopes, ToolDefinition, TOOL_CATEGORY_RUNTIME};
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{MemoryManage, Read},
@@ -14,6 +15,35 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_search",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("offset", "offset", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new(
+                            "expected_catalog_revision",
+                            "expected_catalog_revision",
+                            AuditValue::Copy,
+                        ),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("query_present", "query", AuditValue::NonemptyString),
+                        AuditField::new("tag_count", "tags", AuditValue::Count),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("project", "project", AuditValue::Nullable),
+                    AuditField::new("catalog_revision", "catalog_revision", AuditValue::Nullable),
+                    AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                    AuditField::new("returned_count", "returned_count", AuditValue::Nullable),
+                    AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                ]),
+            },
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -35,6 +65,30 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_read",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("memory_key", "memory_key", AuditValue::Copy),
+                        AuditField::new("expected_revision", "expected_revision", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("project", "project", AuditValue::Nullable),
+                    AuditField::new("memory_id", "memory_id", AuditValue::Nullable),
+                    AuditField::new("memory_key", "memory_key", AuditValue::Nullable),
+                    AuditField::new("revision", "revision", AuditValue::Nullable),
+                    AuditField::new("bootstrap", "bootstrap", AuditValue::Nullable),
+                    AuditField::new("priority", "priority", AuditValue::Nullable),
+                    AuditField::new("returned_body_bytes", "body", AuditValue::NullableBytes),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                ]),
+            },
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -56,6 +110,34 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_set",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("memory_key", "memory_key", AuditValue::Copy),
+                        AuditField::new("priority", "priority", AuditValue::Copy),
+                        AuditField::new("bootstrap", "bootstrap", AuditValue::Copy),
+                        AuditField::new("expected_revision", "expected_revision", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                        AuditField::new("summary_present", "summary", AuditValue::StringPresent),
+                        AuditField::new("body_present", "body", AuditValue::StringPresent),
+                        AuditField::new("tag_count", "tags", AuditValue::Count),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("project", "project", AuditValue::Nullable),
+                    AuditField::new("memory_id", "memory_id", AuditValue::Nullable),
+                    AuditField::new("memory_key", "memory_key", AuditValue::Nullable),
+                    AuditField::new("old_revision", "old_revision", AuditValue::Nullable),
+                    AuditField::new("revision", "revision", AuditValue::Nullable),
+                    AuditField::new("created", "created", AuditValue::Nullable),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                ]),
+            },
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -77,6 +159,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_delete",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("memory_key", "memory_key", AuditValue::Copy),
+                        AuditField::new("expected_revision", "expected_revision", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("project", "project", AuditValue::Nullable),
+                    AuditField::new("memory_id", "memory_id", AuditValue::Nullable),
+                    AuditField::new("memory_key", "memory_key", AuditValue::Nullable),
+                    AuditField::new("revision", "revision", AuditValue::Nullable),
+                    AuditField::new("deleted", "deleted", AuditValue::Nullable),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                ]),
+            },
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -97,6 +201,25 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "memory_scope_list",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("offset", "offset", AuditValue::Copy),
+                    AuditField::new("limit", "limit", AuditValue::Copy),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                AuditField::new("returned_count", "returned_count", AuditValue::Nullable),
+                AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         None,
@@ -115,6 +238,34 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "memory_scope_purge",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("project", "project", AuditValue::Copy),
+                    AuditField::new("memory_scope_id", "memory_scope_id", AuditValue::Copy),
+                    AuditField::new(
+                        "expected_catalog_revision",
+                        "expected_catalog_revision",
+                        AuditValue::Copy,
+                    ),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::Fields(&[
+                AuditField::new("memory_scope_id", "memory_scope_id", AuditValue::Nullable),
+                AuditField::new("catalog_revision", "catalog_revision", AuditValue::Nullable),
+                AuditField::new(
+                    "current_catalog_revision",
+                    "current_catalog_revision",
+                    AuditValue::Nullable,
+                ),
+                AuditField::new("purged_count", "purged_count", AuditValue::Nullable),
+                AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+            ]),
+        },
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         None,

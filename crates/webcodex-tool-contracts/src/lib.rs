@@ -5,6 +5,7 @@
 //! Execution, authorization enforcement, connector orchestration, and side effects remain in
 //! the root application crate.
 
+pub mod audit_policy;
 pub mod metadata;
 pub mod registry;
 pub mod tool_catalog;

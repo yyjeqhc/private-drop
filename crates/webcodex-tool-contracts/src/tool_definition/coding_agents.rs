@@ -4,6 +4,7 @@ use super::{
     def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_JOB,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_CODING_AGENT,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{JobRun, Read},
@@ -20,6 +21,50 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                     "coding_agent_start",
+                    ToolAuditPolicy {
+                        request: AuditRequestPolicy {
+                            fields: &[
+                                AuditField::new("project", "project", AuditValue::Copy),
+                                AuditField::new("provider_id", "provider_id", AuditValue::Copy),
+                                AuditField::new("timeout_secs", "timeout_secs", AuditValue::Copy),
+                                AuditField::new("instruction_bytes", "instruction", AuditValue::Bytes),
+                                AuditField::new("config_count", "config", AuditValue::ObjectCount),
+                                AuditField::new(
+                                    "idempotency_key_present",
+                                    "idempotency_key",
+                                    AuditValue::StringPresent,
+                                ),
+                            ],
+                            transform: AuditTransform::Fields,
+                            typed_fields: &[],
+                            typed_omit: &[],
+                        },
+                        result: AuditResultPolicy::Fields(&[
+                            AuditField::new("run_id", "run_id", AuditValue::Nullable),
+                            AuditField::new("project", "project", AuditValue::Nullable),
+                            AuditField::new("provider_id", "provider_id", AuditValue::Nullable),
+                            AuditField::new("state", "state", AuditValue::Nullable),
+                            AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                            AuditField::new("cancel_requested", "cancel_requested", AuditValue::Nullable),
+                            AuditField::new(
+                                "terminal_stop_reason",
+                                "/terminal/stop_reason",
+                                AuditValue::Nullable,
+                            ),
+                            AuditField::new(
+                                "terminal_error_code",
+                                "/terminal/error_code",
+                                AuditValue::Nullable,
+                            ),
+                            AuditField::new(
+                                "terminal_completed_at",
+                                "/terminal/completed_at",
+                                AuditValue::Nullable,
+                            ),
+                            AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                            AuditField::new("recovery_kind", "recovery_kind", AuditValue::Nullable),
+                        ]),
+                    },
                     ModelVisible,
                     TOOL_CATEGORY_CODING_AGENT,
                     Some(CodingAgentRuns),
@@ -46,6 +91,54 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "coding_agent_observe",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("run_id", "run_id", AuditValue::Copy),
+                        AuditField::new("wait_secs", "wait_secs", AuditValue::Copy),
+                        AuditField::new(
+                            "token_present",
+                            "after_observation_token",
+                            AuditValue::StringPresent,
+                        ),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::CodingEvents(&[
+                    AuditField::new("run_id", "run_id", AuditValue::Nullable),
+                    AuditField::new("project", "project", AuditValue::Nullable),
+                    AuditField::new("provider_id", "provider_id", AuditValue::Nullable),
+                    AuditField::new("state", "state", AuditValue::Nullable),
+                    AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                    AuditField::new("has_more", "has_more", AuditValue::Nullable),
+                    AuditField::new("history_lost", "history_lost", AuditValue::Nullable),
+                    AuditField::new(
+                        "first_retained_sequence",
+                        "first_retained_sequence",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new(
+                        "terminal_stop_reason",
+                        "/terminal/stop_reason",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new(
+                        "terminal_error_code",
+                        "/terminal/error_code",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new(
+                        "terminal_completed_at",
+                        "/terminal/completed_at",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new("recovery_kind", "recovery_kind", AuditValue::Nullable),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,
@@ -69,6 +162,42 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "coding_agent_cancel",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("run_id", "run_id", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::Fields(&[
+                    AuditField::new("run_id", "run_id", AuditValue::Nullable),
+                    AuditField::new("project", "project", AuditValue::Nullable),
+                    AuditField::new("provider_id", "provider_id", AuditValue::Nullable),
+                    AuditField::new("state", "state", AuditValue::Nullable),
+                    AuditField::new("execution_state", "execution_state", AuditValue::Nullable),
+                    AuditField::new("cancel_requested", "cancel_requested", AuditValue::Nullable),
+                    AuditField::new(
+                        "terminal_stop_reason",
+                        "/terminal/stop_reason",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new(
+                        "terminal_error_code",
+                        "/terminal/error_code",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new(
+                        "terminal_completed_at",
+                        "/terminal/completed_at",
+                        AuditValue::Nullable,
+                    ),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    AuditField::new("recovery_kind", "recovery_kind", AuditValue::Nullable),
+                ]),
+            },
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,

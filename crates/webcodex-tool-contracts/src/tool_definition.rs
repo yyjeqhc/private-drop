@@ -66,6 +66,7 @@ pub use super::tool_policy::{
     is_model_hidden_tool_name, known_tool_names, model_hidden_tool_names,
     runtime_tool_context_continuity_policy, runtime_tool_requires_explicit_business_session,
 };
+use crate::audit_policy::*;
 use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA, RUNNER_CAPABILITY_ASYNC_JOBS,
     RUNNER_CAPABILITY_ASYNC_SHELL_JOBS, RUNNER_CAPABILITY_CODING_AGENT_RUNS,
@@ -288,6 +289,7 @@ impl ToolModelSurfaceDeclaration {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ToolDefinition {
+    pub audit: ToolAuditPolicy,
     pub name: &'static str,
     pub model_spec: Option<ToolModelSpecDeclaration>,
     pub model_surface: ToolModelSurfaceDeclaration,
@@ -420,6 +422,7 @@ pub struct ToolManifestIntent {
 
 const fn def(
     name: &'static str,
+    audit: ToolAuditPolicy,
     visibility: ToolVisibility,
     category: &'static str,
     runner_capability: Option<RunnerCapabilityRequirement>,
@@ -432,6 +435,7 @@ const fn def(
     shell_like: bool,
 ) -> ToolDefinition {
     ToolDefinition {
+        audit,
         name,
         model_spec: None,
         model_surface: ToolModelSurfaceDeclaration::DEFAULT,
@@ -606,6 +610,20 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
 const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[context_recovery_only(model_spec(
     def(
         "list_tools",
+        ToolAuditPolicy {
+            request: AuditRequestPolicy {
+                fields: &[
+                    AuditField::new("category", "category", AuditValue::Copy),
+                    AuditField::new("features", "features", AuditValue::Copy),
+                    AuditField::new("summary_only", "summary_only", AuditValue::Copy),
+                    AuditField::new("limit", "limit", AuditValue::Copy),
+                ],
+                transform: AuditTransform::Fields,
+                typed_fields: &[],
+                typed_omit: &[],
+            },
+            result: AuditResultPolicy::SessionEvidence,
+        },
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,
         None,

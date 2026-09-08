@@ -4,6 +4,7 @@ use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
     PERMISSION_RISK_PATCH, TOOL_CATEGORY_PATCH,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::Patch, ToolRisk::ProjectWrite, PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
 };
@@ -15,6 +16,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
                 def(
                 "apply_patch",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("dry_run", "dry_run", AuditValue::Copy),
+                            AuditField::new("matching_mode", "matching_mode", AuditValue::Copy),
+                            AuditField::new("patch_present", "patch", AuditValue::KeyPresent),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[
+                            AuditField::new("patch_bytes", "patch", AuditValue::Bytes),
+                            AuditField::new("patch_present", "patch", AuditValue::Present),
+                        ],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_PATCH,
                 Some(ApplyPatch),
@@ -42,6 +60,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "apply_unified_diff",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new(
+                                "deny_sensitive_paths",
+                                "deny_sensitive_paths",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new("diff_present", "diff", AuditValue::KeyPresent),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[AuditField::new("diff_present", "diff", AuditValue::Present)],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_PATCH,
                 Some(Shell),

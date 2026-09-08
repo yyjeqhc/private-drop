@@ -3,6 +3,7 @@ use super::{
     adaptive_runtime_direct, context_recovery_only, def, model_spec, ToolDefinition,
     TOOL_CATEGORY_PROJECT, TOOL_CATEGORY_RUNTIME,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{ProjectWrite, Read},
@@ -18,6 +19,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_projects",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new("summary_only", "summary_only", AuditValue::Copy),
+                        AuditField::new("client_id_present", "client_id", AuditValue::Present),
+                        AuditField::new("project_present", "project", AuditValue::Present),
+                        AuditField::new("query_present", "query", AuditValue::StringPresent),
+                        AuditField::new("query_length", "query", AuditValue::Chars),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -40,6 +57,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "register_project",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -62,6 +88,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "unregister_project",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -84,6 +119,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "create_project",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -106,6 +150,21 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_runners",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("include_projects", "include_projects", AuditValue::Copy),
+                        AuditField::new("summary_only", "summary_only", AuditValue::Copy),
+                        AuditField::new("client_id_present", "client_id", AuditValue::Present),
+                        AuditField::new("client_ids_count", "client_ids", AuditValue::Count),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &["project"],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -129,6 +188,20 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "runtime_status",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("project", "project", AuditValue::Copy),
+                            AuditField::new("compact", "compact", AuditValue::Copy),
+                            AuditField::new("summary_only", "summary_only", AuditValue::Copy),
+                            AuditField::new("client_id_present", "client_id", AuditValue::Present),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &["project"],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 None,
@@ -154,6 +227,29 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "tool_manifest",
+                ToolAuditPolicy {
+                    request: AuditRequestPolicy {
+                        fields: &[
+                            AuditField::new("tool_name", "tool_name", AuditValue::Copy),
+                            AuditField::new("category", "category", AuditValue::Copy),
+                            AuditField::new("intent", "intent", AuditValue::Copy),
+                            AuditField::new(
+                                "include_recommended_flows",
+                                "include_recommended_flows",
+                                AuditValue::Copy,
+                            ),
+                            AuditField::new(
+                                "include_risk_summary",
+                                "include_risk_summary",
+                                AuditValue::Copy,
+                            ),
+                        ],
+                        transform: AuditTransform::Fields,
+                        typed_fields: &[],
+                        typed_omit: &[],
+                    },
+                    result: AuditResultPolicy::SessionEvidence,
+                },
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 None,

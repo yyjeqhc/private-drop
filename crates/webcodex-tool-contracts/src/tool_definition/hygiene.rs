@@ -4,6 +4,7 @@ use super::{
     adaptive_runtime_direct, context_recovery_only, def, git_like, model_spec, ToolDefinition,
     TOOL_CATEGORY_CLEANUP,
 };
+use crate::audit_policy::*;
 use crate::metadata::{
     ToolPathHint::{None as NoPath, PathList},
     ToolRisk::{ProjectWrite, Read},
@@ -18,6 +19,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
     context_recovery_only(model_spec(
         def(
             "workspace_hygiene_check",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("max_findings", "max_findings", AuditValue::Copy),
+                        AuditField::new("include_tracked", "include_tracked", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(GitOrShell),
@@ -44,6 +58,18 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "delete_project_files",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("paths", "paths", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(Shell),
@@ -66,6 +92,18 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     git_like(model_spec(
         def(
             "git_restore_paths",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("paths", "paths", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(StructuredProcess),
@@ -88,6 +126,18 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     git_like(model_spec(
         def(
             "discard_untracked",
+            ToolAuditPolicy {
+                request: AuditRequestPolicy {
+                    fields: &[
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("paths", "paths", AuditValue::Copy),
+                    ],
+                    transform: AuditTransform::Fields,
+                    typed_fields: &[],
+                    typed_omit: &[],
+                },
+                result: AuditResultPolicy::SessionEvidence,
+            },
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(StructuredProcess),
