@@ -12,11 +12,14 @@ use super::shell::shell_quote;
 use super::shell::shell_quote_powershell;
 use super::shell::{base_shell_env, cwd_allowed};
 use super::ssh::SshConnectionPool;
+#[cfg(test)]
+use crate::runner_protocol::RunnerRequest;
 use crate::runner_protocol::{
-    PersistentShellRequest, PersistentShellResult, RunnerRequest, RAW_SHELL_COMMAND_MAX_BYTES,
+    PersistentShellRequest, PersistentShellResult, RAW_SHELL_COMMAND_MAX_BYTES,
 };
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use webcodex_core::runner_operation::RunnerPersistentShellOperation;
 #[cfg(any(unix, windows))]
 use webcodex_persistent_shell::canonical_dialect;
 use webcodex_persistent_shell::{
@@ -46,59 +49,47 @@ impl PersistentShellManager {
         }
     }
 
-    pub(crate) fn handle(
+    pub(crate) fn handle_operation(
         &self,
         policy: &RunnerPolicy,
         shell: &ShellConfig,
         ssh: &SshConfig,
         ssh_generation: u64,
         project_registry_dir: &Path,
-        request: &RunnerRequest,
+        client_id: &str,
+        request: &RunnerPersistentShellOperation,
     ) -> PersistentShellResult {
         self.processes.update_limits(limits(shell));
         let ssh_resource = request
             .job_context
             .as_ref()
             .and_then(|context| context.ssh_resource.as_deref());
-        let Some(operation) = request.persistent_shell.as_ref() else {
-            return error_result(
-                "",
-                "",
-                "",
-                "persistent_shell_invalid_request",
-                "persistent shell payload is required",
-            );
-        };
+        let operation = &request.request;
         if operation.action == "close" {
             return self.close(operation);
         }
 
-        let project = match validate_boundary(
-            policy,
-            shell,
-            project_registry_dir,
-            &request.client_id,
-            operation,
-        ) {
-            Ok(project) => project,
-            Err((code, message)) => {
-                if operation.action != "open" {
-                    let _ = self.processes.close(
+        let project =
+            match validate_boundary(policy, shell, project_registry_dir, client_id, operation) {
+                Ok(project) => project,
+                Err((code, message)) => {
+                    if operation.action != "open" {
+                        let _ = self.processes.close(
+                            &operation.shell_id,
+                            &operation.workflow_session_id,
+                            &operation.runtime_project_id,
+                            code,
+                        );
+                    }
+                    return error_result(
                         &operation.shell_id,
                         &operation.workflow_session_id,
                         &operation.runtime_project_id,
                         code,
+                        message,
                     );
                 }
-                return error_result(
-                    &operation.shell_id,
-                    &operation.workflow_session_id,
-                    &operation.runtime_project_id,
-                    code,
-                    message,
-                );
-            }
-        };
+            };
 
         match operation.action.as_str() {
             "open" => {
@@ -107,13 +98,13 @@ impl PersistentShellManager {
                         policy,
                         ssh,
                         ssh_generation,
-                        request,
+                        client_id,
                         operation,
                         resource,
                         &project,
                     )
                 } else {
-                    self.open(policy, shell, request, operation, &project)
+                    self.open(policy, shell, client_id, operation, &project)
                 }
             }
             "exec" => {
@@ -146,7 +137,7 @@ impl PersistentShellManager {
         policy: &RunnerPolicy,
         ssh: &SshConfig,
         ssh_generation: u64,
-        request: &RunnerRequest,
+        client_id: &str,
         operation: &PersistentShellRequest,
         resource_name: &str,
         _project: &RunnerProjectShellContext,
@@ -214,7 +205,7 @@ impl PersistentShellManager {
             workflow_session_id: operation.workflow_session_id.clone(),
             runtime_project_id: operation.runtime_project_id.clone(),
             executor: EXECUTOR_SSH.to_string(),
-            client_id: Some(request.client_id.clone()),
+            client_id: Some(client_id.to_string()),
         };
         // The bootstrap is the initialization command: it reserves FD 7/8 on the
         // remote shell (so the shared command wrapper's markers always reach the
@@ -246,7 +237,7 @@ impl PersistentShellManager {
         _policy: &RunnerPolicy,
         _ssh: &SshConfig,
         _ssh_generation: u64,
-        _request: &RunnerRequest,
+        _client_id: &str,
         operation: &PersistentShellRequest,
         _resource_name: &str,
         _project: &RunnerProjectShellContext,
@@ -392,11 +383,11 @@ impl PersistentShellManager {
         &self,
         policy: &RunnerPolicy,
         shell: &ShellConfig,
-        request: &RunnerRequest,
+        client_id: &str,
         operation: &PersistentShellRequest,
         project: &RunnerProjectShellContext,
     ) -> PersistentShellResult {
-        let launch = match build_launch(policy, shell, request, operation, project) {
+        let launch = match build_launch(policy, shell, client_id, operation, project) {
             Ok(launch) => launch,
             Err((code, message)) => {
                 return error_result(
@@ -598,6 +589,39 @@ impl PersistentShellManager {
 
     pub(crate) fn close_project(&self, runtime_project_id: &str, reason: &str) -> usize {
         self.processes.close_project(runtime_project_id, reason)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn handle(
+        &self,
+        policy: &RunnerPolicy,
+        shell: &ShellConfig,
+        ssh: &SshConfig,
+        ssh_generation: u64,
+        project_registry_dir: &Path,
+        request: &RunnerRequest,
+    ) -> PersistentShellResult {
+        let Some(operation) = request.persistent_shell.clone() else {
+            return error_result(
+                "",
+                "",
+                "",
+                "persistent_shell_invalid_request",
+                "persistent shell payload is required",
+            );
+        };
+        self.handle_operation(
+            policy,
+            shell,
+            ssh,
+            ssh_generation,
+            project_registry_dir,
+            &request.client_id,
+            &RunnerPersistentShellOperation {
+                request: operation,
+                job_context: request.job_context.clone(),
+            },
+        )
     }
 
     pub(crate) fn close_exact(
@@ -819,7 +843,7 @@ fn selected_profile<'a>(
 fn build_launch(
     policy: &RunnerPolicy,
     shell: &ShellConfig,
-    request: &RunnerRequest,
+    client_id: &str,
     operation: &PersistentShellRequest,
     project: &RunnerProjectShellContext,
 ) -> Result<ShellLaunch, (&'static str, String)> {
@@ -827,7 +851,7 @@ fn build_launch(
     cwd_allowed(policy, &cwd).map_err(|message| ("persistent_shell_cwd_denied", message))?;
     build_launch_at_cwd(
         shell,
-        request,
+        client_id,
         operation,
         project,
         cwd,
@@ -837,7 +861,7 @@ fn build_launch(
 
 fn build_launch_at_cwd(
     shell: &ShellConfig,
-    request: &RunnerRequest,
+    client_id: &str,
     operation: &PersistentShellRequest,
     project: &RunnerProjectShellContext,
     cwd: PathBuf,
@@ -933,7 +957,7 @@ fn build_launch_at_cwd(
             workflow_session_id: operation.workflow_session_id.clone(),
             runtime_project_id: operation.runtime_project_id.clone(),
             executor: EXECUTOR_AGENT.to_string(),
-            client_id: Some(request.client_id.clone()),
+            client_id: Some(client_id.to_string()),
         },
         dialect,
         profile: profile_name,

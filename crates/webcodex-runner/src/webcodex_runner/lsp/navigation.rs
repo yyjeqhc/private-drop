@@ -17,6 +17,8 @@ use super::supervisor::{
     classify_uri_against_project_root, LspError, LspServerStatus, LspSupervisor, PositionEncoding,
     ProjectUriClassification,
 };
+#[cfg(test)]
+use crate::lsp_bridge::AGENT_LSP_REQUEST_KIND;
 use crate::lsp_bridge::{
     bound_error_message, error_codes, redact_absolute_paths, validate_call_hierarchy_bounds,
     CallHierarchyDirection, CallHierarchyEdgeDirection, CallHierarchyResult,
@@ -25,10 +27,11 @@ use crate::lsp_bridge::{
     PublicCallHierarchyEdge, PublicCallHierarchySymbol, PublicDiagnostic, PublicHover,
     PublicLocation, PublicPosition, PublicRange, PublicSymbol, PublicWorkspaceSymbol,
     RunnerLspPayload, RunnerLspRequest, RunnerLspResultEnvelope, WorkspaceSymbolsResult,
-    AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
-    MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE, MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
+    MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC, MAX_CALL_HIERARCHY_CALL_SITES_PER_EDGE,
+    MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
     MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY, MAX_CALL_HIERARCHY_ROOTS,
 };
+#[cfg(test)]
 use crate::runner_protocol::RunnerRequest;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -46,26 +49,21 @@ const MAX_DIAGNOSTIC_TOTAL_TEXT_CHARS: usize = 64 * 1024;
 const DIAGNOSTICS_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_HOVER_VALUE_CHARS: usize = 16 * 1024;
 const MAX_WORKSPACE_SYMBOL_FIELD_CHARS: usize = 256;
+#[cfg(test)]
 pub(crate) fn is_lsp_request_kind(kind: &str) -> bool {
     kind == AGENT_LSP_REQUEST_KIND
 }
 
-pub(crate) fn handle_lsp_request(
+pub(crate) fn handle_lsp_operation(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
     supervisor: &LspSupervisor,
-    request: &RunnerRequest,
+    payload: &RunnerLspPayload,
+    timeout_secs: u64,
 ) -> CommandResult {
     let start = Instant::now();
-    let Some(payload) = request.lsp.as_ref() else {
-        return lsp_error_cmd(
-            start,
-            error_codes::MISSING_LSP_PAYLOAD,
-            "LSP request missing typed payload",
-        );
-    };
     let operation_deadline = start
-        .checked_add(Duration::from_secs(request.timeout_secs.max(1)))
+        .checked_add(Duration::from_secs(timeout_secs.max(1)))
         .unwrap_or(start);
     match execute_lsp(
         policy,
@@ -91,6 +89,29 @@ pub(crate) fn handle_lsp_request(
             error: None,
         },
     }
+}
+
+#[cfg(test)]
+pub(crate) fn handle_lsp_request(
+    policy: &RunnerPolicy,
+    project_registry_dir: &Path,
+    supervisor: &LspSupervisor,
+    request: &RunnerRequest,
+) -> CommandResult {
+    let Some(payload) = request.lsp.as_ref() else {
+        return lsp_error_cmd(
+            Instant::now(),
+            error_codes::MISSING_LSP_PAYLOAD,
+            "LSP request missing typed payload",
+        );
+    };
+    handle_lsp_operation(
+        policy,
+        project_registry_dir,
+        supervisor,
+        payload,
+        request.timeout_secs,
+    )
 }
 
 fn execute_lsp(
@@ -2148,6 +2169,7 @@ fn sanitize_path_message(message: impl Into<String>) -> String {
     bound_error_message(message.into())
 }
 
+#[cfg(test)]
 fn lsp_error_cmd(start: Instant, code: &str, message: &str) -> CommandResult {
     let envelope = RunnerLspResultEnvelope::err(code, message);
     CommandResult {

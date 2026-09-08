@@ -8,8 +8,10 @@ use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use super::shutdown::{lock_unpoison, SHUTDOWN_POLL_INTERVAL};
 use super::RunnerPolicy;
+#[cfg(test)]
+use crate::runner_protocol::RunnerRequest;
 use crate::runner_protocol::{
-    ClaudeCodeProviderStatus, ProviderCallSummary, RunnerRequest, ToolProvidersStatus,
+    ClaudeCodeProviderStatus, ProviderCallSummary, ToolProvidersStatus,
     EXTERNAL_SEARCH_REQUEST_PREFIX,
 };
 use serde_json::{json, Value};
@@ -24,6 +26,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+#[cfg(test)]
+use webcodex_core::runner_operation::RunnerOperation;
+use webcodex_core::runner_operation::RunnerShellOperation;
 
 use webcodex_process::{GracefulTermination, ManagedChild};
 
@@ -227,28 +232,31 @@ impl ExternalToolRouter {
 
     #[cfg(test)]
     pub(crate) fn route(&self, policy: &RunnerPolicy, request: &RunnerRequest) -> ExternalRoute {
-        self.route_with_shutdown(policy, request, None)
+        match request.decode_operation() {
+            Ok(RunnerOperation::RunShell(operation)) => {
+                self.route_with_shutdown(policy, &operation, None)
+            }
+            _ => ExternalRoute::Native,
+        }
     }
 
     pub(crate) fn route_with_shutdown(
         &self,
         policy: &RunnerPolicy,
-        request: &RunnerRequest,
+        operation: &RunnerShellOperation,
         shutdown: Option<&AtomicBool>,
     ) -> ExternalRoute {
         if self.strategy == ToolProviderStrategy::Native {
             return ExternalRoute::Native;
         }
-        let capability = match request.kind.as_str() {
-            "run_shell"
-                if request.command.lines().next() == Some(EXTERNAL_SEARCH_REQUEST_PREFIX) =>
-            {
-                ProviderCapability::SearchProjectText
-            }
-            _ => return ExternalRoute::Native,
+        let capability = if operation.command.lines().next() == Some(EXTERNAL_SEARCH_REQUEST_PREFIX)
+        {
+            ProviderCapability::SearchProjectText
+        } else {
+            return ExternalRoute::Native;
         };
         let started = Instant::now();
-        let raw = request.stdin.as_deref();
+        let raw = operation.stdin.as_deref();
         let payload = match raw
             .ok_or_else(request_error)
             .and_then(|raw| serde_json::from_str(raw).map_err(|_| request_error()))
@@ -256,7 +264,7 @@ impl ExternalToolRouter {
             Ok(payload) => payload,
             Err(error) => return self.failure_or_native(capability, error, started),
         };
-        let checked = validate_context(policy, request, capability, &payload);
+        let checked = validate_context(policy, operation.cwd.as_deref(), capability, &payload);
         let (root, target) = match checked {
             Ok(checked) => checked,
             Err(error) => {
@@ -278,12 +286,8 @@ impl ExternalToolRouter {
         let context = ToolExecutionContext {
             project_root: &root,
             target,
-            max_output_bytes: request
-                .max_bytes
-                .unwrap_or(MAX_MCP_OUTPUT_BYTES)
-                .min(policy.max_output_bytes)
-                .min(MAX_MCP_OUTPUT_BYTES),
-            timeout_secs: request.timeout_secs.max(1).min(policy.max_timeout_secs),
+            max_output_bytes: MAX_MCP_OUTPUT_BYTES.min(policy.max_output_bytes),
+            timeout_secs: operation.timeout_secs.max(1).min(policy.max_timeout_secs),
         };
         match self
             .claude
@@ -432,11 +436,11 @@ fn normalized_search_exit_code(stdout: &str) -> i32 {
 
 fn validate_context(
     policy: &RunnerPolicy,
-    request: &RunnerRequest,
+    cwd: Option<&str>,
     _capability: ProviderCapability,
     payload: &Value,
 ) -> Result<(PathBuf, PathBuf), ProviderError> {
-    let root = request.cwd.as_deref().ok_or_else(path_error)?;
+    let root = cwd.ok_or_else(path_error)?;
     let root = Path::new(root).canonicalize().map_err(|_| path_error())?;
     cwd_allowed(policy, &root).map_err(|_| path_error())?;
     let relative = payload.get("path").and_then(Value::as_str).unwrap_or(".");

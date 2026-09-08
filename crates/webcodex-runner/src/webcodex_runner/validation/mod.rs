@@ -18,34 +18,21 @@ use super::config::RunnerPolicy;
 use super::output::CommandResult;
 use super::projects::load_runner_project_summaries_from_dir;
 use super::shell::cwd_allowed;
-use crate::runner_protocol::RunnerRequest;
 use crate::validation_bridge::{
     failure_kinds, validate_bridge_request, ValidationBridgeRequest, ValidationBridgeResponse,
-    ValidationBridgeResultEnvelope, AGENT_VALIDATION_REQUEST_KIND,
-    VALIDATION_BRIDGE_PROTOCOL_VERSION,
+    ValidationBridgeResultEnvelope, VALIDATION_BRIDGE_PROTOCOL_VERSION,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
-pub(crate) fn is_validation_request_kind(kind: &str) -> bool {
-    kind == AGENT_VALIDATION_REQUEST_KIND
-}
-
 pub(crate) fn handle_validation_request(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &RunnerRequest,
+    payload: &ValidationBridgeRequest,
     shutdown: Option<&AtomicBool>,
 ) -> CommandResult {
     let start = Instant::now();
-    let Some(payload) = request.validation.as_ref() else {
-        return validation_error_cmd(
-            start,
-            failure_kinds::MISSING_VALIDATION_PAYLOAD,
-            "validation request missing typed payload",
-        );
-    };
     match execute_validation_with_shutdown(policy, project_registry_dir, payload, shutdown) {
         Ok(response) => {
             let envelope = ValidationBridgeResultEnvelope::ok(response);
@@ -192,17 +179,6 @@ fn validate_project_root(
             "project root is not accessible",
         )
     })
-}
-
-fn validation_error_cmd(start: Instant, code: &str, message: &str) -> CommandResult {
-    let envelope = ValidationBridgeResultEnvelope::err(code, message);
-    CommandResult {
-        exit_code: Some(0),
-        stdout: Some(envelope.to_stdout_json()),
-        stderr: Some(String::new()),
-        duration_ms: Some(start.elapsed().as_millis() as u64),
-        error: None,
-    }
 }
 
 /// Empty response skeleton used by adapters for early failures.

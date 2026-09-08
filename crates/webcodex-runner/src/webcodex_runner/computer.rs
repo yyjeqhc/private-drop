@@ -1,6 +1,9 @@
 use super::{err_cmd, ok_cmd, CommandResult};
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
-use crate::runner_protocol::{shell_computer_request_payload_max_bytes, RunnerRequest};
+#[cfg(test)]
+use crate::runner_protocol::shell_computer_request_payload_max_bytes;
+#[cfg(test)]
+use crate::runner_protocol::RunnerRequest;
 use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -9,6 +12,9 @@ use webcodex_computer::{
     DEFAULT_ACCESSIBILITY_DEPTH, DEFAULT_ACCESSIBILITY_NODES, MAX_APPLICATIONS, MAX_DISPLAYS,
     MAX_WINDOWS,
 };
+#[cfg(test)]
+use webcodex_core::runner_operation::RunnerOperation;
+use webcodex_core::runner_operation::{RunnerComputerOperation, RunnerComputerOperationKind};
 
 fn computer_runtime() -> &'static ComputerRuntime {
     static COMPUTER: OnceLock<ComputerRuntime> = OnceLock::new();
@@ -19,29 +25,9 @@ fn computer_runtime() -> &'static ComputerRuntime {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn is_computer_request_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "computer_list_windows"
-            | "computer_list_applications"
-            | "computer_launch_application"
-            | "computer_list_displays"
-            | "computer_snapshot_display"
-            | "computer_read_clipboard"
-            | "computer_write_clipboard"
-            | "computer_pointer_move"
-            | "computer_pointer_click"
-            | "computer_snapshot"
-            | "computer_snapshot_region"
-            | "computer_accessibility_status"
-            | "computer_accessibility_tree"
-            | "computer_element_state"
-            | "computer_activate_window"
-            | "computer_control"
-            | "computer_scroll_to_element"
-            | "computer_key_input"
-            | "computer_input_text"
-    )
+    RunnerComputerOperationKind::from_wire(kind).is_some()
 }
 
 fn ensure_exact_payload_fields(payload: &Value, expected: &[&str]) -> Result<(), String> {
@@ -75,46 +61,19 @@ fn optional_snapshot_dimension(payload: &Value, field: &str) -> Result<Option<u3
     }
 }
 
-pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult {
+pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> CommandResult {
     let start = Instant::now();
-    let payload_max_bytes = shell_computer_request_payload_max_bytes(&request.kind);
-    let payload = match request.stdin.as_deref() {
-        Some(payload) if payload.len() <= payload_max_bytes && !payload.contains('\0') => {
-            match serde_json::from_str::<Value>(payload) {
-                Ok(value) => value,
-                Err(_) => {
-                    return err_cmd(
-                        start,
-                        "invalid_request: computer payload is not valid JSON".to_string(),
-                    )
-                }
-            }
-        }
-        _ => {
+    let payload = match serde_json::from_str::<Value>(&operation.payload) {
+        Ok(value) => value,
+        Err(_) => {
             return err_cmd(
                 start,
-                "invalid_request: computer payload is required and bounded".to_string(),
+                "invalid_request: computer payload is not valid JSON".to_string(),
             )
         }
     };
-    if !request.command.is_empty()
-        || request.cwd.is_some()
-        || request.path.is_some()
-        || request.content.is_some()
-        || request.process.is_some()
-        || request.script.is_some()
-        || request.job_id.is_some()
-        || request.lsp.is_some()
-        || request.job_context.is_some()
-        || request.persistent_shell.is_some()
-    {
-        return err_cmd(
-            start,
-            "invalid_request: computer request contains unrelated execution fields".to_string(),
-        );
-    }
-    let result = match request.kind.as_str() {
-        "computer_list_windows" => {
+    let result = match operation.kind {
+        RunnerComputerOperationKind::ListWindows => {
             let limit = payload
                 .get("limit")
                 .and_then(Value::as_u64)
@@ -123,40 +82,48 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                 .clamp(1, MAX_WINDOWS);
             computer_runtime().list_windows(limit)
         }
-        "computer_list_displays" => ensure_exact_payload_fields(&payload, &["limit"])
-            .and_then(|()| {
-                payload
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .filter(|limit| (1..=MAX_DISPLAYS).contains(limit))
-                    .ok_or_else(|| {
-                        "invalid_request: display discovery limit is invalid".to_string()
-                    })
-            })
-            .and_then(|limit| computer_runtime().list_displays(limit)),
-        "computer_list_applications" => ensure_exact_payload_fields(&payload, &["limit"])
-            .and_then(|()| {
-                payload
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .filter(|limit| (1..=MAX_APPLICATIONS).contains(limit))
-                    .ok_or_else(|| {
-                        "invalid_request: application discovery limit is invalid".to_string()
-                    })
-            })
-            .and_then(|limit| computer_runtime().list_applications(limit)),
-        "computer_launch_application" => ensure_exact_payload_fields(&payload, &["application_id"])
-            .and_then(|()| {
-                payload
-                    .get("application_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "invalid_request: application_id is required".to_string())
-            })
-            .and_then(|application_id| computer_runtime().launch_application(application_id)),
-        "computer_accessibility_status" => computer_runtime().accessibility_status(),
-        "computer_accessibility_tree" => {
+        RunnerComputerOperationKind::ListDisplays => {
+            ensure_exact_payload_fields(&payload, &["limit"])
+                .and_then(|()| {
+                    payload
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .filter(|limit| (1..=MAX_DISPLAYS).contains(limit))
+                        .ok_or_else(|| {
+                            "invalid_request: display discovery limit is invalid".to_string()
+                        })
+                })
+                .and_then(|limit| computer_runtime().list_displays(limit))
+        }
+        RunnerComputerOperationKind::ListApplications => {
+            ensure_exact_payload_fields(&payload, &["limit"])
+                .and_then(|()| {
+                    payload
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .filter(|limit| (1..=MAX_APPLICATIONS).contains(limit))
+                        .ok_or_else(|| {
+                            "invalid_request: application discovery limit is invalid".to_string()
+                        })
+                })
+                .and_then(|limit| computer_runtime().list_applications(limit))
+        }
+        RunnerComputerOperationKind::LaunchApplication => {
+            ensure_exact_payload_fields(&payload, &["application_id"])
+                .and_then(|()| {
+                    payload
+                        .get("application_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: application_id is required".to_string())
+                })
+                .and_then(|application_id| computer_runtime().launch_application(application_id))
+        }
+        RunnerComputerOperationKind::AccessibilityStatus => {
+            computer_runtime().accessibility_status()
+        }
+        RunnerComputerOperationKind::AccessibilityTree => {
             let surface_id = payload
                 .get("surface_id")
                 .and_then(Value::as_str)
@@ -175,7 +142,7 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                 computer_runtime().accessibility_tree(surface_id, max_depth, max_nodes)
             })
         }
-        "computer_element_state" => {
+        RunnerComputerOperationKind::ElementState => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id"]).and_then(|()| {
                 let surface_id = payload
                     .get("surface_id")
@@ -188,15 +155,17 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                 computer_runtime().element_state(surface_id, element_id)
             })
         }
-        "computer_activate_window" => ensure_exact_payload_fields(&payload, &["surface_id"])
-            .and_then(|()| {
-                payload
-                    .get("surface_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "invalid_request: surface_id is required".to_string())
-            })
-            .and_then(|surface_id| computer_runtime().activate_window(surface_id)),
-        "computer_control" => {
+        RunnerComputerOperationKind::ActivateWindow => {
+            ensure_exact_payload_fields(&payload, &["surface_id"])
+                .and_then(|()| {
+                    payload
+                        .get("surface_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: surface_id is required".to_string())
+                })
+                .and_then(|surface_id| computer_runtime().activate_window(surface_id))
+        }
+        RunnerComputerOperationKind::Control => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "action"]).and_then(
                 |()| {
                     let surface_id = payload
@@ -222,7 +191,7 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                 },
             )
         }
-        "computer_scroll_to_element" => {
+        RunnerComputerOperationKind::ScrollToElement => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id"]).and_then(|()| {
                 let surface_id = payload
                     .get("surface_id")
@@ -235,17 +204,19 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                 computer_runtime().scroll_to_element(surface_id, element_id)
             })
         }
-        "computer_read_clipboard" => ensure_exact_payload_fields(&payload, &[])
+        RunnerComputerOperationKind::ReadClipboard => ensure_exact_payload_fields(&payload, &[])
             .and_then(|()| computer_runtime().read_clipboard()),
-        "computer_write_clipboard" => ensure_exact_payload_fields(&payload, &["text"])
-            .and_then(|()| {
-                payload
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "invalid_request: clipboard text is required".to_string())
-            })
-            .and_then(|text| computer_runtime().write_clipboard(text)),
-        "computer_key_input" => {
+        RunnerComputerOperationKind::WriteClipboard => {
+            ensure_exact_payload_fields(&payload, &["text"])
+                .and_then(|()| {
+                    payload
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: clipboard text is required".to_string())
+                })
+                .and_then(|text| computer_runtime().write_clipboard(text))
+        }
+        RunnerComputerOperationKind::KeyInput => {
             ensure_exact_payload_fields(&payload, &["surface_id", "key", "modifiers"]).and_then(
                 |()| {
                     let surface_id = payload
@@ -272,7 +243,7 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                 },
             )
         }
-        "computer_pointer_move" | "computer_pointer_click" => {
+        RunnerComputerOperationKind::PointerMove | RunnerComputerOperationKind::PointerClick => {
             ensure_exact_payload_fields(&payload, &["display_id", "snapshot_generation", "x", "y"])
                 .and_then(|()| {
                     let display_id = payload
@@ -298,15 +269,15 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                         .and_then(Value::as_u64)
                         .and_then(|value| u32::try_from(value).ok())
                         .ok_or_else(|| "invalid_request: y must be a u32".to_string())?;
-                    let action = if request.kind == "computer_pointer_move" {
-                        PointerAction::Move
-                    } else {
-                        PointerAction::Click
+                    let action = match operation.kind {
+                        RunnerComputerOperationKind::PointerMove => PointerAction::Move,
+                        RunnerComputerOperationKind::PointerClick => PointerAction::Click,
+                        _ => unreachable!("pointer branch is typed"),
                     };
                     computer_runtime().pointer_effect(action, display_id, snapshot_generation, x, y)
                 })
         }
-        "computer_input_text" => {
+        RunnerComputerOperationKind::InputText => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "text"]).and_then(
                 |()| {
                     let surface_id = payload
@@ -331,7 +302,7 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                 },
             )
         }
-        "computer_snapshot_display" => {
+        RunnerComputerOperationKind::SnapshotDisplay => {
             ensure_exact_payload_fields(&payload, &["display_id", "max_width", "max_height"])
                 .and_then(|()| {
                     let display_id = payload
@@ -343,15 +314,17 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
                     computer_runtime().snapshot_display(display_id, max_width, max_height)
                 })
         }
-        "computer_snapshot" => ensure_exact_payload_fields(&payload, &["surface_id"])
-            .and_then(|()| {
-                payload
-                    .get("surface_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "invalid_request: surface_id is required".to_string())
-            })
-            .and_then(|surface_id| computer_runtime().snapshot(surface_id, None, None, None)),
-        "computer_snapshot_region" => ensure_exact_payload_fields(
+        RunnerComputerOperationKind::Snapshot => {
+            ensure_exact_payload_fields(&payload, &["surface_id"])
+                .and_then(|()| {
+                    payload
+                        .get("surface_id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "invalid_request: surface_id is required".to_string())
+                })
+                .and_then(|surface_id| computer_runtime().snapshot(surface_id, None, None, None))
+        }
+        RunnerComputerOperationKind::SnapshotRegion => ensure_exact_payload_fields(
             &payload,
             &["surface_id", "region", "max_width", "max_height"],
         )
@@ -371,11 +344,50 @@ pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult 
             }
             computer_runtime().snapshot(surface_id, region, max_width, max_height)
         }),
-        _ => Err("invalid_request: unsupported computer request kind".to_string()),
     };
     match result {
         Ok(result) => ok_cmd(start, result),
         Err(error) => err_cmd(start, error),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn handle_computer_request(request: &RunnerRequest) -> CommandResult {
+    let start = Instant::now();
+    if !request.command.is_empty()
+        || request.cwd.is_some()
+        || request.path.is_some()
+        || request.content.is_some()
+        || request.process.is_some()
+        || request.script.is_some()
+        || request.job_id.is_some()
+        || request.lsp.is_some()
+        || request.job_context.is_some()
+        || request.persistent_shell.is_some()
+    {
+        return err_cmd(
+            start,
+            "invalid_request: computer request contains unrelated execution fields".to_string(),
+        );
+    }
+    let Some(raw) = request.stdin.as_deref() else {
+        return err_cmd(
+            start,
+            "invalid_request: computer payload is required and bounded".to_string(),
+        );
+    };
+    if raw.contains('\0') || serde_json::from_str::<Value>(raw).is_err() {
+        return err_cmd(
+            start,
+            "invalid_request: computer payload is not valid JSON".to_string(),
+        );
+    }
+    match request.decode_operation() {
+        Ok(RunnerOperation::Computer(operation)) => handle_computer_operation(&operation),
+        _ => err_cmd(
+            start,
+            "invalid_request: unsupported computer request kind".to_string(),
+        ),
     }
 }
 

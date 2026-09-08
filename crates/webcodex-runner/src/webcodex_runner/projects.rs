@@ -2,7 +2,9 @@ use super::config::{
     default_true, project_registry_dir, validate_shell_profile_name, RunnerConfig, RunnerPolicy,
 };
 use super::shell::canonicalize_existing;
-use crate::runner_protocol::{RunnerProjectSummary, RunnerRequest};
+use crate::runner_protocol::RunnerProjectSummary;
+#[cfg(test)]
+use crate::runner_protocol::RunnerRequest;
 use crate::{err_cmd, ok_cmd, write_created_file};
 use crate::{CommandResult, CreatedProjectPaths};
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,9 @@ use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
+#[cfg(test)]
+use webcodex_core::runner_operation::RunnerOperation;
+use webcodex_core::runner_operation::{RunnerProjectOperation, RunnerProjectOperationKind};
 use webcodex_process::{GracefulTermination, ManagedChild};
 use webcodex_runner_config::paths::paths_equal;
 
@@ -1197,7 +1202,7 @@ fn choose_auto_project_id(
 }
 
 fn path_resolution_success(
-    request: &RunnerRequest,
+    client_id: &str,
     project: &RunnerProjectFile,
     canonical_path: &Path,
     outcome: &'static str,
@@ -1205,9 +1210,9 @@ fn path_resolution_success(
     project_record_path: Option<&Path>,
 ) -> serde_json::Value {
     serde_json::json!({
-        "id": format!("agent:{}:{}", request.client_id, project.id),
+        "id": format!("agent:{}:{}", client_id, project.id),
         "agent_project_id": project.id,
-        "client_id": request.client_id,
+        "client_id": client_id,
         "name": project.name,
         "path": canonical_path.to_string_lossy(),
         "kind": project_wire_kind(project),
@@ -1229,7 +1234,7 @@ fn path_resolution_success(
 
 fn existing_path_resolution_result(
     start: Instant,
-    request: &RunnerRequest,
+    client_id: &str,
     canonical_path: &Path,
     matches: Vec<RunnerProjectFile>,
 ) -> Option<CommandResult> {
@@ -1259,7 +1264,7 @@ fn existing_path_resolution_result(
     Some(ok_cmd(
         start,
         path_resolution_success(
-            request,
+            client_id,
             &project,
             canonical_path,
             "reused_existing_registration",
@@ -1272,10 +1277,11 @@ fn existing_path_resolution_result(
 /// Resolve an existing Runner registration by canonical path or atomically
 /// persist a new one. This is an internal Server↔Runner operation, not a
 /// model-visible runtime tool.
-pub(crate) fn handle_resolve_or_register_project(
+pub(crate) fn handle_resolve_or_register_project_operation(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &RunnerRequest,
+    client_id: &str,
+    operation: &RunnerProjectOperation,
 ) -> CommandResult {
     let start = Instant::now();
     let _registry_guard = match project_registry_write_lock().lock() {
@@ -1289,10 +1295,8 @@ pub(crate) fn handle_resolve_or_register_project(
             )
         }
     };
-    let payload = match request
-        .stdin
-        .as_deref()
-        .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+    let payload = match serde_json::from_str::<serde_json::Value>(&operation.payload)
+        .ok()
         .and_then(|payload| payload.as_object().cloned())
     {
         Some(payload) => payload,
@@ -1391,7 +1395,8 @@ pub(crate) fn handle_resolve_or_register_project(
         }
     };
     let matches = projects_matching_canonical_path(&projects, &canonical_path);
-    if let Some(result) = existing_path_resolution_result(start, request, &canonical_path, matches)
+    if let Some(result) =
+        existing_path_resolution_result(start, client_id, &canonical_path, matches)
     {
         return result;
     }
@@ -1427,7 +1432,7 @@ pub(crate) fn handle_resolve_or_register_project(
                 if let Ok(projects) = load_project_files_for_path_resolution(project_registry_dir) {
                     let matches = projects_matching_canonical_path(&projects, &canonical_path);
                     if let Some(result) =
-                        existing_path_resolution_result(start, request, &canonical_path, matches)
+                        existing_path_resolution_result(start, client_id, &canonical_path, matches)
                     {
                         return result;
                     }
@@ -1462,7 +1467,7 @@ pub(crate) fn handle_resolve_or_register_project(
     ok_cmd(
         start,
         path_resolution_success(
-            request,
+            client_id,
             &project,
             &canonical_path,
             "auto_registered",
@@ -1632,7 +1637,7 @@ fn managed_worktree_project_toml(
 
 fn managed_worktree_success(
     start: Instant,
-    request: &RunnerRequest,
+    client_id: &str,
     project: &RunnerProjectFile,
     worktree: &Path,
     base_ref: &str,
@@ -1645,9 +1650,9 @@ fn managed_worktree_success(
     ok_cmd(
         start,
         serde_json::json!({
-            "id": format!("agent:{}:{}", request.client_id, project.id),
+            "id": format!("agent:{}:{}", client_id, project.id),
             "agent_project_id": project.id,
-            "client_id": request.client_id,
+            "client_id": client_id,
             "name": project.name,
             "path": worktree.to_string_lossy(),
             "kind": project_wire_kind(project),
@@ -1674,7 +1679,7 @@ fn resume_managed_worktree(
     start: Instant,
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &RunnerRequest,
+    client_id: &str,
     source_root: &Path,
     source_dirty: bool,
     requested_base_ref: Option<&str>,
@@ -1832,7 +1837,7 @@ fn resume_managed_worktree(
         .unwrap_or(requested_base_ref.unwrap_or("HEAD"));
     managed_worktree_success(
         start,
-        request,
+        client_id,
         &project,
         &worktree,
         projected_base_ref,
@@ -1847,10 +1852,11 @@ fn resume_managed_worktree(
 /// Internal Server↔Runner operation that owns Git/ref/path semantics for managed
 /// worktrees. It is intentionally not model-visible; successful output is fed
 /// back through the ordinary registered runtime Project authority path.
-pub(crate) fn handle_prepare_managed_worktree(
+pub(crate) fn handle_prepare_managed_worktree_operation(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &RunnerRequest,
+    client_id: &str,
+    operation: &RunnerProjectOperation,
 ) -> CommandResult {
     let start = Instant::now();
     let _registry_guard = match project_registry_write_lock().lock() {
@@ -1859,10 +1865,8 @@ pub(crate) fn handle_prepare_managed_worktree(
             return managed_worktree_error(start, "operation_failed", false, None, None, None)
         }
     };
-    let Some(payload) = request
-        .stdin
-        .as_deref()
-        .and_then(|payload| serde_json::from_str::<serde_json::Value>(payload).ok())
+    let Some(payload) = serde_json::from_str::<serde_json::Value>(&operation.payload)
+        .ok()
         .and_then(|payload| payload.as_object().cloned())
     else {
         return managed_worktree_error(start, "invalid_request", false, None, None, None);
@@ -1986,7 +1990,7 @@ pub(crate) fn handle_prepare_managed_worktree(
             start,
             policy,
             project_registry_dir,
-            request,
+            client_id,
             &source_root,
             source_dirty,
             requested_base_ref.as_deref(),
@@ -2297,7 +2301,7 @@ pub(crate) fn handle_prepare_managed_worktree(
         }
         return managed_worktree_success(
             start,
-            request,
+            client_id,
             &project,
             &canonical_worktree,
             &base_ref,
@@ -2380,7 +2384,7 @@ pub(crate) fn handle_prepare_managed_worktree(
     };
     managed_worktree_success(
         start,
-        request,
+        client_id,
         &project,
         &canonical_worktree,
         &base_ref,
@@ -2469,28 +2473,23 @@ fn unregister_project_config(path: &Path) -> Result<(), ProjectUnregisterError> 
 
 /// Structured, non-shell project lifecycle mutation. Unregister only removes
 /// the registry TOML and never touches the project path or Git data.
-pub(crate) fn handle_project_lifecycle_op(
+pub(crate) fn handle_project_lifecycle_operation(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &RunnerRequest,
+    operation: &RunnerProjectOperation,
 ) -> CommandResult {
     let _registry_guard = match project_registry_write_lock().lock() {
         Ok(guard) => guard,
         Err(_) => return project_error_cmd(Instant::now(), "operation_failed"),
     };
     let start = Instant::now();
-    let action = request
-        .kind
-        .strip_prefix("project_lifecycle_")
-        .unwrap_or("");
-    if !matches!(action, "enable" | "disable" | "unregister") {
-        return project_error_cmd(start, "unsupported_runner_version");
-    }
-    let payload: serde_json::Value = match request
-        .stdin
-        .as_deref()
-        .and_then(|v| serde_json::from_str(v).ok())
-    {
+    let action = match operation.kind {
+        RunnerProjectOperationKind::LifecycleEnable => "enable",
+        RunnerProjectOperationKind::LifecycleDisable => "disable",
+        RunnerProjectOperationKind::LifecycleUnregister => "unregister",
+        _ => return project_error_cmd(start, "unsupported_runner_version"),
+    };
+    let payload: serde_json::Value = match serde_json::from_str(&operation.payload).ok() {
         Some(v) => v,
         None => return project_error_cmd(start, "invalid_request"),
     };
@@ -2657,7 +2656,7 @@ fn validate_recovered_create_side_effects(
 }
 
 fn recovered_project_result(
-    kind: &str,
+    create: bool,
     runtime_id: &str,
     client_id: &str,
     project: &RunnerProjectFile,
@@ -2672,8 +2671,8 @@ fn recovered_project_result(
         "created_directory": false, "created_config": false, "overwritten": false,
         "allow_patch": project.allow_patch, "template": template,
         "git_initialized": git_init, "recovered": true, "changed": false,
-        "operation": if kind == "create_project" { "create" } else { "register" },
-        "outcome": if kind == "create_project" { "created" } else { "registered" },
+        "operation": if create { "create" } else { "register" },
+        "outcome": if create { "created" } else { "registered" },
         "revision": project_revision(project),
     })
 }
@@ -2683,19 +2682,21 @@ fn recovered_project_result(
 /// policy, writes `project_registry_dir/<id>.toml` atomically (and for
 /// `create_project` creates the directory / templates / optional git init),
 /// and returns structured JSON in `CommandResult.stdout`.
-pub(crate) fn handle_project_op(
+pub(crate) fn handle_project_operation(
     policy: &RunnerPolicy,
     project_registry_dir: &Path,
-    request: &RunnerRequest,
+    client_id: &str,
+    operation: &RunnerProjectOperation,
 ) -> CommandResult {
     let _registry_guard = match project_registry_write_lock().lock() {
         Ok(guard) => guard,
         Err(_) => return project_error_cmd(Instant::now(), "operation_failed"),
     };
     let start = Instant::now();
-    let kind = request.kind.as_str();
-    let payload = match request.stdin.as_deref() {
-        Some(s) if !s.is_empty() => s,
+    let kind = operation.kind.wire_kind();
+    let create = operation.kind == RunnerProjectOperationKind::Create;
+    let payload = match operation.payload.as_str() {
+        s if !s.is_empty() => s,
         _ => {
             return CommandResult {
                 exit_code: None,
@@ -2776,7 +2777,7 @@ pub(crate) fn handle_project_op(
         return project_error_cmd(start, error_kind);
     }
 
-    let client_id = request.client_id.clone();
+    let client_id = client_id.to_string();
     let runtime_id = format!("agent:{}:{}", client_id, id);
 
     let toml_content = build_project_toml(&id, &name, &path, &description, allow_patch);
@@ -2793,11 +2794,11 @@ pub(crate) fn handle_project_op(
         .get("adopt_existing_empty")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    if kind == "create_project" && template != "empty" && template != "basic" {
+    if create && template != "empty" && template != "basic" {
         return project_error_cmd(start, "invalid_request");
     }
 
-    if kind == "register_project" {
+    if !create {
         // The directory must exist and be a directory.
         let path_buf = PathBuf::from(&path);
         let canonical = match path_buf.canonicalize() {
@@ -2834,7 +2835,7 @@ pub(crate) fn handle_project_op(
                     return ok_cmd(
                         start,
                         recovered_project_result(
-                            kind,
+                            create,
                             &runtime_id,
                             &client_id,
                             &project,
@@ -2941,7 +2942,7 @@ pub(crate) fn handle_project_op(
                 return ok_cmd(
                     start,
                     recovered_project_result(
-                        kind,
+                        create,
                         &runtime_id,
                         &client_id,
                         &project,
@@ -3073,6 +3074,81 @@ pub(crate) fn handle_project_op(
         "operation": "create", "outcome": "created", "changed": true, "recovered": false,
     });
     ok_cmd(start, result)
+}
+
+#[cfg(test)]
+fn test_project_operation(
+    request: &RunnerRequest,
+) -> Result<RunnerProjectOperation, CommandResult> {
+    match request.decode_operation() {
+        Ok(RunnerOperation::Project(operation)) => Ok(operation),
+        _ => Err(project_error_cmd(
+            Instant::now(),
+            "unsupported_runner_version",
+        )),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn handle_project_op(
+    policy: &RunnerPolicy,
+    project_registry_dir: &Path,
+    request: &RunnerRequest,
+) -> CommandResult {
+    let operation = match test_project_operation(request) {
+        Ok(operation) => operation,
+        Err(result) => return result,
+    };
+    handle_project_operation(policy, project_registry_dir, &request.client_id, &operation)
+}
+
+#[cfg(test)]
+pub(crate) fn handle_resolve_or_register_project(
+    policy: &RunnerPolicy,
+    project_registry_dir: &Path,
+    request: &RunnerRequest,
+) -> CommandResult {
+    let operation = match test_project_operation(request) {
+        Ok(operation) => operation,
+        Err(result) => return result,
+    };
+    handle_resolve_or_register_project_operation(
+        policy,
+        project_registry_dir,
+        &request.client_id,
+        &operation,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn handle_prepare_managed_worktree(
+    policy: &RunnerPolicy,
+    project_registry_dir: &Path,
+    request: &RunnerRequest,
+) -> CommandResult {
+    let operation = match test_project_operation(request) {
+        Ok(operation) => operation,
+        Err(result) => return result,
+    };
+    handle_prepare_managed_worktree_operation(
+        policy,
+        project_registry_dir,
+        &request.client_id,
+        &operation,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn handle_project_lifecycle_op(
+    policy: &RunnerPolicy,
+    project_registry_dir: &Path,
+    request: &RunnerRequest,
+) -> CommandResult {
+    let operation = match test_project_operation(request) {
+        Ok(operation) => operation,
+        Err(result) => return result,
+    };
+    handle_project_lifecycle_operation(policy, project_registry_dir, &operation)
 }
 
 #[cfg(test)]

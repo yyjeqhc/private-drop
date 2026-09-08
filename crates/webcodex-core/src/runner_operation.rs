@@ -232,6 +232,10 @@ macro_rules! runner_file_operations {
         }
 
         impl RunnerFileOperation {
+            pub fn is_wire_kind(kind: &str) -> bool {
+                matches!(kind, $($wire)|+)
+            }
+
             pub fn wire_kind(&self) -> &'static str {
                 match self { $(Self::$variant(_) => $wire),+ }
             }
@@ -1017,7 +1021,7 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
         }
         crate::lsp_bridge::AGENT_LSP_REQUEST_KIND => {
             ensure_only_lsp_payload(wire)?;
-            ensure_empty_generic_execution_fields(wire, false)?;
+            ensure_lsp_legacy_compatible_generic_fields(wire)?;
             Ok(RunnerOperation::Lsp {
                 payload: wire
                     .lsp
@@ -1573,6 +1577,29 @@ fn ensure_empty_generic_execution_fields(
     Ok(())
 }
 
+/// Historical V2 LSP requests could carry legacy shell `cwd`/`command`
+/// baggage. The LSP handler deliberately ignored both fields, and existing
+/// rolling-compatibility regression coverage depends on that behavior. Keep
+/// this allowance local to LSP decoding; canonical encoding still emits
+/// neither field, and all other execution/file/job fields remain fail-closed.
+fn ensure_lsp_legacy_compatible_generic_fields(wire: &RunnerRequest) -> Result<(), String> {
+    if wire.job_id.is_some()
+        || wire.path.is_some()
+        || wire.content.is_some()
+        || wire.max_bytes.is_some()
+        || wire.expected_sha256.is_some()
+        || wire.expected_prefix.is_some()
+        || wire.start_line.is_some()
+        || wire.end_line.is_some()
+        || wire.create_dirs
+        || wire.stdin.is_some()
+        || wire.job_context.is_some()
+    {
+        return Err("lsp contains incompatible generic fields".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1670,6 +1697,38 @@ mod tests {
             wire.decode_operation().unwrap(),
             RunnerOperation::RunProcess(_)
         ));
+    }
+
+    #[test]
+    fn legacy_lsp_shell_baggage_decodes_but_encoder_stays_canonical() {
+        let operation = RunnerOperation::Lsp {
+            payload: RunnerLspPayload {
+                project_id: "demo".to_string(),
+                request: crate::lsp_bridge::RunnerLspRequest::Status,
+            },
+            timeout_secs: 30,
+        };
+        let canonical = RunnerRequest::from_operation(metadata(), operation).unwrap();
+        assert_eq!(canonical.kind, crate::lsp_bridge::AGENT_LSP_REQUEST_KIND);
+        assert!(canonical.cwd.is_none());
+        assert!(canonical.command.is_empty());
+
+        let mut legacy = canonical.clone();
+        legacy.cwd = Some("/historical/ignored/cwd".to_string());
+        legacy.command = "printf must-not-run".to_string();
+        assert!(matches!(
+            legacy.decode_operation().unwrap(),
+            RunnerOperation::Lsp { .. }
+        ));
+
+        legacy.process = Some(ShellProcessArgv {
+            executable: "printf".to_string(),
+            args: vec!["conflict".to_string()],
+        });
+        assert!(legacy
+            .decode_operation()
+            .unwrap_err()
+            .contains("conflicting"));
     }
 
     #[test]

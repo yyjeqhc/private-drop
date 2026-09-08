@@ -31,9 +31,13 @@ pub(crate) mod transport;
 pub(crate) mod util;
 pub(crate) mod validation;
 
-pub(crate) use artifacts::{handle_artifact_file_request, is_artifact_request_kind};
-pub(crate) use checkpoints::{handle_checkpoint_file_request, is_checkpoint_request_kind};
-pub(crate) use computer::{handle_computer_request, is_computer_request_kind};
+pub(crate) use artifacts::handle_artifact_file_operation;
+#[cfg(test)]
+pub(crate) use artifacts::is_artifact_request_kind;
+pub(crate) use checkpoints::handle_checkpoint_file_request;
+#[cfg(test)]
+pub(crate) use checkpoints::is_checkpoint_request_kind;
+pub(crate) use computer::handle_computer_operation;
 pub(crate) use config::SshConfig;
 pub(crate) use config::{
     client_profile_runner_config, default_config_path, hostname, load_config, max_concurrent_jobs,
@@ -46,25 +50,31 @@ pub(crate) use config::{
     default_websocket_connect_timeout_secs, QuicClientConfig, ShellProfileConfig,
     CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
 };
-pub(super) use dispatch::{dispatch_request, is_project_op};
+#[cfg(test)]
+pub(super) use dispatch::dispatch_request;
+pub(super) use dispatch::{dispatch_request_with_outcome, RunnerDispatchOutcome};
+#[cfg(test)]
+pub(crate) use files::is_basic_file_request_kind;
 #[cfg(test)]
 pub(crate) use files::sha256_hex_bytes;
-pub(crate) use files::{
-    handle_basic_file_request, is_basic_file_request_kind, resolve_requested_path,
-};
+pub(crate) use files::{handle_basic_file_request, resolve_requested_path};
 pub(crate) use lsp::LspSupervisor;
 pub(crate) use output::{err_cmd, ok_cmd, CommandResult, ShellCommandResult};
+#[cfg(test)]
+pub(crate) use patches::is_structured_edit_request_kind;
 pub(crate) use patches::{
     handle_apply_patch_file_request, handle_apply_text_edits_file_request,
-    handle_write_project_file_request, is_structured_edit_request_kind,
-    validate_structured_edit_runner_path,
+    handle_write_project_file_request, validate_structured_edit_runner_path,
 };
 pub(crate) use persistent_shell::PersistentShellManager;
 #[cfg(test)]
-pub(crate) use projects::load_runner_project_summaries_from_dir;
 pub(crate) use projects::{
     handle_prepare_managed_worktree, handle_project_lifecycle_op, handle_project_op,
-    handle_resolve_or_register_project, RunnerProjectCache,
+    handle_resolve_or_register_project, load_runner_project_summaries_from_dir,
+};
+pub(crate) use projects::{
+    handle_prepare_managed_worktree_operation, handle_project_lifecycle_operation,
+    handle_project_operation, handle_resolve_or_register_project_operation, RunnerProjectCache,
 };
 #[cfg(test)]
 pub(crate) use projects::{

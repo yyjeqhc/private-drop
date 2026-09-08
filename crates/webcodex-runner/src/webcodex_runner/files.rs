@@ -3,11 +3,11 @@ use super::output::CommandResult;
 use super::shell::cwd_allowed;
 use crate::project_overview::build_project_overview;
 use crate::runner_config::DEFAULT_MAX_OUTPUT_BYTES;
-use crate::runner_protocol::RunnerRequest;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use webcodex_core::runner_operation::{RunnerFileOperation, RunnerFilePayload};
 use webcodex_workspace::file_read_range::{self, ReadFileReason};
 
 pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
@@ -51,6 +51,7 @@ pub(crate) fn resolve_requested_path(
     Ok(resolved)
 }
 
+#[cfg(test)]
 pub(crate) fn is_basic_file_request_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -66,18 +67,25 @@ pub(crate) fn is_basic_file_request_kind(kind: &str) -> bool {
 
 pub(crate) fn handle_basic_file_request(
     policy: &RunnerPolicy,
-    request: &RunnerRequest,
+    operation: &RunnerFileOperation,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
-    match request.kind.as_str() {
-        "file_read" => handle_file_read_request(policy, request, resolved, start),
-        "file_write" => handle_file_write_request(policy, request, resolved, start),
-        "file_list" => handle_file_list_request(resolved, start),
-        "file_skill_list_packages" => handle_skill_list_packages_request(request, resolved, start),
-        "file_skill_read_file" => handle_skill_read_file_request(policy, request, resolved, start),
-        "file_project_overview" => handle_project_overview_request(request, start),
-        "file_delete_project_files" => {
+    let request = operation.payload();
+    match operation {
+        RunnerFileOperation::Read(_) => handle_file_read_request(policy, request, resolved, start),
+        RunnerFileOperation::Write(_) => {
+            handle_file_write_request(policy, request, resolved, start)
+        }
+        RunnerFileOperation::List(_) => handle_file_list_request(resolved, start),
+        RunnerFileOperation::SkillListPackages(_) => {
+            handle_skill_list_packages_request(request, resolved, start)
+        }
+        RunnerFileOperation::SkillReadFile(_) => {
+            handle_skill_read_file_request(policy, request, resolved, start)
+        }
+        RunnerFileOperation::ProjectOverview(_) => handle_project_overview_request(request, start),
+        RunnerFileOperation::DeleteProjectFiles(_) => {
             handle_delete_project_files_request(request, resolved, start)
         }
         _ => CommandResult {
@@ -85,7 +93,7 @@ pub(crate) fn handle_basic_file_request(
             stdout: None,
             stderr: None,
             duration_ms: Some(start.elapsed().as_millis() as u64),
-            error: Some(format!("unknown file request kind: {}", request.kind)),
+            error: Some("file operation is not a basic file request".to_string()),
         },
     }
 }
@@ -135,7 +143,7 @@ fn delete_project_files_error(start: Instant, message: &'static str) -> CommandR
 }
 
 fn handle_delete_project_files_request(
-    request: &RunnerRequest,
+    request: &RunnerFilePayload,
     resolved_project_root: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -241,7 +249,7 @@ struct ProjectOverviewRunnerOptions {
     limit: Option<usize>,
 }
 
-fn handle_project_overview_request(request: &RunnerRequest, start: Instant) -> CommandResult {
+fn handle_project_overview_request(request: &RunnerFilePayload, start: Instant) -> CommandResult {
     let Some(project_root) = request.cwd.as_deref() else {
         return CommandResult {
             exit_code: None,
@@ -251,7 +259,7 @@ fn handle_project_overview_request(request: &RunnerRequest, start: Instant) -> C
             error: Some("project_overview request missing project root".to_string()),
         };
     };
-    let requested_path = request.path.as_deref().unwrap_or(".");
+    let requested_path = request.path.as_str();
     let options = match request.content.as_deref() {
         Some(payload) => match serde_json::from_str::<ProjectOverviewRunnerOptions>(payload) {
             Ok(options) => options,
@@ -304,7 +312,7 @@ fn read_file_reason_message(reason: ReadFileReason) -> String {
 }
 
 fn ensure_file_read_target_in_project(
-    request: &RunnerRequest,
+    request: &RunnerFilePayload,
     resolved: &Path,
 ) -> Result<(), ReadFileReason> {
     let project_root = request.cwd.as_deref().ok_or(ReadFileReason::InvalidPath)?;
@@ -325,7 +333,7 @@ fn ensure_file_read_target_in_project(
 
 fn handle_file_read_request(
     policy: &RunnerPolicy,
-    request: &RunnerRequest,
+    request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -571,11 +579,11 @@ fn canonical_skill_resource_request_path(package_root: &str, path: &str) -> bool
 }
 
 fn handle_skill_list_packages_request(
-    request: &RunnerRequest,
+    request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
-    if request.path.as_deref() != Some(".agents/skills") {
+    if request.path != ".agents/skills" {
         return skill_command_error(start, "skill_path_invalid");
     }
     let options = match request
@@ -653,7 +661,7 @@ fn handle_skill_list_packages_request(
 
 fn handle_skill_read_file_request(
     policy: &RunnerPolicy,
-    request: &RunnerRequest,
+    request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
@@ -673,10 +681,7 @@ fn handle_skill_read_file_request(
         _ => return skill_command_error(start, "skill_path_invalid"),
     };
     if !canonical_skill_package_root(&options.package_root)
-        || !request
-            .path
-            .as_deref()
-            .is_some_and(|path| canonical_skill_resource_request_path(&options.package_root, path))
+        || !canonical_skill_resource_request_path(&options.package_root, &request.path)
     {
         return skill_command_error(start, "skill_path_invalid");
     }
@@ -716,7 +721,7 @@ fn handle_skill_read_file_request(
     {
         return skill_command_error(start, "skill_path_escape");
     }
-    let requested_project_relative = request.path.as_deref().unwrap_or_default();
+    let requested_project_relative = request.path.as_str();
     let canonical_project_relative = match target.strip_prefix(&project_root) {
         Ok(relative) => relative.to_string_lossy(),
         Err(_) => return skill_command_error(start, "skill_path_escape"),
@@ -798,7 +803,7 @@ fn file_read_error_message(error: &std::io::Error) -> String {
 
 fn handle_file_write_request(
     policy: &RunnerPolicy,
-    request: &RunnerRequest,
+    request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {

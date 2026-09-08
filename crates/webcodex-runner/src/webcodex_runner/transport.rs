@@ -27,7 +27,7 @@ use crate::runner_protocol::{
     PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
 };
 use crate::{
-    build_register_request_with_provider_status, dispatch_request, handle_one_poll, is_project_op,
+    build_register_request_with_provider_status, dispatch_request_with_outcome, handle_one_poll,
     register, CommandResult, JobManager, PollingDispatchSupervisor, PollingRecoveryAction,
     RegisterRecoveryAction, RunnerHttpError, RunnerHttpErrorKind,
 };
@@ -3134,7 +3134,6 @@ fn handle_stream_envelope(
 ) -> Option<String> {
     match envelope {
         RunnerEnvelope::Request { request } => {
-            let project_op = is_project_op(&request.kind);
             let sink = sink.clone();
             let config = Arc::clone(&runtime.config);
             let hot = config.snapshot();
@@ -3149,7 +3148,7 @@ fn handle_stream_envelope(
             let project_inventory_refresh_tx = project_inventory_refresh_tx.clone();
             tokio::task::spawn_blocking(move || {
                 let _dispatch_guard = dispatch_guard;
-                let dispatch_result = dispatch_request(
+                let dispatch_result = dispatch_request_with_outcome(
                     &sink,
                     &hot,
                     &config,
@@ -3159,7 +3158,10 @@ fn handle_stream_envelope(
                     &lsp,
                     request,
                 );
-                if project_op && dispatch_result.is_ok() {
+                if dispatch_result
+                    .as_ref()
+                    .is_ok_and(|outcome| outcome.project_cache_invalidation_required)
+                {
                     // Capacity one deliberately coalesces multiple project
                     // mutations. A queued dirty signal already guarantees a
                     // fresh full observation; never block request completion on

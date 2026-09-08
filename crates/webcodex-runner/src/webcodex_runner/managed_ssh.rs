@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use webcodex_core::ssh_resource::{
     normalize_ssh_resource_default_cwd, normalize_ssh_resource_target, validate_ssh_resource_name,
     SshResourceInventoryEntry, SshResourceRequest, SshResourceResponse, SshResourceSource,
-    MANAGED_SSH_REGISTRY_MAX_BYTES, MANAGED_SSH_RESOURCE_MAX_COUNT, SSH_RESOURCE_REQUEST_MAX_BYTES,
+    MANAGED_SSH_REGISTRY_MAX_BYTES, MANAGED_SSH_RESOURCE_MAX_COUNT,
 };
 
 const STORE_VERSION: u32 = 1;
@@ -112,42 +112,7 @@ impl ManagedSshResourceStore {
         Ok(merged)
     }
 
-    pub(crate) fn handle_wire(
-        &self,
-        static_active: &SshConfig,
-        content: Option<&str>,
-    ) -> SshResourceResponse {
-        let Some(content) = content else {
-            return safe_error(
-                "ssh_resource_invalid",
-                "Managed SSH resource request is missing",
-            );
-        };
-        if content.len() > SSH_RESOURCE_REQUEST_MAX_BYTES {
-            return safe_error(
-                "ssh_resource_invalid",
-                "Managed SSH resource request is too large",
-            );
-        }
-        let request: SshResourceRequest = match serde_json::from_str(content) {
-            Ok(request) => request,
-            Err(_) => {
-                return safe_error(
-                    "ssh_resource_invalid",
-                    "Managed SSH resource request is invalid",
-                )
-            }
-        };
-        if request.validate().is_err() {
-            return safe_error(
-                "ssh_resource_invalid",
-                "Managed SSH resource request is invalid",
-            );
-        }
-        self.handle(static_active, request)
-    }
-
-    fn handle(
+    pub(crate) fn handle(
         &self,
         static_active: &SshConfig,
         request: SshResourceRequest,

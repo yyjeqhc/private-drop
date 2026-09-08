@@ -1,32 +1,34 @@
-use super::output::{err_cmd, ok_cmd, CommandResult};
-use crate::runner_protocol::RunnerRequest;
+use super::output::{ok_cmd, CommandResult};
 use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::time::Instant;
+use webcodex_core::runner_operation::{RunnerFileOperation, RunnerFilePayload};
 
+#[cfg(test)]
 pub(crate) fn is_checkpoint_request_kind(kind: &str) -> bool {
     matches!(kind, "file_checkpoint_create" | "file_checkpoint_restore")
 }
 
 pub(crate) fn handle_checkpoint_file_request(
-    request: &RunnerRequest,
+    operation: &RunnerFileOperation,
     resolved: &Path,
     start: Instant,
 ) -> CommandResult {
+    let request = operation.payload();
     let payload = match parse_payload(request) {
         Ok(payload) => payload,
         Err(err) => return ok_cmd(start, checkpoint_error("invalid_checkpoint_payload", err)),
     };
-    let output = match request.kind.as_str() {
-        "file_checkpoint_create" => {
+    let output = match operation {
+        RunnerFileOperation::CheckpointCreate(_) => {
             let include_untracked = payload
                 .get("include_untracked")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             create_workspace_checkpoint(resolved, include_untracked)
         }
-        "file_checkpoint_restore" => {
+        RunnerFileOperation::CheckpointRestore(_) => {
             let Some(checkpoint) = payload.get("checkpoint") else {
                 return ok_cmd(
                     start,
@@ -36,16 +38,16 @@ pub(crate) fn handle_checkpoint_file_request(
             restore_workspace_checkpoint(resolved, checkpoint)
         }
         _ => {
-            return err_cmd(
+            return ok_cmd(
                 start,
-                format!("unknown checkpoint request kind: {}", request.kind),
+                checkpoint_error("invalid_checkpoint_payload", "not a checkpoint operation"),
             )
         }
     };
     ok_cmd(start, output)
 }
 
-fn parse_payload(request: &RunnerRequest) -> Result<Value, String> {
+fn parse_payload(request: &RunnerFilePayload) -> Result<Value, String> {
     let content = request
         .content
         .as_deref()

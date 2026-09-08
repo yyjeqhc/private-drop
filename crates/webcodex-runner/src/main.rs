@@ -16,9 +16,12 @@ use webcodex_runner::shutdown::{lock_unpoison, ActivityTracker, BackgroundThread
 mod job_manager_tests;
 mod webcodex_runner;
 
+use runner_operation::RunnerFileOperation;
+#[cfg(test)]
+use runner_operation::RunnerOperation;
 use webcodex_core::{
     apply_edits_shared, apply_patch_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway,
-    runner_protocol, validation_bridge,
+    runner_operation, runner_protocol, validation_bridge,
 };
 use webcodex_runner_config as runner_config;
 use webcodex_workspace::{project_overview, workspace_checkpoint};
@@ -66,16 +69,20 @@ use webcodex_runner::{
 use webcodex_runner::{
     client_profile_runner_config, configured_prepared_shell_job_command,
     configured_shell_job_command, configured_validation_job_command, cwd_allowed,
-    default_config_path, dispatch_request, err_cmd, handle_apply_patch_file_request,
-    handle_apply_text_edits_file_request, handle_artifact_file_request, handle_basic_file_request,
-    handle_checkpoint_file_request, handle_write_project_file_request, hostname,
-    is_artifact_request_kind, is_basic_file_request_kind, is_checkpoint_request_kind,
-    is_project_op, is_structured_edit_request_kind, load_config, max_concurrent_jobs, ok_cmd,
-    prepare_detached_process_launch, project_registry_dir, resolve_prepared_shell_profile,
-    resolve_requested_path, run_runner, validate_client_profile,
-    validate_structured_edit_runner_path, CommandResult, HotRunnerConfig, HttpSendConfig,
-    PreparedShellProfile, PreparedShellProfileCache, ReloadableRunnerConfig, RunnerConfig,
-    RunnerPolicy, RunnerProjectCache, RunnerSink, ShellConfig, SubmitResultError,
+    default_config_path, dispatch_request_with_outcome, err_cmd, handle_apply_patch_file_request,
+    handle_apply_text_edits_file_request, handle_artifact_file_operation,
+    handle_basic_file_request, handle_checkpoint_file_request, handle_write_project_file_request,
+    hostname, load_config, max_concurrent_jobs, ok_cmd, prepare_detached_process_launch,
+    project_registry_dir, resolve_prepared_shell_profile, resolve_requested_path, run_runner,
+    validate_client_profile, validate_structured_edit_runner_path, CommandResult, HotRunnerConfig,
+    HttpSendConfig, PreparedShellProfile, PreparedShellProfileCache, ReloadableRunnerConfig,
+    RunnerConfig, RunnerDispatchOutcome, RunnerPolicy, RunnerProjectCache, RunnerSink, ShellConfig,
+    SubmitResultError,
+};
+#[cfg(test)]
+use webcodex_runner::{
+    dispatch_request, is_artifact_request_kind, is_basic_file_request_kind,
+    is_checkpoint_request_kind, is_structured_edit_request_kind,
 };
 use webcodex_runner::{is_transport_failure, SshConfig, SshConnectionPool};
 use webcodex_runner::{
@@ -1185,7 +1192,6 @@ pub(crate) const POLLING_DISPATCH_MAX_IN_FLIGHT: usize = 2;
 
 struct PollingDispatch {
     request_id: String,
-    project_cache_invalidation_required: bool,
     sink: RunnerSink,
     config: Arc<HotRunnerConfig>,
     runtime: Arc<ReloadableRunnerConfig>,
@@ -1197,8 +1203,8 @@ struct PollingDispatch {
 }
 
 impl PollingDispatch {
-    fn run(self) -> Result<bool, SubmitResultError> {
-        dispatch_request(
+    fn run(self) -> Result<RunnerDispatchOutcome, SubmitResultError> {
+        dispatch_request_with_outcome(
             &self.sink,
             &self.config,
             &self.runtime,
@@ -1213,8 +1219,7 @@ impl PollingDispatch {
 
 struct PollingDispatchCompletion {
     request_id: String,
-    project_cache_invalidation_required: bool,
-    dispatch_result: Result<bool, SubmitResultError>,
+    dispatch_result: Result<RunnerDispatchOutcome, SubmitResultError>,
 }
 
 /// Sends a completion even if a worker unwinds. It is declared before the
@@ -1223,25 +1228,19 @@ struct PollingDispatchCompletion {
 struct PollingDispatchCompletionOnDrop {
     completion_tx: mpsc::SyncSender<PollingDispatchCompletion>,
     request_id: String,
-    project_cache_invalidation_required: bool,
-    dispatch_result: Option<Result<bool, SubmitResultError>>,
+    dispatch_result: Option<Result<RunnerDispatchOutcome, SubmitResultError>>,
 }
 
 impl PollingDispatchCompletionOnDrop {
-    fn new(
-        completion_tx: mpsc::SyncSender<PollingDispatchCompletion>,
-        request_id: String,
-        project_cache_invalidation_required: bool,
-    ) -> Self {
+    fn new(completion_tx: mpsc::SyncSender<PollingDispatchCompletion>, request_id: String) -> Self {
         Self {
             completion_tx,
             request_id,
-            project_cache_invalidation_required,
             dispatch_result: None,
         }
     }
 
-    fn complete(&mut self, result: Result<bool, SubmitResultError>) {
+    fn complete(&mut self, result: Result<RunnerDispatchOutcome, SubmitResultError>) {
         self.dispatch_result = Some(result);
     }
 }
@@ -1255,7 +1254,6 @@ impl Drop for PollingDispatchCompletionOnDrop {
         });
         let _ = self.completion_tx.send(PollingDispatchCompletion {
             request_id: std::mem::take(&mut self.request_id),
-            project_cache_invalidation_required: self.project_cache_invalidation_required,
             dispatch_result,
         });
     }
@@ -1302,15 +1300,11 @@ impl PollingDispatchSupervisor {
         let completion_tx = self.completion_tx.clone();
         let dispatch_guard = self.dispatches.enter();
         let request_id = dispatch.request_id.clone();
-        let project_cache_invalidation_required = dispatch.project_cache_invalidation_required;
         let handle = std::thread::Builder::new()
             .name("webcodex-poll-dispatch".to_string())
             .spawn(move || {
-                let mut completion = PollingDispatchCompletionOnDrop::new(
-                    completion_tx,
-                    request_id,
-                    project_cache_invalidation_required,
-                );
+                let mut completion =
+                    PollingDispatchCompletionOnDrop::new(completion_tx, request_id);
                 let _dispatch_guard = dispatch_guard;
                 completion.complete(dispatch.run());
             })
@@ -1335,10 +1329,15 @@ impl PollingDispatchSupervisor {
             0
         });
         let _request_id = completion.request_id;
-        if completion.project_cache_invalidation_required && completion.dispatch_result.is_ok() {
-            project_cache.invalidate();
+        match completion.dispatch_result {
+            Ok(outcome) => {
+                if outcome.project_cache_invalidation_required {
+                    project_cache.invalidate();
+                }
+                Ok(outcome.handled)
+            }
+            Err(error) => Err(error),
         }
-        completion.dispatch_result
     }
 
     /// Inspect every completion currently available. This is called before
@@ -2302,6 +2301,7 @@ fn register(
     }
 }
 
+#[cfg(test)]
 fn is_file_request_kind(kind: &str) -> bool {
     is_basic_file_request_kind(kind)
         || is_structured_edit_request_kind(kind)
@@ -2309,18 +2309,16 @@ fn is_file_request_kind(kind: &str) -> bool {
         || is_checkpoint_request_kind(kind)
 }
 
-fn handle_file_request(policy: &RunnerPolicy, request: &RunnerRequest) -> CommandResult {
-    let Some(path) = request.path.as_deref() else {
-        return CommandResult {
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            duration_ms: Some(0),
-            error: Some("file request missing path".to_string()),
-        };
-    };
+fn handle_file_operation(policy: &RunnerPolicy, operation: &RunnerFileOperation) -> CommandResult {
+    let request = operation.payload();
+    let path = request.path.as_str();
     let start = Instant::now();
-    if is_structured_edit_request_kind(&request.kind) {
+    if matches!(
+        operation,
+        RunnerFileOperation::WriteProjectFile(_)
+            | RunnerFileOperation::ApplyTextEdits(_)
+            | RunnerFileOperation::ApplyPatch(_)
+    ) {
         if let Err(e) = validate_structured_edit_runner_path(path) {
             return CommandResult {
                 exit_code: None,
@@ -2343,34 +2341,51 @@ fn handle_file_request(policy: &RunnerPolicy, request: &RunnerRequest) -> Comman
             }
         }
     };
-    match request.kind.as_str() {
-        "file_write_project_file" => handle_write_project_file_request(request, &resolved, start),
-        "file_apply_text_edits" => handle_apply_text_edits_file_request(policy, request, start),
-        "file_apply_patch" => handle_apply_patch_file_request(policy, request, start),
-        "file_save_project_artifact"
-        | "file_read_project_artifact_metadata"
-        | "file_read_project_artifact"
-        | "file_read_project_artifact_export_chunk"
-        | "file_artifact_upload_begin"
-        | "file_artifact_upload_chunk"
-        | "file_artifact_upload_finish"
-        | "file_artifact_upload_abort" => handle_artifact_file_request(request, &resolved, start),
-        "file_checkpoint_create" | "file_checkpoint_restore" => {
-            handle_checkpoint_file_request(request, &resolved, start)
+    match operation {
+        RunnerFileOperation::WriteProjectFile(_) => {
+            handle_write_project_file_request(request, &resolved, start)
         }
-        "file_read"
-        | "file_write"
-        | "file_list"
-        | "file_project_overview"
-        | "file_delete_project_files"
-        | "file_skill_list_packages"
-        | "file_skill_read_file" => handle_basic_file_request(policy, request, &resolved, start),
+        RunnerFileOperation::ApplyTextEdits(_) => {
+            handle_apply_text_edits_file_request(policy, request, start)
+        }
+        RunnerFileOperation::ApplyPatch(_) => {
+            handle_apply_patch_file_request(policy, request, start)
+        }
+        RunnerFileOperation::SaveProjectArtifact(_)
+        | RunnerFileOperation::ReadProjectArtifactMetadata(_)
+        | RunnerFileOperation::ReadProjectArtifact(_)
+        | RunnerFileOperation::ReadProjectArtifactExportChunk(_)
+        | RunnerFileOperation::ArtifactUploadBegin(_)
+        | RunnerFileOperation::ArtifactUploadChunk(_)
+        | RunnerFileOperation::ArtifactUploadFinish(_)
+        | RunnerFileOperation::ArtifactUploadAbort(_) => {
+            handle_artifact_file_operation(operation, &resolved, start)
+        }
+        RunnerFileOperation::CheckpointCreate(_) | RunnerFileOperation::CheckpointRestore(_) => {
+            handle_checkpoint_file_request(operation, &resolved, start)
+        }
+        RunnerFileOperation::Read(_)
+        | RunnerFileOperation::Write(_)
+        | RunnerFileOperation::List(_)
+        | RunnerFileOperation::ProjectOverview(_)
+        | RunnerFileOperation::DeleteProjectFiles(_)
+        | RunnerFileOperation::SkillListPackages(_)
+        | RunnerFileOperation::SkillReadFile(_) => {
+            handle_basic_file_request(policy, operation, &resolved, start)
+        }
+    }
+}
+
+#[cfg(test)]
+fn handle_file_request(policy: &RunnerPolicy, request: &RunnerRequest) -> CommandResult {
+    match request.decode_operation() {
+        Ok(RunnerOperation::File(operation)) => handle_file_operation(policy, &operation),
         _ => CommandResult {
             exit_code: None,
             stdout: None,
             stderr: None,
-            duration_ms: Some(start.elapsed().as_millis() as u64),
-            error: Some(format!("unknown file request kind: {}", request.kind)),
+            duration_ms: Some(0),
+            error: Some("invalid file request".to_string()),
         },
     }
 }
@@ -5687,7 +5702,6 @@ fn handle_one_poll(
     let Some(request) = response.request else {
         return Ok((false, inventory_status));
     };
-    let project_op = is_project_op(&request.kind);
     let hot = runtime.snapshot();
     let runtime = Arc::clone(runtime);
     let jobs = jobs.clone();
@@ -5699,7 +5713,6 @@ fn handle_one_poll(
     let lsp = lsp.clone();
     let dispatch = PollingDispatch {
         request_id: request.request_id.clone(),
-        project_cache_invalidation_required: project_op,
         sink,
         config: hot,
         runtime,
@@ -5760,12 +5773,14 @@ fn handle_one_poll(
             }
         }
     };
-    if project_op && result.is_ok() {
-        project_cache.invalidate();
+    if let Ok(outcome) = &result {
+        if outcome.project_cache_invalidation_required {
+            project_cache.invalidate();
+        }
     }
     let _ = polling_dispatches.background_threads.reap_finished();
     result
-        .map(|_| (true, inventory_status))
+        .map(|outcome| (outcome.handled, inventory_status))
         .map_err(PollError::from_submit)
 }
 

@@ -2,7 +2,6 @@ use super::artifacts::validate_artifact_runner_path;
 use super::config::RunnerPolicy;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
-use crate::runner_protocol::RunnerRequest;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1533,22 +1532,14 @@ pub(crate) fn handle_skill_store_request(
     client_id: &str,
     server_url: &str,
     policy: &RunnerPolicy,
-    request: &RunnerRequest,
+    request: SkillStoreRequest,
 ) -> CommandResult {
     let start = Instant::now();
-    let parsed = match request
-        .content
-        .as_deref()
-        .and_then(|content| serde_json::from_str::<SkillStoreRequest>(content).ok())
-    {
-        Some(request) => request,
-        None => return error_result(start, "skill_store_invalid_request"),
-    };
     let store = match SkillStore::for_runner(client_id, server_url) {
         Ok(store) => store,
         Err(_) => return error_result(start, "skill_store_unavailable"),
     };
-    let result = match parsed {
+    let result = match request {
         SkillStoreRequest::ListActive => store
             .list_active()
             .and_then(|value| serialize_response(value)),

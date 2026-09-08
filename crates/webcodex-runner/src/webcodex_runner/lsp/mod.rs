@@ -4,7 +4,7 @@ mod position;
 mod protocol;
 mod supervisor;
 
-pub(crate) use navigation::{handle_lsp_request, is_lsp_request_kind};
+pub(crate) use navigation::handle_lsp_operation;
 pub(crate) use supervisor::LspSupervisor;
 
 // The documented Windows ManagedChild spawn path uses a system-wide Toolhelp
