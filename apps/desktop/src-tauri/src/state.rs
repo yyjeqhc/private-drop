@@ -419,6 +419,14 @@ impl ProcessCleanup {
     }
 }
 
+fn project_not_loaded_error() -> DesktopError {
+    readiness_timeout_error(
+        "project_not_loaded",
+        "The selected project did not become ready in the Desktop-owned Runner",
+        "Retry project setup to restart Desktop's Runner and load this project again.",
+    )
+}
+
 fn process_is_active(snapshot: Option<crate::process::ProcessSnapshot>) -> bool {
     snapshot.is_some_and(|process| {
         matches!(
@@ -426,6 +434,27 @@ fn process_is_active(snapshot: Option<crate::process::ProcessSnapshot>) -> bool 
             ProcessPhase::Starting | ProcessPhase::Running | ProcessPhase::Stopping
         )
     })
+}
+
+fn project_recovery_owns_runner(started_this_operation: bool, owned_runner_active: bool) -> bool {
+    started_this_operation || owned_runner_active
+}
+
+fn project_recovery_readiness(
+    current: &crate::models::ReadinessSnapshot,
+    project_selected: bool,
+    runner: RunnerReadiness,
+) -> crate::models::ReadinessSnapshot {
+    aggregate_readiness(
+        current.server.clone(),
+        runner,
+        current.exposure.clone(),
+        if project_selected {
+            ProjectReadiness::Configured
+        } else {
+            ProjectReadiness::None
+        },
+    )
 }
 
 pub struct DesktopCore {
@@ -972,12 +1001,12 @@ impl DesktopCore {
                 .await?;
             self.snapshot.readiness.runner = RunnerReadiness::Ready;
             self.publish_snapshot();
-            self.wait_for_project(
-                &identity,
-                cancellation,
-                runner_started || replacing_owned_runner,
-            )
-            .await?;
+            let project_recovery_owns_runner = project_recovery_owns_runner(
+                runner_started,
+                process_is_active(self.process_snapshot(ProcessKind::LocalRunner).await),
+            );
+            self.wait_for_project(&identity, cancellation, project_recovery_owns_runner)
+                .await?;
             cancellation.check()?;
             Ok(runner_started)
         }
@@ -1224,7 +1253,11 @@ impl DesktopCore {
         };
         self.wait_for_runner(&identity, cancellation, runner_deadline, runner_started)
             .await?;
-        self.wait_for_project(&identity, cancellation, runner_started)
+        let project_recovery_owns_runner = project_recovery_owns_runner(
+            runner_started,
+            process_is_active(self.process_snapshot(ProcessKind::LocalRunner).await),
+        );
+        self.wait_for_project(&identity, cancellation, project_recovery_owns_runner)
             .await?;
         cancellation.check()?;
         self.config.topology = Some(topology);
@@ -1935,17 +1968,9 @@ impl DesktopCore {
         loop {
             cancellation.check()?;
             if deadline.is_elapsed() {
-                self.cleanup_readiness_process(
-                    ProcessKind::LocalRunner,
-                    deadline,
-                    cleanup_owned_runner,
-                )
-                .await;
-                return Err(readiness_timeout_error(
-                    "project_not_loaded",
-                    "The selected project did not become ready in the Desktop-owned Runner",
-                    "Retry project setup to restart Desktop's Runner and load this project again.",
-                ));
+                self.cleanup_project_readiness_runner(deadline, cleanup_owned_runner)
+                    .await;
+                return Err(project_not_loaded_error());
             }
             if self
                 .adapter
@@ -1961,42 +1986,55 @@ impl DesktopCore {
                 && tokio::time::Instant::now() >= recovery_at
             {
                 recovery_attempted = true;
-                self.stop_process_until(ProcessKind::LocalRunner, deadline)
-                    .await;
-                if deadline.is_elapsed() {
-                    return Err(readiness_timeout_error(
-                        "project_not_loaded",
-                        "The selected project did not become ready in the Desktop-owned Runner",
-                        "Retry project setup to restart Desktop's Runner and load this project again.",
-                    ));
+                let recovery: DesktopResult<()> = async {
+                    self.stop_process_until(ProcessKind::LocalRunner, deadline)
+                        .await;
+                    if deadline.is_elapsed() {
+                        return Err(project_not_loaded_error());
+                    }
+                    cancellation.check()?;
+                    self.publish_project_recovery_readiness(RunnerReadiness::Connecting);
+                    let command = self.adapter.local_runner_command(&identity.runner_config)?;
+                    self.spawn_owned(ProcessKind::LocalRunner, command, false, cancellation)
+                        .await?;
+                    self.wait_for_runner(identity, cancellation, deadline, true)
+                        .await
                 }
-                cancellation.check()?;
-                self.snapshot.readiness.runner = RunnerReadiness::Connecting;
-                self.snapshot.readiness.project = ProjectReadiness::Configured;
-                self.publish_snapshot();
-                let command = self.adapter.local_runner_command(&identity.runner_config)?;
-                self.spawn_owned(ProcessKind::LocalRunner, command, false, cancellation)
-                    .await?;
-                self.wait_for_runner(identity, cancellation, deadline, true)
-                    .await?;
-                self.snapshot.readiness.runner = RunnerReadiness::Ready;
-                self.publish_snapshot();
+                .await;
+                if let Err(error) = recovery {
+                    self.cleanup_project_readiness_runner(deadline, true).await;
+                    return Err(error);
+                }
+                self.publish_project_recovery_readiness(RunnerReadiness::Ready);
                 continue;
             }
             if deadline.is_elapsed() {
-                self.cleanup_readiness_process(
-                    ProcessKind::LocalRunner,
-                    deadline,
-                    cleanup_owned_runner,
-                )
-                .await;
-                return Err(readiness_timeout_error(
-                    "project_not_loaded",
-                    "The selected project did not become ready in the Desktop-owned Runner",
-                    "Retry project setup to restart Desktop's Runner and load this project again.",
-                ));
+                self.cleanup_project_readiness_runner(deadline, cleanup_owned_runner)
+                    .await;
+                return Err(project_not_loaded_error());
             }
             sleep_or_cancel_until(POLL_INTERVAL, cancellation, deadline).await?;
+        }
+    }
+
+    fn publish_project_recovery_readiness(&mut self, runner: RunnerReadiness) {
+        self.snapshot.readiness = project_recovery_readiness(
+            &self.snapshot.readiness,
+            self.snapshot.project.is_some(),
+            runner,
+        );
+        self.publish_snapshot();
+    }
+
+    async fn cleanup_project_readiness_runner(
+        &mut self,
+        deadline: Deadline,
+        cleanup_owned_runner: bool,
+    ) {
+        self.cleanup_readiness_process(ProcessKind::LocalRunner, deadline, cleanup_owned_runner)
+            .await;
+        if cleanup_owned_runner {
+            self.publish_project_recovery_readiness(RunnerReadiness::Stopped);
         }
     }
 
@@ -2802,6 +2840,40 @@ mod tests {
             tunnel_proxy: TunnelProxyConfig::default(),
             runtime: None,
         }
+    }
+
+    #[test]
+    fn project_recovery_accepts_existing_desktop_runner_ownership() {
+        assert!(project_recovery_owns_runner(true, false));
+        assert!(project_recovery_owns_runner(false, true));
+        assert!(project_recovery_owns_runner(true, true));
+        assert!(!project_recovery_owns_runner(false, false));
+    }
+
+    #[test]
+    fn project_recovery_cleanup_invalidates_derived_ready_state() {
+        let ready = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::RemoteReady,
+            ProjectReadiness::Ready,
+        );
+        assert!(ready.runtime_ready);
+        assert!(ready.ready_for_chatgpt);
+
+        let stopped = project_recovery_readiness(&ready, true, RunnerReadiness::Stopped);
+        assert_eq!(stopped.runner, RunnerReadiness::Stopped);
+        assert_eq!(stopped.project, ProjectReadiness::Configured);
+        assert!(!stopped.runtime_ready);
+        assert!(!stopped.ready_for_chatgpt);
+        assert_eq!(
+            stopped.summary_kind,
+            ReadinessSummaryKind::RunnerDisconnected
+        );
+        assert_eq!(
+            stopped.next_action_kind,
+            Some(ReadinessNextActionKind::StartRunner)
+        );
     }
 
     #[test]
