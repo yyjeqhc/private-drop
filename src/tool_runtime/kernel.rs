@@ -936,17 +936,11 @@ impl ToolRuntime {
         }
 
         let project = tool_project(&call);
-        let deferred_search_projection = super::dispatch::SearchModelProjection::capture(&call);
-        let defer_batch_model_projection = context.session_id.is_some()
-            && matches!(
-                &call,
-                ToolCall::ReadFiles { .. } | ToolCall::SearchProjectTexts { .. }
-            );
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).
-        let (mut result, deferred_read_projection) = self
-            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_read_projection(
+        let (mut result, result_projection) = self
+            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
                 call,
                 context.auth,
                 context.transport.into(),
@@ -997,50 +991,10 @@ impl ToolRuntime {
                 recorder_ack_requested,
             );
         }
-        if defer_batch_model_projection {
-            match request.tool_name.as_str() {
-                "read_files" => {
-                    super::read_files::enforce_final_model_facing_hard_cap(
-                        &mut result,
-                        &deferred_read_projection,
-                    );
-                }
-                "search_project_texts" => {
-                    let default_timeouts = match &deferred_search_projection {
-                        super::dispatch::SearchModelProjection::Batch { default_timeouts } => {
-                            default_timeouts.as_slice()
-                        }
-                        _ => &[],
-                    };
-                    super::search_project_texts::enforce_final_model_facing_hard_cap(
-                        &mut result,
-                        default_timeouts,
-                    );
-                }
-                _ => {}
-            }
-            // Dispatch deliberately kept the canonical batch envelope while an
-            // outer recording Session was pending. Only now, after final hard-cap
-            // enforcement has accounted for continuity/recovery/handoff/attention,
-            // project the response to the established sparse model-facing shape.
-            super::dispatch::sparsify_search_success_for_model(
-                &deferred_search_projection,
-                &mut result,
-            );
-            if request.tool_name == "read_files" {
-                super::read_files::add_actionable_read_continuations(
-                    &deferred_read_projection,
-                    &mut result,
-                );
-            }
-            super::dispatch::sparsify_complete_read_success(&request.tool_name, &mut result);
-        }
-        if context.session_id.is_some() && request.tool_name == "read_file" {
-            super::read_files::add_actionable_read_continuations(
-                &deferred_read_projection,
-                &mut result,
-            );
-        }
+        // Canonical execution evidence and every Session/context overlay are now
+        // complete. Consume the request-scoped plan exactly once to produce the
+        // final model-facing read/search result.
+        result_projection.project(&mut result);
         if request.tool_name == "tool_manifest" {
             super::surface::sparsify_tool_manifest_model_result(&mut result);
         }

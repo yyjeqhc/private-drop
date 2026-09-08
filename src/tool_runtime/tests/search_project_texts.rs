@@ -2212,6 +2212,78 @@ async fn search_project_texts_outer_recording_session_preserves_complete_sparse_
 }
 
 #[tokio::test]
+async fn search_project_texts_outer_recorder_observes_canonical_batch_before_primary_projection() {
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+        ToolProtocolCapabilities, ToolTransport,
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "search-canonical-before-projection";
+    let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("canonical search evidence".to_string()),
+    );
+    let auth = auth_context(None, true);
+    let arguments = json!({
+        "project": project,
+        "queries": [{"pattern": "needle-a"}, {"pattern": "needle-b"}],
+        "max_result_bytes": 8192
+    });
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .call_tool_with_invocation_metadata(
+                    ToolCallRequest {
+                        tool_name: "search_project_texts".to_string(),
+                        arguments,
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: Some(&session_id),
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    ToolInvocationMetadata::default(),
+                    ToolProtocolCapabilities::default(),
+                )
+                .await
+        }
+    });
+    for (pattern, path) in [("needle-a", "src/a.rs"), ("needle-b", "src/b.rs")] {
+        let request = wait_for_patch_agent_request(&runtime, client_id).await;
+        assert_eq!(request_pattern(&request), pattern);
+        let stdout = search_stdout("matches", path, &"z".repeat(12 * 1024));
+        complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, &stdout, "")
+            .await;
+    }
+
+    let result = task.await.unwrap().result.expect("model-facing result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["output_truncated"], true);
+    assert!(result.output["returned_count"].as_u64().unwrap() < 2);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let event = finished_event(&summary, "search_project_texts");
+    assert_eq!(
+        event.observed_paths,
+        vec!["src/a.rs".to_string(), "src/b.rs".to_string()],
+        "outer recorder must consume canonical search evidence before the terminal model budget"
+    );
+}
+
+#[tokio::test]
 async fn search_project_texts_outer_recording_session_keeps_final_response_under_hard_cap() {
     use crate::tool_runtime::kernel::{
         HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,

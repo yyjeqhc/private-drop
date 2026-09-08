@@ -205,53 +205,122 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
     }
 }
 
-pub(super) enum SearchModelProjection {
+enum SearchModelProjection {
     None,
-    Single { default_timeout: bool },
-    Batch { default_timeouts: Vec<bool> },
+    Single {
+        default_timeout: bool,
+    },
+    Batch {
+        default_timeouts: Vec<bool>,
+        max_result_bytes: Option<usize>,
+    },
 }
 
 impl SearchModelProjection {
-    pub(super) fn capture(call: &ToolCall) -> Self {
+    fn capture(call: &ToolCall) -> Self {
         match call {
             ToolCall::SearchProjectText { timeout_secs, .. } => Self::Single {
                 default_timeout: caller_uses_default_search_timeout(timeout_secs),
             },
-            ToolCall::SearchProjectTexts { queries, .. } => Self::Batch {
+            ToolCall::SearchProjectTexts {
+                queries,
+                max_result_bytes,
+                ..
+            } => Self::Batch {
                 default_timeouts: queries
                     .iter()
                     .map(|query| caller_uses_default_search_timeout(&query.timeout_secs))
                     .collect(),
+                max_result_bytes: *max_result_bytes,
             },
             _ => Self::None,
         }
     }
 }
 
-/// Batch response-budget inputs captured before the ToolCall is moved into
-/// canonical execution. Budgeting is intentionally deferred until after
-/// Session recording/decorations so the recorder keeps seeing the canonical
-/// result while the model-facing projection can account for sparse semantics.
-enum BatchResponseBudgetProjection {
+enum ModelFacingProjection {
     None,
-    ReadFiles { max_result_bytes: Option<usize> },
-    SearchProjectTexts { max_result_bytes: Option<usize> },
+    Read(super::read_files::ReadModelProjection),
+    Search(SearchModelProjection),
 }
 
-impl BatchResponseBudgetProjection {
-    fn capture(call: &ToolCall) -> Self {
-        match call {
-            ToolCall::ReadFiles {
-                max_result_bytes, ..
-            } => Self::ReadFiles {
-                max_result_bytes: *max_result_bytes,
-            },
-            ToolCall::SearchProjectTexts {
-                max_result_bytes, ..
-            } => Self::SearchProjectTexts {
-                max_result_bytes: *max_result_bytes,
-            },
-            _ => Self::None,
+/// Request facts needed only after canonical execution/recording has finished.
+/// Captured once before the ToolCall is moved, then consumed exactly once by the
+/// terminal model-facing projection stage. The concrete projection stays private
+/// so callers cannot branch on tool-specific result policy.
+pub(crate) struct ModelFacingProjectionPlan {
+    projection: ModelFacingProjection,
+}
+
+impl ModelFacingProjectionPlan {
+    pub(crate) fn capture(call: &ToolCall) -> Self {
+        let projection = match call {
+            ToolCall::ReadFile { .. } | ToolCall::ReadFiles { .. } => {
+                ModelFacingProjection::Read(super::read_files::ReadModelProjection::capture(call))
+            }
+            ToolCall::SearchProjectText { .. } | ToolCall::SearchProjectTexts { .. } => {
+                ModelFacingProjection::Search(SearchModelProjection::capture(call))
+            }
+            _ => ModelFacingProjection::None,
+        };
+        Self { projection }
+    }
+
+    pub(crate) fn bind_resolved_project(&mut self, resolved: Option<&ResolvedProject>) {
+        if let ModelFacingProjection::Read(projection) = &mut self.projection {
+            projection.bind_resolved_project(resolved);
+        }
+    }
+
+    /// Consume the plan at the only stage allowed to turn canonical execution
+    /// output into the final model-facing read/search shape. Session/audit
+    /// recorders must run before this method.
+    pub(crate) fn project(self, result: &mut ToolResult) {
+        let projection = self.projection;
+        match &projection {
+            ModelFacingProjection::Read(
+                projection @ super::read_files::ReadModelProjection::Batch {
+                    max_result_bytes, ..
+                },
+            ) => {
+                super::read_files::apply_model_facing_output_budget(
+                    result,
+                    *max_result_bytes,
+                    projection,
+                );
+                super::read_files::enforce_final_model_facing_hard_cap(result, projection);
+            }
+            ModelFacingProjection::Search(SearchModelProjection::Batch {
+                default_timeouts,
+                max_result_bytes,
+            }) => {
+                super::search_project_texts::apply_model_facing_output_budget(
+                    result,
+                    default_timeouts,
+                    *max_result_bytes,
+                );
+                super::search_project_texts::enforce_final_model_facing_hard_cap(
+                    result,
+                    default_timeouts,
+                );
+            }
+            _ => {}
+        }
+
+        match &projection {
+            ModelFacingProjection::Read(projection) => {
+                super::read_files::add_actionable_read_continuations(projection, result);
+                let tool_name = match projection {
+                    super::read_files::ReadModelProjection::Single { .. } => "read_file",
+                    super::read_files::ReadModelProjection::Batch { .. } => "read_files",
+                    super::read_files::ReadModelProjection::None => return,
+                };
+                sparsify_complete_read_success(tool_name, result);
+            }
+            ModelFacingProjection::Search(projection) => {
+                sparsify_search_success_for_model(projection, result)
+            }
+            ModelFacingProjection::None => {}
         }
     }
 }
@@ -430,10 +499,7 @@ pub(crate) fn sparsify_search_output_for_model(
     true
 }
 
-pub(super) fn sparsify_search_success_for_model(
-    projection: &SearchModelProjection,
-    result: &mut ToolResult,
-) {
+fn sparsify_search_success_for_model(projection: &SearchModelProjection, result: &mut ToolResult) {
     if !result.success {
         return;
     }
@@ -444,7 +510,9 @@ pub(super) fn sparsify_search_success_for_model(
         SearchModelProjection::Single { default_timeout } => {
             sparsify_search_output_for_model(output, *default_timeout, false);
         }
-        SearchModelProjection::Batch { default_timeouts } => {
+        SearchModelProjection::Batch {
+            default_timeouts, ..
+        } => {
             let complete_batch =
                 output
                     .get("items")
@@ -520,6 +588,7 @@ pub(crate) fn sparsify_search_batch_success_for_model(
     sparsify_search_success_for_model(
         &SearchModelProjection::Batch {
             default_timeouts: default_timeouts.to_vec(),
+            max_result_bytes: None,
         },
         result,
     );
@@ -799,7 +868,8 @@ impl ToolRuntime {
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
     ) -> ToolResult {
-        self.dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_read_projection(
+        let (mut result, projection) = self
+            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
             call,
             auth,
             transport,
@@ -810,15 +880,17 @@ impl ToolRuntime {
             material_capabilities,
             super::kernel::ToolProtocolCapabilities::default(),
         )
-        .await
-        .0
+        .await;
+        projection.project(&mut result);
+        result
     }
 
-    /// Kernel-only companion that returns the Read projection after the same
-    /// authoritative Project resolution used for execution. Other callers keep
-    /// the existing ToolResult-only API and cannot observe this internal state.
+    /// Kernel-only companion that returns the terminal model-facing projection
+    /// plan after the same authoritative Project resolution used for execution.
+    /// The returned ToolResult is still canonical with respect to read/search
+    /// budgeting and sparse projection so an outer recorder can consume it first.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_read_projection(
+    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
@@ -829,8 +901,8 @@ impl ToolRuntime {
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
         protocol_capabilities: super::kernel::ToolProtocolCapabilities,
-    ) -> (ToolResult, super::read_files::ReadModelProjection) {
-        let mut read_projection = super::read_files::ReadModelProjection::capture(&call);
+    ) -> (ToolResult, ModelFacingProjectionPlan) {
+        let mut result_projection = ModelFacingProjectionPlan::capture(&call);
         // Edit usage telemetry retains only fixed safe classifications. For
         // apply_patch it captures the requested matching enum before the call is
         // moved, never the patch/path/content arguments.
@@ -846,7 +918,7 @@ impl ToolRuntime {
                 context_request.clone(),
                 material_capabilities,
                 protocol_capabilities,
-                &mut read_projection,
+                &mut result_projection,
             )
             .await;
         // Early project/session/auth failures can return before the normal
@@ -866,7 +938,7 @@ impl ToolRuntime {
         if let Some(guard) = edit_usage.as_mut() {
             guard.finish_with_result(&result);
         }
-        (result, read_projection)
+        (result, result_projection)
     }
 
     /// Everything the activity ledger needs from a call, captured before the
@@ -979,7 +1051,7 @@ impl ToolRuntime {
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
         protocol_capabilities: super::kernel::ToolProtocolCapabilities,
-        read_projection: &mut super::read_files::ReadModelProjection,
+        result_projection: &mut ModelFacingProjectionPlan,
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
@@ -1049,7 +1121,7 @@ impl ToolRuntime {
         let resolved_project = project_resolution
             .as_ref()
             .and_then(|resolution| resolution.as_ref().ok());
-        read_projection.bind_resolved_project(resolved_project);
+        result_projection.bind_resolved_project(resolved_project);
         // Preserve the canonical project for activity attribution before the
         // session recorder consumes the resolved value below. Short aliases
         // must not turn a real Runner execution into a client-less row.
@@ -1375,8 +1447,6 @@ impl ToolRuntime {
         }
         let activity_context =
             Self::capture_workspace_activity_context(&call, activity_project.as_deref());
-        let search_projection = SearchModelProjection::capture(&call);
-        let batch_budget_projection = BatchResponseBudgetProjection::capture(&call);
         let validation_assertion_name = recorder_metadata.expectation.assertion_name.as_deref();
         let tool_name = call.tool_name();
         let trusted_recording_session_id = recorder_metadata
@@ -1465,55 +1535,7 @@ impl ToolRuntime {
             material_capabilities,
         )
         .await;
-        let defer_batch_sparsification = !inner_model_facing_recording
-            && !matches!(
-                &batch_budget_projection,
-                BatchResponseBudgetProjection::None
-            );
-        match &batch_budget_projection {
-            BatchResponseBudgetProjection::None => {}
-            BatchResponseBudgetProjection::ReadFiles { max_result_bytes } => {
-                super::read_files::apply_model_facing_output_budget(
-                    &mut result,
-                    *max_result_bytes,
-                    read_projection,
-                );
-                // Direct/business-Session dispatch has already added every
-                // model-facing Session overlay. Enforce the true final ceiling
-                // against that decorated result before sparse projection. Outer
-                // kernel recording defers sparsification and repeats this exact
-                // hard-cap pass after its own overlays are attached.
-                super::read_files::enforce_final_model_facing_hard_cap(
-                    &mut result,
-                    read_projection,
-                );
-            }
-            BatchResponseBudgetProjection::SearchProjectTexts { max_result_bytes } => {
-                let default_timeouts = match &search_projection {
-                    SearchModelProjection::Batch { default_timeouts } => {
-                        default_timeouts.as_slice()
-                    }
-                    _ => &[],
-                };
-                super::search_project_texts::apply_model_facing_output_budget(
-                    &mut result,
-                    default_timeouts,
-                    *max_result_bytes,
-                );
-                super::search_project_texts::enforce_final_model_facing_hard_cap(
-                    &mut result,
-                    default_timeouts,
-                );
-            }
-        }
         sparsify_terminal_structured_execution_success(tool_name, &mut result);
-        if !defer_batch_sparsification {
-            sparsify_search_success_for_model(&search_projection, &mut result);
-            if inner_model_facing_recording {
-                super::read_files::add_actionable_read_continuations(read_projection, &mut result);
-            }
-            sparsify_complete_read_success(tool_name, &mut result);
-        }
         result
     }
 
