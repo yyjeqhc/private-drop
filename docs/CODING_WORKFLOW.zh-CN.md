@@ -59,7 +59,7 @@ Bootstrap 只读取固定的几个指令入口，不会扫描所有子目录规�
 
 Guard failure 是 **zero-write conflict**，不是削弱 guard 的理由。重新读取当前源码，并基于最新状态重新生成原本的编辑。
 
-遇到 `matching_mode_rejected` 时，保持 matching guard，不要切换到 `first_match`。先重新读取当前源码；如果已经有 current source + SHA，而且原本修改很容易表达成 exact edit，优先转为 `apply_text_edits`。如果 patch 形式仍明显更合适，则消费返回的有界 `recovery.action=read_files` / `recovery.items`，读取候选窗口，补充稳定且唯一的上下文，再生成新的 `matching_mode=unique` patch。
+遇到 `matching_mode_rejected` 时，保持 matching guard，不要切换到 `first_match`。先重新读取当前源码；如果已经有 current source + SHA，而且原本修改很容易表达成 exact edit，优先转为 `apply_text_edits`。如果 patch 形式仍明显更合适，则消费返回的有界 `recovery.action=read_files` / `recovery.items`，并保留原请求的 patch guard：原来是 `matching_mode=unique` 时，补充稳定且唯一的上下文后仍以 `unique` 重试；原来是 `exact_unique` 时，基于 exact current source 重新生成并继续使用 `exact_unique`。不要降级明确的 stale-context/concurrency fence。
 
 对于确定性的 `context_mismatch`，同样消费有界 `read_files` recovery，并基于 current source 重新生成 patch；不要盲目重复相同 patch。若结果是 `outcome_unknown`，先检查 workspace，再决定是否允许任何写入重试。
 

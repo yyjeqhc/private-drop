@@ -158,7 +158,10 @@ fn edit_recommended_flow_pairs_reads_with_guarded_exact_edits() {
         "do not weaken the guard or switch to first_match",
         "prefer apply_text_edits if exact edits are easy",
         "bounded read_files recovery",
-        "regenerate matching_mode=unique with unique context",
+        "preserve the requested guard",
+        "unique retries use matching_mode=unique with unique context",
+        "exact_unique retries remain matching_mode=exact_unique",
+        "never downgrade the stale-context/concurrency fence",
         "context_mismatch requires bounded reread",
         "never blind retry",
     ] {

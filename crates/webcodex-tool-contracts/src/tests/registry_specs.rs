@@ -520,6 +520,14 @@ fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
         "legacy strict_matching must not remain model-facing"
     );
     let patch_spec = spec_named(&specs, "apply_patch");
+    assert!(patch_spec.description.contains("preserves requested guard"));
+    assert!(patch_spec.description.contains("unique stays unique"));
+    assert!(patch_spec
+        .description
+        .contains("exact_unique stays exact_unique"));
+    assert!(patch_spec
+        .description
+        .contains("never relax the stale-context/concurrency fence"));
     let patch_output = &patch_spec.output_schema["properties"]["output"]["properties"];
     assert!(
         patch_output.get("match_diagnostic").is_some(),

@@ -71,7 +71,7 @@ Use `apply_text_edits` as the canonical default model-generated editing path aft
 
 Guard failures are **zero-write conflicts**, not reasons to weaken the guard. Re-read the current source and regenerate the intended edit against that state.
 
-For `matching_mode_rejected`, keep the matching guard and do not switch to `first_match`. Re-read the current source. If current source plus SHA is available and the intended change is easy to express as exact edits, prefer `apply_text_edits`. If patch form is still materially clearer, consume the bounded `recovery.action=read_files` / `recovery.items`, inspect the candidate windows, add stable unique context, and regenerate a new `matching_mode=unique` patch.
+For `matching_mode_rejected`, keep the matching guard and do not switch to `first_match`. Re-read the current source. If current source plus SHA is available and the intended change is easy to express as exact edits, prefer `apply_text_edits`. If patch form is still materially clearer, consume the bounded `recovery.action=read_files` / `recovery.items` and preserve the requested patch guard: a `matching_mode=unique` retry adds stable unique context and stays `unique`; an `exact_unique` retry is regenerated from exact current source and stays `exact_unique`. Never downgrade an explicit stale-context/concurrency fence.
 
 For deterministic `context_mismatch`, consume the bounded `read_files` recovery and regenerate against current source; do not blindly repeat the same patch. If the result is `outcome_unknown`, inspect the workspace before deciding whether any write should be retried.
 
