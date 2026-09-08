@@ -14,18 +14,24 @@ fn structured_validation_tools_are_known_and_parse() {
     assert!(matches!(
         ToolCall::from_tool_name(
             "cargo_fmt",
-            json!({"project":"agent:oe:webcodex","check":true,"cwd":"crates/app"})
+            json!({"project":"agent:oe:webcodex","check":true,"cwd":"crates/app","sync_wait_secs":60})
         )
         .unwrap(),
         ToolCall::CargoFmt {
             check: Some(true),
+            sync_wait_secs: Some(60),
             ..
         }
     ));
     assert!(matches!(
-        ToolCall::from_tool_name("cargo_check", json!({"project":"agent:oe:webcodex"})).unwrap(),
+        ToolCall::from_tool_name(
+            "cargo_check",
+            json!({"project":"agent:oe:webcodex","sync_wait_secs":1})
+        )
+        .unwrap(),
         ToolCall::CargoCheck {
             all_targets: None,
+            sync_wait_secs: Some(1),
             ..
         }
     ));
@@ -37,6 +43,7 @@ fn structured_validation_tools_are_known_and_parse() {
                 "filter":"tool_runtime",
                 "require_tests": true,
                 "min_tests": 6
+                ,"sync_wait_secs": 1
             })
         )
         .unwrap(),
@@ -44,16 +51,17 @@ fn structured_validation_tools_are_known_and_parse() {
             filter: Some(filter),
             require_tests: Some(true),
             min_tests: Some(6),
+            sync_wait_secs: Some(1),
             ..
         } if filter == "tool_runtime"
     ));
     assert!(matches!(
         ToolCall::from_tool_name(
             "go_test",
-            json!({"project":"agent:oe:webcodex","cwd":"internal/nodeapp"})
+            json!({"project":"agent:oe:webcodex","cwd":"internal/nodeapp","sync_wait_secs":1})
         )
         .unwrap(),
-        ToolCall::GoTest { cwd: Some(cwd), .. } if cwd == "internal/nodeapp"
+        ToolCall::GoTest { cwd: Some(cwd), sync_wait_secs: Some(1), .. } if cwd == "internal/nodeapp"
     ));
 }
 

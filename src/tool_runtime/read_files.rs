@@ -10,7 +10,10 @@ use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
 pub(crate) const MAX_READ_FILES_ITEMS: usize = 8;
-pub(crate) const MAX_READ_FILES_CONCURRENCY: usize = 4;
+// A max-size read batch may issue all eight independent read-only requests in
+// one Server fanout wave. The public item cap, shared deadline, result budget,
+// and downstream Runner admission (for example polling capacity) remain hard bounds.
+pub(crate) const MAX_READ_FILES_CONCURRENCY: usize = 8;
 pub(crate) const DEFAULT_READ_FILES_DEADLINE: Duration = Duration::from_secs(30);
 pub(crate) use webcodex_core::runtime_contract::{
     DEFAULT_READ_FILES_RESULT_BYTES, MIN_READ_FILES_RESULT_BYTES,

@@ -1216,12 +1216,12 @@ impl std::fmt::Display for PollError {
     }
 }
 
-/// Polling needs enough independent dispatch capacity for one long ordinary
-/// request plus a later request (notably a Job start/stop or persistent-shell
-/// close), but E1 deliberately does not introduce deployment tuning. Two is
-/// the smallest bound that removes the one-request starvation failure while
-/// keeping the process-local OS-thread surface conservative.
-pub(crate) const POLLING_DISPATCH_MAX_IN_FLIGHT: usize = 2;
+/// Polling admits four ordinary Runner requests concurrently before it stops
+/// polling. The Server remains the only pending-work queue: no fifth request is
+/// dequeued until one worker completes. Four matches the current bounded control
+/// responsiveness target while avoiding an unbounded process-local thread fanout;
+/// Job scheduling remains a separate configured queue/concurrency contract.
+pub(crate) const POLLING_DISPATCH_MAX_IN_FLIGHT: usize = 4;
 
 struct PollingDispatch {
     request_id: String,

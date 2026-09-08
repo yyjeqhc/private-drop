@@ -4,13 +4,18 @@ use super::common::{object_schema, with_optional_session_id};
 use webcodex_core::workflow_session_contract::TOOL_RESULT_EXPECTATION_FIELD;
 
 /// `timeout_secs` for read-only structured validation tools is the total
-/// runtime budget of the command. Short validations return immediately; a
-/// long validation continues as the same execution and returns `job_id`. The tool call
-/// itself blocks only a short internal sync window.
+/// runtime budget. `sync_wait_secs` optionally selects the bounded synchronous
+/// grace before same-execution Job handoff; omission preserves the existing
+/// grace capped by the effective timeout.
 const VALIDATION_TIMEOUT_SECS_DESCRIPTION: &str =
     "Total validation runtime budget in seconds (1..=3600). Short validation returns immediately; longer validation keeps the same execution and returns job_id for observation. Defaults vary per tool; invalid values are rejected before start.";
 const VALIDATION_TIMEOUT_MIN: u64 = 1;
 const VALIDATION_TIMEOUT_MAX: u64 = 3600;
+const VALIDATION_SYNC_WAIT_SECS_DESCRIPTION: &str =
+    "Optional synchronous grace in seconds (1..=60). It only controls how long this tool call waits after validation starts; if it is still running and total timeout remains, the same execution is returned as a Job. It never extends timeout_secs or starts a second validation.";
+const VALIDATION_SYNC_WAIT_MIN: u64 = 1;
+const VALIDATION_SYNC_WAIT_MAX: u64 =
+    webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 
 fn with_validation_timeout_bounds(mut schema: Value, default: u64) -> Value {
     schema["properties"]["timeout_secs"]["minimum"] = json!(VALIDATION_TIMEOUT_MIN);
@@ -18,6 +23,16 @@ fn with_validation_timeout_bounds(mut schema: Value, default: u64) -> Value {
     schema["properties"]["timeout_secs"]["default"] = json!(default);
     schema["properties"]["timeout_secs"]["description"] =
         json!(VALIDATION_TIMEOUT_SECS_DESCRIPTION);
+    schema
+}
+
+fn with_validation_sync_wait(mut schema: Value) -> Value {
+    schema["properties"]["sync_wait_secs"] = json!({
+        "type": "integer",
+        "minimum": VALIDATION_SYNC_WAIT_MIN,
+        "maximum": VALIDATION_SYNC_WAIT_MAX,
+        "description": VALIDATION_SYNC_WAIT_SECS_DESCRIPTION,
+    });
     schema
 }
 
@@ -55,10 +70,18 @@ pub fn cargo_fmt_input_schema() -> Value {
             "For mutating format, synchronous timeout in seconds (1..=120, default 120). With check=true, total validation budget is 1..=3600 and a long check keeps the same execution and returns job_id.",
             false,
         ),
+        (
+            "sync_wait_secs",
+            "integer",
+            VALIDATION_SYNC_WAIT_SECS_DESCRIPTION,
+            false,
+        ),
     ]));
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
     schema["properties"]["timeout_secs"]["maximum"] = json!(3600);
     schema["properties"]["timeout_secs"]["default"] = json!(120);
+    schema["properties"]["sync_wait_secs"]["minimum"] = json!(VALIDATION_SYNC_WAIT_MIN);
+    schema["properties"]["sync_wait_secs"]["maximum"] = json!(VALIDATION_SYNC_WAIT_MAX);
     schema["allOf"] = json!([{
         "if": {
             "required": ["check"],
@@ -71,7 +94,8 @@ pub fn cargo_fmt_input_schema() -> Value {
         },
         "else": {
             "properties": {
-                "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 120 }
+                "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 120 },
+                "sync_wait_secs": { "type": "null" }
             }
         }
     }, {
@@ -93,7 +117,7 @@ pub fn cargo_fmt_input_schema() -> Value {
 }
 
 pub fn cargo_check_input_schema() -> Value {
-    with_optional_result_expectation(with_validation_timeout_bounds(
+    with_optional_result_expectation(with_validation_sync_wait(with_validation_timeout_bounds(
         object_schema(with_optional_session_id(vec![
             ("project", "string", "Runner-registered project id.", true),
             (
@@ -130,11 +154,11 @@ pub fn cargo_check_input_schema() -> Value {
             ),
         ])),
         600,
-    ))
+    )))
 }
 
 pub fn cargo_test_input_schema() -> Value {
-    let mut schema = with_validation_timeout_bounds(
+    let mut schema = with_validation_sync_wait(with_validation_timeout_bounds(
         object_schema(with_optional_session_id(vec![
             ("project", "string", "Runner-registered project id.", true),
             (
@@ -185,7 +209,7 @@ pub fn cargo_test_input_schema() -> Value {
             ),
         ])),
         1800,
-    );
+    ));
     schema["properties"]["min_tests"]["minimum"] = json!(1);
     schema["properties"]["min_tests"]["maximum"] =
         json!(webcodex_core::runner_protocol::CARGO_TEST_MIN_TESTS_MAX);
@@ -205,7 +229,7 @@ pub fn cargo_test_input_schema() -> Value {
 }
 
 pub fn go_test_input_schema() -> Value {
-    let mut schema = with_validation_timeout_bounds(
+    let mut schema = with_validation_sync_wait(with_validation_timeout_bounds(
         object_schema(with_optional_session_id(vec![
             ("project", "string", "Runner-registered project id.", true),
             (
@@ -228,7 +252,7 @@ pub fn go_test_input_schema() -> Value {
             ),
         ])),
         1800,
-    );
+    ));
     schema["properties"]["packages"]["minItems"] = json!(1);
     schema["properties"]["packages"]["maxItems"] =
         json!(webcodex_core::runner_protocol::GO_TEST_PACKAGE_MAX_ITEMS);

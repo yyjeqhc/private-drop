@@ -322,6 +322,7 @@ async fn go_test_rejects_empty_or_oversized_package_lists_before_dispatch() {
                     cwd: None,
                     packages: Some(packages),
                     timeout_secs: Some(1800),
+                    sync_wait_secs: None,
                 },
                 Some(&auth),
             )
@@ -378,7 +379,8 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
                         session_id: Some(session_id),
                         cwd: Some("internal/nodeapp".to_string()),
                         packages: None,
-                        timeout_secs: Some(1800),
+                        timeout_secs: Some(60),
+                        sync_wait_secs: Some(60),
                     },
                     Some(&auth),
                 )
@@ -427,6 +429,8 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
     assert_eq!(result.output["command_summary"], "go test -json ./...");
     assert_eq!(result.output["cwd"], "internal/nodeapp");
     assert_eq!(result.output["promoted_to_job"], false);
+    assert_eq!(result.output["effective_timeout_secs"], 60);
+    assert_eq!(result.output["sync_wait_secs"], 60);
     assert_eq!(result.output["tests_detected"], true);
     assert_eq!(result.output["tests_run_count"], 2);
     assert_eq!(result.output["tests_passed"], 1);
@@ -488,6 +492,7 @@ async fn go_test_failure_reports_failed_test_identity_in_result_and_session() {
                         cwd: None,
                         packages: None,
                         timeout_secs: Some(1800),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -580,6 +585,7 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
                             "./internal/node".to_string(),
                         ]),
                         timeout_secs: Some(1800),
+                        sync_wait_secs: Some(1),
                     },
                     Some(&auth),
                 )
@@ -601,6 +607,7 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["sync_wait_secs"], 1);
     assert_eq!(result.output["terminal"], false);
     assert_eq!(result.output["job_id"], job_id);
     let observation_token = result.output["observation_token"]
@@ -699,6 +706,7 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
                         features: None,
                         package: None,
                         timeout_secs: Some(600),
+                        sync_wait_secs: Some(60),
                     },
                     Some(&auth),
                 )
@@ -771,7 +779,20 @@ async fn long_cargo_check_hands_off_with_immediately_observable_token() {
         let project = project.clone();
         async move {
             runtime
-                .cargo_check(project, None, None, None, None, None, None, Some(600))
+                .cargo_check_with_context(
+                    project,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(600),
+                    Some(1),
+                    None,
+                    None,
+                    None,
+                )
                 .await
         }
     });
@@ -795,6 +816,7 @@ async fn long_cargo_check_hands_off_with_immediately_observable_token() {
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["sync_wait_secs"], 1);
     assert!(result.output["stdout_tail"]
         .as_str()
         .is_some_and(|tail| tail.contains("Checking demo v0.1.0")));
@@ -1029,7 +1051,7 @@ async fn validation_command_starts_exactly_once_across_handoff() {
         let runtime = runtime.clone();
         async move {
             runtime
-                .cargo_test(
+                .cargo_test_with_context(
                     project,
                     None,
                     None,
@@ -1039,7 +1061,13 @@ async fn validation_command_starts_exactly_once_across_handoff() {
                     None,
                     None,
                     None,
+                    None,
+                    None,
                     Some(3600),
+                    Some(1),
+                    None,
+                    None,
+                    None,
                 )
                 .await
         }
@@ -1066,6 +1094,20 @@ async fn validation_command_starts_exactly_once_across_handoff() {
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["sync_wait_secs"], 1);
+    assert_eq!(result.output["job_id"], job_id);
+    let duplicate = runtime
+        .runner_registry
+        .poll(crate::runner_protocol::RunnerPollRequest {
+            client_id: client_id.to_string(),
+            runner_instance_id: "inst".to_string(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        duplicate.is_none(),
+        "handoff must not enqueue a second validation execution"
+    );
     // Command ran exactly once.
     assert_eq!(
         std::fs::read_to_string(&counter).unwrap().trim(),
@@ -1134,6 +1176,7 @@ async fn handoff_job_terminal_success_produces_passed_validation_summary() {
                         require_tests: None,
                         min_tests: None,
                         timeout_secs: Some(1800),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -1453,6 +1496,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
                         features: None,
                         package: None,
                         timeout_secs: Some(600),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -1506,6 +1550,7 @@ async fn async_same_cargo_check_target_success_resolves_prior_failure_without_du
                         features: None,
                         package: None,
                         timeout_secs: Some(600),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -1660,6 +1705,7 @@ async fn partial_agent_status_is_conservative_while_delta_log_uses_frozen_valida
                         require_tests: None,
                         min_tests: None,
                         timeout_secs: Some(1800),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -2034,6 +2080,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 features: Some("--no-run".to_string()),
                 package: None,
                 timeout_secs: Some(1800),
+                sync_wait_secs: None,
             },
         ),
         (
@@ -2048,6 +2095,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 features: None,
                 package: Some("--all-features".to_string()),
                 timeout_secs: Some(1800),
+                sync_wait_secs: None,
             },
         ),
         (
@@ -2066,6 +2114,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 require_tests: None,
                 min_tests: None,
                 timeout_secs: Some(1800),
+                sync_wait_secs: None,
             },
         ),
         (
@@ -2080,6 +2129,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 features: Some("a".repeat(crate::runner_protocol::CARGO_VALUE_MAX_BYTES + 1)),
                 package: None,
                 timeout_secs: Some(1800),
+                sync_wait_secs: None,
             },
         ),
         (
@@ -2098,6 +2148,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 require_tests: Some(true),
                 min_tests: None,
                 timeout_secs: Some(1800),
+                sync_wait_secs: None,
             },
         ),
         (
@@ -2116,6 +2167,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 require_tests: None,
                 min_tests: Some(0),
                 timeout_secs: Some(1800),
+                sync_wait_secs: None,
             },
         ),
         (
@@ -2134,6 +2186,7 @@ async fn invalid_cargo_args_fail_before_command_or_agent_request() {
                 require_tests: None,
                 min_tests: Some(crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX + 1),
                 timeout_secs: Some(1800),
+                sync_wait_secs: None,
             },
         ),
     ] {
@@ -2385,6 +2438,7 @@ async fn stop_job_stops_a_handoff_job() {
                         require_tests: None,
                         min_tests: None,
                         timeout_secs: Some(1800),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )

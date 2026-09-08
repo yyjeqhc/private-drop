@@ -21,6 +21,7 @@ use crate::runner_protocol::{
     ShellCommandExecutionState, ShellJobOpRequest, ShellJobValidationMetadata,
     ShellJobValidationStep,
 };
+use webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 pub(crate) use webcodex_validation::parse_cargo_test_run_metadata;
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
@@ -95,14 +96,14 @@ struct ValidationBudget {
 /// Resolve a read-only structured validation budget.
 ///
 /// `timeout_secs` is the total runtime budget of the command, not the tool
-/// call's synchronous wait. When the caller omits it, the tool default is
-/// used. The internal sync wait is the smaller of `SYNC_VALIDATION_WAIT_SECS`
-/// and the effective budget: a budget smaller than the sync window means there
-/// is no headroom to promote the same execution to a Job, so the command runs
-/// to a normal terminal timeout instead.
+/// call's synchronous wait. Explicit `sync_wait_secs` selects a 1..=60 grace
+/// that cannot exceed the effective total budget. When omitted, compatibility
+/// keeps `min(SYNC_VALIDATION_WAIT_SECS, effective_timeout)`; equal grace and
+/// total budget leaves no Cargo handoff headroom.
 fn resolve_validation_budget(
     tool_name: &str,
     timeout_secs: Option<u64>,
+    sync_wait_secs: Option<u64>,
     default: u64,
 ) -> Result<ValidationBudget, ToolResult> {
     let value = timeout_secs.unwrap_or(default);
@@ -114,11 +115,55 @@ fn resolve_validation_budget(
             default,
         ));
     }
-    let sync_wait_secs = SYNC_VALIDATION_WAIT_SECS.min(value);
+    let sync_wait_secs = match sync_wait_secs {
+        Some(sync_wait)
+            if !(MIN_VALIDATION_TIMEOUT_SECS..=STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS)
+                .contains(&sync_wait) =>
+        {
+            return Err(validation_sync_wait_rejection(
+                tool_name,
+                format!(
+                    "{tool_name} sync_wait_secs must be between 1 and {STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS}"
+                ),
+                format!(
+                    "pass sync_wait_secs between 1 and {STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS}, or omit it for the existing synchronous grace."
+                ),
+            ));
+        }
+        Some(sync_wait) if sync_wait > value => {
+            return Err(validation_sync_wait_rejection(
+                tool_name,
+                format!(
+                    "{tool_name} sync_wait_secs ({sync_wait}) must not exceed effective timeout_secs ({value})"
+                ),
+                "lower sync_wait_secs or raise timeout_secs within the validation budget; sync_wait_secs never extends total runtime.",
+            ));
+        }
+        Some(sync_wait) => sync_wait,
+        None => SYNC_VALIDATION_WAIT_SECS.min(value),
+    };
     Ok(ValidationBudget {
         effective_timeout_secs: value,
         sync_wait_secs,
     })
+}
+
+fn validation_sync_wait_rejection(
+    tool_name: &str,
+    reason: impl Into<String>,
+    guidance: impl Into<String>,
+) -> ToolResult {
+    ToolResult::err_with_output(
+        command_rejected_message(reason.into(), guidance.into()),
+        json!({
+            "execution_source": tool_name,
+            "execution_state": "not_started",
+            "command_started": false,
+            "command_completed": false,
+            "failure_kind": "invalid_arguments",
+            "tool_failure": true,
+        }),
+    )
 }
 
 fn sync_timeout_out_of_range_result_with_range(
@@ -207,7 +252,7 @@ impl ToolRuntime {
         check: Option<bool>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
-        self.cargo_fmt_with_context_inner(project, cwd, check, timeout_secs, None, None, None)
+        self.cargo_fmt_with_context_inner(project, cwd, check, timeout_secs, None, None, None, None)
             .await
     }
 
@@ -221,6 +266,7 @@ impl ToolRuntime {
         cwd: Option<String>,
         check: Option<bool>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -230,6 +276,7 @@ impl ToolRuntime {
             cwd,
             check,
             timeout_secs,
+            sync_wait_secs,
             session_id,
             ssh_resource,
             auth,
@@ -244,11 +291,19 @@ impl ToolRuntime {
         cwd: Option<String>,
         check: Option<bool>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let check = check.unwrap_or(false);
+        if !check && sync_wait_secs.is_some() {
+            return validation_sync_wait_rejection(
+                "cargo_fmt",
+                "cargo_fmt sync_wait_secs is available only with check=true",
+                "remove sync_wait_secs for mutating cargo_fmt, or use check=true for read-only validation handoff.",
+            );
+        }
         // Both read-only and mutating structured Cargo formatting reject named
         // SSH resources before selecting an execution path. In particular, the
         // mutating sync path must never fall back to the Runner project root.
@@ -307,6 +362,7 @@ impl ToolRuntime {
                     minimum_tests: None,
                     go_packages: None,
                     timeout_secs,
+                    sync_wait_secs,
                     session_id,
                     ssh_resource,
                     auth,
@@ -341,6 +397,7 @@ impl ToolRuntime {
             None,
             None,
             None,
+            None,
         )
         .await
     }
@@ -356,6 +413,7 @@ impl ToolRuntime {
         features: Option<String>,
         package: Option<String>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -369,6 +427,7 @@ impl ToolRuntime {
             features,
             package,
             timeout_secs,
+            sync_wait_secs,
             session_id,
             ssh_resource,
             auth,
@@ -387,6 +446,7 @@ impl ToolRuntime {
         features: Option<String>,
         package: Option<String>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -408,6 +468,7 @@ impl ToolRuntime {
                 minimum_tests: None,
                 go_packages: None,
                 timeout_secs,
+                sync_wait_secs,
                 session_id,
                 ssh_resource,
                 auth,
@@ -447,6 +508,7 @@ impl ToolRuntime {
             None,
             None,
             None,
+            None,
         )
         .await
     }
@@ -466,6 +528,7 @@ impl ToolRuntime {
         require_tests: Option<bool>,
         min_tests: Option<u64>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -483,6 +546,7 @@ impl ToolRuntime {
             require_tests,
             min_tests,
             timeout_secs,
+            sync_wait_secs,
             session_id,
             ssh_resource,
             auth,
@@ -505,6 +569,7 @@ impl ToolRuntime {
         require_tests: Option<bool>,
         min_tests: Option<u64>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -530,6 +595,7 @@ impl ToolRuntime {
                 minimum_tests,
                 go_packages: None,
                 timeout_secs,
+                sync_wait_secs,
                 session_id,
                 ssh_resource,
                 auth,
@@ -545,7 +611,7 @@ impl ToolRuntime {
         cwd: Option<String>,
         timeout_secs: Option<u64>,
     ) -> ToolResult {
-        self.go_test_with_context(project, cwd, None, timeout_secs, None, None, None)
+        self.go_test_with_context(project, cwd, None, timeout_secs, None, None, None, None)
             .await
     }
 
@@ -555,6 +621,7 @@ impl ToolRuntime {
         cwd: Option<String>,
         packages: Option<Vec<String>>,
         timeout_secs: Option<u64>,
+        sync_wait_secs: Option<u64>,
         session_id: Option<String>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -576,6 +643,7 @@ impl ToolRuntime {
                 minimum_tests: None,
                 go_packages: packages,
                 timeout_secs,
+                sync_wait_secs,
                 session_id,
                 ssh_resource,
                 auth,
@@ -585,8 +653,8 @@ impl ToolRuntime {
     }
 
     /// Run one read-only structured validation exactly once, synchronously
-    /// waiting for up to the internal sync window, then promoting the *same*
-    /// execution to a queryable Job if it is still running.
+    /// waiting for up to the effective synchronous grace, then promoting the
+    /// *same* execution to a queryable Job if it is still running.
     async fn run_readonly_validation(
         &self,
         tool_name: &str,
@@ -598,7 +666,12 @@ impl ToolRuntime {
             "cargo_fmt" => DEFAULT_CARGO_FMT_TIMEOUT_SECS,
             _ => unreachable!("unknown read-only validation tool"),
         };
-        let budget = match resolve_validation_budget(tool_name, request.timeout_secs, default) {
+        let budget = match resolve_validation_budget(
+            tool_name,
+            request.timeout_secs,
+            request.sync_wait_secs,
+            default,
+        ) {
             Ok(budget) => budget,
             Err(result) => return result,
         };
@@ -682,11 +755,12 @@ impl ToolRuntime {
         if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource.as_deref()) {
             return result;
         }
-        if tool_name == "go_test" || timeout_secs > SYNC_VALIDATION_WAIT_SECS {
-            // The budget exceeds the internal sync window, so there is
-            // headroom to promote the same execution to a Job. The agent
-            // path enqueues exactly one structured validation Job, waits
-            // up to `sync_wait_secs`, and hands off if still running.
+        if tool_name == "go_test" || sync_wait_secs < timeout_secs {
+            // The effective synchronous grace is shorter than the total
+            // validation budget, so there is headroom to expose the same
+            // execution as a Job. The agent path enqueues exactly one
+            // structured validation Job, waits up to `sync_wait_secs`, and
+            // hands off if it is still running.
             self.run_readonly_validation_agent(
                 tool_name,
                 &request.project,
@@ -913,9 +987,9 @@ impl ToolRuntime {
             job_id.clone(),
             handoff.auth.clone(),
         );
-        // Poll the job status up to the internal sync wait. Each poll is cheap
-        // and the total sleep is bounded by the sync window. The wait is taken
-        // from the runtime's injectable clock so tests can shrink it.
+        // Poll the job status up to the effective synchronous grace. Each poll
+        // is cheap and total sleep stays bounded by that grace. The wait is
+        // taken from the runtime's injectable clock so tests can shrink it.
         let wait = self
             .validation_sync_wait
             .min(std::time::Duration::from_secs(sync_wait_secs));
@@ -1391,6 +1465,7 @@ struct ValidationRunRequest<'a> {
     minimum_tests: Option<u64>,
     go_packages: Option<Vec<String>>,
     timeout_secs: Option<u64>,
+    sync_wait_secs: Option<u64>,
     session_id: Option<String>,
     ssh_resource: Option<&'a str>,
     auth: Option<&'a AuthContext>,

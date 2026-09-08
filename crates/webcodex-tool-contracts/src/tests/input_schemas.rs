@@ -123,7 +123,11 @@ fn search_project_text_schema_declares_bounded_advanced_inputs() {
 #[test]
 fn sync_validation_and_run_shell_timeout_schema_bounds() {
     let specs = registered_tool_specs();
-    for (name, default) in [("cargo_check", 600), ("cargo_test", 1800)] {
+    for (name, default) in [
+        ("cargo_check", 600),
+        ("cargo_test", 1800),
+        ("go_test", 1800),
+    ] {
         let spec = spec_named(&specs, name);
         let timeout = &spec.input_schema["properties"]["timeout_secs"];
         assert_eq!(timeout["type"], "integer", "{name}");
@@ -132,6 +136,18 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
         assert_eq!(timeout["default"], default, "{name}");
         let desc = timeout["description"].as_str().unwrap_or("");
         assert!(desc.contains("3600") && desc.to_ascii_lowercase().contains("job"));
+
+        let sync_wait = &spec.input_schema["properties"]["sync_wait_secs"];
+        assert_eq!(sync_wait["type"], "integer", "{name}");
+        assert_eq!(sync_wait["minimum"], 1, "{name}");
+        assert_eq!(sync_wait["maximum"], 60, "{name}");
+        assert!(sync_wait.get("default").is_none(), "{name}");
+        let desc = sync_wait["description"].as_str().unwrap_or("");
+        assert!(desc.contains("same execution"), "{name}: {desc}");
+        assert!(
+            desc.contains("never extends timeout_secs"),
+            "{name}: {desc}"
+        );
     }
     let cargo_fmt = spec_named(&specs, "cargo_fmt");
     let timeout = &cargo_fmt.input_schema["properties"]["timeout_secs"];
@@ -139,6 +155,11 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
     assert_eq!(timeout["minimum"], 1);
     assert_eq!(timeout["maximum"], 3600);
     assert_eq!(timeout["default"], 120);
+    let sync_wait = &cargo_fmt.input_schema["properties"]["sync_wait_secs"];
+    assert_eq!(sync_wait["type"], "integer");
+    assert_eq!(sync_wait["minimum"], 1);
+    assert_eq!(sync_wait["maximum"], 60);
+    assert!(sync_wait.get("default").is_none());
     assert_eq!(
         cargo_fmt.input_schema["allOf"][0]["then"]["properties"]["timeout_secs"]["maximum"],
         3600
@@ -146,6 +167,10 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
     assert_eq!(
         cargo_fmt.input_schema["allOf"][0]["else"]["properties"]["timeout_secs"]["maximum"],
         120
+    );
+    assert_eq!(
+        cargo_fmt.input_schema["allOf"][0]["else"]["properties"]["sync_wait_secs"]["type"],
+        "null"
     );
 
     let run_shell = spec_named(&specs, "run_shell");
@@ -286,11 +311,29 @@ fn cargo_fmt_conditional_timeout_schema_matches_contract() {
     assert!(validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3600})
     ));
+    assert!(validates(
+        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 1})
+    ));
+    assert!(validates(
+        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 60})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 0})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 61})
+    ));
     assert!(!validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3601})
     ));
     assert!(validates(
         &json!({"project": "demo", "check": false, "timeout_secs": 120})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "check": false, "timeout_secs": 120, "sync_wait_secs": 1})
+    ));
+    assert!(!validates(
+        &json!({"project": "demo", "timeout_secs": 120, "sync_wait_secs": 1})
     ));
     assert!(!validates(
         &json!({"project": "demo", "check": false, "timeout_secs": 121})

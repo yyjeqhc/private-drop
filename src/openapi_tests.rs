@@ -1240,6 +1240,24 @@ fn openapi_tool_call_request_exposes_canonical_closeout_and_visible_runtime_fiel
 }
 
 #[test]
+fn openapi_flattened_sync_wait_keeps_shared_bounded_contract() {
+    let spec = build_openapi_spec();
+    let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .unwrap();
+    let sync_wait = properties
+        .get("sync_wait_secs")
+        .expect("shared flattened sync_wait_secs");
+    let alternatives = flattened_schema_alternatives(sync_wait);
+    assert!(!alternatives.is_empty());
+    assert!(alternatives
+        .iter()
+        .all(|schema| schema["type"] == "integer"));
+    assert!(alternatives.iter().all(|schema| schema["minimum"] == 1));
+    assert!(alternatives.iter().all(|schema| schema["maximum"] == 60));
+}
+
+#[test]
 fn openapi_call_runtime_tool_declares_checkpoint_flattened_fields() {
     // Regression: GPT Action wrapper rejected checkpoint note,
     // include_untracked, checkpoint_id, confirm, and include_diff_stat

@@ -1322,6 +1322,10 @@ async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema()
     assert!(contract["description"].as_str().is_some());
     assert_eq!(contract["input_schema"]["type"], "object");
     assert!(contract["input_schema"]["properties"]["package"].is_object());
+    let sync_wait = &contract["input_schema"]["properties"]["sync_wait_secs"];
+    assert_eq!(sync_wait["type"], "integer");
+    assert_eq!(sync_wait["minimum"], 1);
+    assert_eq!(sync_wait["maximum"], 60);
     assert!(contract["annotations"].is_object());
     let specs = registered_tool_specs();
     let manifest_spec = spec_named(&specs, "tool_manifest");

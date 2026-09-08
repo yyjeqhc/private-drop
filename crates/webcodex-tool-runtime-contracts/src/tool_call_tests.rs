@@ -462,6 +462,58 @@ fn from_tool_name_parses_run_shell_with_optional_fields() {
 }
 
 #[test]
+fn structured_validation_sync_wait_parser_enforces_lifecycle_bounds() {
+    for (name, arguments) in [
+        (
+            "cargo_check",
+            json!({"project": "demo", "timeout_secs": 600, "sync_wait_secs": 1}),
+        ),
+        (
+            "cargo_test",
+            json!({"project": "demo", "timeout_secs": 600, "sync_wait_secs": 60}),
+        ),
+        (
+            "go_test",
+            json!({"project": "demo", "timeout_secs": 60, "sync_wait_secs": 60}),
+        ),
+        (
+            "cargo_fmt",
+            json!({"project": "demo", "check": true, "timeout_secs": 60, "sync_wait_secs": 60}),
+        ),
+    ] {
+        ToolCall::from_tool_name(name, arguments)
+            .unwrap_or_else(|error| panic!("{name} valid sync wait should parse: {error}"));
+    }
+
+    for (name, arguments) in [
+        (
+            "cargo_check",
+            json!({"project": "demo", "timeout_secs": 600, "sync_wait_secs": 0}),
+        ),
+        (
+            "cargo_test",
+            json!({"project": "demo", "timeout_secs": 600, "sync_wait_secs": 61}),
+        ),
+        (
+            "go_test",
+            json!({"project": "demo", "timeout_secs": 30, "sync_wait_secs": 31}),
+        ),
+        (
+            "cargo_fmt",
+            json!({"project": "demo", "check": false, "timeout_secs": 60, "sync_wait_secs": 1}),
+        ),
+        (
+            "cargo_fmt",
+            json!({"project": "demo", "timeout_secs": 60, "sync_wait_secs": 1}),
+        ),
+    ] {
+        let error = ToolCall::from_tool_name(name, arguments)
+            .expect_err("invalid structured validation sync wait must fail closed");
+        assert!(error.contains("sync_wait_secs"), "{name}: {error}");
+    }
+}
+
+#[test]
 fn from_tool_name_parses_structured_run_process_boundaries() {
     let call = ToolCall::from_tool_name(
         "run_process",

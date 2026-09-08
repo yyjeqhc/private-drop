@@ -1350,7 +1350,7 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
     let mut started = Vec::new();
     let mut releases = Vec::new();
     let mut markers = Vec::new();
-    for label in ["a", "b", "c"] {
+    for label in ["a", "b", "c", "d", "e"] {
         let started_path = temp.path().join(format!("{label}-started"));
         let release_path = temp.path().join(format!("{label}-release"));
         let marker_path = temp.path().join(format!("{label}-marker"));
@@ -1372,7 +1372,7 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
     let poll_count = Arc::new(AtomicUsize::new(0));
     let result_count = Arc::new(AtomicUsize::new(0));
     let runner_shutdown = Arc::new(AtomicBool::new(false));
-    let (third_poll_tx, third_poll_rx) = std::sync::mpsc::sync_channel(1);
+    let (fifth_poll_tx, fifth_poll_rx) = std::sync::mpsc::sync_channel(1);
     let handler = {
         let poll_count = Arc::clone(&poll_count);
         let result_count = Arc::clone(&result_count);
@@ -1382,13 +1382,13 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
             "/api/shell/agent/register" => register_success_response(),
             "/api/shell/agent/poll" => {
                 let index = poll_count.fetch_add(1, Ordering::SeqCst);
-                if index == 2 {
-                    let _ = third_poll_tx.send(());
+                if index == POLLING_DISPATCH_MAX_IN_FLIGHT {
+                    let _ = fifth_poll_tx.send(());
                 }
                 poll_delivery_response(requests.get(index))
             }
             "/api/shell/agent/result" => {
-                if result_count.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                if result_count.fetch_add(1, Ordering::SeqCst) + 1 == requests.len() {
                     runner_shutdown.store(true, Ordering::SeqCst);
                 }
                 result_success_response()
@@ -1407,44 +1407,49 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
         cfg,
         runtime.clone(),
         false,
-        "inst-e1-bound",
+        "inst-polling-bound",
         Arc::clone(&runner_shutdown),
     );
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    for path in &started[..2] {
-        wait_for_path(path, deadline, "first two polling workers to start");
+    for path in &started[..POLLING_DISPATCH_MAX_IN_FLIGHT] {
+        wait_for_path(
+            path,
+            deadline,
+            "polling workers up to the fixed bound to start",
+        );
     }
     assert_eq!(runtime.dispatches.active(), POLLING_DISPATCH_MAX_IN_FLIGHT);
     assert!(
-        third_poll_rx
+        fifth_poll_rx
             .recv_timeout(Duration::from_millis(200))
             .is_err(),
-        "the Runner dequeued a third request while both dispatch slots were occupied"
+        "the Runner dequeued an N+1 request while all polling dispatch slots were occupied"
     );
 
     std::fs::write(&releases[0], "release\n").unwrap();
-    third_poll_rx
+    fifth_poll_rx
         .recv_timeout(Duration::from_secs(5))
-        .expect("releasing one slot must allow the third poll");
+        .expect("releasing one slot must allow exactly the N+1 poll");
     wait_for_path(
-        &started[2],
+        &started[POLLING_DISPATCH_MAX_IN_FLIGHT],
         Instant::now() + Duration::from_secs(5),
-        "third polling worker to start",
+        "N+1 polling worker to start",
     );
     assert_eq!(
         runtime.dispatches.active(),
         POLLING_DISPATCH_MAX_IN_FLIGHT,
         "active polling dispatches exceeded the fixed bound"
     );
-    std::fs::write(&releases[1], "release\n").unwrap();
-    std::fs::write(&releases[2], "release\n").unwrap();
+    for release in &releases[1..] {
+        std::fs::write(release, "release\n").unwrap();
+    }
 
     runner
         .finish(Duration::from_secs(10), "bounded polling runner")
         .expect("bounded polling runner should shut down cleanly");
     server.finish();
-    assert_eq!(result_count.load(Ordering::SeqCst), 3);
+    assert_eq!(result_count.load(Ordering::SeqCst), requests.len());
     for marker in markers {
         assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 1);
     }

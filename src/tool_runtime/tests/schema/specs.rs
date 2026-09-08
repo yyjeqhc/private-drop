@@ -48,17 +48,19 @@ fn run_script_tool_call_parser_accepts_declared_languages() {
 fn cargo_fmt_tool_call_parser_accepts_contract_timeout() {
     let parsed = ToolCall::from_tool_name(
         "cargo_fmt",
-        json!({"project": "demo", "check": true, "timeout_secs": 3600}),
+        json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 60}),
     )
     .unwrap();
     match parsed {
         ToolCall::CargoFmt {
             check,
             timeout_secs,
+            sync_wait_secs,
             ..
         } => {
             assert_eq!(check, Some(true));
             assert_eq!(timeout_secs, Some(3600));
+            assert_eq!(sync_wait_secs, Some(60));
         }
         other => panic!("expected cargo_fmt, got {other:?}"),
     }

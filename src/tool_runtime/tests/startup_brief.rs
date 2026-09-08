@@ -166,6 +166,23 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(runner_targeting_guidance.contains("runtime_status(client_id=...)"));
     assert!(runner_targeting_guidance.contains("list_projects(client_id=...)"));
     assert!(runner_targeting_guidance.contains("before treating it as absent"));
+    let defaults = workflow["guidance"]
+        .as_array()
+        .expect("default workflow guidance")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    for phrase in [
+        "independent read-only inspection",
+        "short sync_wait_secs",
+        "same-execution Job handoff",
+        "do not fan out heavy validations",
+        "stale/cache-warmup",
+        "final source needs fresh validation",
+    ] {
+        assert!(defaults.contains(phrase), "workflow guidance: {phrase}");
+    }
     let persistent_shell_guidance = workflow["model_protocol"]["persistent_shell"]
         .as_str()
         .expect("persistent shell guidance");

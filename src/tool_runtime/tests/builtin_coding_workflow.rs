@@ -54,10 +54,12 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
         "recover truncated instructions",
         "only where the exposed schema supports it",
         "unknown outcome",
-        "compile/tests are certain",
-        "warm build cache",
-        "while inspecting",
-        "Zero tests are not coverage",
+        "independent read-only inspection",
+        "short sync_wait_secs",
+        "same-execution Job handoff",
+        "do not fan out heavy validations",
+        "stale/cache-warmup",
+        "final source needs fresh validation",
         "advisory evidence, not proof",
     ] {
         assert!(defaults.contains(boundary), "missing guidance: {boundary}");

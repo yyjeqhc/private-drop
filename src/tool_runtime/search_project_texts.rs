@@ -11,6 +11,10 @@ use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
 pub(crate) const MAX_SEARCH_PROJECT_TEXTS_QUERIES: usize = 8;
+// Keep search fanout below the query cap: each rg process can independently
+// consume CPU, filesystem bandwidth, and page cache, including while a heavy
+// validation Job is running. Two is the cross-device baseline after current
+// 2-vs-4 narrow/broad workload review; results still preserve input order.
 pub(crate) const MAX_SEARCH_PROJECT_TEXTS_CONCURRENCY: usize = 2;
 pub(crate) const DEFAULT_SEARCH_PROJECT_TEXTS_DEADLINE: Duration = Duration::from_secs(30);
 pub(crate) use webcodex_core::runtime_contract::{

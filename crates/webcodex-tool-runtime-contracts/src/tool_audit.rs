@@ -141,7 +141,11 @@ fn typed_structured_validation_request_audit(
     }
     match kind {
         StructuredValidationRequestAudit::CargoFmt => {
-            copy_keys(obj, &mut out, &["cwd", "check", "timeout_secs"]);
+            copy_keys(
+                obj,
+                &mut out,
+                &["cwd", "check", "timeout_secs", "sync_wait_secs"],
+            );
             insert_structured_validation_target(kind.tool_name(), obj, &mut out);
         }
         StructuredValidationRequestAudit::CargoCheck => {
@@ -155,6 +159,7 @@ fn typed_structured_validation_request_audit(
                     "no_default_features",
                     "package",
                     "timeout_secs",
+                    "sync_wait_secs",
                 ],
             );
             out.insert(
@@ -181,6 +186,7 @@ fn typed_structured_validation_request_audit(
                     "require_tests",
                     "min_tests",
                     "timeout_secs",
+                    "sync_wait_secs",
                 ],
             );
             out.insert(
@@ -202,7 +208,7 @@ fn typed_structured_validation_request_audit(
             insert_structured_validation_target(kind.tool_name(), obj, &mut out);
         }
         StructuredValidationRequestAudit::GoTest => {
-            copy_keys(obj, &mut out, &["cwd", "timeout_secs"]);
+            copy_keys(obj, &mut out, &["cwd", "timeout_secs", "sync_wait_secs"]);
             let packages = obj.get("packages").and_then(Value::as_array);
             out.insert(
                 "packages_present".to_string(),
@@ -1267,6 +1273,29 @@ mod computer_privacy_tests {
 
     #[test]
     fn request_audit_fails_closed_and_never_mutates_business_arguments() {
+        // Structured validation lifecycle controls are audit metadata, not
+        // validation identity inputs. Keep the explicit synchronous grace in
+        // the bounded request projection while preserving the business args.
+        let cargo_test = json!({
+            "project": "agent:test:demo",
+            "filter": "focused",
+            "timeout_secs": 600,
+            "sync_wait_secs": 1
+        });
+        let cargo_test_before = cargo_test.clone();
+        let cargo_test_summary = session_log_arguments_for_tool_request("cargo_test", &cargo_test);
+        assert_eq!(cargo_test_summary["sync_wait_secs"], 1);
+        assert_eq!(cargo_test_summary["timeout_secs"], 600);
+        let validation_target_id = cargo_test_summary["validation_target_id"]
+            .as_str()
+            .expect("cargo_test validation target");
+        let mut later_grace = cargo_test.clone();
+        later_grace["sync_wait_secs"] = json!(60);
+        let later_summary = session_log_arguments_for_tool_request("cargo_test", &later_grace);
+        assert_eq!(later_summary["sync_wait_secs"], 60);
+        assert_eq!(later_summary["validation_target_id"], validation_target_id);
+        assert_eq!(cargo_test, cargo_test_before);
+
         let unknown = json!({"secret": "UNKNOWN_TOOL_SECRET"});
         let unknown_before = unknown.clone();
         assert_eq!(
@@ -3278,6 +3307,7 @@ impl ToolCall {
                 cwd,
                 check,
                 timeout_secs,
+                sync_wait_secs,
                 ..
             } => typed_structured_validation_request_audit(
                 StructuredValidationRequestAudit::CargoFmt,
@@ -3286,6 +3316,7 @@ impl ToolCall {
                     "cwd": cwd,
                     "check": check,
                     "timeout_secs": timeout_secs,
+                    "sync_wait_secs": sync_wait_secs,
                 }),
             ),
             Self::CargoCheck {
@@ -3297,6 +3328,7 @@ impl ToolCall {
                 features,
                 package,
                 timeout_secs,
+                sync_wait_secs,
                 ..
             } => typed_structured_validation_request_audit(
                 StructuredValidationRequestAudit::CargoCheck,
@@ -3309,6 +3341,7 @@ impl ToolCall {
                     "features": features,
                     "package": package,
                     "timeout_secs": timeout_secs,
+                    "sync_wait_secs": sync_wait_secs,
                 }),
             ),
             Self::CargoTest {
@@ -3324,6 +3357,7 @@ impl ToolCall {
                 require_tests,
                 min_tests,
                 timeout_secs,
+                sync_wait_secs,
                 ..
             } => typed_structured_validation_request_audit(
                 StructuredValidationRequestAudit::CargoTest,
@@ -3340,6 +3374,7 @@ impl ToolCall {
                     "require_tests": require_tests,
                     "min_tests": min_tests,
                     "timeout_secs": timeout_secs,
+                    "sync_wait_secs": sync_wait_secs,
                 }),
             ),
             Self::GoTest {
@@ -3347,6 +3382,7 @@ impl ToolCall {
                 cwd,
                 packages,
                 timeout_secs,
+                sync_wait_secs,
                 ..
             } => typed_structured_validation_request_audit(
                 StructuredValidationRequestAudit::GoTest,
@@ -3355,6 +3391,7 @@ impl ToolCall {
                     "cwd": cwd,
                     "packages": packages,
                     "timeout_secs": timeout_secs,
+                    "sync_wait_secs": sync_wait_secs,
                 }),
             ),
             Self::ReadFile {

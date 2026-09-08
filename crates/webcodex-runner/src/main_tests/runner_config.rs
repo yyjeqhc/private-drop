@@ -1045,10 +1045,12 @@ allow_cwd_anywhere = true
 }
 
 #[test]
-fn phase_e2_polling_dispatch_and_job_execution_concurrency_defaults_are_independent() {
-    assert_eq!(POLLING_DISPATCH_MAX_IN_FLIGHT, 2);
+fn polling_dispatch_and_job_execution_concurrency_have_independent_contracts() {
+    assert_eq!(POLLING_DISPATCH_MAX_IN_FLIGHT, 4);
     assert_eq!(DEFAULT_MAX_CONCURRENT_JOBS, 4);
-    assert_ne!(POLLING_DISPATCH_MAX_IN_FLIGHT, DEFAULT_MAX_CONCURRENT_JOBS);
+    // These happen to share a numeric default today, but polling capacity is
+    // ordinary request admission while max_concurrent_jobs is a configured,
+    // queue-aware JobManager limit advertised by Runner registration.
 }
 
 fn mcp_test_toml_path(path: &std::path::Path) -> String {

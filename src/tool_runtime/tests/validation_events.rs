@@ -366,6 +366,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                         features: None,
                         package: None,
                         timeout_secs: Some(60),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -403,6 +404,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                         require_tests: None,
                         min_tests: None,
                         timeout_secs: Some(60),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )

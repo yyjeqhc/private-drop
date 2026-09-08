@@ -69,6 +69,8 @@ Guard failure 是 **zero-write conflict**，不是削弱 guard 的理由。重�
 
 能使用 `cargo_test`、`cargo_check`、`go_test` 等 structured validation 时优先使用它们。先运行能够发现当前回归的最小检查，只有实际受影响的边界需要时才扩大范围。
 
+如果一个确定需要执行的 validation 很可能明显超过 synchronous grace，同时还有真正独立的 read-only inspection，可以显式设置较短的 `sync_wait_secs`（通常可用 `1`），让已经启动的 validation 以**同一个 execution** 尽早 handoff 为 Job。随后只继续独立的源码读取、搜索、diff/architecture inspection 或 review，再观察该 Job；不要为了“并行”额外启动 CPU-heavy validation。如果运行中的 validation 所覆盖源码随后发生 mutation，那么其结果只能算 stale/cache-warmup evidence，不能证明 final workspace；最终源码仍需重新运行 task-appropriate validation。
+
 如果某次 test invocation 必须证明“测试确实执行了”，使用 `require_tests: true` 或 `min_tests: N`。它们是本次调用的 evidence assertion，不会自动变成 Workflow Session 的持久要求。如果 validator execution 成功，但请求的 test 数量未满足或无法证明，closeout 会把这次调用保留为 evidence gap，而不是代码/测试 correctness failure。否则，exit-zero 但合法运行零个 test 只是 execution result，并不能证明 test coverage。
 
 只有 structured validation 无法表达检查时，才使用 shell/process escape hatch。

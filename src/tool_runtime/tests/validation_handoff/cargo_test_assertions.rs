@@ -47,6 +47,7 @@ async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_s
                         require_tests: Some(true),
                         min_tests: None,
                         timeout_secs: Some(600),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -162,6 +163,7 @@ async fn handoff_cargo_test_count_gap_preserves_completed_job_and_inconclusive_s
                         require_tests: Some(true),
                         min_tests: Some(2),
                         timeout_secs: Some(1800),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )
@@ -302,6 +304,7 @@ async fn cargo_test_minimum_misassertion_then_sufficient_same_target_is_non_bloc
                             require_tests: None,
                             min_tests: Some(minimum),
                             timeout_secs: Some(600),
+                            sync_wait_secs: None,
                         },
                         Some(&auth),
                     )
@@ -487,6 +490,7 @@ async fn durable_cargo_test_explicit_zero_opt_out_survives_job_reconciliation() 
                         require_tests: Some(false),
                         min_tests: None,
                         timeout_secs: Some(1800),
+                        sync_wait_secs: None,
                     },
                     Some(&auth),
                 )

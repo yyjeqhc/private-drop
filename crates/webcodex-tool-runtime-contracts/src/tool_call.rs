@@ -24,7 +24,7 @@ use webcodex_core::plugin::{
 use webcodex_core::runner_protocol::ShellScriptLanguage;
 use webcodex_core::runtime_contract::{
     validate_project_op_path, DEFAULT_OBSERVE_JOBS_TAIL_LINES,
-    GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES,
+    GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES, STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS,
 };
 use webcodex_tool_contracts::{lookup_tool_definition, model_visible_tool_names_csv};
 use webcodex_workflow_session::{
@@ -978,6 +978,8 @@ pub enum ToolCall {
         check: Option<bool>,
         #[serde(default)]
         timeout_secs: Option<u64>,
+        #[serde(default)]
+        sync_wait_secs: Option<u64>,
     },
 
     /// Run `cargo check` in a Runner-registered Rust project.
@@ -999,6 +1001,8 @@ pub enum ToolCall {
         package: Option<String>,
         #[serde(default)]
         timeout_secs: Option<u64>,
+        #[serde(default)]
+        sync_wait_secs: Option<u64>,
     },
 
     /// Run `cargo test` in a Runner-registered Rust project.
@@ -1028,6 +1032,8 @@ pub enum ToolCall {
         min_tests: Option<u64>,
         #[serde(default)]
         timeout_secs: Option<u64>,
+        #[serde(default)]
+        sync_wait_secs: Option<u64>,
     },
 
     /// Run canonical structured `go test -json` validation with an optional
@@ -1042,6 +1048,8 @@ pub enum ToolCall {
         packages: Option<Vec<String>>,
         #[serde(default)]
         timeout_secs: Option<u64>,
+        #[serde(default)]
+        sync_wait_secs: Option<u64>,
     },
 
     /// Read a file from a project.
@@ -2510,6 +2518,43 @@ fn reject_unknown_bounded_computer_fields(
     }
 }
 
+fn validate_structured_validation_sync_wait(name: &str, arguments: &Value) -> Result<(), String> {
+    if !matches!(name, "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test") {
+        return Ok(());
+    }
+    let Some(object) = arguments.as_object() else {
+        return Ok(());
+    };
+    let Some(sync_wait_value) = object.get("sync_wait_secs") else {
+        return Ok(());
+    };
+    if sync_wait_value.is_null() {
+        return Ok(());
+    }
+    let Some(sync_wait_secs) = sync_wait_value.as_u64() else {
+        return Ok(()); // serde reports the canonical type error below.
+    };
+    if !(1..=STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS).contains(&sync_wait_secs) {
+        return Err(format!(
+            "invalid arguments for tool '{name}': sync_wait_secs must be between 1 and {STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS}"
+        ));
+    }
+    if name == "cargo_fmt" && object.get("check").and_then(Value::as_bool) != Some(true) {
+        return Err(
+            "invalid arguments for tool 'cargo_fmt': sync_wait_secs is available only with check=true"
+                .to_string(),
+        );
+    }
+    if let Some(timeout_secs) = object.get("timeout_secs").and_then(Value::as_u64) {
+        if sync_wait_secs > timeout_secs {
+            return Err(format!(
+                "invalid arguments for tool '{name}': sync_wait_secs ({sync_wait_secs}) must not exceed timeout_secs ({timeout_secs})"
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl ToolCall {
     pub fn from_tool_name(name: &str, arguments: Value) -> Result<Self, String> {
         Self::from_tool_name_with_recorder_metadata(name, arguments).map(|(call, _)| call)
@@ -2570,6 +2615,7 @@ impl ToolCall {
         })?;
         validate_model_facing_assertion_name(name, &arguments)?;
         validate_model_facing_result_expectation(name, &arguments)?;
+        validate_structured_validation_sync_wait(name, &arguments)?;
         if name == "apply_patch"
             && arguments
                 .as_object()

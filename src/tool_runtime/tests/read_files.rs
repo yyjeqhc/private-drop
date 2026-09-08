@@ -874,7 +874,7 @@ async fn read_files_isolates_mixed_failures_without_leaking_absolute_paths() {
 }
 
 #[tokio::test]
-async fn read_files_runner_in_flight_is_concurrent_and_never_exceeds_four() {
+async fn read_files_max_batch_can_enqueue_all_eight_independent_reads() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "batch-concurrency";
@@ -895,11 +895,11 @@ async fn read_files_runner_in_flight_is_concurrent_and_never_exceeds_four() {
     });
 
     let mut active = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..8 {
         active.push(next_read_request(&runtime, client_id).await);
     }
-    let mut max_in_flight = active.len();
-    let fifth_before_completion = runtime
+    assert_eq!(active.len(), 8);
+    let extra_before_completion = runtime
         .runner_registry
         .poll(RunnerPollRequest {
             client_id: client_id.to_string(),
@@ -908,30 +908,17 @@ async fn read_files_runner_in_flight_is_concurrent_and_never_exceeds_four() {
         .await
         .unwrap();
     assert!(
-        fifth_before_completion.is_none(),
-        "fifth read was enqueued before a slot opened"
+        extra_before_completion.is_none(),
+        "max-size read batch enqueued work beyond its eight-item bound"
     );
 
-    let mut dispatched = 4;
-    while dispatched < 8 {
-        let finished = active.remove(0);
-        complete_read(&runtime, client_id, &finished, "value\n").await;
-        active.push(next_read_request(&runtime, client_id).await);
-        dispatched += 1;
-        max_in_flight = max_in_flight.max(active.len());
-        assert!(active.len() <= 4);
-    }
-    for request in active {
+    for request in active.into_iter().rev() {
         complete_read(&runtime, client_id, &request, "value\n").await;
     }
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["succeeded_count"], 8);
-    assert!(
-        max_in_flight > 1,
-        "batch unexpectedly degraded to serial reads"
-    );
-    assert!(max_in_flight <= 4);
+    assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
 }
 
 #[tokio::test]
