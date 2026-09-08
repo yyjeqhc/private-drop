@@ -17,6 +17,18 @@
 
 安装完成后启动 WebCodex Desktop。
 
+### 后台驻留与登录时启动
+
+WebCodex Desktop 是长期运行的本机 Runtime 控制器。关闭主窗口**不会**退出应用：
+
+- **macOS：**通过菜单栏中的 WebCodex 图标重新打开窗口。
+- **Windows：**通过系统托盘中的 WebCodex 图标重新打开窗口。
+- 窗口隐藏后，Desktop 自己管理的本机 Server、Runner、Regular OpenAI Secure Tunnel，以及当时正在运行的 Quick Share 都会继续运行。Quick Share 仍然只是临时会话；后台驻留不会把它变成永久服务。
+- **停止本机运行环境**是用户明确选择的 desired-state 操作：它会停止本机 Runtime，并改变已保存的 Runtime 偏好；这和隐藏窗口不是同一件事。
+- **退出 WebCodex**才是真正退出应用。退出时 Desktop 会回收自己拥有的进程树，不会按进程名称广泛终止不属于 Desktop 的其他 WebCodex 进程。
+
+在**设置 → 后台与启动**中开启**登录时启动 WebCodex**后，Desktop 会向操作系统注册登录启动，并以后台方式启动，不主动显示主窗口。这个设置与 Runtime 的保存偏好相互独立：`runtime_autostart` 仍决定是否恢复已保存的本机 Runtime，已保存的连接偏好仍决定条件合适时是否恢复 Regular ChatGPT Tunnel。
+
 ## 2. 准备 OpenAI Tunnel
 
 在 OpenAI 平台创建一个 Tunnel，并准备一个可用于该 Tunnel 的 API key：

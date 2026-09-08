@@ -27,6 +27,18 @@ Current macOS builds are ad-hoc signed and are not notarized. If Gatekeeper bloc
 
 Launch WebCodex Desktop after installation.
 
+### Background lifecycle and Launch at Login
+
+WebCodex Desktop is a long-running local runtime controller. Closing the main window does **not** quit the application:
+
+- On **macOS**, use the WebCodex menu-bar item to reopen the window.
+- On **Windows**, use the WebCodex system-tray icon to reopen the window.
+- The Desktop-owned local Server, Runner, regular OpenAI Secure Tunnel, and an active Quick Share session continue running while the window is hidden. Quick Share remains a temporary session; it is not converted into a permanent service by background residency.
+- **Stop local runtime** is a desired-state action: it stops the local runtime and changes the saved runtime preference. It is different from hiding the window.
+- **Quit WebCodex** is the application-exit action. Quit stops the Desktop-owned process tree before Desktop exits. It does not broadly terminate unrelated WebCodex processes that Desktop does not own.
+
+In **Settings → Background & startup**, **Launch WebCodex at login** registers Desktop with the operating system and starts it in the background without opening the main window. This setting is separate from the saved runtime preferences: `runtime_autostart` still decides whether the saved local runtime is restored, and the saved connection preference still decides whether the regular ChatGPT Tunnel is restored when appropriate.
+
 ## 2. Prepare an OpenAI Tunnel
 
 Create a Tunnel in the OpenAI Platform and prepare an API key that can use that Tunnel:
