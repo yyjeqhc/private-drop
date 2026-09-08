@@ -141,11 +141,7 @@ fn typed_structured_validation_request_audit(
     }
     match kind {
         StructuredValidationRequestAudit::CargoFmt => {
-            copy_keys(
-                obj,
-                &mut out,
-                &["cwd", "check", "timeout_secs", "sync_wait_secs"],
-            );
+            copy_keys(obj, &mut out, &["cwd", "check", "timeout_secs"]);
             insert_structured_validation_target(kind.tool_name(), obj, &mut out);
         }
         StructuredValidationRequestAudit::CargoCheck => {
@@ -159,7 +155,6 @@ fn typed_structured_validation_request_audit(
                     "no_default_features",
                     "package",
                     "timeout_secs",
-                    "sync_wait_secs",
                 ],
             );
             out.insert(
@@ -186,7 +181,6 @@ fn typed_structured_validation_request_audit(
                     "require_tests",
                     "min_tests",
                     "timeout_secs",
-                    "sync_wait_secs",
                 ],
             );
             out.insert(
@@ -208,7 +202,7 @@ fn typed_structured_validation_request_audit(
             insert_structured_validation_target(kind.tool_name(), obj, &mut out);
         }
         StructuredValidationRequestAudit::GoTest => {
-            copy_keys(obj, &mut out, &["cwd", "timeout_secs", "sync_wait_secs"]);
+            copy_keys(obj, &mut out, &["cwd", "timeout_secs"]);
             let packages = obj.get("packages").and_then(Value::as_array);
             out.insert(
                 "packages_present".to_string(),
@@ -220,6 +214,13 @@ fn typed_structured_validation_request_audit(
             );
             insert_structured_validation_target(kind.tool_name(), obj, &mut out);
         }
+    }
+    if let Some(sync_wait_secs) = obj
+        .get("sync_wait_secs")
+        .filter(|value| !value.is_null())
+        .cloned()
+    {
+        out.insert("sync_wait_secs".to_string(), sync_wait_secs);
     }
     Value::Object(out)
 }
