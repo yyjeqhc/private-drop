@@ -2318,6 +2318,8 @@ async function refreshWindowDetail() {
 async function selectWindow(key) {
     if (!/^[0-9a-fA-F]{64}$/.test(key))
         return;
+    if (key !== selectedWindowKey)
+        renderWindowDetail(null);
     selectedWindowKey = key;
     renderWindowList();
     renderWorkspaceHeading();
@@ -2350,12 +2352,10 @@ async function refreshWindows(refreshSelected = true) {
         return;
     }
     windowRows = Array.isArray(response.data.windows) ? response.data.windows : [];
-    const selectedStillListed = !!selectedWindowKey
-        && windowRows.some((row) => String(row?.client_window_key || "") === selectedWindowKey);
     if (!selectedWindowKey && windowRows.length)
         selectedWindowKey = String(windowRows[0]?.client_window_key || "");
     renderWindowList();
-    if (refreshSelected && selectedWindowKey && (selectedStillListed || windowRows.length)) {
+    if (refreshSelected && selectedWindowKey) {
         await refreshWindowDetail();
     }
     else if (!selectedWindowKey) {
