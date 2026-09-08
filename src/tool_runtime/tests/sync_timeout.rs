@@ -231,9 +231,33 @@ async fn structured_validation_sync_wait_rejects_invalid_or_over_budget_values_b
         if let Some(extra) = extra.as_object() {
             args.as_object_mut().unwrap().extend(extra.clone());
         }
-        let call = ToolCall::from_tool_name(tool_name, args).unwrap();
-        let result = runtime.dispatch_with_auth(call, Some(&auth)).await;
-        assert_sync_wait_rejected(&result, tool_name);
+        let error = ToolCall::from_tool_name(tool_name, args).expect_err(
+            "invalid structured validation sync_wait_secs must fail in the typed parser",
+        );
+        assert!(error.contains("sync_wait_secs"), "{tool_name}: {error}");
+        assert_no_pending_shell_request(&runtime, client_id).await;
+    }
+
+    // The runtime keeps the same fail-closed bound even if an internal caller
+    // bypasses model-facing ToolCall parsing.
+    for (sync_wait_secs, timeout_secs) in [(0u64, 600u64), (61, 600), (31, 30)] {
+        let result = runtime
+            .cargo_check_with_context(
+                project.clone(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(timeout_secs),
+                Some(sync_wait_secs),
+                None,
+                None,
+                Some(&auth),
+            )
+            .await;
+        assert_sync_wait_rejected(&result, "cargo_check");
         assert_no_pending_shell_request(&runtime, client_id).await;
     }
 }
@@ -250,12 +274,30 @@ async fn cargo_fmt_mutating_rejects_sync_wait_before_enqueue_or_job_creation() {
         json!({"project": project, "check": false, "timeout_secs": 120, "sync_wait_secs": 1}),
         json!({"project": project, "timeout_secs": 120, "sync_wait_secs": 1}),
     ] {
-        let call = ToolCall::from_tool_name("cargo_fmt", args).unwrap();
-        let result = runtime.dispatch_with_auth(call, Some(&auth)).await;
-        assert_sync_wait_rejected(&result, "cargo_fmt");
+        let error = ToolCall::from_tool_name("cargo_fmt", args)
+            .expect_err("mutating cargo_fmt sync_wait_secs must fail in the typed parser");
+        assert!(error.contains("check=true"), "{error}");
         assert_no_pending_shell_request(&runtime, client_id).await;
         assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
     }
+
+    // Runtime callers cannot background a mutating formatter even when they do
+    // not pass through the model-facing parser.
+    let result = runtime
+        .cargo_fmt_with_context(
+            project,
+            None,
+            Some(false),
+            Some(120),
+            Some(1),
+            None,
+            None,
+            Some(&auth),
+        )
+        .await;
+    assert_sync_wait_rejected(&result, "cargo_fmt");
+    assert_no_pending_shell_request(&runtime, client_id).await;
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 #[tokio::test]
