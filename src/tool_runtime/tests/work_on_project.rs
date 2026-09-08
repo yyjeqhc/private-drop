@@ -3025,7 +3025,7 @@ async fn work_on_project_sizes_and_runner_request_reduction_are_stable() {
     assert!(reused_bytes < standard_bytes);
     assert!(workflow_omitted_bytes < fresh_bytes);
     // With the same repository observations and instruction body retained, the
-    // static workflow-only omission is 757 bytes in this fixture. Keep enough
+    // workflow-omitted projection stays below 1 KiB in this fixture. Keep enough
     // headroom for small projection growth while preserving the context win.
     assert!(
         workflow_omitted_bytes <= 1000,

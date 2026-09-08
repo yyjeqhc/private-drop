@@ -871,7 +871,8 @@ impl ToolRuntime {
 
         // The concurrency slot covers validation, enqueue, and response wait.
         // No request can reach the Runner until its future is polled by
-        // `buffer_unordered`, so at most four file reads are actually in flight.
+        // `buffer_unordered`, so at most MAX_READ_FILES_CONCURRENCY file reads
+        // are actually in flight.
         let mut completed: Vec<Value> =
             stream::iter(items.into_iter().enumerate().map(|(index, item)| {
                 let project = &resolved.config;
