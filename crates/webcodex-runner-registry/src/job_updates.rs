@@ -23,6 +23,11 @@ use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
 use uuid::Uuid;
+use webcodex_core::runner_operation::{
+    RunnerInvocationMetadata, RunnerJobOperation, RunnerJobProcessOperation,
+    RunnerJobScriptOperation, RunnerJobShellOperation, RunnerJobValidationOperation,
+    RunnerOperation,
+};
 use webcodex_core::runner_protocol::{
     validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
     RunnerJobUpdateRequest, RunnerRequest, ShellCommandExecutionState, ShellJobActivity,
@@ -687,18 +692,11 @@ impl RunnerRegistry {
                     .to_string(),
             );
         }
-        let (
-            request_kind,
-            request_command,
-            request_process,
-            request_script,
-            request_stdin,
-            safe_command_preview,
-            structured_metadata,
-            job_kind,
-        ) = match structured_execution {
+        let (safe_command_preview, structured_metadata, job_kind) = match structured_execution
+            .as_ref()
+        {
             Some(StructuredJobExecution::Process(process)) => {
-                validate_process_argv(&process)?;
+                validate_process_argv(process)?;
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     structured_stdin.as_deref(),
@@ -716,19 +714,10 @@ impl RunnerRegistry {
                     validation_tool: validation_tool.clone(),
                     assertion_name: assertion_name.clone(),
                 };
-                (
-                    "start_process_job",
-                    String::new(),
-                    Some(process),
-                    None,
-                    structured_stdin,
-                    preview,
-                    Some(safe),
-                    "run_process",
-                )
+                (preview, Some(safe), "run_process")
             }
             Some(StructuredJobExecution::DetachedProcess(process)) => {
-                validate_process_argv(&process)?;
+                validate_process_argv(process)?;
                 validate_structured_job_common(
                     normalized_job_cwd.as_deref(),
                     structured_stdin.as_deref(),
@@ -745,20 +734,11 @@ impl RunnerRegistry {
                     validation_tool: validation_tool.clone(),
                     assertion_name: None,
                 };
-                (
-                    "start_detached_process_job",
-                    String::new(),
-                    Some(process),
-                    None,
-                    structured_stdin,
-                    preview,
-                    Some(safe),
-                    "run_detached_process",
-                )
+                (preview, Some(safe), "run_detached_process")
             }
             Some(StructuredJobExecution::Script(script)) => {
                 validate_script_request(
-                    &script,
+                    script,
                     structured_stdin.as_deref(),
                     normalized_job_cwd.as_deref(),
                     timeout_secs,
@@ -778,16 +758,7 @@ impl RunnerRegistry {
                     validation_tool: validation_tool.clone(),
                     assertion_name: assertion_name.clone(),
                 };
-                (
-                    "start_script_job",
-                    String::new(),
-                    None,
-                    Some(script),
-                    structured_stdin,
-                    preview,
-                    Some(safe),
-                    "run_script",
-                )
+                (preview, Some(safe), "run_script")
             }
             None => {
                 let run = ShellRunRequest {
@@ -799,17 +770,6 @@ impl RunnerRegistry {
                     wait_timeout_secs: 0,
                 };
                 validate_run_request(&run)?;
-                let request_kind = if validation_steps.is_empty() {
-                    "start_job"
-                } else {
-                    "start_validation_job"
-                };
-                let request_command = if validation_steps.is_empty() {
-                    command.clone()
-                } else {
-                    serde_json::to_string(&validation_steps)
-                        .map_err(|error| format!("could not serialize validation plan: {error}"))?
-                };
                 let preview = if validation_steps.is_empty() {
                     command_preview(&run.command)
                 } else {
@@ -822,27 +782,23 @@ impl RunnerRegistry {
                             .join(", ")
                     )
                 };
-                (
-                    request_kind,
-                    request_command,
-                    None,
-                    None,
-                    None,
-                    preview,
-                    None,
-                    "shell",
-                )
+                (preview, None, "shell")
             }
         };
+        let detached_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::DetachedProcess(_))
+        );
         let detached_idempotency_key = metadata.detached_idempotency_key.as_deref();
-        let detached_request = request_kind == "start_detached_process_job";
         if detached_request != detached_idempotency_key.is_some() {
             return Err(
                 "detached idempotency_key must be present exactly for detached process Job starts"
                     .to_string(),
             );
         }
-        let detached_intent = if detached_request {
+        let detached_intent = if let Some(StructuredJobExecution::DetachedProcess(process)) =
+            structured_execution.as_ref()
+        {
             Some(DetachedIdempotencyIntent {
                 project_id: metadata.project_id.clone(),
                 session_id: metadata.session_id.clone(),
@@ -850,11 +806,8 @@ impl RunnerRegistry {
                 cwd: normalized_job_cwd.clone(),
                 purpose: metadata.purpose.clone(),
                 shell: metadata.shell.clone(),
-                process: request_process
-                    .as_ref()
-                    .expect("detached request has typed process")
-                    .clone(),
-                stdin: request_stdin.clone(),
+                process: process.clone(),
+                stdin: structured_stdin.clone(),
                 timeout_secs,
             })
         } else {
@@ -887,35 +840,64 @@ impl RunnerRegistry {
             validation: validation.clone(),
             structured_execution: structured_metadata.clone(),
         };
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: request_kind.to_string(),
-            job_id: Some(job_id.clone()),
-            cwd: normalized_job_cwd.clone(),
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: request_command,
-            process: request_process,
-            script: request_script,
-            stdin: request_stdin,
-            timeout_secs,
-            requested_by,
-            created_at,
-            validation: None,
-            lsp: None,
-            job_context: Some(job_context),
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
+        let job_operation = match structured_execution {
+            Some(StructuredJobExecution::Process(process)) => {
+                RunnerJobOperation::StartProcess(RunnerJobProcessOperation {
+                    job_id: job_id.clone(),
+                    cwd: normalized_job_cwd.clone(),
+                    process,
+                    stdin: structured_stdin.clone(),
+                    timeout_secs,
+                    context: job_context,
+                })
+            }
+            Some(StructuredJobExecution::DetachedProcess(process)) => {
+                RunnerJobOperation::StartDetachedProcess(RunnerJobProcessOperation {
+                    job_id: job_id.clone(),
+                    cwd: normalized_job_cwd.clone(),
+                    process,
+                    stdin: structured_stdin.clone(),
+                    timeout_secs,
+                    context: job_context,
+                })
+            }
+            Some(StructuredJobExecution::Script(script)) => {
+                RunnerJobOperation::StartScript(RunnerJobScriptOperation {
+                    job_id: job_id.clone(),
+                    cwd: normalized_job_cwd.clone(),
+                    script,
+                    stdin: structured_stdin.clone(),
+                    timeout_secs,
+                    context: job_context,
+                })
+            }
+            None if validation_steps.is_empty() => {
+                RunnerJobOperation::StartShell(RunnerJobShellOperation {
+                    job_id: job_id.clone(),
+                    cwd: normalized_job_cwd.clone(),
+                    command: command.clone(),
+                    timeout_secs,
+                    context: job_context,
+                })
+            }
+            None => RunnerJobOperation::StartValidation(RunnerJobValidationOperation {
+                job_id: job_id.clone(),
+                cwd: normalized_job_cwd.clone(),
+                steps: validation_steps.clone(),
+                timeout_secs,
+                context: job_context,
+            }),
         };
+        debug_assert_eq!(job_operation.is_detached_process(), detached_request);
+        let request = RunnerRequest::from_operation(
+            RunnerInvocationMetadata {
+                request_id: request_id.clone(),
+                client_id: client_id.clone(),
+                requested_by,
+                created_at,
+            },
+            RunnerOperation::Job(job_operation),
+        )?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
@@ -942,7 +924,7 @@ impl RunnerRegistry {
                 "capability_unavailable: runner {client_id} does not support structured_execution_jobs"
             ));
         }
-        if request.kind == "start_detached_process_job"
+        if detached_request
             && !runner
                 .runner_features
                 .supports(RunnerFeature::DetachedProcessJobs)
@@ -1301,35 +1283,17 @@ impl RunnerRegistry {
         ) && job.status != "stop_requested"
         {
             let stop_request_id = next_request_id();
-            let request = RunnerRequest {
-                request_id: stop_request_id.clone(),
-                client_id: job.client_id.clone(),
-                kind: "stop_job".to_string(),
-                job_id: Some(job_id.to_string()),
-                cwd: None,
-                path: None,
-                content: None,
-                max_bytes: None,
-                expected_sha256: None,
-                expected_prefix: None,
-                start_line: None,
-                end_line: None,
-                create_dirs: false,
-                command: String::new(),
-                process: None,
-                script: None,
-                stdin: None,
-                timeout_secs: 1,
-                requested_by: "tool_runtime_cleanup".to_string(),
-                created_at: now_ts(),
-                validation: None,
-                lsp: None,
-                job_context: None,
-                mcp_gateway: None,
-                plugin_gateway: None,
-                coding_agent: None,
-                persistent_shell: None,
-            };
+            let request = RunnerRequest::from_operation(
+                RunnerInvocationMetadata {
+                    request_id: stop_request_id.clone(),
+                    client_id: job.client_id.clone(),
+                    requested_by: "tool_runtime_cleanup".to_string(),
+                    created_at: now_ts(),
+                },
+                RunnerOperation::Job(RunnerJobOperation::Stop {
+                    job_id: job_id.to_string(),
+                }),
+            )?;
             enqueue_pending_request_locked(
                 self.telemetry.as_ref(),
                 &mut inner,
@@ -1835,35 +1799,17 @@ impl RunnerRegistry {
             "agent_queued" | "running" | "stop_requested" => {
                 let stop_request_id = next_request_id();
                 let client_id = job.client_id.clone();
-                let request = RunnerRequest {
-                    request_id: stop_request_id.clone(),
-                    client_id: client_id.clone(),
-                    kind: "stop_job".to_string(),
-                    job_id: Some(job_id.to_string()),
-                    cwd: None,
-                    path: None,
-                    content: None,
-                    max_bytes: None,
-                    expected_sha256: None,
-                    expected_prefix: None,
-                    start_line: None,
-                    end_line: None,
-                    create_dirs: false,
-                    command: String::new(),
-                    process: None,
-                    script: None,
-                    stdin: None,
-                    timeout_secs: 1,
-                    requested_by,
-                    created_at: now_ts(),
-                    validation: None,
-                    lsp: None,
-                        job_context: None,
-                    mcp_gateway: None,
-                    plugin_gateway: None,
-                    coding_agent: None,
-                    persistent_shell: None,
-                };
+                let request = RunnerRequest::from_operation(
+                    RunnerInvocationMetadata {
+                        request_id: stop_request_id.clone(),
+                        client_id: client_id.clone(),
+                        requested_by,
+                        created_at: now_ts(),
+                    },
+                    RunnerOperation::Job(RunnerJobOperation::Stop {
+                        job_id: job_id.to_string(),
+                    }),
+                )?;
                 enqueue_pending_request_locked(
                     self.telemetry.as_ref(),
                     &mut inner,

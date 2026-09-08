@@ -21,7 +21,7 @@ use webcodex_core::coding_agent::{
     validate_request as validate_coding_agent_request, CodingAgentDispatchState,
     CodingAgentRequest, CodingAgentResponse,
 };
-use webcodex_core::lsp_bridge::{RunnerLspPayload, RunnerLspRequest, AGENT_LSP_REQUEST_KIND};
+use webcodex_core::lsp_bridge::{RunnerLspPayload, RunnerLspRequest};
 use webcodex_core::mcp_gateway::{
     validate_request as validate_mcp_gateway_request, McpGatewayDispatchState, McpGatewayRequest,
     McpGatewayResponse,
@@ -29,6 +29,12 @@ use webcodex_core::mcp_gateway::{
 use webcodex_core::plugin::{
     validate_request as validate_plugin_gateway_request, PluginDispatchState, PluginGatewayRequest,
     PluginGatewayResponse,
+};
+use webcodex_core::runner_operation::{
+    RunnerComputerOperation, RunnerComputerOperationKind, RunnerFileOperation,
+    RunnerInvocationMetadata, RunnerOperation, RunnerPersistentShellOperation,
+    RunnerProcessOperation, RunnerProjectOperation, RunnerProjectOperationKind,
+    RunnerScriptOperation, RunnerShellOperation,
 };
 use webcodex_core::runner_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
@@ -42,8 +48,7 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_FILE_WRITE, RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     RUNNER_CAPABILITY_PERSISTENT_SHELL, RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
     RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE, RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD, RUNNER_CONFIG_REQUEST_KIND,
-    RUNNER_CONFIG_REQUEST_MAX_BYTES,
+    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD, RUNNER_CONFIG_REQUEST_MAX_BYTES,
 };
 use webcodex_core::skill_store::SkillStoreRequest;
 use webcodex_core::ssh_resource::{SshResourceRequest, SSH_RESOURCE_REQUEST_MAX_BYTES};
@@ -101,6 +106,9 @@ impl std::error::Error for EnqueueLspError {}
 impl From<PendingRequestEnqueueError> for EnqueueLspError {
     fn from(error: PendingRequestEnqueueError) -> Self {
         match error {
+            PendingRequestEnqueueError::InvalidOperation { message } => {
+                Self::InvalidRequest { message }
+            }
             PendingRequestEnqueueError::UnknownRunner { client_id } => {
                 Self::UnknownRunner { client_id }
             }
@@ -142,6 +150,9 @@ pub(super) fn enqueue_pending_request_locked(
     waiter: Option<oneshot::Sender<ShellRunResponse>>,
     job_id: Option<String>,
 ) -> Result<(), PendingRequestEnqueueError> {
+    let operation = request
+        .decode_operation()
+        .map_err(|message| PendingRequestEnqueueError::InvalidOperation { message })?;
     ensure_dispatch_supported_locked(inner, client_id)?;
     ensure_queue_capacity_locked(inner, client_id)?;
     let runner = inner.runners.get(client_id);
@@ -169,6 +180,7 @@ pub(super) fn enqueue_pending_request_locked(
         request_id,
         PendingShellRequest {
             request,
+            operation,
             waiter,
             job_id,
             expected_runner_owner: None,
@@ -345,6 +357,37 @@ fn apply_text_edits_capability_requirements(body: &ShellFileOpRequest) -> (bool,
     (requires_occurrence, requires_line_scope)
 }
 
+fn encode_runner_operation(
+    request_id: &str,
+    client_id: &str,
+    requested_by: String,
+    operation: RunnerOperation,
+) -> Result<RunnerRequest, String> {
+    RunnerRequest::from_operation(
+        RunnerInvocationMetadata {
+            request_id: request_id.to_string(),
+            client_id: client_id.to_string(),
+            requested_by,
+            created_at: now_ts(),
+        },
+        operation,
+    )
+}
+
+fn encode_file_operation(
+    request_id: &str,
+    body: &ShellFileOpRequest,
+    requested_by: String,
+) -> Result<RunnerRequest, String> {
+    let operation = RunnerFileOperation::from_server_request(body)?;
+    encode_runner_operation(
+        request_id,
+        &body.client_id,
+        requested_by,
+        RunnerOperation::File(operation),
+    )
+}
+
 impl RunnerRegistry {
     pub async fn enqueue_file_op(
         &self,
@@ -397,36 +440,7 @@ impl RunnerRegistry {
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let kind = format!("file_{}", body.op);
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind,
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),
@@ -459,35 +473,7 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "file_apply_text_edits".to_string(),
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
@@ -534,35 +520,7 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "file_apply_text_edits".to_string(),
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
@@ -617,35 +575,7 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "file_apply_patch".to_string(),
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
@@ -716,35 +646,7 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "file_save_project_artifact".to_string(),
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         let current = inner
@@ -806,35 +708,7 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "file_read_project_artifact_metadata".to_string(),
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
@@ -895,35 +769,7 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "file_read_project_artifact_export_chunk".to_string(),
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
@@ -975,36 +821,7 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let kind = format!("file_{}", body.op);
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind,
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+        let request = encode_file_operation(&request_id, &body, requested_by)?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
@@ -1062,35 +879,17 @@ impl RunnerRegistry {
         let normalized_cwd = cwd.map(|cwd| cwd.trim().to_string());
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: "run_process".to_string(),
-            job_id: None,
-            cwd: normalized_cwd,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: Some(process),
-            script: None,
-            stdin,
-            timeout_secs,
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+            RunnerOperation::RunProcess(RunnerProcessOperation {
+                cwd: normalized_cwd,
+                process,
+                stdin,
+                timeout_secs,
+            }),
+        )?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
@@ -1138,35 +937,17 @@ impl RunnerRegistry {
         let normalized_cwd = cwd.map(|cwd| cwd.trim().to_string());
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: "run_script".to_string(),
-            job_id: None,
-            cwd: normalized_cwd,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: Some(script),
-            stdin,
-            timeout_secs,
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+            RunnerOperation::RunScript(RunnerScriptOperation {
+                cwd: normalized_cwd,
+                script,
+                stdin,
+                timeout_secs,
+            }),
+        )?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
@@ -1223,35 +1004,17 @@ impl RunnerRegistry {
         let normalized_cwd = cwd.map(|cwd| cwd.trim().to_string());
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: "run_internal_posix_script".to_string(),
-            job_id: None,
-            cwd: normalized_cwd,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: Some(script),
-            stdin: None,
-            timeout_secs,
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+            RunnerOperation::RunInternalPosixScript(RunnerScriptOperation {
+                cwd: normalized_cwd,
+                script,
+                stdin: None,
+                timeout_secs,
+            }),
+        )?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
@@ -1313,41 +1076,23 @@ impl RunnerRegistry {
             });
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "run_shell".to_string(),
-            job_id: None,
-            cwd: normalized_cwd,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: body.command.clone(),
-            process: None,
-            script: None,
-            stdin: body.stdin.clone(),
-            timeout_secs: body.timeout_secs,
-            requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: ssh_context,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
-        let mut inner = self.inner.lock().await;
-        if request
-            .job_context
+        let has_ssh_context = ssh_context
             .as_ref()
-            .is_some_and(|context| context.ssh_resource.is_some())
-        {
+            .is_some_and(|context| context.ssh_resource.is_some());
+        let request = encode_runner_operation(
+            &request_id,
+            &body.client_id,
+            requested_by,
+            RunnerOperation::RunShell(RunnerShellOperation {
+                cwd: normalized_cwd,
+                command: body.command.clone(),
+                stdin: body.stdin.clone(),
+                timeout_secs: body.timeout_secs,
+                job_context: ssh_context,
+            }),
+        )?;
+        let mut inner = self.inner.lock().await;
+        if has_ssh_context {
             let Some(runner) = inner.runners.get(&body.client_id) else {
                 return Err(format!("unknown shell client: {}", body.client_id));
             };
@@ -1456,35 +1201,13 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.to_string(),
-            kind: "skill_store".to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: Some(content),
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 120,
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            persistent_shell: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-        };
+            RunnerOperation::SkillStore(operation),
+        )
+        .map_err(|_| "invalid Skill store request".to_string())?;
         let mut inner = self.inner.lock().await;
         let runner = inner
             .runners
@@ -1552,35 +1275,12 @@ impl RunnerRegistry {
         let expected_provider_instance_id = operation.provider_instance_id().to_string();
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.to_string(),
-            kind: "mcp_gateway".to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 120,
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            persistent_shell: None,
-            mcp_gateway: Some(operation),
-            plugin_gateway: None,
-            coding_agent: None,
-        };
+            RunnerOperation::McpGateway(operation),
+        )?;
         let mut inner = self.inner.lock().await;
         let runner = inner
             .runners
@@ -1650,35 +1350,12 @@ impl RunnerRegistry {
                 });
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.to_string(),
-            kind: "plugin_gateway".to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 120,
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            persistent_shell: None,
-            mcp_gateway: None,
-            plugin_gateway: Some(operation),
-            coding_agent: None,
-        };
+            RunnerOperation::PluginGateway(operation),
+        )?;
         let mut inner = self.inner.lock().await;
         let runner = inner
             .runners
@@ -1740,35 +1417,13 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.to_string(),
-            kind: "ssh_resource".to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: Some(content),
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 60,
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            persistent_shell: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-        };
+            RunnerOperation::SshResource(operation),
+        )
+        .map_err(|_| "ssh_resource_invalid: request was not started".to_string())?;
         let mut inner = self.inner.lock().await;
         let runner = inner
             .runners
@@ -1830,35 +1485,13 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.to_string(),
-            kind: RUNNER_CONFIG_REQUEST_KIND.to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: Some(content),
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 30,
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            persistent_shell: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-        };
+            RunnerOperation::RunnerConfig(operation),
+        )
+        .map_err(|_| "invalid_runner_config_request: request was not started".to_string())?;
         let mut inner = self.inner.lock().await;
         let runner = inner
             .runners
@@ -1924,35 +1557,12 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.to_string(),
-            kind: "coding_agent".to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: 120,
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            persistent_shell: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: Some(operation),
-        };
+            RunnerOperation::CodingAgent(operation),
+        )?;
         let mut inner = self.inner.lock().await;
         let runner = inner
             .runners
@@ -2051,35 +1661,15 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let wire_request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: "persistent_shell".to_string(),
-            job_id: None,
-            cwd: request.cwd.clone(),
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: request.command.clone().unwrap_or_default(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: request.timeout_secs.unwrap_or(30),
+        let wire_request = encode_runner_operation(
+            &request_id,
+            &client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: job_context.clone(),
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: Some(request),
-        };
+            RunnerOperation::PersistentShell(RunnerPersistentShellOperation {
+                request,
+                job_context: job_context.clone(),
+            }),
+        )?;
         let mut inner = self.inner.lock().await;
         let Some(runner) = inner.runners.get(&client_id) else {
             return Err(format!("unknown shell client: {client_id}"));
@@ -2161,35 +1751,17 @@ impl RunnerRegistry {
         };
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: kind.to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: Some(payload),
-            timeout_secs: 30,
+        let operation_kind = RunnerProjectOperationKind::from_wire(kind)
+            .ok_or_else(|| format!("unsupported project op kind: {kind}"))?;
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+            RunnerOperation::Project(RunnerProjectOperation {
+                kind: operation_kind,
+                payload,
+            }),
+        )?;
         let mut inner = self.inner.lock().await;
         if let Some(required_feature) = required_feature {
             let runner = inner
@@ -2263,35 +1835,18 @@ impl RunnerRegistry {
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: kind.to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: Some(payload),
-            timeout_secs: timeout_secs.max(1),
+        let operation_kind = RunnerComputerOperationKind::from_wire(kind)
+            .ok_or_else(|| "invalid computer request kind".to_string())?;
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: None,
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+            RunnerOperation::Computer(RunnerComputerOperation {
+                kind: operation_kind,
+                payload,
+                timeout_secs: timeout_secs.max(1),
+            }),
+        )?;
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         let current = inner
@@ -2345,35 +1900,16 @@ impl RunnerRegistry {
         };
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
-        let request = RunnerRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: AGENT_LSP_REQUEST_KIND.to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            create_dirs: false,
-            command: String::new(),
-            process: None,
-            script: None,
-            stdin: None,
-            timeout_secs: timeout_secs.max(1),
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
             requested_by,
-            created_at: now_ts(),
-            validation: None,
-            lsp: Some(payload),
-            job_context: None,
-            mcp_gateway: None,
-            plugin_gateway: None,
-            coding_agent: None,
-            persistent_shell: None,
-        };
+            RunnerOperation::Lsp {
+                payload,
+                timeout_secs: timeout_secs.max(1),
+            },
+        )
+        .map_err(|message| EnqueueLspError::InvalidRequest { message })?;
         let mut inner = self.inner.lock().await;
         self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
         // This check is the authoritative TOCTOU fence: capability validation

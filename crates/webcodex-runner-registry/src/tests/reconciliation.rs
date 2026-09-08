@@ -8,6 +8,9 @@ use super::{
     clamp_grace, job_recovery_grace_secs, now_ts, RunnerRegistry, RUNNER_ONLINE_WINDOW_SECS,
     JOB_RECOVERY_GRACE_SECS, MAX_OUTPUT_BYTES,
 };
+use webcodex_core::runner_operation::{
+    RunnerInvocationMetadata, RunnerJobOperation, RunnerOperation,
+};
 use crate::runner_protocol::{
     PersistentShellResult, RunnerJobUpdateRequest, RunnerPollRequest,
     RunnerProjectSummary, RunnerRequest, RunnerCapabilities,
@@ -1588,10 +1591,18 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
 
     let original_request_id = request.request_id.clone();
     let control_request_id = format!("control-{}", job.job_id);
-    let mut control_request: RunnerRequest = request.clone();
-    control_request.request_id = control_request_id.clone();
-    control_request.kind = "stop_job".to_string();
-    control_request.job_id = Some(job.job_id.clone());
+    let control_request = RunnerRequest::from_operation(
+        RunnerInvocationMetadata {
+            request_id: control_request_id.clone(),
+            client_id: request.client_id.clone(),
+            requested_by: request.requested_by.clone(),
+            created_at: request.created_at,
+        },
+        RunnerOperation::Job(RunnerJobOperation::Stop {
+            job_id: job.job_id.clone(),
+        }),
+    )
+    .unwrap();
     let (persistent_tx, _persistent_rx) = tokio::sync::oneshot::channel::<PersistentShellResult>();
     {
         let mut inner = registry_b.inner.lock().await;
@@ -1602,6 +1613,7 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
             original_request_id.clone(),
             PendingShellRequest {
                 request: request.clone(),
+                operation: request.decode_operation().unwrap(),
                 waiter: None,
                 job_id: Some(job.job_id.clone()),
                 expected_runner_owner: None,
@@ -1622,7 +1634,8 @@ async fn terminal_observed_future_inventory_ended_at_cannot_bypass_prune() {
         inner.pending_by_id.insert(
             control_request_id.clone(),
             PendingShellRequest {
-                request: control_request,
+                request: control_request.clone(),
+                operation: control_request.decode_operation().unwrap(),
                 waiter: None,
                 job_id: Some(job.job_id.clone()),
                 expected_runner_owner: None,

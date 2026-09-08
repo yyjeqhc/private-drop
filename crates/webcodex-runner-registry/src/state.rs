@@ -10,6 +10,7 @@ use webcodex_core::coding_agent::{
 };
 use webcodex_core::mcp_gateway::McpGatewayResponse;
 use webcodex_core::plugin::PluginGatewayResponse;
+use webcodex_core::runner_operation::RunnerOperation;
 use webcodex_core::runner_protocol::{
     PersistentShellResult, RunnerBuildInfo, RunnerHostContext, RunnerPolicySummary,
     RunnerProjectSummary, RunnerRequest, RunnerView, ShellCommandExecutionState, ShellJobActivity,
@@ -208,6 +209,10 @@ pub(super) struct SkillStoreDispatchFence {
 #[derive(Debug)]
 pub(super) struct PendingShellRequest {
     pub(super) request: RunnerRequest,
+    /// Canonical semantic operation decoded exactly once when the V2 wire DTO is admitted.
+    /// Registry fencing/result correlation must use this field rather than reinterpreting
+    /// `request.kind + optional payloads`.
+    pub(super) operation: RunnerOperation,
     pub(super) waiter: Option<oneshot::Sender<ShellRunResponse>>,
     pub(super) job_id: Option<String>,
     /// Optional Control-side project-placement fence for synchronous requests

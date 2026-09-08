@@ -16,6 +16,7 @@ use webcodex_core::plugin::{
     validate_response_for_request as validate_plugin_gateway_response, PluginDispatchState,
     PluginGatewayResponse,
 };
+use webcodex_core::runner_operation::{RunnerJobOperation, RunnerOperation};
 use webcodex_core::runner_protocol::{
     RunnerPersistentShellResultRequest, RunnerPollRequest, RunnerRequest, RunnerResultPayload,
     ShellCommandExecutionState, ShellRunResponse,
@@ -93,13 +94,10 @@ impl RunnerRegistry {
             let stale_runner_config_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     match (
-                        pending.request.kind.as_str(),
+                        &pending.operation,
                         pending.expected_runner_config_runner_instance_id.as_deref(),
                     ) {
-                        (
-                            webcodex_core::runner_protocol::RUNNER_CONFIG_REQUEST_KIND,
-                            Some(expected),
-                        ) => {
+                        (RunnerOperation::RunnerConfig(_), Some(expected)) => {
                             let Some(runner) = inner.runners.get(&body.client_id) else {
                                 return Some((
                                     "runner_replaced",
@@ -123,12 +121,10 @@ impl RunnerRegistry {
                                     .to_string(),
                             ))
                         }
-                        (webcodex_core::runner_protocol::RUNNER_CONFIG_REQUEST_KIND, None) => {
-                            Some((
-                                "runner_replaced",
-                                "Runner config exact-process fence is missing".to_string(),
-                            ))
-                        }
+                        (RunnerOperation::RunnerConfig(_), None) => Some((
+                            "runner_replaced",
+                            "Runner config exact-process fence is missing".to_string(),
+                        )),
                         (_, Some(_)) => Some((
                             "runner_replaced",
                             "Runner config exact-process fence is inconsistent".to_string(),
@@ -161,10 +157,10 @@ impl RunnerRegistry {
             let stale_ssh_resource_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     match (
-                        pending.request.kind.as_str(),
+                        &pending.operation,
                         pending.expected_ssh_resource_runner_instance_id.as_deref(),
                     ) {
-                        ("ssh_resource", Some(expected_runner)) => {
+                        (RunnerOperation::SshResource(_), Some(expected_runner)) => {
                             let Some(runner) = inner.runners.get(&body.client_id) else {
                                 return Some((
                                     "runner_replaced",
@@ -187,7 +183,7 @@ impl RunnerRegistry {
                                     .to_string(),
                             ))
                         }
-                        ("ssh_resource", None) => Some((
+                        (RunnerOperation::SshResource(_), None) => Some((
                             "runner_replaced",
                             "SSH resource exact Runner fence is missing".to_string(),
                         )),
@@ -223,13 +219,13 @@ impl RunnerRegistry {
             let stale_bridge_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     match (
-                        pending.request.mcp_gateway.as_ref(),
+                        &pending.operation,
                         pending.expected_mcp_gateway_runner_instance_id.as_deref(),
                         pending.expected_mcp_gateway_provider_id.as_deref(),
                         pending.expected_mcp_gateway_provider_instance_id.as_deref(),
                     ) {
                         (
-                            Some(operation),
+                            RunnerOperation::McpGateway(operation),
                             Some(expected_runner),
                             Some(expected_provider),
                             Some(expected_provider_instance),
@@ -274,7 +270,7 @@ impl RunnerRegistry {
                                     .to_string(),
                             ))
                         }
-                        (None, None, None, None) => None,
+                        (_, None, None, None) => None,
                         _ => Some((
                             "stale_provider",
                             "stale_mcp_gateway: pending exact bridge fence is incomplete"
@@ -318,7 +314,7 @@ impl RunnerRegistry {
                 continue;
             }
             let stale_plugin_error = inner.pending_by_id.get(&request_id).and_then(|pending| {
-                let Some(operation) = pending.request.plugin_gateway.as_ref() else {
+                let RunnerOperation::PluginGateway(operation) = &pending.operation else {
                     return None;
                 };
                 let Some(fence) = inner.plugin_gateway_fences.get(&request_id) else {
@@ -397,8 +393,8 @@ impl RunnerRegistry {
             }
             let stale_skill_store_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
-                    match (pending.request.kind.as_str(), pending.skill_store_fence.as_ref()) {
-                        ("skill_store", Some(fence)) => {
+                    match (&pending.operation, pending.skill_store_fence.as_ref()) {
+                        (RunnerOperation::SkillStore(_), Some(fence)) => {
                             let Some(runner) = inner.runners.get(&body.client_id) else {
                                 return Some(
                                     "stale_runner: Skill store target Runner disappeared before dispatch"
@@ -423,7 +419,7 @@ impl RunnerRegistry {
                                 )
                             })
                         }
-                        ("skill_store", None) => Some(
+                        (RunnerOperation::SkillStore(_), None) => Some(
                             "stale_runner: Skill store exact dispatch fence is missing".to_string(),
                         ),
                         (_, Some(_)) => Some(
@@ -459,7 +455,7 @@ impl RunnerRegistry {
             }
             let stale_coding_agent_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
-                    if pending.request.coding_agent.is_none() {
+                    if !matches!(&pending.operation, RunnerOperation::CodingAgent(_)) {
                         return None;
                     }
                     let Some(fence) = inner.coding_agent_fences.get(&request_id) else {
@@ -565,13 +561,22 @@ impl RunnerRegistry {
                 inner.persistent_waiters.remove(&request_id);
                 continue;
             }
-            let Some((request, job_id)) = inner.pending_by_id.get_mut(&request_id).map(|pending| {
-                pending.dispatched = true;
-                (pending.request.clone(), pending.job_id.clone())
-            }) else {
+            let Some((request, operation, job_id)) =
+                inner.pending_by_id.get_mut(&request_id).map(|pending| {
+                    pending.dispatched = true;
+                    (
+                        pending.request.clone(),
+                        pending.operation.clone(),
+                        pending.job_id.clone(),
+                    )
+                })
+            else {
                 continue;
             };
-            if request.kind == "stop_job" {
+            if matches!(
+                &operation,
+                RunnerOperation::Job(RunnerJobOperation::Stop { .. })
+            ) {
                 inner.pending_by_id.remove(&request_id);
                 return Ok(Some(request));
             }
@@ -653,13 +658,19 @@ impl RunnerRegistry {
         if pending.request.client_id != body.client_id {
             return Err("request_id does not belong to client_id".to_string());
         }
-        if pending.request.coding_agent.is_none() && payload.coding_agent.is_some() {
+        if !matches!(&pending.operation, RunnerOperation::CodingAgent(_))
+            && payload.coding_agent.is_some()
+        {
             return Err("unexpected CodingAgentRun result for non-coding request".to_string());
         }
-        if pending.request.mcp_gateway.is_none() && payload.mcp_gateway.is_some() {
+        if !matches!(&pending.operation, RunnerOperation::McpGateway(_))
+            && payload.mcp_gateway.is_some()
+        {
             return Err("unexpected MCP gateway result for non-bridge request".to_string());
         }
-        if pending.request.plugin_gateway.is_none() && payload.plugin_gateway.is_some() {
+        if !matches!(&pending.operation, RunnerOperation::PluginGateway(_))
+            && payload.plugin_gateway.is_some()
+        {
             return Err("unexpected Plugin gateway result for non-Plugin request".to_string());
         }
         self.telemetry
@@ -678,7 +689,7 @@ impl RunnerRegistry {
                 body.request_id
             ));
         };
-        if pending.request.mcp_gateway.is_some() {
+        if matches!(&pending.operation, RunnerOperation::McpGateway(_)) {
             let response = match mcp_gateway {
                 Some(response)
                     if command_execution_state.is_none()
@@ -712,7 +723,7 @@ impl RunnerRegistry {
             self.telemetry.runner_result_finalized(&trace_request_id);
             return Ok(());
         }
-        if pending.request.plugin_gateway.is_some() {
+        if let RunnerOperation::PluginGateway(plugin_request) = &pending.operation {
             let response = match plugin_gateway {
                 Some(response)
                     if command_execution_state.is_none()
@@ -723,15 +734,7 @@ impl RunnerRegistry {
                         && body.stderr.is_none()
                         && body.duration_ms.is_none()
                         && body.error.is_none()
-                        && validate_plugin_gateway_response(
-                            pending
-                                .request
-                                .plugin_gateway
-                                .as_ref()
-                                .expect("checked above"),
-                            &response,
-                        )
-                        .is_ok() =>
+                        && validate_plugin_gateway_response(plugin_request, &response).is_ok() =>
                 {
                     response
                 }
@@ -757,7 +760,7 @@ impl RunnerRegistry {
             self.telemetry.runner_result_finalized(&trace_request_id);
             return Ok(());
         }
-        if pending.request.coding_agent.is_some() {
+        if let RunnerOperation::CodingAgent(coding_request) = &pending.operation {
             let response = match coding_agent {
                 Some(response)
                     if command_execution_state.is_none()
@@ -767,15 +770,7 @@ impl RunnerRegistry {
                         && body.stderr.is_none()
                         && body.duration_ms.is_none()
                         && body.error.is_none()
-                        && validate_coding_agent_response(
-                            pending
-                                .request
-                                .coding_agent
-                                .as_ref()
-                                .expect("checked above"),
-                            &response,
-                        )
-                        .is_ok() =>
+                        && validate_coding_agent_response(coding_request, &response).is_ok() =>
                 {
                     response
                 }
@@ -806,7 +801,7 @@ impl RunnerRegistry {
         let request_id = body.request_id.clone();
         let client_id = body.client_id.clone();
         let error = body.error.clone();
-        let stdout = if is_large_native_image_request(&pending.request) {
+        let stdout = if pending.operation.is_large_native_image_request() {
             truncate_output_to(
                 body.stdout,
                 webcodex_core::artifact_policy::MAX_MCP_IMAGE_RESPONSE_BYTES,
@@ -913,9 +908,10 @@ impl RunnerRegistry {
         if pending.request.client_id != body.client_id {
             return Err("request_id does not belong to client_id".to_string());
         }
-        let expected = pending.request.persistent_shell.as_ref().ok_or_else(|| {
-            "request_id does not belong to a persistent shell request".to_string()
-        })?;
+        let RunnerOperation::PersistentShell(operation) = &pending.operation else {
+            return Err("request_id does not belong to a persistent shell request".to_string());
+        };
+        let expected = &operation.request;
         if expected.shell_id != body.result.shell_id
             || expected.workflow_session_id != body.result.workflow_session_id
             || expected.runtime_project_id != body.result.runtime_project_id
@@ -987,20 +983,4 @@ fn truncate_persistent_shell_stream(value: &mut String) -> bool {
     }
     *value = value[start..].to_string();
     true
-}
-
-fn is_large_native_image_request(request: &RunnerRequest) -> bool {
-    if matches!(
-        request.kind.as_str(),
-        "computer_snapshot" | "computer_snapshot_display"
-    ) {
-        return true;
-    }
-    request.kind == "file_read_project_artifact"
-        && request
-            .content
-            .as_deref()
-            .and_then(|content| serde_json::from_str::<serde_json::Value>(content).ok())
-            .and_then(|payload| payload.get("mcp_image").and_then(|value| value.as_bool()))
-            .unwrap_or(false)
 }

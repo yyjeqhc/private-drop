@@ -15,6 +15,7 @@ use webcodex_core::runner_protocol::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PendingRequestEnqueueError {
+    InvalidOperation { message: String },
     UnknownRunner { client_id: String },
     RunnerOffline { client_id: String },
     QueueFull { client_id: String, limit: usize },
@@ -23,6 +24,9 @@ pub(super) enum PendingRequestEnqueueError {
 impl fmt::Display for PendingRequestEnqueueError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidOperation { message } => {
+                write!(formatter, "invalid canonical Runner operation: {message}")
+            }
             Self::UnknownRunner { client_id } => {
                 write!(formatter, "unknown shell client: {client_id}")
             }
