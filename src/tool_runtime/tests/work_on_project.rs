@@ -79,6 +79,57 @@ fn record_window_activity_fixture(
     );
 }
 
+async fn call_hygiene_in_window_with_local_runner(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    session_id: Option<&str>,
+    auth: &crate::auth::AuthContext,
+    window_id: &str,
+) -> crate::tool_runtime::kernel::ToolCallOutcome {
+    let runtime_for_task = runtime.clone();
+    let project = project.to_string();
+    let session_id = session_id.map(str::to_string);
+    let auth = auth.clone();
+    let window_id = window_id.to_string();
+    let task = tokio::spawn(async move {
+        let window = crate::client_window::ClientWindow::for_test(&window_id);
+        runtime_for_task
+            .call_tool_with_context(
+                ToolCallRequest {
+                    tool_name: "workspace_hygiene_check".to_string(),
+                    arguments: json!({"project": project}),
+                },
+                ToolCallContext {
+                    transport: ToolTransport::Mcp,
+                    session_id: session_id.as_deref(),
+                    auth: Some(&auth),
+                    window: Some(&window),
+                    record_oauth_scope_denials: true,
+                    host_file_import_trust: HostFileImportTrust::Untrusted,
+                },
+            )
+            .await
+    });
+
+    // Agent-backed hygiene is asynchronous: service its synthetic Runner
+    // requests instead of waiting for each 30-second production script timeout.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "window-correlation hygiene call did not finish within 30 seconds for {client_id}"
+        );
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
+            assert_eq!(request.kind, "run_internal_posix_script");
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    task.await.unwrap()
+}
+
 fn work_on_project_call(project: &str, instruction: &str, session_id: Option<&str>) -> ToolCall {
     work_on_project_call_with_projections(project, instruction, session_id, true, true)
 }
@@ -1386,22 +1437,15 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
     );
 
     // T2: an explicitly authorized outer recorder advances S normally.
-    let recorded = runtime
-        .call_tool_with_context(
-            ToolCallRequest {
-                tool_name: "workspace_hygiene_check".to_string(),
-                arguments: json!({"project": project.clone()}),
-            },
-            ToolCallContext {
-                transport: ToolTransport::Mcp,
-                session_id: Some(&session_id),
-                auth: Some(&auth),
-                window: Some(&window),
-                record_oauth_scope_denials: true,
-                host_file_import_trust: HostFileImportTrust::Untrusted,
-            },
-        )
-        .await;
+    let recorded = call_hygiene_in_window_with_local_runner(
+        &runtime,
+        "wop-gap",
+        &project,
+        Some(&session_id),
+        &auth,
+        window_id,
+    )
+    .await;
     assert!(recorded.success, "{:?}", recorded.error_status);
     assert!(recorded.correlation.recorder_gap_session_id.is_none());
     assert!(recorded.correlation.workflow_sessions.iter().any(|link| {
@@ -1431,22 +1475,10 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
     // T3: omitting recording_session_id does not block business execution and
     // does not forge a Session event. The exact same Window/principal/Project
     // affinity produces a bounded recovery hint and a Window-only gap fact.
-    let unrecorded = runtime
-        .call_tool_with_context(
-            ToolCallRequest {
-                tool_name: "workspace_hygiene_check".to_string(),
-                arguments: json!({"project": project.clone()}),
-            },
-            ToolCallContext {
-                transport: ToolTransport::Mcp,
-                session_id: None,
-                auth: Some(&auth),
-                window: Some(&window),
-                record_oauth_scope_denials: true,
-                host_file_import_trust: HostFileImportTrust::Untrusted,
-            },
-        )
-        .await;
+    let unrecorded = call_hygiene_in_window_with_local_runner(
+        &runtime, "wop-gap", &project, None, &auth, window_id,
+    )
+    .await;
     assert!(unrecorded.success, "{:?}", unrecorded.error_status);
     assert_eq!(
         unrecorded.correlation.recorder_gap_session_id.as_deref(),
@@ -1501,29 +1533,15 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
 
     // T4: explicitly echoing S restores normal recording. The original gap is
     // retained as history, but does not propagate to the recovered call.
-    // The synthetic Runner has a 60-second keepalive fence and this fixture
-    // deliberately exercises multiple real startup/tool paths. Refresh only the
-    // test Runner registration so T4 verifies recorder recovery rather than the
-    // unrelated offline timeout.
-    let refreshed_project =
-        register_runner_project_at_path(&runtime, "wop-gap", "demo", root.path()).await;
-    assert_eq!(refreshed_project, project);
-    let recovered = runtime
-        .call_tool_with_context(
-            ToolCallRequest {
-                tool_name: "workspace_hygiene_check".to_string(),
-                arguments: json!({"project": project.clone()}),
-            },
-            ToolCallContext {
-                transport: ToolTransport::Mcp,
-                session_id: Some(&session_id),
-                auth: Some(&auth),
-                window: Some(&window),
-                record_oauth_scope_denials: true,
-                host_file_import_trust: HostFileImportTrust::Untrusted,
-            },
-        )
-        .await;
+    let recovered = call_hygiene_in_window_with_local_runner(
+        &runtime,
+        "wop-gap",
+        &project,
+        Some(&session_id),
+        &auth,
+        window_id,
+    )
+    .await;
     assert!(
         recovered.success,
         "transport={:?} result={:?}",

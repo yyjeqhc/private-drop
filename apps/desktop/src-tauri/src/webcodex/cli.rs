@@ -1177,11 +1177,13 @@ mod tests {
                 Some(&payload),
                 false,
                 &cancellation,
-                Duration::from_secs(8),
+                // This regression verifies timeout-driven tree reclamation, not
+                // an exact eight-second wall clock. Give a loaded Windows host
+                // enough time to start PowerShell and publish the fixture PIDs.
+                Duration::from_secs(12),
             )
             .await
         });
-        let marker_deadline = Instant::now() + Duration::from_secs(6);
         let pids = loop {
             if let Ok(contents) = std::fs::read_to_string(&marker) {
                 let parsed = contents
@@ -1195,18 +1197,18 @@ mod tests {
                 }
             }
             assert!(
-                Instant::now() < marker_deadline,
-                "blocked-stdin fixture must publish owned pids before timeout"
+                !command.is_finished(),
+                "blocked-stdin fixture command finished before publishing owned pids"
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         };
-        let error = tokio::time::timeout(Duration::from_secs(12), command)
+        let error = tokio::time::timeout(Duration::from_secs(16), command)
             .await
             .expect("blocked-stdin command must finish within its bounded cleanup")
             .expect("blocked-stdin fixture task")
             .unwrap_err();
         assert_eq!(error.code, "webcodex_command_timeout");
-        assert!(started.elapsed() < Duration::from_secs(12));
+        assert!(started.elapsed() < Duration::from_secs(16));
         for pid in pids {
             assert!(
                 !windows_process_exists(pid),
