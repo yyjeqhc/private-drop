@@ -488,7 +488,30 @@ fn spawn_job_update_delivery_worker(
                 continue;
             };
 
-            match sink.try_send_job_update(&update) {
+            let send_result = if matches!(
+                &sink,
+                RunnerSink::WebSocket { .. } | RunnerSink::Quic { .. }
+            ) {
+                // Stream delivery is a non-blocking try_send. Keep candidate
+                // validation and enqueue atomic with respect to coalescing: a
+                // semantic update may supersede an output/activity-only item
+                // after the worker clones it but before channel capacity returns.
+                // HTTP remains outside this lock because it performs a bounded
+                // synchronous request and must never block update producers.
+                let pending = lock_unpoison(&pending_map);
+                let still_pending = pending
+                    .get(&job_id)
+                    .and_then(JobUpdateDeliveryQueue::next)
+                    .is_some_and(|current| current.update_seq == pending_update.update_seq);
+                if !still_pending {
+                    continue;
+                }
+                sink.try_send_job_update(&update)
+            } else {
+                sink.try_send_job_update(&update)
+            };
+
+            match send_result {
                 Ok(true) => {
                     let still_current = lock_unpoison(&sink_slot)
                         .as_ref()
