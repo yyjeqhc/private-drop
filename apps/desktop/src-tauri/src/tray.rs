@@ -104,6 +104,7 @@ impl TrayProjection {
             Some(ConnectionAction::Disconnect)
         } else if local_full
             && snapshot.readiness.runtime_ready
+            && snapshot.openai_tunnel_configured
             && snapshot.regular_tunnel_available
         {
             Some(ConnectionAction::Connect)
@@ -432,6 +433,7 @@ mod tests {
             exposure: Exposure::None,
             enrollment: crate::models::Enrollment::ManagedPairing,
         });
+        snapshot.openai_tunnel_configured = true;
         snapshot.regular_tunnel_available = true;
         snapshot
     }
@@ -460,6 +462,18 @@ mod tests {
             projection.connection_action,
             Some(ConnectionAction::Connect)
         );
+    }
+
+    #[test]
+    fn unconfigured_tunnel_does_not_offer_connect_action() {
+        let mut snapshot = local_snapshot();
+        snapshot.readiness.server = ServerReadiness::Ready;
+        snapshot.readiness.runner = RunnerReadiness::Ready;
+        snapshot.readiness.runtime_ready = true;
+        snapshot.openai_tunnel_configured = false;
+        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        assert_eq!(projection.connection_status, ConnectionStatus::NotConnected);
+        assert_eq!(projection.connection_action, None);
     }
 
     #[test]
