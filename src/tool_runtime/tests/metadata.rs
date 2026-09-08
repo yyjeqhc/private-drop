@@ -2403,10 +2403,15 @@ async fn runtime_status_reports_project_connector_exposure_when_configured() {
     );
 }
 
+// runtime_status reads the process-global compact-schema switch on each call.
+// Serialize this async assertion with tests that mutate that switch so the
+// value cannot change between dispatch and the matching expectation.
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
     use crate::runner_protocol::{RunnerPolicySummary, ShellProfilesSummary};
 
+    let _env = crate::test_support::TestEnvGuard::new();
     let runtime = test_runtime();
     let policy = RunnerPolicySummary {
         allowed_roots: vec![PathBuf::from(
