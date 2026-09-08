@@ -343,6 +343,127 @@ async fn stateless_full_trace_preserves_raw_context_ack_and_records_clean_effect
     assert_eq!(final_response["result"]["isError"], false);
 }
 
+#[test]
+fn stateless_full_trace_correlates_only_hashed_openai_window() {
+    std::thread::Builder::new()
+        .name("mcp-stateless-window-trace".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build stateless window-trace test runtime")
+                .block_on(stateless_full_trace_correlates_only_hashed_openai_window_body());
+        })
+        .expect("spawn stateless window-trace test thread")
+        .join()
+        .expect("stateless window-trace test thread panicked");
+}
+
+async fn stateless_full_trace_correlates_only_hashed_openai_window_body() {
+    use std::collections::BTreeSet;
+
+    let trace_root = tempfile::tempdir().unwrap();
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+    env.set(
+        "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+        trace_root.path().to_string_lossy().as_ref(),
+    );
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db, runtime));
+    let raw_window = "openai-window-trace-opaque-secret";
+
+    for id in [51_i64, 52_i64] {
+        let mut params = mcp_2026_params(json!({"name": "list_tools", "arguments": {}}));
+        params["_meta"]["openai/session"] = json!(raw_window);
+        let (status, body) = stateless_2026_jsonrpc(
+            &service,
+            "secret",
+            Some(MCP_STATELESS_PROTOCOL_VERSION),
+            Some("tools/call"),
+            Some("list_tools"),
+            None,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": params,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["isError"], false, "{body}");
+    }
+    crate::tool_request_trace::flush_full_trace_writer();
+
+    let mut trace_ids = BTreeSet::new();
+    let mut window_keys = BTreeSet::new();
+    let mut traced_requests = 0_usize;
+    for entry in std::fs::read_dir(trace_root.path()).unwrap().flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let trace_dir = entry.path();
+        let Ok(events_text) = std::fs::read_to_string(trace_dir.join("events.jsonl")) else {
+            continue;
+        };
+        assert!(
+            !events_text.contains(raw_window),
+            "raw OpenAI window identity leaked into trace metadata"
+        );
+        let events = events_text
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        if let Some(parsed) = events.iter().find(|event| {
+            event["event"] == "mcp_tool_request_parsed" && event["tool_name"] == "list_tools"
+        }) {
+            traced_requests += 1;
+            let trace_id = parsed["server_trace_id"]
+                .as_str()
+                .expect("parsed trace event server_trace_id");
+            let window_key = parsed["client_window_key"]
+                .as_str()
+                .expect("parsed trace event hashed client window");
+            assert_eq!(parsed["client_window_source"], "openai-session");
+            assert_eq!(window_key.len(), 64);
+            assert!(window_key.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert_ne!(window_key, raw_window);
+            trace_ids.insert(trace_id.to_string());
+            window_keys.insert(window_key.to_string());
+        }
+
+        for event in &events {
+            let Some(relative) = event.get("payload_path").and_then(Value::as_str) else {
+                continue;
+            };
+            let compressed = std::fs::read(trace_dir.join(relative)).unwrap();
+            let raw = zstd::stream::decode_all(compressed.as_slice()).unwrap();
+            assert!(
+                !String::from_utf8_lossy(&raw).contains(raw_window),
+                "raw OpenAI window identity leaked into compressed trace payload"
+            );
+        }
+    }
+
+    assert_eq!(traced_requests, 2, "expected one parsed event per request");
+    assert_eq!(
+        trace_ids.len(),
+        2,
+        "requests must keep distinct trace identities"
+    );
+    assert_eq!(
+        window_keys.len(),
+        1,
+        "the same ChatGPT window must produce one stable hashed correlation key"
+    );
+}
+
 #[tokio::test]
 async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     // list_tools is a full-operator-only tool; select that surface so the

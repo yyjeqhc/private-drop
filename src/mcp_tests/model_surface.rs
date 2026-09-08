@@ -1046,6 +1046,51 @@ async fn adaptive_stateless_manifest_inventory_matches_extension_gateway_univers
 }
 
 #[tokio::test]
+async fn adaptive_stateless_discovery_intent_stays_curated() {
+    use crate::tool_runtime::tool_definition::TOOL_MANIFEST_INTENTS;
+
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(7291)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {
+                    "intent": "discovery",
+                    "include_recommended_flows": false,
+                    "include_risk_summary": false
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("adaptive stateless discovery intent must succeed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(output["intent"], "discovery");
+    let names = output["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let expected = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "discovery")
+        .expect("canonical discovery intent")
+        .tools
+        .to_vec();
+    assert_eq!(
+        names, expected,
+        "Stateless operator extensions may expand the discoverable universe but must not implicitly expand the curated discovery intent"
+    );
+}
+
+#[tokio::test]
 async fn operator_extension_manifest_is_absent_without_stateless_capability_and_does_not_grant_scope(
 ) {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);

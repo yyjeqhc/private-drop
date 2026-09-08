@@ -84,7 +84,7 @@ fn full_operator_runtime_specs_for_auth(
 fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     ToolSpec {
         name: ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string(),
-        description: "Call one model-visible gateway-only long-tail runtime tool through the adaptive surface. Tools discovered with availability=direct must be invoked directly; if the host has not loaded that callable, rediscover/load it instead of retrying through this gateway. Runtime argument validation, OAuth scope checks, project authority, permission gates, and tool effects remain unchanged.".to_string(),
+        description: "Call one gateway-admitted long-tail runtime tool through the adaptive surface. Tools discovered with availability=direct must be invoked directly; if the host has not loaded that callable, rediscover/load it instead of retrying through this gateway. Runtime argument validation, OAuth scope checks, project authority, permission gates, and tool effects remain unchanged.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -92,7 +92,7 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128,
-                    "description": "Exact gateway-only model-visible runtime tool name obtained from bounded runtime discovery. Do not pass tools whose discovery availability is direct."
+                    "description": "Exact gateway-admitted runtime tool name obtained from bounded runtime discovery. Do not pass tools whose discovery availability is direct."
                 },
                 "arguments": {
                     "type": "object",
