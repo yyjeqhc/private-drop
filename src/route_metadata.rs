@@ -128,6 +128,8 @@ pub(crate) enum RouteId {
     HostConsoleConnect,
     RuntimeConsoleOverview,
     RuntimeConsoleRunner,
+    RuntimeConsoleWindows,
+    RuntimeConsoleWindow,
     RuntimeConsoleProjects,
     RuntimeConsoleWorkflowSessions,
     RuntimeConsoleWorkflowSession,
