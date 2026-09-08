@@ -3,6 +3,7 @@ use super::jobs::{
     truncate_output, truncate_output_to,
 };
 use super::requests::{remove_pending_request_locked, take_pending_request_locked};
+use super::state::JobLifecycleState;
 use super::validation::{validate_id, validate_runner_instance_id};
 use super::{now_ts, RunnerFeature, RunnerRegistry};
 use webcodex_core::coding_agent::{
@@ -586,8 +587,8 @@ impl RunnerRegistry {
             }
             if let Some(job_id) = job_id {
                 if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
-                    if job.status == "queued" {
-                        job.status = "agent_queued".to_string();
+                    if job.lifecycle == JobLifecycleState::Queued {
+                        job.lifecycle = JobLifecycleState::RunnerQueued;
                         // Dispatch proves only that the Runner accepted the
                         // Job request. A typed structured Job becomes started
                         // only when the Runner reports `running` after a
@@ -824,10 +825,10 @@ impl RunnerRegistry {
             inner.request_to_job.remove(&request_id);
             if let Some(job) = inner.jobs_by_id.get_mut(job_id) {
                 let terminal_now = now_ts();
-                job.status = if success {
-                    "completed".to_string()
+                job.lifecycle = if success {
+                    JobLifecycleState::Completed
                 } else {
-                    "failed".to_string()
+                    JobLifecycleState::Failed
                 };
                 observe_job_terminal(job, terminal_now);
                 job.ended_at = Some(terminal_now);

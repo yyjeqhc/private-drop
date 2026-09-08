@@ -266,6 +266,188 @@ pub enum ShellJobVisibility {
     CleanupPending,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobLifecycleState {
+    Queued,
+    RunnerQueued,
+    StartedLegacy,
+    Running,
+    StopRequested,
+    Completed,
+    Failed,
+    Stopped,
+    Timeout,
+    TimedOut,
+    Lost,
+    Cancelled,
+}
+
+impl JobLifecycleState {
+    pub(super) fn from_wire(status: &str) -> Result<Self, String> {
+        match status {
+            "queued" => Ok(Self::Queued),
+            "agent_queued" => Ok(Self::RunnerQueued),
+            "started" => Ok(Self::StartedLegacy),
+            "running" => Ok(Self::Running),
+            "stop_requested" => Ok(Self::StopRequested),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "stopped" => Ok(Self::Stopped),
+            "timeout" => Ok(Self::Timeout),
+            "timed_out" => Ok(Self::TimedOut),
+            "lost" => Ok(Self::Lost),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(format!("unknown Runner Job lifecycle status: {status}")),
+        }
+    }
+
+    pub(super) const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::RunnerQueued => "agent_queued",
+            Self::StartedLegacy => "started",
+            Self::Running => "running",
+            Self::StopRequested => "stop_requested",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+            Self::Timeout => "timeout",
+            Self::TimedOut => "timed_out",
+            Self::Lost => "lost",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    pub(super) const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed
+                | Self::Failed
+                | Self::Stopped
+                | Self::Timeout
+                | Self::TimedOut
+                | Self::Lost
+                | Self::Cancelled
+        )
+    }
+
+    pub(super) const fn is_runner_active(self) -> bool {
+        matches!(
+            self,
+            Self::RunnerQueued | Self::StartedLegacy | Self::Running | Self::StopRequested
+        )
+    }
+
+    pub(super) const fn is_active(self) -> bool {
+        matches!(self, Self::Queued) || self.is_runner_active()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobRecoveryPhase {
+    Recovering,
+    Reconciled,
+    LostAfterReconcile,
+}
+
+impl JobRecoveryPhase {
+    pub(super) const fn as_wire(self) -> &'static str {
+        match self {
+            Self::Recovering => "recovering",
+            Self::Reconciled => "reconciled",
+            Self::LostAfterReconcile => "lost_after_reconcile",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum JobRecoveryReason {
+    RunnerTransportDisconnected,
+    RunnerTransportStale,
+    RunnerRequestNotDispatched,
+    RunnerDisconnectedWithoutReconciliation,
+    SharedKeyRunnerExpired,
+    RunnerInventoryMissing,
+    RunnerInstanceReplaced,
+    RunnerRecoveryDeadlineExceeded,
+    ServerRestartReconciliation,
+    SameInstanceReconciliation,
+    SameInstanceUpdateReconciliation,
+    DetachedInstanceTransfer,
+}
+
+impl JobRecoveryReason {
+    pub(super) const fn as_wire(self) -> &'static str {
+        match self {
+            Self::RunnerTransportDisconnected => "runner_transport_disconnected",
+            Self::RunnerTransportStale => "runner_transport_stale",
+            Self::RunnerRequestNotDispatched => "runner_request_not_dispatched",
+            Self::RunnerDisconnectedWithoutReconciliation => {
+                "runner_disconnected_without_reconciliation"
+            }
+            Self::SharedKeyRunnerExpired => "shared_key_runner_expired",
+            Self::RunnerInventoryMissing => "runner_inventory_missing",
+            Self::RunnerInstanceReplaced => "runner_instance_replaced",
+            Self::RunnerRecoveryDeadlineExceeded => "runner_recovery_deadline_exceeded",
+            Self::ServerRestartReconciliation => "server_restart_reconciliation",
+            Self::SameInstanceReconciliation => "same_instance_reconciliation",
+            Self::SameInstanceUpdateReconciliation => "same_instance_update_reconciliation",
+            Self::DetachedInstanceTransfer => "detached_instance_transfer",
+        }
+    }
+
+    pub(super) const fn implies_lost_after_reconcile(self) -> bool {
+        matches!(
+            self,
+            Self::RunnerInventoryMissing
+                | Self::RunnerInstanceReplaced
+                | Self::RunnerRecoveryDeadlineExceeded
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct JobRecoveryState {
+    pub(super) phase: Option<JobRecoveryPhase>,
+    pub(super) recovered_after_server_restart: bool,
+    pub(super) reconciled_at: Option<i64>,
+    pub(super) reason: Option<JobRecoveryReason>,
+    pub(super) recovering_since: Option<i64>,
+}
+
+impl JobRecoveryState {
+    pub(super) fn recovering(&self) -> bool {
+        self.phase == Some(JobRecoveryPhase::Recovering)
+    }
+
+    pub(super) fn public_state(&self) -> Option<&'static str> {
+        self.phase.map(JobRecoveryPhase::as_wire)
+    }
+
+    pub(super) fn public_reason(&self) -> Option<&'static str> {
+        self.reason.map(JobRecoveryReason::as_wire)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct JobObservationState {
+    pub(super) epoch: Arc<str>,
+    pub(super) revision: Arc<AtomicU64>,
+    pub(super) notify: Arc<Notify>,
+    pub(super) terminal_observed_at: Option<i64>,
+}
+
+impl JobObservationState {
+    pub(super) fn new(epoch: Arc<str>) -> Self {
+        Self {
+            epoch,
+            revision: Arc::new(AtomicU64::new(0)),
+            notify: Arc::new(Notify::new()),
+            terminal_observed_at: None,
+        }
+    }
+}
+
 /// Server-process-local exact intent retained only to prove same-key detached
 /// replays. It is never serialized into Runner protocol, durable state, audit,
 /// or Session evidence; restart reconstruction deliberately restores `None`.
@@ -307,7 +489,7 @@ pub(super) struct ShellJobRecord {
     /// keep this `None`, forcing exact logical-Job recovery instead of guessing
     /// that a resent body matches after Server restart.
     pub(super) detached_idempotency_intent: Option<DetachedIdempotencyIntent>,
-    pub(super) status: String,
+    pub(super) lifecycle: JobLifecycleState,
     pub(super) created_at: i64,
     pub(super) started_at: Option<i64>,
     pub(super) ended_at: Option<i64>,
@@ -315,7 +497,6 @@ pub(super) struct ShellJobRecord {
     /// observed the Job in a terminal state. Runner-reported execution
     /// timestamps remain in `ended_at` for public results and diagnostics,
     /// but never control Server registry retention.
-    pub(super) terminal_observed_at: Option<i64>,
     pub(super) exit_code: Option<i32>,
     pub(super) duration_ms: Option<u64>,
     pub(super) stdout: ShellJobLogState,
@@ -332,28 +513,20 @@ pub(super) struct ShellJobRecord {
     pub(super) activity: Option<ShellJobActivity>,
     pub(super) visibility: ShellJobVisibility,
     pub(super) last_update_seq: u64,
-    pub(super) recovery_state: Option<String>,
-    pub(super) recovered_after_server_restart: bool,
-    pub(super) reconciled_at: Option<i64>,
-    pub(super) recovery_reason_code: Option<String>,
-    pub(super) recovering_since: Option<i64>,
-    pub(super) recovery_original_status: Option<String>,
-    /// Server-owned generation for the complete public Job snapshot. Unlike
-    /// `last_update_seq`, this also advances for accepted legacy/unsequenced
-    /// updates and server-side recovery/status changes. It is intentionally
-    /// process-local: waiters use it only while this record is alive, while the
-    /// Runner-owned sequence retains its protocol and restart semantics.
-    /// Process-local server epoch used to invalidate observation tokens after restart.
-    pub(super) observation_epoch: Arc<str>,
-    pub(super) public_revision: Arc<AtomicU64>,
-    /// Observer update notifier. Shared with every snapshot of the record and
-    /// notified (broadcast) whenever anything that changes the public Job
-    /// snapshot or `last_update_seq` happens: an accepted `agent:job_update`,
-    /// log/validation progress, terminal transitions, disconnect/recovery,
-    /// reconciliation, or a stop request that changed status. Bounded
-    /// `job_log`/`job_tail` waiters re-check the authoritative snapshot after
-    /// every wake, so spurious wakes are harmless. Never persisted.
-    pub(super) update_notify: Arc<Notify>,
+    pub(super) recovery: JobRecoveryState,
+    /// Process-local observation ownership. It can wake readers but never grants
+    /// execution authority or mutates lifecycle state.
+    pub(super) observation: JobObservationState,
+}
+
+impl ShellJobRecord {
+    pub(super) fn public_status(&self) -> &'static str {
+        if self.recovery.recovering() {
+            "recovering"
+        } else {
+            self.lifecycle.as_wire()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

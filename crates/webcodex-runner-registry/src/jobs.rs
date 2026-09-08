@@ -1,4 +1,7 @@
-use super::state::{RunnerRegistryInner, ShellJobLogState, ShellJobRecord};
+use super::state::{
+    JobLifecycleState, JobRecoveryPhase, JobRecoveryReason, RunnerRegistryInner, ShellJobLogState,
+    ShellJobRecord,
+};
 use super::{
     now_ts, RunnerFeature, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_RUNNER,
     RUNNER_ONLINE_WINDOW_SECS,
@@ -202,7 +205,7 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         job.started_at
             .map(|started_at| job.ended_at.unwrap_or(now).saturating_sub(started_at) as u64)
     };
-    let result = if is_final_job_status(&job.status) {
+    let result = if job.lifecycle.is_terminal() {
         Some(RunnerJobResult {
             shell: Some(RunnerShellJobResult {
                 cwd: job.cwd.clone(),
@@ -228,7 +231,7 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         purpose: job.purpose.clone(),
         shell: job.shell.clone(),
         command_preview: job.command_preview.clone(),
-        status: job.status.clone(),
+        status: job.public_status().to_string(),
         created_at: job.created_at,
         started_at: job.started_at,
         ended_at: job.ended_at,
@@ -243,17 +246,18 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         validation_progress: job.validation_progress.clone(),
         activity: job.activity,
         validation: job.validation.clone(),
-        recovery_state: job.recovery_state.clone(),
-        recovered_after_server_restart: job.recovered_after_server_restart,
-        reconciled_at: job.reconciled_at,
-        recovery_reason_code: job.recovery_reason_code.clone(),
+        recovery_state: job.recovery.public_state().map(str::to_string),
+        recovered_after_server_restart: job.recovery.recovered_after_server_restart,
+        reconciled_at: job.recovery.reconciled_at,
+        recovery_reason_code: job.recovery.public_reason().map(str::to_string),
         // General lifecycle views do not project log bodies, so they retain a
         // cursor-less legacy token. `job_log_for_auth` replaces this with a
         // cursor-aware v2 token for its frozen returned log snapshot.
         observation_token: webcodex_core::job_observation::JobObservationToken::new_legacy(
             job.job_id.clone(),
-            job.observation_epoch.to_string(),
-            job.public_revision
+            job.observation.epoch.to_string(),
+            job.observation
+                .revision
                 .load(std::sync::atomic::Ordering::Relaxed),
         )
         .ok()
@@ -450,11 +454,12 @@ pub(super) fn select_log_lines(
     )
 }
 
+pub(super) fn parse_job_lifecycle(status: &str) -> Result<JobLifecycleState, String> {
+    JobLifecycleState::from_wire(status)
+}
+
 pub(super) fn is_final_job_status(status: &str) -> bool {
-    matches!(
-        status,
-        "completed" | "failed" | "stopped" | "timeout" | "timed_out" | "lost" | "cancelled"
-    )
+    JobLifecycleState::from_wire(status).is_ok_and(JobLifecycleState::is_terminal)
 }
 
 /// Record the first time this Server process observes a Job in a terminal
@@ -462,8 +467,8 @@ pub(super) fn is_final_job_status(status: &str) -> bool {
 /// the Runner-reported `ended_at` execution timestamp. Replays and duplicate
 /// terminal transitions are idempotent.
 pub(super) fn observe_job_terminal(job: &mut ShellJobRecord, now: i64) {
-    if is_final_job_status(&job.status) && job.terminal_observed_at.is_none() {
-        job.terminal_observed_at = Some(now);
+    if job.lifecycle.is_terminal() && job.observation.terminal_observed_at.is_none() {
+        job.observation.terminal_observed_at = Some(now);
     }
 }
 
@@ -475,40 +480,38 @@ pub(super) fn observe_job_terminal(job: &mut ShellJobRecord, now: i64) {
 /// every wake, so spurious broadcasts are harmless.
 pub(super) fn notify_job_update(job: &ShellJobRecord) {
     use std::sync::atomic::Ordering;
-    job.public_revision.fetch_add(1, Ordering::Relaxed);
-    job.update_notify.notify_waiters();
+    job.observation.revision.fetch_add(1, Ordering::Relaxed);
+    job.observation.notify.notify_waiters();
 }
 
 pub(super) fn is_runner_active_job_status(status: &str) -> bool {
-    matches!(
-        status,
-        "agent_queued" | "running" | "stop_requested" | "recovering"
-    )
+    JobLifecycleState::from_wire(status).is_ok_and(JobLifecycleState::is_runner_active)
 }
 
-pub(super) fn begin_job_recovery(job: &mut ShellJobRecord, now: i64, reason_code: &str) {
-    if is_final_job_status(&job.status) || job.status == "queued" {
+pub(super) fn begin_job_recovery(job: &mut ShellJobRecord, now: i64, reason: JobRecoveryReason) {
+    if job.lifecycle.is_terminal() || job.lifecycle == JobLifecycleState::Queued {
         return;
     }
-    if job.status != "recovering" {
-        job.recovery_original_status = Some(job.status.clone());
-        job.status = "recovering".to_string();
-        job.recovering_since = Some(now);
+    if !job.recovery.recovering() {
+        job.recovery.recovering_since = Some(now);
     }
-    job.recovery_state = Some("recovering".to_string());
-    job.recovery_reason_code = Some(reason_code.to_string());
+    job.recovery.phase = Some(JobRecoveryPhase::Recovering);
+    job.recovery.reason = Some(reason);
     job.ended_at = None;
-    // Once the Runner connection is lost, the previous activity may be stale.
-    // Reconciliation restores current activity from authoritative inventory.
     job.activity = None;
     notify_job_update(job);
 }
 
-pub(super) fn mark_job_lost(job: &mut ShellJobRecord, now: i64, reason_code: &str, message: &str) {
-    if is_final_job_status(&job.status) {
+pub(super) fn mark_job_lost(
+    job: &mut ShellJobRecord,
+    now: i64,
+    reason: JobRecoveryReason,
+    message: &str,
+) {
+    if job.lifecycle.is_terminal() {
         return;
     }
-    job.status = "lost".to_string();
+    job.lifecycle = JobLifecycleState::Lost;
     job.activity = None;
     observe_job_terminal(job, now);
     if job.ended_at.is_none() {
@@ -522,16 +525,11 @@ pub(super) fn mark_job_lost(job: &mut ShellJobRecord, now: i64, reason_code: &st
             ShellCommandExecutionState::NotStarted
         });
     }
-    job.recovery_state = matches!(
-        reason_code,
-        "runner_inventory_missing"
-            | "runner_instance_replaced"
-            | "runner_recovery_deadline_exceeded"
-    )
-    .then(|| "lost_after_reconcile".to_string());
-    job.recovery_reason_code = Some(reason_code.to_string());
-    job.recovering_since = None;
-    job.recovery_original_status = None;
+    job.recovery.phase = reason
+        .implies_lost_after_reconcile()
+        .then_some(JobRecoveryPhase::LostAfterReconcile);
+    job.recovery.reason = Some(reason);
+    job.recovery.recovering_since = None;
     notify_job_update(job);
 }
 
@@ -618,11 +616,11 @@ pub(super) fn refresh_job_status_locked(inner: &mut RunnerRegistryInner, job_id:
     let Some(job) = inner.jobs_by_id.get(job_id) else {
         return;
     };
-    if is_final_job_status(&job.status) || !is_runner_active_job_status(&job.status) {
+    if job.lifecycle.is_terminal() || !job.lifecycle.is_runner_active() {
         return;
     }
-    if job.status == "recovering" {
-        let expired = job.recovering_since.is_some_and(|since| {
+    if job.recovery.recovering() {
+        let expired = job.recovery.recovering_since.is_some_and(|since| {
             now_ts().saturating_sub(since) >= super::job_recovery_grace_secs()
         });
         if expired {
@@ -630,7 +628,7 @@ pub(super) fn refresh_job_status_locked(inner: &mut RunnerRegistryInner, job_id:
                 mark_job_lost(
                     job,
                     now_ts(),
-                    "runner_recovery_deadline_exceeded",
+                    JobRecoveryReason::RunnerRecoveryDeadlineExceeded,
                     "runner did not reconcile the job before the recovery deadline",
                 );
             }
@@ -648,12 +646,12 @@ pub(super) fn refresh_job_status_locked(inner: &mut RunnerRegistryInner, job_id:
     });
     if let Some(job) = inner.jobs_by_id.get_mut(job_id) {
         if recoverable {
-            begin_job_recovery(job, now_ts(), "runner_transport_stale");
+            begin_job_recovery(job, now_ts(), JobRecoveryReason::RunnerTransportStale);
         } else {
             mark_job_lost(
                 job,
                 now_ts(),
-                "runner_disconnected_without_reconciliation",
+                JobRecoveryReason::RunnerDisconnectedWithoutReconciliation,
                 "runner went stale while job was running",
             );
         }

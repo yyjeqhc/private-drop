@@ -1,8 +1,12 @@
 use super::jobs::{
     command_preview, is_final_job_status, is_runner_active_job_status, mark_job_lost,
-    notify_job_update, observe_job_terminal, replace_log_from_snapshot, COMMAND_PREVIEW_MAX_CHARS,
+    notify_job_update, observe_job_terminal, parse_job_lifecycle, replace_log_from_snapshot,
+    COMMAND_PREVIEW_MAX_CHARS,
 };
-use super::state::{RunnerRegistryInner, ShellJobLogState, ShellJobRecord, ShellJobVisibility};
+use super::state::{
+    JobLifecycleState, JobObservationState, JobRecoveryPhase, JobRecoveryReason, JobRecoveryState,
+    RunnerRegistryInner, ShellJobLogState, ShellJobRecord, ShellJobVisibility,
+};
 use super::validation::validate_id;
 use super::{job_recovery_grace_secs, RunnerRegistry};
 use crate::RunnerAccessGroup;
@@ -176,11 +180,15 @@ fn validate_snapshot(
     if snapshot.update_seq == 0 {
         return Err("job inventory update_seq must be greater than zero".to_string());
     }
+    let lifecycle = parse_job_lifecycle(&snapshot.status)
+        .map_err(|_| format!("job inventory status '{}' is invalid", snapshot.status))?;
     let active = matches!(
-        snapshot.status.as_str(),
-        "agent_queued" | "running" | "stop_requested"
+        lifecycle,
+        JobLifecycleState::RunnerQueued
+            | JobLifecycleState::Running
+            | JobLifecycleState::StopRequested
     );
-    let terminal = is_final_job_status(&snapshot.status);
+    let terminal = lifecycle.is_terminal();
     if !active && !terminal {
         return Err(format!(
             "job inventory status '{}' is invalid",
@@ -208,11 +216,13 @@ fn validate_snapshot(
     if terminal && snapshot.ended_at.is_none() {
         return Err("terminal job inventory snapshot requires ended_at".to_string());
     }
-    if snapshot.status == "completed" && snapshot.exit_code != Some(0) {
+    if lifecycle == JobLifecycleState::Completed && snapshot.exit_code != Some(0) {
         return Err("completed job inventory snapshot requires exit_code=0".to_string());
     }
-    if matches!(snapshot.status.as_str(), "running" | "stop_requested")
-        && snapshot.started_at.is_none()
+    if matches!(
+        lifecycle,
+        JobLifecycleState::Running | JobLifecycleState::StopRequested
+    ) && snapshot.started_at.is_none()
     {
         return Err("running job inventory snapshot requires started_at".to_string());
     }
@@ -242,19 +252,31 @@ fn validate_snapshot(
             ShellCommandExecutionState::NotStarted => {
                 snapshot.started_at.is_none()
                     && matches!(
-                        snapshot.status.as_str(),
-                        "failed" | "stopped" | "cancelled" | "lost"
+                        lifecycle,
+                        JobLifecycleState::Failed
+                            | JobLifecycleState::Stopped
+                            | JobLifecycleState::Cancelled
+                            | JobLifecycleState::Lost
                     )
             }
             ShellCommandExecutionState::OutcomeUnknown => {
-                matches!(snapshot.status.as_str(), "failed" | "lost")
+                matches!(
+                    lifecycle,
+                    JobLifecycleState::Failed | JobLifecycleState::Lost
+                )
             }
             ShellCommandExecutionState::TimedOut => {
-                matches!(snapshot.status.as_str(), "timeout" | "timed_out")
+                matches!(
+                    lifecycle,
+                    JobLifecycleState::Timeout | JobLifecycleState::TimedOut
+                )
             }
             ShellCommandExecutionState::Completed => matches!(
-                snapshot.status.as_str(),
-                "completed" | "failed" | "stopped" | "cancelled"
+                lifecycle,
+                JobLifecycleState::Completed
+                    | JobLifecycleState::Failed
+                    | JobLifecycleState::Stopped
+                    | JobLifecycleState::Cancelled
             ),
         };
         if !consistent {
@@ -285,30 +307,34 @@ fn validate_snapshot(
     if !snapshot.context.validation_steps.is_empty() {
         let steps = &snapshot.context.validation_steps;
         let progress = snapshot.validation_progress.as_ref();
-        let structurally_valid = match snapshot.status.as_str() {
-            "agent_queued" => progress.is_none(),
-            "running" | "stop_requested" => progress.is_some_and(|progress| {
-                progress.completed < steps.len()
-                    && progress.current_step.as_ref() == steps.get(progress.completed)
-                    && progress.failed_step.is_none()
-            }),
-            "completed" => progress.is_some_and(|progress| {
+        let structurally_valid = match lifecycle {
+            JobLifecycleState::RunnerQueued => progress.is_none(),
+            JobLifecycleState::Running | JobLifecycleState::StopRequested => {
+                progress.is_some_and(|progress| {
+                    progress.completed < steps.len()
+                        && progress.current_step.as_ref() == steps.get(progress.completed)
+                        && progress.failed_step.is_none()
+                })
+            }
+            JobLifecycleState::Completed => progress.is_some_and(|progress| {
                 progress.completed == steps.len()
                     && progress.current_step.is_none()
                     && progress.failed_step.is_none()
             }),
-            "failed" => progress.is_none_or(|progress| {
+            JobLifecycleState::Failed => progress.is_none_or(|progress| {
                 progress.current_step.is_none()
                     && progress.failed_step.as_ref().is_none_or(|failed| {
                         progress.completed < steps.len()
                             && steps.get(progress.completed) == Some(failed)
                     })
             }),
-            "stopped" | "timeout" | "timed_out" | "cancelled" | "lost" => {
-                progress.is_none_or(|progress| {
-                    progress.current_step.is_none() && progress.failed_step.is_none()
-                })
-            }
+            JobLifecycleState::Stopped
+            | JobLifecycleState::Timeout
+            | JobLifecycleState::TimedOut
+            | JobLifecycleState::Cancelled
+            | JobLifecycleState::Lost => progress.is_none_or(|progress| {
+                progress.current_step.is_none() && progress.failed_step.is_none()
+            }),
             _ => false,
         };
         if !structurally_valid {
@@ -317,7 +343,10 @@ fn validate_snapshot(
     }
     if let Some(activity) = snapshot.activity {
         if !activity.is_canonical()
-            || !matches!(snapshot.status.as_str(), "running" | "stop_requested")
+            || !matches!(
+                lifecycle,
+                JobLifecycleState::Running | JobLifecycleState::StopRequested
+            )
         {
             return Err("job inventory activity is invalid for status".to_string());
         }
@@ -535,7 +564,7 @@ pub(super) fn preflight_inventory_locked(
             ));
         }
         if detached_instance_transfer
-            && !is_final_job_status(&existing.status)
+            && !existing.lifecycle.is_terminal()
             && snapshot.update_seq < existing.last_update_seq
         {
             return Err(format!(
@@ -544,8 +573,8 @@ pub(super) fn preflight_inventory_locked(
             ));
         }
         let would_apply = snapshot.update_seq > existing.last_update_seq
-            || (snapshot.update_seq == existing.last_update_seq && existing.status == "recovering");
-        if !is_final_job_status(&existing.status) && would_apply {
+            || (snapshot.update_seq == existing.last_update_seq && existing.recovery.recovering());
+        if !existing.lifecycle.is_terminal() && would_apply {
             let existing_progress = existing
                 .validation_progress
                 .as_ref()
@@ -645,11 +674,11 @@ fn record_from_snapshot(
         // Runner inventory. Same-key retries after Server restart recover this
         // logical Job instead of guessing that a resent body matches.
         detached_idempotency_intent: None,
-        status: snapshot.status.clone(),
+        lifecycle: JobLifecycleState::from_wire(&snapshot.status)
+            .expect("validated job inventory lifecycle"),
         created_at: snapshot.created_at,
         started_at: snapshot.started_at,
         ended_at: snapshot.ended_at,
-        terminal_observed_at: None,
         exit_code: snapshot.exit_code,
         duration_ms: snapshot.duration_ms,
         stdout: ShellJobLogState::default(),
@@ -664,15 +693,14 @@ fn record_from_snapshot(
         activity: snapshot.activity,
         visibility: super::state::ShellJobVisibility::Public,
         last_update_seq: snapshot.update_seq,
-        recovery_state: Some("reconciled".to_string()),
-        recovered_after_server_restart: true,
-        reconciled_at: Some(now),
-        recovery_reason_code: Some("server_restart_reconciliation".to_string()),
-        recovering_since: None,
-        recovery_original_status: None,
-        observation_epoch,
-        public_revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        update_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        recovery: JobRecoveryState {
+            phase: Some(JobRecoveryPhase::Reconciled),
+            recovered_after_server_restart: true,
+            reconciled_at: Some(now),
+            reason: Some(JobRecoveryReason::ServerRestartReconciliation),
+            recovering_since: None,
+        },
+        observation: JobObservationState::new(observation_epoch),
     };
     observe_job_terminal(&mut record, now);
     record
@@ -682,9 +710,10 @@ fn apply_snapshot(
     job: &mut ShellJobRecord,
     snapshot: &ShellJobSnapshot,
     now: i64,
-    recovery_reason_code: &str,
+    recovery_reason: JobRecoveryReason,
 ) {
-    job.status = snapshot.status.clone();
+    job.lifecycle =
+        JobLifecycleState::from_wire(&snapshot.status).expect("validated job inventory lifecycle");
     observe_job_terminal(job, now);
     job.started_at = snapshot.started_at;
     job.ended_at = snapshot.ended_at;
@@ -699,11 +728,10 @@ fn apply_snapshot(
     replace_log_from_snapshot(&mut job.stdout, &snapshot.stdout);
     replace_log_from_snapshot(&mut job.stderr, &snapshot.stderr);
     job.last_update_seq = snapshot.update_seq;
-    job.recovery_state = Some("reconciled".to_string());
-    job.reconciled_at = Some(now);
-    job.recovery_reason_code = Some(recovery_reason_code.to_string());
-    job.recovering_since = None;
-    job.recovery_original_status = None;
+    job.recovery.phase = Some(JobRecoveryPhase::Reconciled);
+    job.recovery.reconciled_at = Some(now);
+    job.recovery.reason = Some(recovery_reason);
+    job.recovery.recovering_since = None;
     notify_job_update(job);
 }
 
@@ -712,7 +740,7 @@ fn remove_cleanup_terminal_jobs_locked(inner: &mut RunnerRegistryInner) {
         .jobs_by_id
         .iter()
         .filter(|(_, job)| {
-            job.visibility == ShellJobVisibility::CleanupPending && is_final_job_status(&job.status)
+            job.visibility == ShellJobVisibility::CleanupPending && job.lifecycle.is_terminal()
         })
         .map(|(job_id, _)| job_id.clone())
         .collect::<Vec<_>>();
@@ -745,11 +773,10 @@ impl RunnerRegistry {
             .jobs_by_id
             .iter()
             .filter_map(|(job_id, job)| {
-                if job.visibility != ShellJobVisibility::Public || !is_final_job_status(&job.status)
-                {
+                if job.visibility != ShellJobVisibility::Public || !job.lifecycle.is_terminal() {
                     return None;
                 }
-                match job.terminal_observed_at {
+                match job.observation.terminal_observed_at {
                     None => Some(TerminalSweepAction::Observe(job_id.clone())),
                     Some(observed_at)
                         if now.saturating_sub(observed_at) >= JOB_TERMINAL_RETENTION_SECS =>
@@ -841,7 +868,7 @@ pub(super) fn expire_recovering_jobs_locked(
         .jobs_by_id
         .iter()
         .filter_map(|(job_id, job)| {
-            if job.status != "recovering" {
+            if !job.recovery.recovering() {
                 return None;
             }
             if let Some(client_id) = client_filter {
@@ -850,6 +877,7 @@ pub(super) fn expire_recovering_jobs_locked(
                 }
             }
             let expired = job
+                .recovery
                 .recovering_since
                 .is_some_and(|since| now.saturating_sub(since) >= grace);
             expired.then(|| {
@@ -879,11 +907,11 @@ pub(super) fn expire_recovering_jobs_locked(
             // interleave (we hold the mutex for the whole call), but the filter
             // above ran on borrowed references; defend against the job having
             // already left `recovering` by any path.
-            if job.status == "recovering" {
+            if job.recovery.recovering() {
                 mark_job_lost(
                     job,
                     now,
-                    "runner_recovery_deadline_exceeded",
+                    JobRecoveryReason::RunnerRecoveryDeadlineExceeded,
                     "runner did not reconcile the job before the recovery deadline",
                 );
             }
@@ -963,7 +991,7 @@ pub(super) fn reconcile_inventory_locked(
         .filter(|(job_id, job)| {
             job.client_id == client_id
                 && job.runner_instance_id == runner_instance_id
-                && is_runner_active_job_status(&job.status)
+                && job.lifecycle.is_runner_active()
                 && !inventory_ids.contains(job_id.as_str())
         })
         .map(|(job_id, job)| (job_id.clone(), job.request_id.clone()))
@@ -978,7 +1006,7 @@ pub(super) fn reconcile_inventory_locked(
             mark_job_lost(
                 job,
                 now,
-                "runner_inventory_missing",
+                JobRecoveryReason::RunnerInventoryMissing,
                 "runner complete active inventory did not contain this job",
             );
         }
@@ -998,7 +1026,7 @@ pub(super) fn reconcile_inventory_locked(
                 )
             });
         if let Some(existing) = inner.jobs_by_id.get_mut(&snapshot.job_id) {
-            if is_final_job_status(&existing.status) {
+            if existing.lifecycle.is_terminal() {
                 // A server-authoritative terminal state (deadline, replacement,
                 // or a previously accepted terminal result) never revives or
                 // changes terminal class.
@@ -1010,7 +1038,7 @@ pub(super) fn reconcile_inventory_locked(
                 continue;
             }
             if snapshot.update_seq == existing.last_update_seq
-                && existing.status != "recovering"
+                && !existing.recovery.recovering()
                 && !detached_instance_transfer
             {
                 continue;
@@ -1018,12 +1046,12 @@ pub(super) fn reconcile_inventory_locked(
             if detached_instance_transfer {
                 existing.runner_instance_id = runner_instance_id.to_string();
             }
-            let recovery_reason_code = if detached_instance_transfer {
-                "detached_instance_transfer"
+            let recovery_reason = if detached_instance_transfer {
+                JobRecoveryReason::DetachedInstanceTransfer
             } else {
-                "same_instance_reconciliation"
+                JobRecoveryReason::SameInstanceReconciliation
             };
-            apply_snapshot(existing, snapshot, now, recovery_reason_code);
+            apply_snapshot(existing, snapshot, now, recovery_reason);
             summary.updated += 1;
         } else if suppress_unknown_terminal {
             summary.suppressed_terminal += 1;
@@ -1070,7 +1098,7 @@ pub(super) fn terminate_instance_jobs_locked(
             });
             job.client_id == client_id
                 && job.runner_instance_id == runner_instance_id
-                && (job.status == "queued" || is_runner_active_job_status(&job.status))
+                && (job.lifecycle == JobLifecycleState::Queued || job.lifecycle.is_runner_active())
                 && !detached_instance_transfer
         })
         .map(|(job_id, job)| (job_id.clone(), job.request_id.clone()))
@@ -1084,7 +1112,7 @@ pub(super) fn terminate_instance_jobs_locked(
             mark_job_lost(
                 job,
                 now,
-                "runner_instance_replaced",
+                JobRecoveryReason::RunnerInstanceReplaced,
                 "runner instance was replaced before the job completed or reconciled",
             );
         }

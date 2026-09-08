@@ -1,5 +1,5 @@
 use super::access_control::{assert_runner_access, runner_visible_to_access};
-use super::jobs::{begin_job_recovery, is_final_job_status, mark_job_lost, offline_last_seen};
+use super::jobs::{begin_job_recovery, mark_job_lost, offline_last_seen};
 use super::project_inventory::{
     expire_staging, pending_inventory_state, preserve_authoritative_pending,
 };
@@ -8,7 +8,10 @@ use super::reconciliation::{
     validate_job_inventory_without_project_membership,
 };
 use super::requests::resolve_disconnected_sync_requests_locked;
-use super::state::{NotifierEntry, RunnerRecord, RunnerRegistryInner, RunnerSemanticView};
+use super::state::{
+    JobLifecycleState, JobRecoveryReason, NotifierEntry, RunnerRecord, RunnerRegistryInner,
+    RunnerSemanticView,
+};
 use super::validation::{
     normalize_tool_providers, trim_string, validate_id, validate_optional_field,
     validate_runner_instance_id,
@@ -836,7 +839,7 @@ impl RunnerRegistry {
                 mark_job_lost(
                     job,
                     now,
-                    "shared_key_runner_expired",
+                    JobRecoveryReason::SharedKeyRunnerExpired,
                     "shared-key runner registration expired after being offline",
                 );
             }
@@ -1017,11 +1020,9 @@ impl RunnerRegistry {
                 if job.client_id != client_id {
                     return None;
                 }
-                if is_final_job_status(&job.status)
-                    || !matches!(
-                        job.status.as_str(),
-                        "queued" | "agent_queued" | "running" | "stop_requested"
-                    )
+                if job.lifecycle.is_terminal()
+                    || !(job.lifecycle == JobLifecycleState::Queued
+                        || job.lifecycle.is_runner_active())
                 {
                     return None;
                 }
@@ -1034,17 +1035,17 @@ impl RunnerRegistry {
                 .get(&job_id)
                 .and_then(|j| j.request_id.clone());
             if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
-                if recoverable && job.status != "queued" {
-                    begin_job_recovery(job, now, "runner_transport_disconnected");
+                if recoverable && job.lifecycle != JobLifecycleState::Queued {
+                    begin_job_recovery(job, now, JobRecoveryReason::RunnerTransportDisconnected);
                 } else {
-                    let (reason, message) = if job.status == "queued" {
+                    let (reason, message) = if job.lifecycle == JobLifecycleState::Queued {
                         (
-                            "runner_request_not_dispatched",
+                            JobRecoveryReason::RunnerRequestNotDispatched,
                             "Runner transport disconnected before the queued request was dispatched",
                         )
                     } else {
                         (
-                            "runner_disconnected_without_reconciliation",
+                            JobRecoveryReason::RunnerDisconnectedWithoutReconciliation,
                             "Runner transport disconnected without reconciliation support",
                         )
                     };

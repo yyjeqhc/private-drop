@@ -3,15 +3,18 @@ use super::access_control::{
 };
 use super::jobs::{
     append_log_limited, assert_active_instance_locked, command_preview, is_final_job_status,
-    job_view, notify_job_update, observe_job_terminal, process_preview, refresh_job_status_locked,
-    replace_log_limited, script_preview, select_log_lines,
+    job_view, notify_job_update, observe_job_terminal, parse_job_lifecycle, process_preview,
+    refresh_job_status_locked, replace_log_limited, script_preview, select_log_lines,
 };
 use super::reconciliation::validate_stream_snapshot;
 use super::requests::{
     enqueue_pending_request_locked, next_request_id, notify_runner_locked,
     remove_pending_request_locked,
 };
-use super::state::{DetachedIdempotencyIntent, ShellJobRecord, ShellJobVisibility};
+use super::state::{
+    DetachedIdempotencyIntent, JobLifecycleState, JobObservationState, JobRecoveryPhase,
+    JobRecoveryReason, JobRecoveryState, ShellJobRecord, ShellJobVisibility,
+};
 use super::validation::{validate_id, validate_run_request, validate_runner_instance_id};
 use super::{
     now_ts, RunnerFeature, RunnerRegistry, DETACHED_IDEMPOTENCY_CONFLICT,
@@ -21,7 +24,6 @@ use crate::DetachedInitiatorIdentity;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
-use tokio::sync::Notify;
 use uuid::Uuid;
 use webcodex_core::runner_operation::{
     RunnerInvocationMetadata, RunnerJobOperation, RunnerJobProcessOperation,
@@ -174,8 +176,8 @@ fn frozen_shell_job_log_projection(
         let mut view = job_view(job);
         view.observation_token = webcodex_core::job_observation::JobObservationToken::new_legacy(
             job.job_id.clone(),
-            job.observation_epoch.to_string(),
-            job.public_revision.load(Ordering::Relaxed),
+            job.observation.epoch.to_string(),
+            job.observation.revision.load(Ordering::Relaxed),
         )
         .ok()
         .map(|token| token.encode());
@@ -202,7 +204,7 @@ fn frozen_shell_job_log_projection(
         );
     }
 
-    let epoch_matches = after.is_none_or(|token| token.epoch == job.observation_epoch.as_ref());
+    let epoch_matches = after.is_none_or(|token| token.epoch == job.observation.epoch.as_ref());
     let base_mode = match after {
         None => webcodex_core::job_observation::JobLogSelectionMode::Baseline,
         Some(token) if token.is_legacy() || !epoch_matches => {
@@ -246,8 +248,8 @@ fn frozen_shell_job_log_projection(
     let mut view = job_view(job);
     view.observation_token = webcodex_core::job_observation::JobObservationToken::new(
         job.job_id.clone(),
-        job.observation_epoch.to_string(),
-        job.public_revision.load(Ordering::Relaxed),
+        job.observation.epoch.to_string(),
+        job.observation.revision.load(Ordering::Relaxed),
         stdout.next_line as u64,
         stderr.next_line as u64,
     )
@@ -280,9 +282,8 @@ fn frozen_shell_job_log_projection(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct JobPublicMutationSignature {
-    status: String,
-    recovery_state: Option<String>,
-    recovery_reason_code: Option<String>,
+    lifecycle: JobLifecycleState,
+    recovery: JobRecoveryState,
     last_update_seq: u64,
     stdout: super::state::ShellJobLogState,
     stderr: super::state::ShellJobLogState,
@@ -300,9 +301,8 @@ struct JobPublicMutationSignature {
 
 fn public_mutation_signature(job: &ShellJobRecord) -> JobPublicMutationSignature {
     JobPublicMutationSignature {
-        status: job.status.clone(),
-        recovery_state: job.recovery_state.clone(),
-        recovery_reason_code: job.recovery_reason_code.clone(),
+        lifecycle: job.lifecycle,
+        recovery: job.recovery.clone(),
         last_update_seq: job.last_update_seq,
         stdout: job.stdout.clone(),
         stderr: job.stderr.clone(),
@@ -314,8 +314,8 @@ fn public_mutation_signature(job: &ShellJobRecord) -> JobPublicMutationSignature
         command_execution_state: job.command_execution_state,
         validation_progress: job.validation_progress.clone(),
         activity: job.activity,
-        recovered_after_server_restart: job.recovered_after_server_restart,
-        reconciled_at: job.reconciled_at,
+        recovered_after_server_restart: job.recovery.recovered_after_server_restart,
+        reconciled_at: job.recovery.reconciled_at,
     }
 }
 
@@ -1073,11 +1073,10 @@ impl RunnerRegistry {
             shell: metadata.shell,
             command_preview: safe_command_preview,
             detached_idempotency_intent: detached_intent,
-            status: "queued".to_string(),
+            lifecycle: JobLifecycleState::Queued,
             created_at,
             started_at: None,
             ended_at: None,
-            terminal_observed_at: None,
             exit_code: None,
             duration_ms: None,
             stdout: Default::default(),
@@ -1093,15 +1092,8 @@ impl RunnerRegistry {
             last_update_seq: 0,
             visibility: metadata.visibility,
 
-            recovery_state: None,
-            recovered_after_server_restart: false,
-            reconciled_at: None,
-            recovery_reason_code: None,
-            recovering_since: None,
-            recovery_original_status: None,
-            observation_epoch: self.observation_epoch.clone(),
-            public_revision: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            update_notify: std::sync::Arc::new(Notify::new()),
+            recovery: JobRecoveryState::default(),
+            observation: JobObservationState::new(self.observation_epoch.clone()),
         };
         inner.request_to_job.insert(request_id, job_id.clone());
         inner.jobs_by_id.insert(job_id.clone(), job);
@@ -1137,7 +1129,7 @@ impl RunnerRegistry {
         // A terminal update may race the sync-wait deadline. Keep terminal
         // records hidden so the initiating structured tool call returns its
         // terminal result instead of handing off an already-finished Job.
-        if !is_final_job_status(&job.status) {
+        if !job.lifecycle.is_terminal() {
             let view = job_view(job);
             if view.observation_token.is_none() {
                 return Err(format!(
@@ -1260,7 +1252,7 @@ impl RunnerRegistry {
         {
             return Err(format!("unknown shell job: {job_id}"));
         }
-        if job.status == "queued" {
+        if job.lifecycle == JobLifecycleState::Queued {
             if let Some(request_id) = job.request_id.as_deref() {
                 remove_pending_request_locked(&mut inner, request_id);
                 inner.request_to_job.remove(request_id);
@@ -1268,7 +1260,7 @@ impl RunnerRegistry {
             inner.jobs_by_id.remove(job_id);
             return Ok(true);
         }
-        if is_final_job_status(&job.status) {
+        if job.lifecycle.is_terminal() {
             inner.jobs_by_id.remove(job_id);
             return Ok(true);
         }
@@ -1277,10 +1269,9 @@ impl RunnerRegistry {
             .get_mut(job_id)
             .expect("job exists")
             .visibility = ShellJobVisibility::CleanupPending;
-        if matches!(
-            job.status.as_str(),
-            "agent_queued" | "running" | "stop_requested"
-        ) && job.status != "stop_requested"
+        if !job.recovery.recovering()
+            && job.lifecycle.is_runner_active()
+            && job.lifecycle != JobLifecycleState::StopRequested
         {
             let stop_request_id = next_request_id();
             let request = RunnerRequest::from_operation(
@@ -1304,7 +1295,7 @@ impl RunnerRegistry {
                 Some(job_id.to_string()),
             )?;
             let record = inner.jobs_by_id.get_mut(job_id).expect("job exists");
-            record.status = "stop_requested".to_string();
+            record.lifecycle = JobLifecycleState::StopRequested;
             record.error = Some("internal structured execution cleanup requested".to_string());
             notify_runner_locked(&inner, &job.client_id);
         }
@@ -1350,8 +1341,7 @@ impl RunnerRegistry {
         let Some(request_id) = job.request_id.clone() else {
             return false;
         };
-        if job.visibility != ShellJobVisibility::HiddenUntilHandoff
-            || !is_final_job_status(&job.status)
+        if job.visibility != ShellJobVisibility::HiddenUntilHandoff || !job.lifecycle.is_terminal()
         {
             return false;
         }
@@ -1491,7 +1481,7 @@ impl RunnerRegistry {
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .filter(|job| job.project_id.as_deref() == Some(runtime_project_id))
-            .filter(|job| crate::job_status_is_active(&job.status))
+            .filter(|job| job.lifecycle.is_active())
             .count()
     }
 
@@ -1512,7 +1502,7 @@ impl RunnerRegistry {
             .values()
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .filter(|job| job.project_id.as_deref() == Some(runtime_project_id))
-            .filter(|job| crate::job_status_is_active(&job.status))
+            .filter(|job| job.lifecycle.is_active())
             .count();
         if active == 0 {
             *inner
@@ -1552,7 +1542,11 @@ impl RunnerRegistry {
             .jobs_by_id
             .values()
             .filter(|job| job.client_id == client_id)
-            .filter(|job| status.map(|status| status == job.status).unwrap_or(true))
+            .filter(|job| {
+                status
+                    .map(|status| status == job.public_status())
+                    .unwrap_or(true)
+            })
             .cloned()
             .collect::<Vec<_>>();
         jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at));
@@ -1631,11 +1625,11 @@ impl RunnerRegistry {
             {
                 return Err(format!("unknown shell job: {}", job_id));
             }
-            let revision = job.public_revision.load(Ordering::Relaxed);
+            let revision = job.observation.revision.load(Ordering::Relaxed);
             let changed = after.as_ref().is_some_and(|token| {
-                token.epoch != job.observation_epoch.as_ref() || token.revision != revision
+                token.epoch != job.observation.epoch.as_ref() || token.revision != revision
             });
-            let terminal = is_final_job_status(&job.status);
+            let terminal = job.lifecycle.is_terminal();
             if wait_secs.is_none() || after.is_none() || changed || terminal {
                 let wait_outcome = if changed {
                     if waited {
@@ -1664,7 +1658,7 @@ impl RunnerRegistry {
                 ));
             }
 
-            let update_notify = job.update_notify.clone();
+            let update_notify = job.observation.notify.clone();
             let notified = update_notify.notified();
             drop(inner);
 
@@ -1678,11 +1672,11 @@ impl RunnerRegistry {
             {
                 return Err(format!("unknown shell job: {}", job_id));
             }
-            let revision = job.public_revision.load(Ordering::Relaxed);
+            let revision = job.observation.revision.load(Ordering::Relaxed);
             let changed = after.as_ref().is_some_and(|token| {
-                token.epoch != job.observation_epoch.as_ref() || token.revision != revision
+                token.epoch != job.observation.epoch.as_ref() || token.revision != revision
             });
-            let terminal = is_final_job_status(&job.status);
+            let terminal = job.lifecycle.is_terminal();
             if changed || terminal {
                 let wait = JobLogWait {
                     wait_outcome: if terminal {
@@ -1724,11 +1718,11 @@ impl RunnerRegistry {
                 {
                     return Err(format!("unknown shell job: {}", job_id));
                 }
-                let revision = job.public_revision.load(Ordering::Relaxed);
+                let revision = job.observation.revision.load(Ordering::Relaxed);
                 let changed = after.as_ref().is_some_and(|token| {
-                    token.epoch != job.observation_epoch.as_ref() || token.revision != revision
+                    token.epoch != job.observation.epoch.as_ref() || token.revision != revision
                 });
-                let terminal = is_final_job_status(&job.status);
+                let terminal = job.lifecycle.is_terminal();
                 let wait = JobLogWait {
                     wait_outcome: if terminal {
                         JobLogWaitOutcome::Terminal
@@ -1778,15 +1772,21 @@ impl RunnerRegistry {
         {
             return Err(format!("unknown shell job: {}", job_id));
         }
-        match job.status.as_str() {
-            "queued" => {
+        if job.recovery.recovering() {
+            return Err(
+                "runner_unavailable_recovering: wait for same-instance job reconciliation before retrying stop_job"
+                    .to_string(),
+            );
+        }
+        match job.lifecycle {
+            JobLifecycleState::Queued => {
                 if let Some(request_id) = &job.request_id {
                     remove_pending_request_locked(&mut inner, request_id);
                     inner.request_to_job.remove(request_id);
                 }
                 let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
                 let terminal_now = now_ts();
-                job.status = "stopped".to_string();
+                job.lifecycle = JobLifecycleState::Stopped;
                 observe_job_terminal(job, terminal_now);
                 job.ended_at = Some(terminal_now);
                 job.error = Some("job stopped before Runner picked it up".to_string());
@@ -1796,7 +1796,12 @@ impl RunnerRegistry {
                 notify_job_update(job);
                 Ok(job_view(job))
             }
-            "agent_queued" | "running" | "stop_requested" => {
+            JobLifecycleState::StopRequested => {
+                Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists")))
+            }
+            JobLifecycleState::RunnerQueued
+            | JobLifecycleState::StartedLegacy
+            | JobLifecycleState::Running => {
                 let stop_request_id = next_request_id();
                 let client_id = job.client_id.clone();
                 let request = RunnerRequest::from_operation(
@@ -1820,17 +1825,13 @@ impl RunnerRegistry {
                     Some(job_id.to_string()),
                 )?;
                 let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
-                job.status = "stop_requested".to_string();
+                job.lifecycle = JobLifecycleState::StopRequested;
                 job.error = Some("stop requested".to_string());
                 notify_job_update(job);
                 let notify_runner_id = job.client_id.clone();
                 notify_runner_locked(&inner, &notify_runner_id);
                 Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists")))
             }
-            "recovering" => Err(
-                "runner_unavailable_recovering: wait for same-instance job reconciliation before retrying stop_job"
-                    .to_string(),
-            ),
             _ => Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists"))),
         }
     }
@@ -1905,19 +1906,29 @@ impl RunnerRegistry {
                     .to_string(),
             );
         }
+        let incoming_lifecycle = parse_job_lifecycle(incoming_status).map_err(|_| {
+            if sequenced {
+                format!(
+                    "job_state_reconciliation update status '{}' is invalid",
+                    incoming_status
+                )
+            } else {
+                format!("job update status '{}' is invalid", incoming_status)
+            }
+        })?;
         if sequenced
             && !matches!(
-                incoming_status,
-                "agent_queued"
-                    | "running"
-                    | "stop_requested"
-                    | "completed"
-                    | "failed"
-                    | "stopped"
-                    | "timeout"
-                    | "timed_out"
-                    | "cancelled"
-                    | "lost"
+                incoming_lifecycle,
+                JobLifecycleState::RunnerQueued
+                    | JobLifecycleState::Running
+                    | JobLifecycleState::StopRequested
+                    | JobLifecycleState::Completed
+                    | JobLifecycleState::Failed
+                    | JobLifecycleState::Stopped
+                    | JobLifecycleState::Timeout
+                    | JobLifecycleState::TimedOut
+                    | JobLifecycleState::Cancelled
+                    | JobLifecycleState::Lost
             )
         {
             return Err(format!(
@@ -1925,13 +1936,13 @@ impl RunnerRegistry {
                 incoming_status
             ));
         }
-        if sequenced && body.finished != is_final_job_status(incoming_status) {
+        if sequenced && body.finished != incoming_lifecycle.is_terminal() {
             return Err(
                 "job_state_reconciliation update has inconsistent finished/status".to_string(),
             );
         }
         if sequenced
-            && !is_final_job_status(incoming_status)
+            && !incoming_lifecycle.is_terminal()
             && (body.exit_code.is_some() || body.duration_ms.is_some())
         {
             return Err(
@@ -1939,7 +1950,10 @@ impl RunnerRegistry {
                     .to_string(),
             );
         }
-        if sequenced && incoming_status == "completed" && body.exit_code != Some(0) {
+        if sequenced
+            && incoming_lifecycle == JobLifecycleState::Completed
+            && body.exit_code != Some(0)
+        {
             return Err(
                 "completed job_state_reconciliation update requires exit_code=0".to_string(),
             );
@@ -1983,7 +1997,7 @@ impl RunnerRegistry {
                         .to_string(),
                 );
             }
-            if job.status == "recovering" && sequenced && body.log_snapshot.is_none() {
+            if job.recovery.recovering() && sequenced && body.log_snapshot.is_none() {
                 return Err(
                     "recovering job update requires an authoritative log_snapshot or register inventory"
                         .to_string(),
@@ -1993,7 +2007,7 @@ impl RunnerRegistry {
             if sequenced && incoming_seq.is_some_and(|sequence| sequence <= job.last_update_seq) {
                 return Ok(job_view(job));
             }
-            if is_final_job_status(&job.status) {
+            if job.lifecycle.is_terminal() {
                 // Terminal class is server-authoritative once accepted.
                 return Ok(job_view(job));
             }
@@ -2016,7 +2030,7 @@ impl RunnerRegistry {
                 .and_then(|_| validate_job_activity(job, &body))
             {
                 let terminal_now = now_ts();
-                job.status = "failed".to_string();
+                job.lifecycle = JobLifecycleState::Failed;
                 observe_job_terminal(job, terminal_now);
                 job.ended_at = Some(terminal_now);
                 job.exit_code = body.exit_code;
@@ -2032,7 +2046,7 @@ impl RunnerRegistry {
                 }
                 request_id_to_remove = job.request_id.clone();
             } else {
-                let was_recovering = job.status == "recovering";
+                let was_recovering = job.recovery.recovering();
                 if let Some(snapshot) = body.log_snapshot {
                     super::jobs::replace_log_from_snapshot(&mut job.stdout, &snapshot.stdout);
                     super::jobs::replace_log_from_snapshot(&mut job.stderr, &snapshot.stderr);
@@ -2051,22 +2065,28 @@ impl RunnerRegistry {
                 if job.started_at.is_none()
                     && body.command_execution_state != Some(ShellCommandExecutionState::NotStarted)
                     && matches!(
-                        incoming_status,
-                        "running" | "completed" | "failed" | "stopped" | "timeout"
+                        incoming_lifecycle,
+                        JobLifecycleState::Running
+                            | JobLifecycleState::Completed
+                            | JobLifecycleState::Failed
+                            | JobLifecycleState::Stopped
+                            | JobLifecycleState::Timeout
                     )
                 {
                     job.started_at = Some(now_ts());
                 }
-                if !incoming_status.is_empty() && !is_final_job_status(&job.status) {
-                    job.status = if incoming_status == "queued" && job.started_at.is_some() {
-                        "agent_queued".to_string()
+                if !job.lifecycle.is_terminal() {
+                    job.lifecycle = if incoming_lifecycle == JobLifecycleState::Queued
+                        && job.started_at.is_some()
+                    {
+                        JobLifecycleState::RunnerQueued
                     } else {
-                        incoming_status.to_string()
+                        incoming_lifecycle
                     };
                 }
-                if is_final_job_status(incoming_status) {
+                if incoming_lifecycle.is_terminal() {
                     let terminal_now = now_ts();
-                    job.status = incoming_status.to_string();
+                    job.lifecycle = incoming_lifecycle;
                     observe_job_terminal(job, terminal_now);
                     job.ended_at = Some(terminal_now);
                     job.exit_code = body.exit_code;
@@ -2074,19 +2094,23 @@ impl RunnerRegistry {
                     job.error = body.error;
                     job.command_execution_state = body.command_execution_state;
                     job.activity = None;
-                    job.recovery_state = job.reconciled_at.map(|_| "reconciled".to_string());
-                    job.recovering_since = None;
-                    job.recovery_original_status = None;
+                    if !was_recovering {
+                        job.recovery.phase = job
+                            .recovery
+                            .reconciled_at
+                            .map(|_| JobRecoveryPhase::Reconciled);
+                    }
+                    job.recovery.recovering_since = None;
                     request_id_to_remove = job.request_id.clone();
                 } else if body.error.is_some() {
                     job.error = body.error;
                 }
-                if body.finished && !is_final_job_status(&job.status) {
+                if body.finished && !job.lifecycle.is_terminal() {
                     let terminal_now = now_ts();
-                    job.status = if job.error.is_none() && job.exit_code == Some(0) {
-                        "completed".to_string()
+                    job.lifecycle = if job.error.is_none() && job.exit_code == Some(0) {
+                        JobLifecycleState::Completed
                     } else {
-                        "failed".to_string()
+                        JobLifecycleState::Failed
                     };
                     observe_job_terminal(job, terminal_now);
                     job.ended_at = Some(terminal_now);
@@ -2094,12 +2118,10 @@ impl RunnerRegistry {
                     request_id_to_remove = job.request_id.clone();
                 }
                 if was_recovering {
-                    job.recovery_state = Some("reconciled".to_string());
-                    job.reconciled_at = Some(now_ts());
-                    job.recovery_reason_code =
-                        Some("same_instance_update_reconciliation".to_string());
-                    job.recovering_since = None;
-                    job.recovery_original_status = None;
+                    job.recovery.phase = Some(JobRecoveryPhase::Reconciled);
+                    job.recovery.reconciled_at = Some(now_ts());
+                    job.recovery.reason = Some(JobRecoveryReason::SameInstanceUpdateReconciliation);
+                    job.recovery.recovering_since = None;
                 }
             }
             if let Some(sequence) = incoming_seq {
@@ -2108,8 +2130,8 @@ impl RunnerRegistry {
             if public_mutation_signature(job) != before {
                 notify_job_update(job);
             }
-            remove_cleanup_terminal = job.visibility == ShellJobVisibility::CleanupPending
-                && is_final_job_status(&job.status);
+            remove_cleanup_terminal =
+                job.visibility == ShellJobVisibility::CleanupPending && job.lifecycle.is_terminal();
             job_view(job)
         };
         if let Some(request_id) = request_id_to_remove {
