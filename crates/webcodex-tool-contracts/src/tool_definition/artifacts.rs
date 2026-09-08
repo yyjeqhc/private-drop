@@ -22,6 +22,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "save_project_artifact",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -47,6 +48,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "import_conversation_files_to_project",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -71,6 +73,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "export_project_artifact",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
@@ -93,6 +96,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "read_project_artifact_metadata",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
@@ -115,6 +119,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "read_project_artifact",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileRead),
@@ -137,6 +142,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "artifact_upload_begin",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -159,6 +165,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_artifact_upload_path_binding(model_spec(
         def(
             "artifact_upload_chunk",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -182,6 +189,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "artifact_upload_finish",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),
@@ -207,6 +215,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "artifact_upload_abort",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
             Some(FileWrite),

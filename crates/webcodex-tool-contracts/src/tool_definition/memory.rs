@@ -14,6 +14,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_search",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -35,6 +36,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_read",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -56,6 +58,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_set",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -77,6 +80,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         def(
             "memory_delete",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelHidden,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -97,6 +101,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "memory_scope_list",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         None,
@@ -115,6 +120,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "memory_scope_purge",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         None,

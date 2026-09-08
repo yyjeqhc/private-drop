@@ -8,6 +8,7 @@ use crate::registry::input_schemas::ssh_resource_input_schema;
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
     def(
         "ssh_resource",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,
         None,

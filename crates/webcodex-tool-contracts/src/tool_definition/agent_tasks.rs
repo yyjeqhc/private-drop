@@ -24,6 +24,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_agent_task",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -49,6 +50,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_tasks",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -74,6 +76,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "read_agent_task",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -100,6 +103,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "assign_agent_task",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -127,6 +131,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "start_agent_task_attempt",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -153,6 +158,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                     "start_agent_task_coding_run",
+                    super::ToolAuditPolicy::TYPED_CANONICAL,
                     ModelVisible,
                     TOOL_CATEGORY_AGENT_TASK,
                     Some(CodingAgentRuns),
@@ -186,6 +192,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                 "reconcile_agent_task_coding_run",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -214,6 +221,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "heartbeat_agent_task_attempt",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,
@@ -242,6 +250,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "complete_agent_task_attempt",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_AGENT_TASK,
                 None,

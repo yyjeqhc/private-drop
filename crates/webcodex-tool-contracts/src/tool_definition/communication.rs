@@ -24,6 +24,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_agent_identity",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -49,6 +50,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_identities",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -75,6 +77,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "update_agent_identity",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -103,6 +106,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "attach_agent_endpoint",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -130,6 +134,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "bootstrap_agent_conversation",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -156,6 +161,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "detach_agent_endpoint",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -183,6 +189,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "create_conversation",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -208,6 +215,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_conversations",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -233,6 +241,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "read_conversation",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -258,6 +267,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "post_conversation_message",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -283,6 +293,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "list_agent_inbox",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -309,6 +320,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "consume_agent_deliveries",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,
@@ -337,6 +349,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "consume_agent_wake",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMMUNICATION,
                 None,

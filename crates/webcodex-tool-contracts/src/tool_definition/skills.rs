@@ -14,6 +14,7 @@ use crate::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_list",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(FileRead),
@@ -32,6 +33,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_read_file",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(FileRead),
@@ -50,6 +52,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_versions",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
@@ -68,6 +71,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_install",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
@@ -86,6 +90,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_activate",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),
@@ -104,6 +109,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     def(
         "skill_remove_revision",
+        super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_RUNTIME,
         Some(SkillStoreManage),

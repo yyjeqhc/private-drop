@@ -16,6 +16,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
         model_spec(
             def(
                 "plugin_tool",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 None,

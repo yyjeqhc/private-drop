@@ -18,6 +18,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     git_like(model_spec(
         def(
             "workspace_checkpoint_create",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(FileRead),
@@ -40,6 +41,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "workspace_checkpoint_list",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(OwnerOnly),
@@ -62,6 +64,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "workspace_checkpoint_show",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(OwnerOnly),
@@ -85,6 +88,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "workspace_checkpoint_restore",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(FileWrite),
@@ -109,6 +113,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "workspace_checkpoint_delete",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
             Some(OwnerOnly),

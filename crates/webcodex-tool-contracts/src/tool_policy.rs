@@ -4,8 +4,9 @@ use super::metadata::{
     tool_metadata, ToolApprovalPolicy, ToolEffect, ToolMetadata, ToolPathHint, ToolRisk,
 };
 use super::tool_definition::{
-    tool_definitions, RunnerCapabilityRequirement, ToolContextContinuityPolicy, ToolDefinition,
-    ToolEffectAnnotations, PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE,
+    tool_definitions, RunnerCapabilityRequirement, ToolAuditPolicy, ToolContextContinuityPolicy,
+    ToolDefinition, ToolEffectAnnotations, PERMISSION_RISK_ARTIFACT_WRITE,
+    PERMISSION_RISK_DESTRUCTIVE,
     PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION,
     PERMISSION_RISK_WRITE,
 };
@@ -13,6 +14,10 @@ use super::tool_definition::{
 impl ToolDefinition {
     pub fn metadata(self) -> ToolMetadata {
         self.metadata
+    }
+
+    pub fn audit_policy(self) -> ToolAuditPolicy {
+        self.audit
     }
 
     pub fn effect_annotations(self) -> ToolEffectAnnotations {
@@ -142,6 +147,12 @@ fn fallback_permission_risk(name: &str, metadata: ToolMetadata) -> &'static str 
 
 pub fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
     tool_definitions().find(|definition| definition.name == name)
+}
+
+/// Audit policy lookup is intentionally optional. Unknown/non-runtime names
+/// have no audit contract and callers must fail closed rather than infer one.
+pub fn runtime_tool_audit_policy(name: &str) -> Option<ToolAuditPolicy> {
+    lookup_tool_definition(name).map(|definition| definition.audit_policy())
 }
 
 fn definition_or_metadata_facade(name: &str) -> Result<&'static ToolDefinition, ToolMetadata> {

@@ -286,9 +286,45 @@ impl ToolModelSurfaceDeclaration {
     };
 }
 
+/// Declarative privacy contract for the bounded Tool Audit / Session-ledger
+/// projection. Tool identity lives in `ToolDefinition`; audit code consumes
+/// this policy and must never infer a missing policy from the raw tool name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolAuditPolicy {
+    pub request: ToolAuditRequestPolicy,
+    pub result: ToolAuditResultPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditRequestPolicy {
+    /// Parse the concrete request into the canonical typed `ToolCall` and use
+    /// its bounded audit projection. Parse/projection failure is fail-closed.
+    Typed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditResultPolicy {
+    /// Supply canonical execution evidence to the existing bounded Session
+    /// ledger projector. This is not permission to persist an arbitrary result
+    /// body; sensitive result families override this policy before the result
+    /// projector migration is completed.
+    CanonicalLedgerEvidence,
+}
+
+impl ToolAuditPolicy {
+    /// Existing behavior baseline used during the staged audit migration.
+    /// Every ToolDefinition must opt in explicitly through `def(...)`; there is
+    /// intentionally no implicit/missing-policy default.
+    pub const TYPED_CANONICAL: Self = Self {
+        request: ToolAuditRequestPolicy::Typed,
+        result: ToolAuditResultPolicy::CanonicalLedgerEvidence,
+    };
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ToolDefinition {
     pub name: &'static str,
+    pub audit: ToolAuditPolicy,
     pub model_spec: Option<ToolModelSpecDeclaration>,
     pub model_surface: ToolModelSurfaceDeclaration,
     pub visibility: ToolVisibility,
@@ -420,6 +456,7 @@ pub struct ToolManifestIntent {
 
 const fn def(
     name: &'static str,
+    audit: ToolAuditPolicy,
     visibility: ToolVisibility,
     category: &'static str,
     runner_capability: Option<RunnerCapabilityRequirement>,
@@ -433,6 +470,7 @@ const fn def(
 ) -> ToolDefinition {
     ToolDefinition {
         name,
+        audit,
         model_spec: None,
         model_surface: ToolModelSurfaceDeclaration::DEFAULT,
         visibility,
@@ -606,6 +644,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
 const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[context_recovery_only(model_spec(
     def(
         "list_tools",
+        ToolAuditPolicy::TYPED_CANONICAL,
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,
         None,

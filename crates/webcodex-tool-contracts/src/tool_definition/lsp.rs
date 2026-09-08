@@ -16,6 +16,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "lsp_status",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),
@@ -38,6 +39,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "document_symbols",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),
@@ -60,6 +62,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "document_diagnostics",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),
@@ -82,6 +85,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "hover",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),
@@ -104,6 +108,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "workspace_symbols",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),
@@ -126,6 +131,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "goto_definition",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),
@@ -148,6 +154,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "find_references",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),
@@ -170,6 +177,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "call_hierarchy",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspCallHierarchy),

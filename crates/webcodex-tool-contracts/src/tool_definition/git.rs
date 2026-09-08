@@ -19,6 +19,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(change_summary_like(git_like(model_spec(
         def(
             "git_diff_summary",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -42,6 +43,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "git_review_summary",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -67,6 +69,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "show_changes",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -94,6 +97,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(git_like(model_spec(
         def(
             "git_commit_paths",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -116,6 +120,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(git_like(model_spec(
         def(
             "git_status",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -138,6 +143,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(git_like(model_spec(
         def(
             "git_diff",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),
@@ -161,6 +167,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
                 "git_diff_hunks",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -185,6 +192,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(git_like(model_spec(
         def(
             "git_log",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_GIT,
             Some(GitOrShell),

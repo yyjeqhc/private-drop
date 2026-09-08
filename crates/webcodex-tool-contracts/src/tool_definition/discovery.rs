@@ -18,6 +18,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_projects",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -40,6 +41,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "register_project",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -62,6 +64,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "unregister_project",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -84,6 +87,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "create_project",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -106,6 +110,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_runners",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -129,6 +134,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "runtime_status",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 None,
@@ -154,6 +160,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "tool_manifest",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 None,

@@ -18,6 +18,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
     context_recovery_only(model_spec(
         def(
             "workspace_hygiene_check",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(GitOrShell),
@@ -44,6 +45,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "delete_project_files",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(Shell),
@@ -66,6 +68,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     git_like(model_spec(
         def(
             "git_restore_paths",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(StructuredProcess),
@@ -88,6 +91,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     git_like(model_spec(
         def(
             "discard_untracked",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
             Some(StructuredProcess),

@@ -34,6 +34,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_read_clipboard",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardRead),
@@ -60,6 +61,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "computer_write_clipboard",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerClipboardWrite),
@@ -87,6 +89,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_pointer_move",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
@@ -118,6 +121,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
             def(
                 "computer_pointer_click",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerPointerControl),
@@ -149,6 +153,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     unit_arguments(model_spec(
         def(
             "computer_list_targets",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             std::option::Option::None,
@@ -171,6 +176,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_list_windows",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
@@ -194,6 +200,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_list_displays",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
@@ -218,6 +225,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_list_applications",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationDiscovery),
@@ -240,6 +248,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_launch_application",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerApplicationLaunch),
@@ -262,6 +271,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_accessibility_status",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -284,6 +294,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_accessibility_tree",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -306,6 +317,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_find_elements",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerAccessibilityObserve),
@@ -328,6 +340,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_element_state",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerElementState),
@@ -350,6 +363,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_activate_window",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerWindowActivate),
@@ -373,6 +387,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "computer_control",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerControl),
@@ -397,6 +412,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_scroll_to_element",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerScrollToElement),
@@ -420,6 +436,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "computer_key_input",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerKeyInput),
@@ -444,6 +461,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_input_text",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerTextInput),
@@ -466,6 +484,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "computer_snapshot",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_COMPUTER,
             Some(ComputerObserve),
@@ -489,6 +508,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_snapshot_display",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(ComputerDisplayObserve),
@@ -514,6 +534,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "computer_save_snapshot",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_COMPUTER,
                 Some(FileWrite),

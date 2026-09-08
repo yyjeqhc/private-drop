@@ -18,6 +18,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "write_project_file",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_EDIT,
             Some(FileWrite),
@@ -44,6 +45,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
                 def(
                 "apply_text_edits",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_EDIT,
                 Some(FileWrite),

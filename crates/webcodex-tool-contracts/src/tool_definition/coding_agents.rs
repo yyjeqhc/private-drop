@@ -20,6 +20,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             require_all_scopes(
                 def(
                     "coding_agent_start",
+                    super::ToolAuditPolicy::TYPED_CANONICAL,
                     ModelVisible,
                     TOOL_CATEGORY_CODING_AGENT,
                     Some(CodingAgentRuns),
@@ -46,6 +47,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
             "coding_agent_observe",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,
@@ -69,6 +71,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
             "coding_agent_cancel",
+            super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CODING_AGENT,
             None,

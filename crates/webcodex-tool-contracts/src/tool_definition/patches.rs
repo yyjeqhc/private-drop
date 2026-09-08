@@ -15,6 +15,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
                 def(
                 "apply_patch",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_PATCH,
                 Some(ApplyPatch),
@@ -42,6 +43,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             def(
                 "apply_unified_diff",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_PATCH,
                 Some(Shell),

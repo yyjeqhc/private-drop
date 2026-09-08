@@ -45,6 +45,33 @@ fn tool_definitions_cover_known_names_and_public_specs() {
 }
 
 #[test]
+fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
+    for definition in tool_definitions() {
+        assert_eq!(
+            runtime_tool_audit_policy(definition.name),
+            Some(definition.audit_policy()),
+            "{} audit policy must resolve only through ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            definition.audit_policy().request,
+            ToolAuditRequestPolicy::Typed,
+            "{} request audit must use the typed canonical boundary",
+            definition.name
+        );
+        assert_eq!(
+            definition.audit_policy().result,
+            ToolAuditResultPolicy::CanonicalLedgerEvidence,
+            "{} initial result audit migration must declare canonical ledger evidence explicitly",
+            definition.name
+        );
+    }
+
+    assert_eq!(runtime_tool_audit_policy("unknown_open_world_tool"), None);
+    assert_eq!(runtime_tool_audit_policy("start_coding_task"), None);
+}
+
+#[test]
 fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     let mut seen_ranks = std::collections::BTreeMap::new();
     for definition in tool_definitions() {

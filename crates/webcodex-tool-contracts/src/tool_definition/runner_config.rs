@@ -16,6 +16,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
             def(
                 "runner_config_check",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 Some(RunnerConfigControl),
@@ -39,6 +40,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             model_spec(
                 def(
                     "runner_config_reload",
+                    super::ToolAuditPolicy::TYPED_CANONICAL,
                     ModelVisible,
                     TOOL_CATEGORY_RUNTIME,
                     Some(RunnerConfigControl),
