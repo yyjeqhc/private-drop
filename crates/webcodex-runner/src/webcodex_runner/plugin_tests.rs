@@ -633,7 +633,9 @@ fn bare_plugin_command_resolves_from_prepared_path_with_explicit_profile() {
         },
     );
     let plugins = PluginConfig {
-        request_timeout_secs: 2,
+        // This regression exercises prepared-PATH resolution, not timeout
+        // behavior. Keep provider startup tolerant of a heavily loaded CI host.
+        request_timeout_secs: 10,
         providers: vec![PluginProviderConfig {
             id: "fake".to_string(),
             name: "Fake Plugin".to_string(),
@@ -646,7 +648,8 @@ fn bare_plugin_command_resolves_from_prepared_path_with_explicit_profile() {
     };
     let config = runner_config(plugins, shell, temp.path());
     let manager = PluginManager::new(&config, temp.path().join("runner.toml"));
-    assert_eq!(current_providers(&manager)[0].status, "ready");
+    let provider = current_providers(&manager).remove(0);
+    assert_eq!(provider.status, "ready", "{provider:?}");
     assert_eq!(
         fs::read_to_string(marker)
             .unwrap_or_default()
