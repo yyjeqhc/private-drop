@@ -5,6 +5,25 @@
 pub struct ToolAuditPolicy {
     pub request: AuditRequestPolicy,
     pub result: AuditResultPolicy,
+    /// Final ledger context reduction, including restore-time re-projection.
+    pub context: AuditContextPolicy,
+    /// Whether the existing bounded stdout/stderr excerpt contract applies.
+    pub execution: AuditExecutionPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditContextPolicy {
+    Omit,
+    Fields(&'static [AuditField]),
+    WorkingTreeStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditExecutionPolicy {
+    Omit,
+    Text,
+    TestCounts,
+    TestAssertions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +113,8 @@ pub enum AuditValue {
     NullableCount,
     NullableBytes,
     Preview,
+    /// Bounded activity preview only; the Session ledger must omit it.
+    EphemeralPreview,
     ExecutionContext,
     CompletionFingerprint,
     ConsumeTokenPresent,
@@ -118,6 +139,19 @@ impl ToolAuditPolicy {
                     fields.iter().all(AuditField::is_valid)
                 }
                 AuditResultPolicy::Omit | AuditResultPolicy::SessionEvidence => true,
+            }
+            && match self.context {
+                AuditContextPolicy::Fields(fields) => fields.iter().all(|field| {
+                    field.is_valid()
+                        && matches!(
+                            field.value,
+                            AuditValue::Copy
+                                | AuditValue::Nullable
+                                | AuditValue::NullableCount
+                                | AuditValue::NullableBytes
+                        )
+                }),
+                AuditContextPolicy::Omit | AuditContextPolicy::WorkingTreeStatus => true,
             }
     }
 }

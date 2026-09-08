@@ -16,6 +16,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_list",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Fields(&[
+                AuditField::new("catalog_revision", "catalog_revision", AuditValue::Copy),
+                AuditField::new("total_count", "total_count", AuditValue::Copy),
+                AuditField::new("returned_count", "returned_count", AuditValue::Copy),
+                AuditField::new("offset", "offset", AuditValue::Copy),
+                AuditField::new("next_offset", "next_offset", AuditValue::Copy),
+                AuditField::new("truncated", "truncated", AuditValue::Copy),
+                AuditField::new("invalid_count", "invalid_count", AuditValue::Copy),
+                AuditField::new(
+                    "discovery_truncated",
+                    "discovery_truncated",
+                    AuditValue::Copy,
+                ),
+                AuditField::new("error_kind", "error_kind", AuditValue::Copy),
+                AuditField::new("state_changed", "state_changed", AuditValue::Copy),
+            ]),
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),
@@ -70,6 +87,25 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_read_file",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Fields(&[
+                AuditField::new("skill_id", "skill_id", AuditValue::Copy),
+                AuditField::new(
+                    "definition_revision",
+                    "definition_revision",
+                    AuditValue::Copy,
+                ),
+                AuditField::new("package_revision", "package_revision", AuditValue::Copy),
+                AuditField::new("path", "path", AuditValue::Copy),
+                AuditField::new("sha256", "sha256", AuditValue::Copy),
+                AuditField::new("start_line", "start_line", AuditValue::Copy),
+                AuditField::new("end_line", "end_line", AuditValue::Copy),
+                AuditField::new("returned_lines", "returned_lines", AuditValue::Copy),
+                AuditField::new("has_more", "has_more", AuditValue::Copy),
+                AuditField::new("next_start_line", "next_start_line", AuditValue::Copy),
+                AuditField::new("error_kind", "error_kind", AuditValue::Copy),
+                AuditField::new("state_changed", "state_changed", AuditValue::Copy),
+            ]),
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),
@@ -136,6 +172,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_versions",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),
@@ -183,6 +221,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_install",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),
@@ -259,6 +299,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_activate",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),
@@ -320,6 +362,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "skill_remove_revision",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),

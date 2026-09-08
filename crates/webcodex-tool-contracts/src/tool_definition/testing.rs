@@ -17,6 +17,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "cargo_fmt",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Text,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -58,6 +60,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "cargo_check",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Text,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -109,6 +113,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "cargo_test",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::TestAssertions,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -163,6 +169,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "go_test",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::TestCounts,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),

@@ -17,6 +17,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 def(
                 "apply_patch",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -25,10 +27,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("patch_present", "patch", AuditValue::KeyPresent),
                         ],
                         transform: AuditTransform::Fields,
-                        typed: AuditTypedPolicy::Overrides { fields: &[
-                            AuditField::new("patch_bytes", "patch", AuditValue::Bytes),
-                            AuditField::new("patch_present", "patch", AuditValue::Present),
-                        ], omit: &[] },
+                        typed: AuditTypedPolicy::Overrides {
+                            fields: &[
+                                AuditField::new("patch_bytes", "patch", AuditValue::Bytes),
+                                AuditField::new("patch_present", "patch", AuditValue::Present),
+                            ],
+                            omit: &[],
+                        },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -60,6 +65,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "apply_unified_diff",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -71,7 +78,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("diff_present", "diff", AuditValue::KeyPresent),
                         ],
                         transform: AuditTransform::Fields,
-                        typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new("diff_present", "diff", AuditValue::Present)], omit: &[] },
+                        typed: AuditTypedPolicy::Overrides {
+                            fields: &[AuditField::new("diff_present", "diff", AuditValue::Present)],
+                            omit: &[],
+                        },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },

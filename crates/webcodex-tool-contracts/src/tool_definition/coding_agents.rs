@@ -22,6 +22,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 def(
                     "coding_agent_start",
                     ToolAuditPolicy {
+                        context: AuditContextPolicy::Omit,
+                        execution: AuditExecutionPolicy::Omit,
                         request: AuditRequestPolicy {
                             fields: &[
                                 AuditField::new("project", "project", AuditValue::Copy),
@@ -91,6 +93,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "coding_agent_observe",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -103,7 +107,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::CodingEvents(&[
                     AuditField::new("run_id", "run_id", AuditValue::Nullable),
@@ -161,13 +168,18 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "coding_agent_cancel",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
                         AuditField::new("run_id", "run_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("run_id", "run_id", AuditValue::Nullable),

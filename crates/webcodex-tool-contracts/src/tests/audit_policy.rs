@@ -28,6 +28,8 @@ fn audit_policy_cannot_change_execution_authority_or_model_contract() {
                 typed: AuditTypedPolicy::Omit,
             },
             result: AuditResultPolicy::Omit,
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
         };
         assert_eq!(omitted.metadata(), definition.metadata());
         assert_eq!(omitted.policy, definition.policy);

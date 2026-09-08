@@ -9,6 +9,8 @@ use crate::metadata::{ToolPathHint::None as NoPath, ToolRisk::Read, ADMIN, TOOL_
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[context_recovery_only(def(
     "read_tool_trace",
     ToolAuditPolicy {
+        context: AuditContextPolicy::Omit,
+        execution: AuditExecutionPolicy::Omit,
         request: AuditRequestPolicy {
             fields: &[
                 AuditField::new("trace_ref", "trace_ref", AuditValue::Copy),

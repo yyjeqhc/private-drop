@@ -21,6 +21,17 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "git_diff_summary",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Fields(&[
+                    AuditField::new("clean", "clean", AuditValue::Copy),
+                    AuditField::new("branch", "branch", AuditValue::Copy),
+                    AuditField::new("head", "head", AuditValue::Copy),
+                    AuditField::new("upstream", "upstream", AuditValue::Copy),
+                    AuditField::new("ahead", "ahead", AuditValue::Copy),
+                    AuditField::new("behind", "behind", AuditValue::Copy),
+                    AuditField::new("counts", "counts", AuditValue::Copy),
+                    AuditField::new("changed_files", "changed_files", AuditValue::Copy),
+                ]),
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[AuditField::new("project", "project", AuditValue::Copy)],
                     transform: AuditTransform::Fields,
@@ -52,6 +63,8 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "git_review_summary",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -101,6 +114,17 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "show_changes",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("clean", "clean", AuditValue::Copy),
+                        AuditField::new("branch", "branch", AuditValue::Copy),
+                        AuditField::new("head", "head", AuditValue::Copy),
+                        AuditField::new("upstream", "upstream", AuditValue::Copy),
+                        AuditField::new("ahead", "ahead", AuditValue::Copy),
+                        AuditField::new("behind", "behind", AuditValue::Copy),
+                        AuditField::new("counts", "counts", AuditValue::Copy),
+                        AuditField::new("changed_files", "changed_files", AuditValue::Copy),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -146,6 +170,8 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "git_commit_paths",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -181,6 +207,8 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "git_status",
             ToolAuditPolicy {
+                context: AuditContextPolicy::WorkingTreeStatus,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[AuditField::new("project", "project", AuditValue::Copy)],
                     transform: AuditTransform::Fields,
@@ -211,6 +239,8 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "git_diff",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -218,7 +248,11 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                     ],
                     transform: AuditTransform::Fields,
                     typed: AuditTypedPolicy::Overrides {
-                        fields: &[AuditField::new("args_count", "args", AuditValue::NullableCount)],
+                        fields: &[AuditField::new(
+                            "args_count",
+                            "args",
+                            AuditValue::NullableCount,
+                        )],
                         omit: &[],
                     },
                 },
@@ -248,6 +282,8 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "git_diff_hunks",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -260,13 +296,16 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("head_commit", "head_commit", AuditValue::ExactCommit),
                         ],
                         transform: AuditTransform::Fields,
-                        typed: AuditTypedPolicy::Overrides { fields: &[], omit: &[
-                            "continuation_present",
-                            "base_commit",
-                            "head_commit",
-                            "base_commit_valid",
-                            "head_commit_valid",
-                        ] },
+                        typed: AuditTypedPolicy::Overrides {
+                            fields: &[],
+                            omit: &[
+                                "continuation_present",
+                                "base_commit",
+                                "head_commit",
+                                "base_commit_valid",
+                                "head_commit_valid",
+                            ],
+                        },
                     },
                     result: AuditResultPolicy::Fields(&[
                         AuditField::new("project", "project", AuditValue::Nullable),
@@ -311,6 +350,12 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "git_log",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Fields(&[
+                    AuditField::new("commits", "commits", AuditValue::Copy),
+                    AuditField::new("next_skip", "next_skip", AuditValue::Copy),
+                    AuditField::new("truncated", "truncated", AuditValue::Copy),
+                ]),
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),

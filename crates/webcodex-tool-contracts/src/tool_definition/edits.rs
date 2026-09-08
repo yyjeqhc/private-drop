@@ -20,6 +20,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "write_project_file",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -29,14 +31,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("content_present", "content", AuditValue::KeyPresent),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[
-                        AuditField::new(
-                            "expected_sha256_present",
-                            "expected_sha256",
-                            AuditValue::NonemptyString,
-                        ),
-                        AuditField::new("content_present", "content", AuditValue::Present),
-                    ], omit: &["expected_sha256"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[
+                            AuditField::new(
+                                "expected_sha256_present",
+                                "expected_sha256",
+                                AuditValue::NonemptyString,
+                            ),
+                            AuditField::new("content_present", "content", AuditValue::Present),
+                        ],
+                        omit: &["expected_sha256"],
+                    },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -67,6 +72,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 def(
                 "apply_text_edits",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),

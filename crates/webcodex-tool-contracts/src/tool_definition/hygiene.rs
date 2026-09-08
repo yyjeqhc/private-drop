@@ -20,6 +20,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
         def(
             "workspace_hygiene_check",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -58,6 +60,8 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "delete_project_files",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -91,6 +95,8 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "git_restore_paths",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -124,6 +130,8 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "discard_untracked",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),

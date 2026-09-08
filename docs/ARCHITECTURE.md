@@ -170,6 +170,16 @@ Session provenance is supported, while generic invocation continuity metadata
 receives no specialized semantics. Adding another heterogeneous gateway extends
 this closed dispatch boundary without adding a concrete Kernel policy branch.
 
+### Canonical Tool Audit privacy
+
+`ToolDefinition.audit` declares request, result, persisted-context, and bounded
+execution-excerpt policies. Runtime and Workflow Session projectors consume
+semantic policies instead of maintaining tool-name privacy tables. Missing or
+invalid declarations fail closed; the explicit canonical-evidence family feeds
+existing bounded ledger reducers and never authorizes raw result persistence.
+See [Tool Audit and Session privacy](architecture/tool-audit-privacy.md) for the
+dependency boundary, compatibility behavior, and new-tool invariant.
+
 ### Cargo workspace ownership layers
 
 The checked-in [`workspace-boundaries.toml`](../workspace-boundaries.toml) is the

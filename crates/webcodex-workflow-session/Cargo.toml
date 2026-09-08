@@ -9,6 +9,7 @@ root-test-support = []
 
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
+webcodex-tool-contracts = { path = "../webcodex-tool-contracts" }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }

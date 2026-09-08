@@ -4,6 +4,81 @@ use serde_json::json;
 use webcodex_tool_contracts::registered_tool_specs;
 
 #[test]
+fn unknown_absent_and_malformed_result_policies_fail_closed() {
+    let output = json!({"body":"PRIVATE_RESULT_BODY", "output":{"raw":"PRIVATE_OPAQUE"}});
+    for name in [
+        "unknown",
+        "start_coding_task",
+        "list_agents",
+        "ReadFile",
+        "read_file ",
+    ] {
+        assert_eq!(
+            session_log_result_for_tool(name, &output),
+            Value::Null,
+            "{name}"
+        );
+    }
+    assert_eq!(project_result(None, &output), Value::Null);
+    let mut malformed = lookup_tool_definition("run_process").unwrap().audit;
+    const INVALID_FIELDS: &[AuditField] =
+        &[AuditField::new("body", "/bad~escape", AuditValue::Nullable)];
+    malformed.result = AuditResultPolicy::Fields(INVALID_FIELDS);
+    assert_eq!(project_result(Some(&malformed), &output), Value::Null);
+    // Even the explicit canonical-evidence family must not rescue an invalid request policy.
+    malformed.result = AuditResultPolicy::SessionEvidence;
+    malformed.request.fields = INVALID_FIELDS;
+    assert_eq!(project_result(Some(&malformed), &output), Value::Null);
+    for output in [
+        json!("PRIVATE_SCALAR"),
+        json!(["PRIVATE_ARRAY"]),
+        json!(42),
+        Value::Null,
+    ] {
+        assert_eq!(
+            session_log_result_for_tool("run_process", &output),
+            Value::Null
+        );
+    }
+}
+
+#[test]
+fn all_canonical_result_policies_leave_business_results_unchanged() {
+    for definition in webcodex_tool_contracts::tool_definitions() {
+        let output = json!({
+            "project":"demo", "success":true, "exit_code":0,
+            "body":"PRIVATE_BODY", "text":"PRIVATE_TEXT", "value":"PRIVATE_VALUE",
+            "payload":{"opaque":"PRIVATE_PAYLOAD"},
+            "events":[{"kind":"text", "text":"PRIVATE_EVENT_TEXT"}]
+        });
+        let before = output.clone();
+        let projected = session_log_result_for_tool(definition.name, &output);
+        assert_eq!(output, before, "{}", definition.name);
+        match definition.audit.result {
+            AuditResultPolicy::SessionEvidence => assert_eq!(projected, output),
+            AuditResultPolicy::Fields(_)
+            | AuditResultPolicy::CodingEvents(_)
+            | AuditResultPolicy::Omit => {
+                assert!(
+                    !projected.to_string().contains("PRIVATE_"),
+                    "{}",
+                    definition.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn opaque_gateway_result_policy_does_not_copy_provider_payloads() {
+    for name in ["plugin_tool", "ssh_resource"] {
+        let output = json!({"success":true, "arguments":{"body":"PRIVATE_BODY"},
+            "binding":"PRIVATE_BINDING", "native_path":"/private/native", "credentials":"PRIVATE_CREDENTIAL"});
+        assert_eq!(session_log_result_for_tool(name, &output), json!({}));
+    }
+}
+
+#[test]
 fn unknown_retired_and_noncanonical_request_names_fail_closed() {
     let arguments = json!({
         "project": "agent:test:demo",

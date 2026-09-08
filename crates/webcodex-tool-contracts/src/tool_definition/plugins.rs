@@ -18,12 +18,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
             def(
                 "plugin_tool",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[],
                         transform: AuditTransform::Fields,
                         typed: AuditTypedPolicy::Omit,
                     },
-                    result: AuditResultPolicy::Fields(&[]),
+                    result: AuditResultPolicy::Omit,
                 },
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,

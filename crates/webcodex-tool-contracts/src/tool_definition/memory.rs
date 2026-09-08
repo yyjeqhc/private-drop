@@ -16,6 +16,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "memory_search",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Fields(&[
+                    AuditField::new("catalog_revision", "catalog_revision", AuditValue::Copy),
+                    AuditField::new("total_count", "total_count", AuditValue::Copy),
+                    AuditField::new("returned_count", "returned_count", AuditValue::Copy),
+                    AuditField::new("offset", "offset", AuditValue::Copy),
+                    AuditField::new("next_offset", "next_offset", AuditValue::Copy),
+                    AuditField::new("truncated", "truncated", AuditValue::Copy),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Copy),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Copy),
+                ]),
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -65,6 +76,17 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "memory_read",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Fields(&[
+                    AuditField::new("memory_id", "memory_id", AuditValue::Nullable),
+                    AuditField::new("memory_key", "memory_key", AuditValue::Nullable),
+                    AuditField::new("revision", "revision", AuditValue::Nullable),
+                    AuditField::new("bootstrap", "bootstrap", AuditValue::Nullable),
+                    AuditField::new("priority", "priority", AuditValue::Nullable),
+                    AuditField::new("returned_body_bytes", "body", AuditValue::NullableBytes),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                ]),
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -109,6 +131,16 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "memory_set",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Fields(&[
+                    AuditField::new("memory_id", "memory_id", AuditValue::Copy),
+                    AuditField::new("memory_key", "memory_key", AuditValue::Copy),
+                    AuditField::new("old_revision", "old_revision", AuditValue::Copy),
+                    AuditField::new("revision", "revision", AuditValue::Copy),
+                    AuditField::new("created", "created", AuditValue::Copy),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Copy),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Copy),
+                ]),
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -157,6 +189,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "memory_delete",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Fields(&[
+                    AuditField::new("memory_id", "memory_id", AuditValue::Copy),
+                    AuditField::new("memory_key", "memory_key", AuditValue::Copy),
+                    AuditField::new("revision", "revision", AuditValue::Copy),
+                    AuditField::new("deleted", "deleted", AuditValue::Copy),
+                    AuditField::new("error_kind", "error_kind", AuditValue::Copy),
+                    AuditField::new("state_changed", "state_changed", AuditValue::Copy),
+                ]),
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -198,6 +239,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "memory_scope_list",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Fields(&[
+                AuditField::new("total_count", "total_count", AuditValue::Copy),
+                AuditField::new("returned_count", "returned_count", AuditValue::Copy),
+                AuditField::new("truncated", "truncated", AuditValue::Copy),
+                AuditField::new("error_kind", "error_kind", AuditValue::Copy),
+                AuditField::new("state_changed", "state_changed", AuditValue::Copy),
+            ]),
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),
@@ -234,6 +283,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     def(
         "memory_scope_purge",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Fields(&[
+                AuditField::new("memory_scope_id", "memory_scope_id", AuditValue::Copy),
+                AuditField::new("catalog_revision", "catalog_revision", AuditValue::Copy),
+                AuditField::new(
+                    "current_catalog_revision",
+                    "current_catalog_revision",
+                    AuditValue::Copy,
+                ),
+                AuditField::new("purged_count", "purged_count", AuditValue::Copy),
+                AuditField::new("error_kind", "error_kind", AuditValue::Copy),
+                AuditField::new("state_changed", "state_changed", AuditValue::Copy),
+            ]),
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("project", "project", AuditValue::Copy),

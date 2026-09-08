@@ -26,6 +26,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "create_agent_task",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -92,6 +94,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "list_agent_tasks",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -137,6 +141,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "read_agent_task",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -203,6 +209,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "assign_agent_task",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -254,6 +262,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "start_agent_task_attempt",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -315,6 +325,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 def(
                     "start_agent_task_coding_run",
                     ToolAuditPolicy {
+                        context: AuditContextPolicy::Omit,
+                        execution: AuditExecutionPolicy::Omit,
                         request: AuditRequestPolicy {
                             fields: &[
                                 AuditField::new("project", "project", AuditValue::Copy),
@@ -394,6 +406,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 def(
                 "reconcile_agent_task_coding_run",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -454,6 +468,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "heartbeat_agent_task_attempt",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -523,6 +539,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "complete_agent_task_attempt",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),

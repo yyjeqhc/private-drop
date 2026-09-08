@@ -611,6 +611,8 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[context_recovery_only(model_sp
     def(
         "list_tools",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
                     AuditField::new("category", "category", AuditValue::Copy),

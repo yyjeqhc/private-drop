@@ -36,6 +36,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "computer_read_clipboard",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -79,6 +81,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "computer_write_clipboard",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -124,6 +128,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "computer_pointer_move",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -187,6 +193,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "computer_pointer_click",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -250,10 +258,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_list_targets",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[AuditField::new("project", "project", AuditValue::Copy)],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("count", "count", AuditValue::Nullable),
@@ -284,6 +297,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_list_windows",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -291,7 +306,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("limit", "limit", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("count", "count", AuditValue::Nullable),
@@ -322,6 +340,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "computer_list_displays",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -361,6 +381,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_list_applications",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -368,7 +390,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("limit", "limit", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("count", "count", AuditValue::Nullable),
@@ -398,6 +423,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_launch_application",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -405,7 +432,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("application_id", "application_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("application_id", "application_id", AuditValue::Nullable),
@@ -438,13 +468,18 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_accessibility_status",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
                         AuditField::new("client_id", "client_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("platform", "platform", AuditValue::Nullable),
@@ -474,6 +509,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_accessibility_tree",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -483,7 +520,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("max_nodes", "max_nodes", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -521,6 +561,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_find_elements",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -534,7 +576,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("label_present", "label", AuditValue::StringPresent),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -571,6 +616,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_element_state",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -579,7 +626,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("element_id", "element_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -614,6 +664,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_activate_window",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -621,7 +673,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("surface_id", "surface_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -652,6 +707,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "computer_control",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -661,7 +718,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("action", "action", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -695,6 +755,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_scroll_to_element",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -703,7 +765,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("element_id", "element_id", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -735,6 +800,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "computer_key_input",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -744,7 +811,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("modifiers", "modifiers", AuditValue::Copy),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -778,6 +848,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_input_text",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -787,7 +859,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("text_bytes", "text", AuditValue::Bytes),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "surface_id", AuditValue::Nullable),
@@ -819,6 +894,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "computer_snapshot",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -829,7 +906,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("region_present", "region", AuditValue::Present),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[], omit: &["project"] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[],
+                        omit: &["project"],
+                    },
                 },
                 result: AuditResultPolicy::Fields(&[
                     AuditField::new("surface_id", "/surface/surface_id", AuditValue::Nullable),
@@ -871,6 +951,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "computer_snapshot_display",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -929,6 +1011,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "computer_save_snapshot",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),

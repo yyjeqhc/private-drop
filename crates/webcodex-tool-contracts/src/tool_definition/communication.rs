@@ -26,6 +26,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "create_agent_identity",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("agent_id", "/agent/agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "profile_revision",
+                            "/agent/profile_revision",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -85,6 +98,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "list_agent_identities",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                        AuditField::new("returned_count", "agents", AuditValue::NullableCount),
+                        AuditField::new("offset", "offset", AuditValue::Nullable),
+                        AuditField::new("next_offset", "next_offset", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -131,6 +153,19 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "update_agent_identity",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("agent_id", "/agent/agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "profile_revision",
+                            "/agent/profile_revision",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -200,6 +235,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "attach_agent_endpoint",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("endpoint_id", "/endpoint/endpoint_id", AuditValue::Nullable),
+                        AuditField::new("agent_id", "/endpoint/agent_id", AuditValue::Nullable),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -261,6 +305,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "bootstrap_agent_conversation",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -342,6 +388,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "detach_agent_endpoint",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("endpoint_id", "/endpoint/endpoint_id", AuditValue::Nullable),
+                        AuditField::new("agent_id", "/endpoint/agent_id", AuditValue::Nullable),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -392,6 +447,23 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "create_conversation",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new(
+                            "conversation_id",
+                            "/conversation/conversation/conversation_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "participant_count",
+                            "/conversation/participants",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("created", "created", AuditValue::Nullable),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -454,6 +526,15 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "list_conversations",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("total_count", "total_count", AuditValue::Nullable),
+                        AuditField::new("returned_count", "conversations", AuditValue::NullableCount),
+                        AuditField::new("offset", "offset", AuditValue::Nullable),
+                        AuditField::new("next_offset", "next_offset", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -505,6 +586,24 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "read_conversation",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new(
+                            "conversation_id",
+                            "/conversation/conversation_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "participant_count",
+                            "participants",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("message_count", "messages", AuditValue::NullableCount),
+                        AuditField::new("after_seq", "after_seq", AuditValue::Nullable),
+                        AuditField::new("next_after_seq", "next_after_seq", AuditValue::Nullable),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -566,6 +665,24 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "post_conversation_message",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("message_id", "/message/message_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "conversation_id",
+                            "/message/conversation_id",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("seq", "/message/seq", AuditValue::Nullable),
+                        AuditField::new(
+                            "delivery_count",
+                            "/message/deliveries",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("replayed", "replayed", AuditValue::Nullable),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -644,6 +761,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "list_agent_inbox",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("agent_id", "agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "total_queued_count",
+                            "total_queued_count",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("returned_count", "deliveries", AuditValue::NullableCount),
+                        AuditField::new(
+                            "after_delivery_order",
+                            "after_delivery_order",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new(
+                            "next_after_delivery_order",
+                            "next_after_delivery_order",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("truncated", "truncated", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -713,6 +852,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "consume_agent_deliveries",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("agent_id", "agent_id", AuditValue::Nullable),
+                        AuditField::new(
+                            "consumed_count",
+                            "consumed_delivery_ids",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new(
+                            "already_consumed_count",
+                            "already_consumed_delivery_ids",
+                            AuditValue::NullableCount,
+                        ),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -773,6 +928,20 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "consume_agent_wake",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Fields(&[
+                        AuditField::new("wake_id", "wake_id", AuditValue::Nullable),
+                        AuditField::new("target_agent_id", "target_agent_id", AuditValue::Nullable),
+                        AuditField::new("state", "state", AuditValue::Nullable),
+                        AuditField::new("already_consumed", "already_consumed", AuditValue::Nullable),
+                        AuditField::new(
+                            "consumed_at_unix_ms",
+                            "consumed_at_unix_ms",
+                            AuditValue::Nullable,
+                        ),
+                        AuditField::new("state_changed", "state_changed", AuditValue::Nullable),
+                        AuditField::new("error_kind", "error_kind", AuditValue::Nullable),
+                    ]),
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),

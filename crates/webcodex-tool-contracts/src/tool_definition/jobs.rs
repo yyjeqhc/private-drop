@@ -27,14 +27,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "run_process",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::TestCounts,
                     request: AuditRequestPolicy {
                         fields: &[],
                         transform: AuditTransform::ProcessExecution,
-                        typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                            "sync_wait_secs",
-                            "sync_wait_secs",
-                            AuditValue::Copy,
-                        )], omit: &[] },
+                        typed: AuditTypedPolicy::Overrides {
+                            fields: &[AuditField::new(
+                                "sync_wait_secs",
+                                "sync_wait_secs",
+                                AuditValue::Copy,
+                            )],
+                            omit: &[],
+                        },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -64,6 +69,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "run_detached_process",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[],
                         transform: AuditTransform::DetachedExecution,
@@ -96,14 +103,19 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "run_script",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::TestCounts,
                 request: AuditRequestPolicy {
                     fields: &[],
                     transform: AuditTransform::ScriptExecution,
-                    typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                        "sync_wait_secs",
-                        "sync_wait_secs",
-                        AuditValue::Copy,
-                    )], omit: &[] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[AuditField::new(
+                            "sync_wait_secs",
+                            "sync_wait_secs",
+                            AuditValue::Copy,
+                        )],
+                        omit: &[],
+                    },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -130,6 +142,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "run_shell",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::TestCounts,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -138,14 +152,17 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                         AuditField::new("purpose", "purpose", AuditValue::Copy),
                         AuditField::new("shell", "shell", AuditValue::Copy),
                         AuditField::new("command_present", "command", AuditValue::KeyPresent),
-                        AuditField::new("command_summary", "command", AuditValue::Preview),
+                        AuditField::new("command_summary", "command", AuditValue::EphemeralPreview),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                        "command_present",
-                        "command",
-                        AuditValue::Present,
-                    )], omit: &[] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[AuditField::new(
+                            "command_present",
+                            "command",
+                            AuditValue::Present,
+                        )],
+                        omit: &[],
+                    },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -172,6 +189,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "open_session_shell",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -207,6 +226,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "session_shell_exec",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -217,14 +238,17 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("session_id", "session_id", AuditValue::Copy),
                             AuditField::new("shell_id", "shell_id", AuditValue::Copy),
                             AuditField::new("command_present", "command", AuditValue::KeyPresent),
-                            AuditField::new("command_summary", "command", AuditValue::Preview),
+                            AuditField::new("command_summary", "command", AuditValue::EphemeralPreview),
                         ],
                         transform: AuditTransform::Fields,
-                        typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                            "command_present",
-                            "command",
-                            AuditValue::Present,
-                        )], omit: &["cwd", "shell"] },
+                        typed: AuditTypedPolicy::Overrides {
+                            fields: &[AuditField::new(
+                                "command_present",
+                                "command",
+                                AuditValue::Present,
+                            )],
+                            omit: &["cwd", "shell"],
+                        },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -251,6 +275,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "session_shell_status",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -286,6 +312,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "close_session_shell",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -323,6 +351,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "run_job",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::TestCounts,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -331,14 +361,17 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                             AuditField::new("purpose", "purpose", AuditValue::Copy),
                             AuditField::new("shell", "shell", AuditValue::Copy),
                             AuditField::new("command_present", "command", AuditValue::KeyPresent),
-                            AuditField::new("command_summary", "command", AuditValue::Preview),
+                            AuditField::new("command_summary", "command", AuditValue::EphemeralPreview),
                         ],
                         transform: AuditTransform::Fields,
-                        typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                            "command_present",
-                            "command",
-                            AuditValue::Present,
-                        )], omit: &[] },
+                        typed: AuditTypedPolicy::Overrides {
+                            fields: &[AuditField::new(
+                                "command_present",
+                                "command",
+                                AuditValue::Present,
+                            )],
+                            omit: &[],
+                        },
                     },
                     result: AuditResultPolicy::SessionEvidence,
                 },
@@ -368,6 +401,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "stop_job",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -404,11 +439,17 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "job_status",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
-AuditField::new("job_id", "job_id", AuditValue::Copy),
-AuditField::new("include_command_preview", "include_command_preview", AuditValue::Copy),
-],
+                        AuditField::new("job_id", "job_id", AuditValue::Copy),
+                        AuditField::new(
+                            "include_command_preview",
+                            "include_command_preview",
+                            AuditValue::Copy,
+                        ),
+                    ],
                     transform: AuditTransform::Fields,
                     typed: AuditTypedPolicy::Omit,
                 },
@@ -437,13 +478,15 @@ AuditField::new("include_command_preview", "include_command_preview", AuditValue
         def(
             "job_log",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
-AuditField::new("job_id", "job_id", AuditValue::Copy),
-AuditField::new("offset", "offset", AuditValue::Copy),
-AuditField::new("tail_lines", "tail_lines", AuditValue::Copy),
-AuditField::new("wait_secs", "wait_secs", AuditValue::Copy),
-],
+                        AuditField::new("job_id", "job_id", AuditValue::Copy),
+                        AuditField::new("offset", "offset", AuditValue::Copy),
+                        AuditField::new("tail_lines", "tail_lines", AuditValue::Copy),
+                        AuditField::new("wait_secs", "wait_secs", AuditValue::Copy),
+                    ],
                     transform: AuditTransform::Fields,
                     typed: AuditTypedPolicy::Omit,
                 },
@@ -473,6 +516,8 @@ AuditField::new("wait_secs", "wait_secs", AuditValue::Copy),
             def(
                 "observe_jobs",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[],
                         transform: AuditTransform::JobObservation,
@@ -509,6 +554,8 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "list_jobs",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("limit", "limit", AuditValue::Copy),
@@ -545,11 +592,13 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
     def(
         "job_tail",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[
-AuditField::new("job_id", "job_id", AuditValue::Copy),
-AuditField::new("tail_lines", "tail_lines", AuditValue::Copy),
-],
+                    AuditField::new("job_id", "job_id", AuditValue::Copy),
+                    AuditField::new("tail_lines", "tail_lines", AuditValue::Copy),
+                ],
                 transform: AuditTransform::Fields,
                 typed: AuditTypedPolicy::Omit,
             },

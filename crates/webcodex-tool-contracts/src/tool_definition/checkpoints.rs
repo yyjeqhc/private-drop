@@ -20,6 +20,22 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "workspace_checkpoint_create",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Fields(&[
+                    AuditField::new("checkpoint_id", "checkpoint_id", AuditValue::Copy),
+                    AuditField::new("head", "head", AuditValue::Copy),
+                    AuditField::new("branch", "branch", AuditValue::Copy),
+                    AuditField::new("complete", "complete", AuditValue::Copy),
+                    AuditField::new("tracked_diff_bytes", "tracked_diff_bytes", AuditValue::Copy),
+                    AuditField::new("staged_diff_bytes", "staged_diff_bytes", AuditValue::Copy),
+                    AuditField::new(
+                        "untracked_file_count",
+                        "untracked_file_count",
+                        AuditValue::Copy,
+                    ),
+                    AuditField::new("status_summary", "status_summary", AuditValue::Copy),
+                    AuditField::new("kind", "kind", AuditValue::Copy),
+                ]),
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[],
                     transform: AuditTransform::Checkpoint,
@@ -50,6 +66,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "workspace_checkpoint_list",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -83,6 +101,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "workspace_checkpoint_show",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -118,6 +138,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "workspace_checkpoint_restore",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -154,6 +176,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "workspace_checkpoint_delete",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),

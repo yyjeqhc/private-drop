@@ -18,6 +18,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "lsp_status",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[AuditField::new("project", "project", AuditValue::Copy)],
                     transform: AuditTransform::Fields,
@@ -48,6 +50,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "document_symbols",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -82,6 +86,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "document_diagnostics",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -116,6 +122,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "hover",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -151,6 +159,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "workspace_symbols",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -185,6 +195,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "goto_definition",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -221,6 +233,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "find_references",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -262,6 +276,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "call_hierarchy",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),

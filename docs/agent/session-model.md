@@ -352,6 +352,16 @@ return the complete current context. Context changes record bounded structured
 metadata only; no command, environment, token, or secret content is added to
 the audit ledger.
 
+### Canonical audit privacy policy
+
+Generic recording and restore consume `ToolDefinition.audit`: request rules,
+result evidence projection, final context selection, and execution-excerpt
+eligibility are declared together. Session owns final bounds, secret redaction,
+and evidence reduction, not a separate tool-name privacy registry. Missing or
+invalid policy omits the raw payload. Canonical evidence remains distinct from
+terminal model projection and cannot supply execution or Session authority.
+See [Tool Audit and Session privacy](../architecture/tool-audit-privacy.md).
+
 ### Full-runtime coding continuity
 
 `work_on_project` is the canonical external full-runtime start-or-continue

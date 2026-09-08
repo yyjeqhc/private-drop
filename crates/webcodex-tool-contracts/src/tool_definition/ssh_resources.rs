@@ -10,12 +10,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
     def(
         "ssh_resource",
         ToolAuditPolicy {
+            context: AuditContextPolicy::Omit,
+            execution: AuditExecutionPolicy::Omit,
             request: AuditRequestPolicy {
                 fields: &[],
                 transform: AuditTransform::Fields,
                 typed: AuditTypedPolicy::Omit,
             },
-            result: AuditResultPolicy::Fields(&[]),
+            result: AuditResultPolicy::Omit,
         },
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,

@@ -24,6 +24,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "save_project_artifact",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -37,11 +39,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                        "content_base64_present",
-                        "content_base64",
-                        AuditValue::Present,
-                    )], omit: &[] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[AuditField::new(
+                            "content_base64_present",
+                            "content_base64",
+                            AuditValue::Present,
+                        )],
+                        omit: &[],
+                    },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -71,6 +76,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "import_conversation_files_to_project",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -110,12 +117,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         def(
             "export_project_artifact",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
-AuditField::new("project", "project", AuditValue::Copy),
-AuditField::new("path", "path", AuditValue::Copy),
-AuditField::new("session_id", "session_id", AuditValue::Copy),
-],
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    ],
                     transform: AuditTransform::Fields,
                     typed: AuditTypedPolicy::Omit,
                 },
@@ -144,6 +153,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
         def(
             "read_project_artifact_metadata",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -178,6 +189,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
         def(
             "read_project_artifact",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -215,6 +228,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
         def(
             "artifact_upload_begin",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -229,11 +244,14 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                        "expected_sha256_present",
-                        "expected_sha256",
-                        AuditValue::Present,
-                    )], omit: &[] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[AuditField::new(
+                            "expected_sha256_present",
+                            "expected_sha256",
+                            AuditValue::Present,
+                        )],
+                        omit: &[],
+                    },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -260,6 +278,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
         def(
             "artifact_upload_chunk",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -273,11 +293,14 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
                         ),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                        "content_base64_present",
-                        "content_base64",
-                        AuditValue::Present,
-                    )], omit: &[] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[AuditField::new(
+                            "content_base64_present",
+                            "content_base64",
+                            AuditValue::Present,
+                        )],
+                        omit: &[],
+                    },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -305,6 +328,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
             def(
             "artifact_upload_finish",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -342,6 +367,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
             def(
             "artifact_upload_abort",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),

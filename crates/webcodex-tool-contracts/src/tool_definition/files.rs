@@ -21,6 +21,8 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "project_overview",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -56,6 +58,8 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "list_project_files",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -90,16 +94,18 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "list_project_tracked_files",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
-AuditField::new("project", "project", AuditValue::Copy),
-AuditField::new("path", "path", AuditValue::Copy),
-AuditField::new("globs", "globs", AuditValue::Copy),
-AuditField::new("depth", "depth", AuditValue::Copy),
-AuditField::new("limit", "limit", AuditValue::Copy),
-AuditField::new("offset", "offset", AuditValue::Copy),
-AuditField::new("session_id", "session_id", AuditValue::Copy),
-],
+                        AuditField::new("project", "project", AuditValue::Copy),
+                        AuditField::new("path", "path", AuditValue::Copy),
+                        AuditField::new("globs", "globs", AuditValue::Copy),
+                        AuditField::new("depth", "depth", AuditValue::Copy),
+                        AuditField::new("limit", "limit", AuditValue::Copy),
+                        AuditField::new("offset", "offset", AuditValue::Copy),
+                        AuditField::new("session_id", "session_id", AuditValue::Copy),
+                    ],
                     transform: AuditTransform::Fields,
                     typed: AuditTypedPolicy::Omit,
                 },
@@ -130,6 +136,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
         def(
             "search_project_text",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -144,11 +152,14 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
                         AuditField::new("pattern_present", "pattern", AuditValue::KeyPresent),
                     ],
                     transform: AuditTransform::Fields,
-                    typed: AuditTypedPolicy::Overrides { fields: &[AuditField::new(
-                        "pattern_present",
-                        "pattern",
-                        AuditValue::Present,
-                    )], omit: &[] },
+                    typed: AuditTypedPolicy::Overrides {
+                        fields: &[AuditField::new(
+                            "pattern_present",
+                            "pattern",
+                            AuditValue::Present,
+                        )],
+                        omit: &[],
+                    },
                 },
                 result: AuditResultPolicy::SessionEvidence,
             },
@@ -176,6 +187,8 @@ AuditField::new("session_id", "session_id", AuditValue::Copy),
             def(
                 "search_project_texts",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
@@ -215,6 +228,8 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
         def(
             "read_file",
             ToolAuditPolicy {
+                context: AuditContextPolicy::Omit,
+                execution: AuditExecutionPolicy::Omit,
                 request: AuditRequestPolicy {
                     fields: &[
                         AuditField::new("project", "project", AuditValue::Copy),
@@ -252,6 +267,8 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "read_files",
                 ToolAuditPolicy {
+                    context: AuditContextPolicy::Omit,
+                    execution: AuditExecutionPolicy::Omit,
                     request: AuditRequestPolicy {
                         fields: &[
                             AuditField::new("project", "project", AuditValue::Copy),
