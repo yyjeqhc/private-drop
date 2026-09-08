@@ -267,6 +267,77 @@ fn update(
 }
 
 #[tokio::test]
+async fn terminal_protocol_violation_during_recovery_keeps_execution_terminal_authoritative() {
+    let registry = RunnerRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
+    registry
+        .update_job(update(INSTANCE_A, &job.job_id, 1, "running", None, false))
+        .await
+        .unwrap();
+    registry.reconcile_disconnect(CLIENT_ID, INSTANCE_A).await;
+
+    {
+        let inner = registry.inner.lock().await;
+        let record = inner.jobs_by_id.get(&job.job_id).unwrap();
+        assert_eq!(record.lifecycle, JobLifecycleState::Running);
+        assert_eq!(record.recovery.phase, Some(JobRecoveryPhase::Recovering));
+        assert!(record.recovery_active());
+    }
+
+    // A same-instance sequenced update while recovering must carry an
+    // authoritative log snapshot. Deliberately attach validation progress to a
+    // non-validation Job so executor protocol validation terminalizes it.
+    let mut invalid = update(INSTANCE_A, &job.job_id, 2, "running", None, false);
+    invalid.log_snapshot = Some(ShellJobLogSnapshot {
+        stdout: ShellJobStreamSnapshot::default(),
+        stderr: ShellJobStreamSnapshot::default(),
+    });
+    invalid.validation_progress = Some(ShellJobValidationProgress {
+        completed: 0,
+        current_step: None,
+        failed_step: None,
+    });
+    let failed = registry.update_job(invalid).await.unwrap();
+    assert_eq!(failed.status, "failed");
+    assert_eq!(failed.recovery_state.as_deref(), Some("recovering"));
+    assert!(failed
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("executor protocol violation")));
+
+    {
+        let mut inner = registry.inner.lock().await;
+        let record = inner.jobs_by_id.get_mut(&job.job_id).unwrap();
+        assert_eq!(record.lifecycle, JobLifecycleState::Failed);
+        assert_eq!(record.recovery.phase, Some(JobRecoveryPhase::Recovering));
+        assert!(
+            !record.recovery_active(),
+            "terminal execution lifecycle must fence retained recovery metadata"
+        );
+        record.recovery.recovering_since = Some(now_ts() - job_recovery_grace_secs() - 1);
+    }
+
+    // Terminal Job operations must retain the pre-refactor behavior even though
+    // the compatibility recovery metadata is still projected.
+    let stopped = registry
+        .stop_job(&job.job_id, "tester".to_string())
+        .await
+        .unwrap();
+    assert_eq!(stopped.status, "failed");
+    let duplicate = registry
+        .update_job(update(INSTANCE_A, &job.job_id, 3, "running", None, false))
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status, "failed");
+
+    recovery_timeout_sweep(&registry).await;
+    let after_sweep = registry.get_job(&job.job_id).await.unwrap();
+    assert_eq!(after_sweep.status, "failed");
+    assert_eq!(after_sweep.recovery_state.as_deref(), Some("recovering"));
+}
+
+#[tokio::test]
 async fn validation_progress_accepts_coalesced_sequence_gaps_without_skipping_steps() {
     let registry = RunnerRegistry::default();
     register(&registry, INSTANCE_A, empty_inventory()).await;

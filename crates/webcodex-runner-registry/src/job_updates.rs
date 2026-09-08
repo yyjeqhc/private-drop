@@ -1269,7 +1269,7 @@ impl RunnerRegistry {
             .get_mut(job_id)
             .expect("job exists")
             .visibility = ShellJobVisibility::CleanupPending;
-        if !job.recovery.recovering()
+        if !job.recovery_active()
             && job.lifecycle.is_runner_active()
             && job.lifecycle != JobLifecycleState::StopRequested
         {
@@ -1772,7 +1772,7 @@ impl RunnerRegistry {
         {
             return Err(format!("unknown shell job: {}", job_id));
         }
-        if job.recovery.recovering() {
+        if job.recovery_active() {
             return Err(
                 "runner_unavailable_recovering: wait for same-instance job reconciliation before retrying stop_job"
                     .to_string(),
@@ -1799,9 +1799,7 @@ impl RunnerRegistry {
             JobLifecycleState::StopRequested => {
                 Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists")))
             }
-            JobLifecycleState::RunnerQueued
-            | JobLifecycleState::StartedLegacy
-            | JobLifecycleState::Running => {
+            JobLifecycleState::RunnerQueued | JobLifecycleState::Running => {
                 let stop_request_id = next_request_id();
                 let client_id = job.client_id.clone();
                 let request = RunnerRequest::from_operation(
@@ -1997,7 +1995,7 @@ impl RunnerRegistry {
                         .to_string(),
                 );
             }
-            if job.recovery.recovering() && sequenced && body.log_snapshot.is_none() {
+            if job.recovery_active() && sequenced && body.log_snapshot.is_none() {
                 return Err(
                     "recovering job update requires an authoritative log_snapshot or register inventory"
                         .to_string(),
@@ -2046,7 +2044,7 @@ impl RunnerRegistry {
                 }
                 request_id_to_remove = job.request_id.clone();
             } else {
-                let was_recovering = job.recovery.recovering();
+                let was_recovering = job.recovery_active();
                 if let Some(snapshot) = body.log_snapshot {
                     super::jobs::replace_log_from_snapshot(&mut job.stdout, &snapshot.stdout);
                     super::jobs::replace_log_from_snapshot(&mut job.stderr, &snapshot.stderr);

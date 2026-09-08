@@ -7,7 +7,7 @@ fn typed_job_lifecycle_preserves_exact_wire_contract_and_rejects_unknown() {
     let cases = [
         ("queued", JobLifecycleState::Queued, false, false),
         ("agent_queued", JobLifecycleState::RunnerQueued, false, true),
-        ("started", JobLifecycleState::StartedLegacy, false, true),
+        ("started", JobLifecycleState::StartedLegacy, false, false),
         ("running", JobLifecycleState::Running, false, true),
         (
             "stop_requested",
@@ -32,6 +32,10 @@ fn typed_job_lifecycle_preserves_exact_wire_contract_and_rejects_unknown() {
     }
     assert!(JobLifecycleState::from_wire("recovering").is_err());
     assert!(JobLifecycleState::from_wire("mystery").is_err());
+    assert!(JobLifecycleState::Queued.is_active());
+    assert!(JobLifecycleState::StartedLegacy.is_active());
+    assert!(JobLifecycleState::RunnerQueued.is_active());
+    assert!(!JobLifecycleState::Completed.is_active());
 }
 
 #[tokio::test]

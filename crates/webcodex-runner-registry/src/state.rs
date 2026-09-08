@@ -331,15 +331,19 @@ impl JobLifecycleState {
         )
     }
 
+    /// Runner-owned active execution states. `StartedLegacy` is deliberately
+    /// excluded: the historical public vocabulary treats it as broadly active,
+    /// but it never participated in Runner recovery, reconciliation, or stop
+    /// delivery semantics.
     pub(super) const fn is_runner_active(self) -> bool {
         matches!(
             self,
-            Self::RunnerQueued | Self::StartedLegacy | Self::Running | Self::StopRequested
+            Self::RunnerQueued | Self::Running | Self::StopRequested
         )
     }
 
     pub(super) const fn is_active(self) -> bool {
-        matches!(self, Self::Queued) || self.is_runner_active()
+        matches!(self, Self::Queued | Self::StartedLegacy) || self.is_runner_active()
     }
 }
 
@@ -434,6 +438,9 @@ pub(super) struct JobObservationState {
     pub(super) epoch: Arc<str>,
     pub(super) revision: Arc<AtomicU64>,
     pub(super) notify: Arc<Notify>,
+    /// First time this Server process observed the Job in a terminal execution
+    /// lifecycle. Runner-reported `ended_at` remains the public execution time
+    /// and never controls Server registry retention.
     pub(super) terminal_observed_at: Option<i64>,
 }
 
@@ -493,10 +500,6 @@ pub(super) struct ShellJobRecord {
     pub(super) created_at: i64,
     pub(super) started_at: Option<i64>,
     pub(super) ended_at: Option<i64>,
-    /// Server-process-local lifecycle clock: the first time this Server
-    /// observed the Job in a terminal state. Runner-reported execution
-    /// timestamps remain in `ended_at` for public results and diagnostics,
-    /// but never control Server registry retention.
     pub(super) exit_code: Option<i32>,
     pub(super) duration_ms: Option<u64>,
     pub(super) stdout: ShellJobLogState,
@@ -520,8 +523,16 @@ pub(super) struct ShellJobRecord {
 }
 
 impl ShellJobRecord {
+    /// Recovery is an orthogonal provenance/availability dimension, but it only
+    /// controls active-Job behavior while the underlying execution lifecycle is
+    /// still Runner-owned. A terminal lifecycle remains authoritative even when
+    /// compatibility recovery metadata from the preceding disconnect is retained.
+    pub(super) fn recovery_active(&self) -> bool {
+        self.lifecycle.is_runner_active() && self.recovery.recovering()
+    }
+
     pub(super) fn public_status(&self) -> &'static str {
-        if self.recovery.recovering() {
+        if self.recovery_active() {
             "recovering"
         } else {
             self.lifecycle.as_wire()

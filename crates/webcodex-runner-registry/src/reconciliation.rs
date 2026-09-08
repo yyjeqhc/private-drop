@@ -573,7 +573,7 @@ pub(super) fn preflight_inventory_locked(
             ));
         }
         let would_apply = snapshot.update_seq > existing.last_update_seq
-            || (snapshot.update_seq == existing.last_update_seq && existing.recovery.recovering());
+            || (snapshot.update_seq == existing.last_update_seq && existing.recovery_active());
         if !existing.lifecycle.is_terminal() && would_apply {
             let existing_progress = existing
                 .validation_progress
@@ -868,7 +868,7 @@ pub(super) fn expire_recovering_jobs_locked(
         .jobs_by_id
         .iter()
         .filter_map(|(job_id, job)| {
-            if !job.recovery.recovering() {
+            if !job.recovery_active() {
                 return None;
             }
             if let Some(client_id) = client_filter {
@@ -907,7 +907,7 @@ pub(super) fn expire_recovering_jobs_locked(
             // interleave (we hold the mutex for the whole call), but the filter
             // above ran on borrowed references; defend against the job having
             // already left `recovering` by any path.
-            if job.recovery.recovering() {
+            if job.recovery_active() {
                 mark_job_lost(
                     job,
                     now,
@@ -1038,7 +1038,7 @@ pub(super) fn reconcile_inventory_locked(
                 continue;
             }
             if snapshot.update_seq == existing.last_update_seq
-                && !existing.recovery.recovering()
+                && !existing.recovery_active()
                 && !detached_instance_transfer
             {
                 continue;

@@ -619,7 +619,7 @@ pub(super) fn refresh_job_status_locked(inner: &mut RunnerRegistryInner, job_id:
     if job.lifecycle.is_terminal() || !job.lifecycle.is_runner_active() {
         return;
     }
-    if job.recovery.recovering() {
+    if job.recovery_active() {
         let expired = job.recovery.recovering_since.is_some_and(|since| {
             now_ts().saturating_sub(since) >= super::job_recovery_grace_secs()
         });
