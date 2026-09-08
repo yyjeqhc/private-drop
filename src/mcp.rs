@@ -426,6 +426,28 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     };
     guard.set_client_window(window.identity.as_ref());
     guard.parsed("ok");
+    let server_trace_id = guard.correlation_trace_id();
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let live_principal = crate::tool_runtime::runtime_observation_principal(auth.as_ref()).ok();
+    let window_registry = runtime.window_activity_registry();
+    let live_window_request =
+        if request.id.is_some() && matches!(request.method.as_str(), "tools/call" | "tools/list") {
+            window.identity.as_ref().map(|identity| {
+                window_registry.start(
+                    identity,
+                    &server_trace_id,
+                    &request.method,
+                    live_principal
+                        .as_ref()
+                        .map(|(kind, id)| (kind.as_str(), id.as_str())),
+                )
+            })
+        } else {
+            None
+        };
+    if let (Some(active), Some(tool_name)) = (live_window_request.as_ref(), tool_name.as_deref()) {
+        active.update(Some(tool_name), None);
+    }
 
     // Chat-window MCP tool calls must land in the action audit exactly like
     // the REST surface (they were previously invisible there). Summary-level
@@ -434,35 +456,60 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     // represented as executed actions.
     let audit = if request.method == "tools/call" && request.id.is_some() {
         Some((
-            ActionAudit::start(req, depot, "/mcp", "toolsCall"),
+            ActionAudit::start(req, depot, "/mcp", "toolsCall")
+                .with_window(window.identity.as_ref(), Some(&server_trace_id)),
             tool_name.clone().unwrap_or_else(|| "unknown".to_string()),
             tools::project_from_tool_call_params(&request.params),
         ))
     } else {
         None
     };
-    let record_audit = |success: bool,
-                        status: StatusCode,
-                        error: Option<String>,
-                        model_ergonomics: Option<&ModelErgonomicsRecord>| {
-        if let Some((audit, tool, project)) = audit.as_ref() {
-            let mut summary = json!({ "transport": "mcp" });
-            if let Some(telemetry) =
-                model_ergonomics.and_then(|record| serde_json::to_value(record).ok())
-            {
-                summary["model_ergonomics"] = telemetry;
+    let record_audit =
+        |success: bool,
+         status: StatusCode,
+         error: Option<String>,
+         model_ergonomics: Option<&ModelErgonomicsRecord>,
+         correlation: &crate::tool_runtime::ToolCallCorrelation| {
+            if let Some((audit, tool, project)) = audit.as_ref() {
+                let mut summary = json!({ "transport": "mcp" });
+                if let Some(telemetry) =
+                    model_ergonomics.and_then(|record| serde_json::to_value(record).ok())
+                {
+                    summary["model_ergonomics"] = telemetry;
+                }
+                let mut event = ActionAuditRecord::new(tool.clone(), success, status)
+                    .error(error)
+                    .summary(summary)
+                    .meaningful(crate::tool_runtime::is_meaningful_activity_tool(tool))
+                    .recorder_gap(correlation.recorder_gap_session_id.clone());
+                event.project = correlation
+                    .resolved_project
+                    .clone()
+                    .or_else(|| project.clone());
+                for link in &correlation.workflow_sessions {
+                    let relation = match link.relation {
+                        crate::tool_runtime::WorkflowSessionCorrelationRelation::Recording => {
+                            crate::action_audit_sessions::WorkflowSessionRelation::Recording
+                        }
+                        crate::tool_runtime::WorkflowSessionCorrelationRelation::WorkOnProject => {
+                            crate::action_audit_sessions::WorkflowSessionRelation::WorkOnProject
+                        }
+                    };
+                    event = event.workflow_link(
+                        link.session_id.clone(),
+                        relation,
+                        link.project.clone(),
+                    );
+                }
+                audit.record(event);
             }
-            let mut event = ActionAuditRecord::new(tool.clone(), success, status)
-                .error(error)
-                .summary(summary);
-            event.project = project.clone();
-            audit.record(event);
-        }
-    };
+        };
 
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let tools_list_audit = if request.method == "tools/list" && request.id.is_some() {
-        Some(ActionAudit::start(req, depot, "/mcp", "toolsList"))
+        Some(
+            ActionAudit::start(req, depot, "/mcp", "toolsList")
+                .with_window(window.identity.as_ref(), Some(&server_trace_id)),
+        )
     } else {
         None
     };
@@ -491,6 +538,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         } else {
             tool_name.as_deref().and_then(ModelErgonomicsTimer::start)
         };
+    let mut tool_correlation = crate::tool_runtime::ToolCallCorrelation::default();
     let mut model_ergonomics = None;
     let active_trace_id = guard.active_trace_id();
     // Keep the complete MCP dispatch future off the current thread's stack. The
@@ -512,6 +560,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 Some(&mut guard),
                 Some(&mut model_ergonomics),
                 compact_schemas,
+                Some(&mut tool_correlation),
             )),
         ),
     )
@@ -551,6 +600,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Some("mcp dispatch hard timeout".to_string()),
                 timeout_model_ergonomics.as_ref(),
+                &tool_correlation,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -561,6 +611,13 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             return;
         }
     };
+
+    if let (Some(active), Some(project)) = (
+        live_window_request.as_ref(),
+        tool_correlation.resolved_project.as_deref(),
+    ) {
+        active.update(None, Some(project));
+    }
 
     if let Some(audit) = tools_list_audit.as_ref() {
         match &outcome {
@@ -656,6 +713,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                         .map(str::to_string)
                 },
                 model_ergonomics.as_ref(),
+                &tool_correlation,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -664,7 +722,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             guard.handler_returned(200, estimated, Some(true), tool_success, "ok");
         }
         McpOutcome::ArtifactExportStream { id, plan } => {
-            record_audit(true, StatusCode::OK, None, None);
+            record_audit(true, StatusCode::OK, None, None, &tool_correlation);
             guard.response_serialized(200, None, Some(true), None, "artifact_export_stream");
             res.status_code(StatusCode::OK);
             let _ = res.add_header("content-type", "application/json", true);
@@ -682,6 +740,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 StatusCode::BAD_REQUEST,
                 body["error"]["message"].as_str().map(str::to_string),
                 model_ergonomics.as_ref(),
+                &tool_correlation,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -696,6 +755,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 StatusCode::NOT_FOUND,
                 body["error"]["message"].as_str().map(str::to_string),
                 model_ergonomics.as_ref(),
+                &tool_correlation,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -716,6 +776,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                     required_scope.unwrap_or("unknown")
                 )),
                 model_ergonomics.as_ref(),
+                &tool_correlation,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -765,6 +826,7 @@ async fn handle_mcp_request(
         None,
         None,
         compact_schemas,
+        None,
     )
     .await;
     match outcome {
@@ -793,6 +855,7 @@ async fn handle_mcp_request_with_lifecycle(
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
     mut model_ergonomics_out: Option<&mut Option<ModelErgonomicsRecord>>,
     compact_schemas: bool,
+    mut correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
 ) -> McpOutcome {
     let stateless_2026 = protocol_era == McpProtocolEra::Stateless2026;
     let runtime_exposure = runtime.runtime_exposure();
@@ -927,6 +990,7 @@ async fn handle_mcp_request_with_lifecycle(
                 window,
                 lifecycle.as_deref_mut(),
                 model_ergonomics_out.as_deref_mut(),
+                correlation_out.as_deref_mut(),
             )
             .await;
         }

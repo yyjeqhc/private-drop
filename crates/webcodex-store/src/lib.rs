@@ -21,6 +21,7 @@ mod oauth;
 mod schema;
 mod server_instance;
 mod task_kernel;
+mod window_activity;
 
 pub use self::admin_project_lifecycle::{AdminProjectAudit, AdminProjectIdempotencyRecord};
 pub use self::agent_task::{
@@ -86,6 +87,7 @@ pub use self::task_kernel::{
     ConnectorWorkspaceTransition, GuidanceReadState, LocalReviewableTask, NewConnectorResult,
     NewConnectorTask, WindowProjectActivation,
 };
+pub use self::window_activity::{MAX_WINDOW_ACTIVITY_LIMIT, MAX_WINDOW_LINK_LIMIT};
 pub struct Database {
     conn: Mutex<Connection>,
     state_path: PathBuf,

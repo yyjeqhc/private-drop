@@ -20,6 +20,65 @@ use crate::tool_runtime::{
 use serde_json::{json, Value};
 use std::path::Path;
 
+fn record_window_activity_fixture(
+    db: &std::sync::Arc<crate::Database>,
+    auth: &crate::auth::AuthContext,
+    window_id: &str,
+    project: &str,
+    operation: &str,
+    linked_session: Option<(&str, crate::action_audit_sessions::WorkflowSessionRelation)>,
+    recorder_gap_session_id: Option<&str>,
+    at_ms: i64,
+) {
+    let window = crate::client_window::ClientWindow::for_test(window_id);
+    let (principal_kind, principal_id) =
+        crate::tool_runtime::runtime_observation_principal(Some(auth)).unwrap();
+    crate::action_audit_sessions::record_action_event(
+        db,
+        crate::action_audit_sessions::ActionAuditEventInput {
+            explicit_session_id: None,
+            session_title: None,
+            endpoint: "/mcp".to_string(),
+            action_name: "toolsCall".to_string(),
+            operation: Some(operation.to_string()),
+            project: Some(project.to_string()),
+            principal_kind: None,
+            principal_user_id: None,
+            oauth_client_id: None,
+            status: "success".to_string(),
+            http_status: Some(200),
+            started_at: at_ms / 1000,
+            ended_at: at_ms / 1000,
+            duration_ms: 1,
+            error_summary: None,
+            warning_summary: None,
+            changed_files: Vec::new(),
+            ids: json!({}),
+            summary: json!({}),
+            request_bytes: None,
+            response_bytes: None,
+            client_window_key: Some(window.key().to_string()),
+            client_window_source: Some(window.source().to_string()),
+            server_trace_id: Some(format!("fixture-{at_ms}")),
+            principal_correlation_kind: Some(principal_kind),
+            principal_correlation_id: Some(principal_id),
+            window_started_at_ms: Some(at_ms),
+            window_ended_at_ms: Some(at_ms + 1),
+            window_meaningful: true,
+            recorder_gap_session_id: recorder_gap_session_id.map(str::to_string),
+            workflow_links: linked_session
+                .map(|(session_id, relation)| {
+                    vec![crate::action_audit_sessions::ActionAuditWorkflowLinkInput {
+                        workflow_session_id: session_id.to_string(),
+                        relation,
+                        project: Some(project.to_string()),
+                    }]
+                })
+                .unwrap_or_default(),
+        },
+    );
+}
+
 fn work_on_project_call(project: &str, instruction: &str, session_id: Option<&str>) -> ToolCall {
     work_on_project_call_with_projections(project, instruction, session_id, true, true)
 }
@@ -917,6 +976,30 @@ fn work_on_project_projection_fails_closed_when_required_field_is_missing() {
 }
 
 #[test]
+fn work_on_project_projection_emits_typed_window_session_correlation() {
+    let mut correlation = crate::tool_runtime::ToolCallCorrelation::default();
+    let result =
+        crate::tool_runtime::coding_task::project_work_on_project_output_with_correlation_for_test(
+            SAMPLE_PROJECT.to_string(),
+            valid_work_on_project_projection_input(),
+            &mut correlation,
+        );
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(
+        correlation.resolved_project.as_deref(),
+        Some("agent:wop:demo")
+    );
+    assert_eq!(correlation.workflow_sessions.len(), 1);
+    let link = &correlation.workflow_sessions[0];
+    assert_eq!(link.session_id, "wc_sess_projection");
+    assert_eq!(link.project.as_deref(), Some("agent:wop:demo"));
+    assert_eq!(
+        link.relation,
+        crate::tool_runtime::WorkflowSessionCorrelationRelation::WorkOnProject
+    );
+}
+
+#[test]
 fn work_on_project_projection_fails_closed_for_wrong_field_type() {
     let mut output = valid_work_on_project_projection_input();
     output["workspace"]["conflicts"] = json!("0");
@@ -1260,6 +1343,232 @@ async fn work_on_project_without_session_id_always_creates_fresh_session() {
             .len(),
         second_before
     );
+}
+
+#[tokio::test]
+async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger() {
+    let root = tempfile::tempdir().unwrap();
+    let audit_root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let window_db = std::sync::Arc::new(
+        crate::Database::open(&audit_root.path().join("window-activity.db")).unwrap(),
+    );
+    let runtime = ToolRuntime::new_for_tests().with_window_activity_database(window_db.clone());
+    let project = register_runner_project_at_path(&runtime, "wop-gap", "demo", root.path()).await;
+    let auth = auth_context(None, true);
+    let window_id = "wop-recorder-gap-window";
+    let window = crate::client_window::ClientWindow::for_test(window_id);
+
+    // T1: the first work_on_project creates S and establishes the canonical
+    // Window <-> Session relation even though no outer recorder existed yet.
+    let created = dispatch_coding_call_in_window(
+        &runtime,
+        "wop-gap",
+        work_on_project_call("demo", "create recorder-gap fixture", None),
+        Some(&auth),
+        window_id,
+    )
+    .await;
+    assert!(created.success, "{:?}", created.error);
+    let session_id = created.output["session_id"].as_str().unwrap().to_string();
+    record_window_activity_fixture(
+        &window_db,
+        &auth,
+        window_id,
+        &project,
+        "work_on_project",
+        Some((
+            &session_id,
+            crate::action_audit_sessions::WorkflowSessionRelation::WorkOnProject,
+        )),
+        None,
+        1_000,
+    );
+
+    // T2: an explicitly authorized outer recorder advances S normally.
+    let recorded = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "workspace_hygiene_check".to_string(),
+                arguments: json!({"project": project.clone()}),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Mcp,
+                session_id: Some(&session_id),
+                auth: Some(&auth),
+                window: Some(&window),
+                record_oauth_scope_denials: true,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    assert!(recorded.success, "{:?}", recorded.error_status);
+    assert!(recorded.correlation.recorder_gap_session_id.is_none());
+    assert!(recorded.correlation.workflow_sessions.iter().any(|link| {
+        link.session_id == session_id
+            && link.relation == crate::tool_runtime::WorkflowSessionCorrelationRelation::Recording
+    }));
+    record_window_activity_fixture(
+        &window_db,
+        &auth,
+        window_id,
+        &project,
+        "workspace_hygiene_check",
+        Some((
+            &session_id,
+            crate::action_audit_sessions::WorkflowSessionRelation::Recording,
+        )),
+        None,
+        2_000,
+    );
+    let recorded_event_count = runtime
+        .sessions
+        .summary(&session_id, Some(200))
+        .unwrap()
+        .events
+        .len();
+
+    // T3: omitting recording_session_id does not block business execution and
+    // does not forge a Session event. The exact same Window/principal/Project
+    // affinity produces a bounded recovery hint and a Window-only gap fact.
+    let unrecorded = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "workspace_hygiene_check".to_string(),
+                arguments: json!({"project": project.clone()}),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Mcp,
+                session_id: None,
+                auth: Some(&auth),
+                window: Some(&window),
+                record_oauth_scope_denials: true,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    assert!(unrecorded.success, "{:?}", unrecorded.error_status);
+    assert_eq!(
+        unrecorded.correlation.recorder_gap_session_id.as_deref(),
+        Some(session_id.as_str())
+    );
+    let unrecorded_result = unrecorded.result.as_ref().expect("tool result");
+    assert_eq!(
+        unrecorded_result.output["workflow_recording_attention"]["status"],
+        "recording_session_missing"
+    );
+    assert_eq!(
+        unrecorded_result.output["workflow_recording_attention"]["candidate_session_id"],
+        session_id
+    );
+    assert_eq!(
+        unrecorded_result.output["workflow_recording_attention"]["project"],
+        project
+    );
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(&session_id, Some(200))
+            .unwrap()
+            .events
+            .len(),
+        recorded_event_count,
+        "missing recorder must not backfill or mutate the Workflow Session ledger"
+    );
+    record_window_activity_fixture(
+        &window_db,
+        &auth,
+        window_id,
+        &project,
+        "workspace_hygiene_check",
+        None,
+        unrecorded.correlation.recorder_gap_session_id.as_deref(),
+        3_000,
+    );
+
+    let (principal_kind, principal_id) =
+        crate::tool_runtime::runtime_observation_principal(Some(&auth)).unwrap();
+    let window_rows = window_db
+        .list_window_activity_events(window.key(), Some((&principal_kind, &principal_id)), 20)
+        .unwrap();
+    assert_eq!(
+        window_rows
+            .iter()
+            .filter(|event| event.recorder_gap_session_id.as_deref() == Some(session_id.as_str()))
+            .count(),
+        1
+    );
+
+    // T4: explicitly echoing S restores normal recording. The original gap is
+    // retained as history, but does not propagate to the recovered call.
+    // The synthetic Runner has a 60-second keepalive fence and this fixture
+    // deliberately exercises multiple real startup/tool paths. Refresh only the
+    // test Runner registration so T4 verifies recorder recovery rather than the
+    // unrelated offline timeout.
+    let refreshed_project =
+        register_runner_project_at_path(&runtime, "wop-gap", "demo", root.path()).await;
+    assert_eq!(refreshed_project, project);
+    let recovered = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "workspace_hygiene_check".to_string(),
+                arguments: json!({"project": project.clone()}),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Mcp,
+                session_id: Some(&session_id),
+                auth: Some(&auth),
+                window: Some(&window),
+                record_oauth_scope_denials: true,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    assert!(
+        recovered.success,
+        "transport={:?} result={:?}",
+        recovered.error_status, recovered.result
+    );
+    assert!(recovered.correlation.recorder_gap_session_id.is_none());
+    assert!(
+        runtime
+            .sessions
+            .summary(&session_id, Some(200))
+            .unwrap()
+            .events
+            .len()
+            > recorded_event_count
+    );
+    record_window_activity_fixture(
+        &window_db,
+        &auth,
+        window_id,
+        &project,
+        "workspace_hygiene_check",
+        Some((
+            &session_id,
+            crate::action_audit_sessions::WorkflowSessionRelation::Recording,
+        )),
+        None,
+        4_000,
+    );
+    let final_rows = window_db
+        .list_window_activity_events(window.key(), Some((&principal_kind, &principal_id)), 20)
+        .unwrap();
+    assert_eq!(
+        final_rows
+            .iter()
+            .filter(|event| event.recorder_gap_session_id.is_some())
+            .count(),
+        1,
+        "recorder recovery must not propagate the prior gap"
+    );
+    let affinity = window_db
+        .latest_window_workflow_affinity(window.key(), &principal_kind, &principal_id, &project)
+        .unwrap()
+        .unwrap();
+    assert_eq!(affinity.workflow_session_id, session_id);
+    assert_eq!(affinity.relation, "recording");
 }
 
 #[tokio::test]

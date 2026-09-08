@@ -57,6 +57,16 @@ fn seed_event(
             summary,
             request_bytes: None,
             response_bytes: None,
+            client_window_key: None,
+            client_window_source: None,
+            server_trace_id: None,
+            principal_correlation_kind: None,
+            principal_correlation_id: None,
+            window_started_at_ms: None,
+            window_ended_at_ms: None,
+            window_meaningful: false,
+            recorder_gap_session_id: None,
+            workflow_links: Vec::new(),
         },
     );
 }
@@ -92,6 +102,16 @@ fn seed_attributed_event(
             summary: json!({}),
             request_bytes: None,
             response_bytes: None,
+            client_window_key: None,
+            client_window_source: None,
+            server_trace_id: None,
+            principal_correlation_kind: None,
+            principal_correlation_id: None,
+            window_started_at_ms: None,
+            window_ended_at_ms: None,
+            window_meaningful: false,
+            recorder_gap_session_id: None,
+            workflow_links: Vec::new(),
         },
     );
 }

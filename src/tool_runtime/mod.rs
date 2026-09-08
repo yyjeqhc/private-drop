@@ -63,6 +63,11 @@ mod script;
 mod search_project_texts;
 mod semantic_navigation;
 mod session_context;
+pub(crate) use observations::is_meaningful_activity_tool;
+pub(crate) use session_context::runtime_observation_principal;
+pub(crate) use window_activity::{
+    ToolCallCorrelation, WorkflowSessionCorrelation, WorkflowSessionCorrelationRelation,
+};
 mod session_shell;
 mod session_tools;
 pub(crate) mod sessions;
@@ -85,6 +90,8 @@ mod tool_spec;
 mod validation_events;
 pub(crate) mod validation_parser;
 pub(crate) mod validation_profile;
+mod window_activity;
+pub(crate) use window_activity::ActiveWindowRequest;
 
 #[cfg(test)]
 pub(crate) use webcodex_tool_contracts::MODEL_TOOL_DESCRIPTION_MAX_CHARS;

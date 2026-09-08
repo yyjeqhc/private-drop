@@ -52,6 +52,7 @@ pub(crate) async fn try_dispatch_specialized_gateway(
                 error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             });
         }
     };
@@ -77,12 +78,34 @@ pub(crate) async fn try_dispatch_specialized_gateway(
         _ => unreachable!("specialized gateway name must parse to its canonical ToolCall"),
     };
     Some(match invocation {
-        Ok(result) | Err(SpecializedGovernanceDenial::Tool(result)) => ToolCallOutcome {
+        Ok(result) => {
+            let mut correlation = super::window_activity::ToolCallCorrelation::default();
+            if let Some(session_id) = context.session_id {
+                correlation.add_workflow_session(
+                    super::window_activity::WorkflowSessionCorrelation {
+                        session_id: session_id.to_string(),
+                        project: runtime.sessions.session_project(session_id).flatten(),
+                        relation:
+                            super::window_activity::WorkflowSessionCorrelationRelation::Recording,
+                    },
+                );
+            }
+            ToolCallOutcome {
+                success: result.success,
+                result: Some(result),
+                error_status: None,
+                project: None,
+                model_ergonomics: None,
+                correlation,
+            }
+        }
+        Err(SpecializedGovernanceDenial::Tool(result)) => ToolCallOutcome {
             success: result.success,
             result: Some(result),
             error_status: None,
             project: None,
             model_ergonomics: None,
+            correlation: Default::default(),
         },
         Err(SpecializedGovernanceDenial::Scope {
             required_scope,
@@ -96,6 +119,7 @@ pub(crate) async fn try_dispatch_specialized_gateway(
             }),
             project: None,
             model_ergonomics: None,
+            correlation: Default::default(),
         },
     })
 }

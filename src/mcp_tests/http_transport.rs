@@ -375,7 +375,7 @@ async fn stateless_full_trace_correlates_only_hashed_openai_window_body() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
-    let service = Service::new(build_test_router(config, db, runtime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
     let raw_window = "openai-window-trace-opaque-secret";
 
     for id in [51_i64, 52_i64] {
@@ -399,6 +399,28 @@ async fn stateless_full_trace_correlates_only_hashed_openai_window_body() {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["result"]["isError"], false, "{body}");
     }
+
+    // tools/list is liveness evidence for the same hashed Window, but it is not
+    // meaningful coding work and cannot establish a Workflow Session relation.
+    let mut list_params = mcp_2026_params(json!({}));
+    list_params["_meta"]["openai/session"] = json!(raw_window);
+    let (status, listed) = stateless_2026_jsonrpc(
+        &service,
+        "secret",
+        Some(MCP_STATELESS_PROTOCOL_VERSION),
+        Some("tools/list"),
+        None,
+        None,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 53,
+            "method": "tools/list",
+            "params": list_params,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert!(listed["result"]["tools"].is_array(), "{listed}");
     crate::tool_request_trace::flush_full_trace_writer();
 
     let mut trace_ids = BTreeSet::new();
@@ -462,6 +484,55 @@ async fn stateless_full_trace_correlates_only_hashed_openai_window_body() {
         1,
         "the same ChatGPT window must produce one stable hashed correlation key"
     );
+
+    let durable_rows = {
+        let conn = db.conn_for_tests();
+        let mut stmt = conn
+            .prepare(
+                "SELECT action_name, operation, client_window_key, client_window_source,
+                        server_trace_id, summary_json, error_summary, warning_summary,
+                        window_meaningful, recorder_gap_session_id
+                 FROM action_events
+                 WHERE client_window_key IS NOT NULL
+                 ORDER BY window_started_at_ms, event_id",
+            )
+            .unwrap();
+        stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, Option<String>>(9)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    };
+    assert_eq!(durable_rows.len(), 3);
+    let durable_debug = format!("{durable_rows:?}");
+    assert!(
+        !durable_debug.contains(raw_window),
+        "raw OpenAI Window identity leaked into ActionAudit SQLite rows: {durable_debug}"
+    );
+    let durable_keys = durable_rows
+        .iter()
+        .map(|row| row.2.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(durable_keys.len(), 1);
+    assert_eq!(durable_rows.last().unwrap().0, "toolsList");
+    assert_eq!(
+        durable_rows.last().unwrap().1.as_deref(),
+        Some("mcp_tools_list")
+    );
+    assert_eq!(durable_rows.last().unwrap().8, 0);
+    assert!(durable_rows.last().unwrap().9.is_none());
 }
 
 #[tokio::test]

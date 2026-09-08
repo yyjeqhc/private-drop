@@ -188,7 +188,7 @@ where
     }
 }
 
-fn current_active_trace_id() -> Option<String> {
+pub(crate) fn current_active_trace_id() -> Option<String> {
     ACTIVE_TOOL_TRACE_ID.try_with(Clone::clone).ok()
 }
 
@@ -1584,6 +1584,13 @@ impl ToolRequestLifecycle {
 
     pub fn active_trace_id(&self) -> Option<String> {
         self.enabled().then(|| self.trace_id.clone())
+    }
+
+    /// Stable safe request-correlation id even when full request tracing is
+    /// disabled. Window activity may use this UUID without enabling or
+    /// persisting trace payloads.
+    pub fn correlation_trace_id(&self) -> String {
+        self.trace_id.clone()
     }
 
     pub fn capture_payload(&self, phase: &str, value: &Value) {

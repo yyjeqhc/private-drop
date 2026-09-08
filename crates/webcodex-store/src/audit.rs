@@ -1,5 +1,5 @@
 use super::Database;
-use crate::models::{ActionEventRecord, ActionSessionRecord};
+use crate::models::{ActionEventRecord, ActionEventWorkflowLinkRecord, ActionSessionRecord};
 use rusqlite::{params, Connection};
 
 impl Database {
@@ -154,37 +154,7 @@ impl Database {
 
     pub fn insert_action_event(&self, event: &ActionEventRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO action_events (
-                event_id, session_id, started_at, ended_at, duration_ms, endpoint,
-                operation, action_name, project, principal_kind, principal_user_id,
-                oauth_client_id, status, http_status, error_summary, warning_summary,
-                changed_files_json, ids_json, summary_json, request_bytes, response_bytes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
-            params![
-                event.event_id,
-                event.session_id,
-                event.started_at,
-                event.ended_at,
-                event.duration_ms,
-                event.endpoint,
-                event.operation,
-                event.action_name,
-                event.project,
-                event.principal_kind,
-                event.principal_user_id,
-                event.oauth_client_id,
-                event.status,
-                event.http_status,
-                event.error_summary,
-                event.warning_summary,
-                event.changed_files_json,
-                event.ids_json,
-                event.summary_json,
-                event.request_bytes,
-                event.response_bytes,
-            ],
-        )?;
+        insert_action_event_on_conn(&conn, event)?;
         Ok(())
     }
 
@@ -215,6 +185,7 @@ impl Database {
     pub fn append_action_event_and_update_session(
         &self,
         event: &ActionEventRecord,
+        workflow_links: &[ActionEventWorkflowLinkRecord],
         success_inc: i64,
         failed_inc: i64,
         timeout_inc: i64,
@@ -225,37 +196,21 @@ impl Database {
     ) -> anyhow::Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO action_events (
-                event_id, session_id, started_at, ended_at, duration_ms, endpoint,
-                operation, action_name, project, principal_kind, principal_user_id,
-                oauth_client_id, status, http_status, error_summary, warning_summary,
-                changed_files_json, ids_json, summary_json, request_bytes, response_bytes
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
-            params![
-                event.event_id,
-                event.session_id,
-                event.started_at,
-                event.ended_at,
-                event.duration_ms,
-                event.endpoint,
-                event.operation,
-                event.action_name,
-                event.project,
-                event.principal_kind,
-                event.principal_user_id,
-                event.oauth_client_id,
-                event.status,
-                event.http_status,
-                event.error_summary,
-                event.warning_summary,
-                event.changed_files_json,
-                event.ids_json,
-                event.summary_json,
-                event.request_bytes,
-                event.response_bytes,
-            ],
-        )?;
+        insert_action_event_on_conn(&tx, event)?;
+        for link in workflow_links {
+            tx.execute(
+                "INSERT OR IGNORE INTO action_event_workflow_links (
+                    event_id, workflow_session_id, workflow_session_relation, project, linked_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    event.event_id,
+                    link.workflow_session_id,
+                    link.workflow_session_relation,
+                    link.project,
+                    link.linked_at_ms,
+                ],
+            )?;
+        }
         tx.execute(
             "UPDATE action_sessions
              SET updated_at = ?2,
@@ -289,6 +244,54 @@ impl Database {
     }
 }
 
+fn insert_action_event_on_conn(conn: &Connection, event: &ActionEventRecord) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO action_events (
+            event_id, session_id, started_at, ended_at, duration_ms, endpoint,
+            operation, action_name, project, principal_kind, principal_user_id,
+            oauth_client_id, status, http_status, error_summary, warning_summary,
+            changed_files_json, ids_json, summary_json, request_bytes, response_bytes,
+            client_window_key, client_window_source, server_trace_id,
+            principal_correlation_kind, principal_correlation_id,
+            window_started_at_ms, window_ended_at_ms, window_meaningful,
+            recorder_gap_session_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+        params![
+            event.event_id,
+            event.session_id,
+            event.started_at,
+            event.ended_at,
+            event.duration_ms,
+            event.endpoint,
+            event.operation,
+            event.action_name,
+            event.project,
+            event.principal_kind,
+            event.principal_user_id,
+            event.oauth_client_id,
+            event.status,
+            event.http_status,
+            event.error_summary,
+            event.warning_summary,
+            event.changed_files_json,
+            event.ids_json,
+            event.summary_json,
+            event.request_bytes,
+            event.response_bytes,
+            event.client_window_key,
+            event.client_window_source,
+            event.server_trace_id,
+            event.principal_correlation_kind,
+            event.principal_correlation_id,
+            event.window_started_at_ms,
+            event.window_ended_at_ms,
+            event.window_meaningful,
+            event.recorder_gap_session_id,
+        ],
+    )?;
+    Ok(())
+}
+
 fn count_action_events_on_conn(conn: &Connection, session_id: &str) -> anyhow::Result<usize> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM action_events WHERE session_id = ?1",
@@ -308,7 +311,11 @@ fn list_action_events_on_conn(
         "SELECT event_id, session_id, started_at, ended_at, duration_ms, endpoint,
                 operation, action_name, project, principal_kind, principal_user_id,
                 oauth_client_id, status, http_status, error_summary, warning_summary,
-                changed_files_json, ids_json, summary_json, request_bytes, response_bytes
+                changed_files_json, ids_json, summary_json, request_bytes, response_bytes,
+                client_window_key, client_window_source, server_trace_id,
+                principal_correlation_kind, principal_correlation_id,
+                window_started_at_ms, window_ended_at_ms, window_meaningful,
+                recorder_gap_session_id
          FROM action_events
          WHERE session_id = ?1
          ORDER BY started_at DESC
@@ -363,6 +370,15 @@ fn row_to_action_event(row: &rusqlite::Row) -> rusqlite::Result<ActionEventRecor
         summary_json: row.get(18)?,
         request_bytes: row.get(19)?,
         response_bytes: row.get(20)?,
+        client_window_key: row.get(21)?,
+        client_window_source: row.get(22)?,
+        server_trace_id: row.get(23)?,
+        principal_correlation_kind: row.get(24)?,
+        principal_correlation_id: row.get(25)?,
+        window_started_at_ms: row.get(26)?,
+        window_ended_at_ms: row.get(27)?,
+        window_meaningful: row.get(28)?,
+        recorder_gap_session_id: row.get(29)?,
     })
 }
 

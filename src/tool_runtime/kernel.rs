@@ -128,6 +128,9 @@ pub(crate) struct ToolCallOutcome {
     pub(crate) error_status: Option<ToolCallErrorStatus>,
     pub(crate) project: Option<String>,
     pub(crate) model_ergonomics: Option<ModelErgonomicsCompletion>,
+    /// Trusted internal Window/Workflow Session correlation evidence. This is
+    /// adapter metadata only and is never part of the public ToolResult.
+    pub(crate) correlation: super::window_activity::ToolCallCorrelation,
 }
 
 pub(crate) fn check_runtime_tool_scope(
@@ -354,6 +357,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         // Project Memory tools are kernel-known but globally model-hidden. One
@@ -372,6 +376,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         // Phase-3 Skill tools are kernel-known only so ToolCall parsing stays
@@ -391,6 +396,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         if super::skills::is_skill_management_tool_name(&request.tool_name)
@@ -406,6 +412,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         if super::skills::is_skill_management_tool_name(&request.tool_name)
@@ -422,6 +429,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         // Action-dependent gateways resolve exact policy before the generic
@@ -456,6 +464,7 @@ impl ToolRuntime {
                     error_status: None,
                     project: None,
                     model_ergonomics: None,
+                    correlation: Default::default(),
                 };
             }
         }
@@ -480,6 +489,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         if let Err(error_status) = check_session_message_resolution_scope(
@@ -492,6 +502,7 @@ impl ToolRuntime {
                 error_status: Some(error_status),
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         let outer_ack_observation = context.session_id.map(|recorder_session_id| {
@@ -520,6 +531,7 @@ impl ToolRuntime {
                         error_status: None,
                         project: None,
                         model_ergonomics: None,
+                        correlation: Default::default(),
                     };
                 }
                 let recorder_project = self
@@ -547,6 +559,7 @@ impl ToolRuntime {
                         error_status: None,
                         project: None,
                         model_ergonomics: None,
+                        correlation: Default::default(),
                     };
                 }
             }
@@ -616,6 +629,7 @@ impl ToolRuntime {
                 error_status: None,
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         if let Some(mut result) = tool_disabled_result_from_definition(&request.tool_name) {
@@ -667,6 +681,7 @@ impl ToolRuntime {
                 error_status: None,
                 project: None,
                 model_ergonomics: None,
+                correlation: Default::default(),
             };
         }
         // The outer recording Session is provenance/context only. Its lifecycle,
@@ -683,6 +698,7 @@ impl ToolRuntime {
                     error_status: Some(error_status),
                     project: None,
                     model_ergonomics: None,
+                    correlation: Default::default(),
                 };
             }
         }
@@ -720,6 +736,7 @@ impl ToolRuntime {
                     error_status: Some(error_status),
                     project: None,
                     model_ergonomics: None,
+                    correlation: Default::default(),
                 };
             }
         }
@@ -740,6 +757,7 @@ impl ToolRuntime {
                     error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
                     project: None,
                     model_ergonomics: None,
+                    correlation: Default::default(),
                 };
             }
         };
@@ -794,6 +812,7 @@ impl ToolRuntime {
                     error_status: None,
                     project: None,
                     model_ergonomics: None,
+                    correlation: Default::default(),
                 };
             }
         }
@@ -818,7 +837,7 @@ impl ToolRuntime {
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).
-        let (mut result, result_projection) = self
+        let (mut result, result_projection, mut correlation) = self
             .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
                 call,
                 context.auth,
@@ -834,6 +853,23 @@ impl ToolRuntime {
                 capabilities,
             )
             .await;
+        if let Some(session_id) = context.session_id {
+            correlation.add_workflow_session(super::window_activity::WorkflowSessionCorrelation {
+                session_id: session_id.to_string(),
+                project: recorder_metadata.recording_session_project.clone(),
+                relation: super::window_activity::WorkflowSessionCorrelationRelation::Recording,
+            });
+        }
+        if result.success && context.session_id.is_none() {
+            correlation.recorder_gap_session_id = self
+                .workflow_recording_gap_candidate(
+                    &request.tool_name,
+                    context.window,
+                    context.auth,
+                    &correlation,
+                )
+                .await;
+        }
         if let Some(start) = session_event.as_mut() {
             if let Some(permission) =
                 super::permissions::permission_decision_from_output(&result.output)
@@ -874,6 +910,22 @@ impl ToolRuntime {
         // complete. Consume the request-scoped plan exactly once to produce the
         // final model-facing read/search result.
         result_projection.project(&mut result);
+        if let (Some(session_id), Some(project)) = (
+            correlation.recorder_gap_session_id.as_deref(),
+            correlation.resolved_project.as_deref(),
+        ) {
+            if let Some(output) = result.output.as_object_mut() {
+                output.insert(
+                    "workflow_recording_attention".to_string(),
+                    serde_json::json!({
+                        "status": "recording_session_missing",
+                        "candidate_session_id": session_id,
+                        "project": project,
+                        "reason": "same_window_recent_explicit_association"
+                    }),
+                );
+            }
+        }
         if request.tool_name == "tool_manifest" {
             super::surface::sparsify_tool_manifest_model_result(&mut result);
         }
@@ -895,6 +947,22 @@ impl ToolRuntime {
             }
         }
         super::dispatch::sparsify_success_model_result_metadata(&request.tool_name, &mut result);
+        // The continuity hint is diagnostic only. Keep it inside the shared
+        // model-result hard ceiling; if an unrelated producer already consumed
+        // the full envelope, omit this non-authoritative overlay rather than
+        // changing the business result.
+        if result
+            .output
+            .as_object()
+            .is_some_and(|output| output.contains_key("workflow_recording_attention"))
+            && serde_json::to_vec(&result).is_ok_and(|bytes| {
+                bytes.len() > webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES
+            })
+        {
+            if let Some(output) = result.output.as_object_mut() {
+                output.remove("workflow_recording_attention");
+            }
+        }
         if request.tool_name == "observe_jobs" {
             super::observe_jobs::sparsify_observe_jobs_model_result(&mut result);
         }
@@ -904,7 +972,46 @@ impl ToolRuntime {
             error_status: None,
             project,
             model_ergonomics: None,
+            correlation,
         }
+    }
+
+    async fn workflow_recording_gap_candidate(
+        &self,
+        tool_name: &str,
+        window: Option<&crate::client_window::ClientWindow>,
+        auth: Option<&AuthContext>,
+        correlation: &super::window_activity::ToolCallCorrelation,
+    ) -> Option<String> {
+        if tool_name == "work_on_project"
+            || !super::observations::is_meaningful_activity_tool(tool_name)
+        {
+            return None;
+        }
+        let window = window?;
+        let project = correlation.resolved_project.as_deref()?;
+        let db = self.window_activity_db.as_ref()?;
+        let (principal_kind, principal_id) =
+            session_context::runtime_observation_principal(auth).ok()?;
+        let affinity = db
+            .latest_window_workflow_affinity(window.key(), &principal_kind, &principal_id, project)
+            .ok()??;
+        if affinity.project.as_deref() != Some(project)
+            || self.sessions.lifecycle_state(&affinity.workflow_session_id)
+                != Some(super::sessions::SessionLifecycle::Active)
+            || self.sessions.session_project(&affinity.workflow_session_id)
+                != Some(Some(project.to_string()))
+        {
+            return None;
+        }
+        if self
+            .authorize_session_target(&affinity.workflow_session_id, tool_name, auth)
+            .await
+            .is_err()
+        {
+            return None;
+        }
+        Some(affinity.workflow_session_id)
     }
 
     async fn recording_session_project_mismatch(

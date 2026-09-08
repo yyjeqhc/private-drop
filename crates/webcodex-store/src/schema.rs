@@ -177,6 +177,15 @@ impl Database {
                 summary_json TEXT NOT NULL,
                 request_bytes INTEGER,
                 response_bytes INTEGER,
+                client_window_key TEXT,
+                client_window_source TEXT,
+                server_trace_id TEXT,
+                principal_correlation_kind TEXT,
+                principal_correlation_id TEXT,
+                window_started_at_ms INTEGER,
+                window_ended_at_ms INTEGER,
+                window_meaningful INTEGER NOT NULL DEFAULT 0 CHECK(window_meaningful IN (0, 1)),
+                recorder_gap_session_id TEXT,
                 FOREIGN KEY(session_id) REFERENCES action_sessions(session_id)
             );
             CREATE INDEX IF NOT EXISTS idx_action_events_session_started
@@ -185,6 +194,19 @@ impl Database {
                 ON action_events(principal_user_id, started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_action_events_oauth_client_started
                 ON action_events(oauth_client_id, started_at DESC);
+
+            CREATE TABLE IF NOT EXISTS action_event_workflow_links (
+                event_id TEXT NOT NULL,
+                workflow_session_id TEXT NOT NULL,
+                workflow_session_relation TEXT NOT NULL
+                    CHECK(workflow_session_relation IN ('recording', 'work_on_project')),
+                project TEXT,
+                linked_at_ms INTEGER NOT NULL,
+                PRIMARY KEY(event_id, workflow_session_id, workflow_session_relation),
+                FOREIGN KEY(event_id) REFERENCES action_events(event_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_action_event_workflow_links_session
+                ON action_event_workflow_links(workflow_session_id, linked_at_ms DESC);
 
             CREATE TABLE IF NOT EXISTS oauth_clients (
                 id TEXT PRIMARY KEY,
@@ -596,6 +618,11 @@ impl Database {
             ",
         )?;
 
+        // ActionAudit predates Window correlation. Fresh databases already have
+        // the current columns above; existing databases receive the same shape
+        // through this additive, idempotent migration.
+        Self::ensure_action_event_window_schema(&mut conn)?;
+
         // Durable Agent identity and Conversation state are an independent
         // communication domain. Workflow Session and project Memory ledgers
         // remain separate authoritative stores.
@@ -618,6 +645,59 @@ impl Database {
         // are created above with the current execution schema; any pre-current
         // persisted shape must be recreated instead of being altered in place.
         Self::ensure_current_execution_schema(&conn)?;
+        Ok(())
+    }
+
+    fn ensure_action_event_window_schema(conn: &mut Connection) -> anyhow::Result<()> {
+        const COLUMN_ADDITIONS: &[(&str, &str)] = &[
+            ("client_window_key", "TEXT"),
+            ("client_window_source", "TEXT"),
+            ("server_trace_id", "TEXT"),
+            ("principal_correlation_kind", "TEXT"),
+            ("principal_correlation_id", "TEXT"),
+            ("window_started_at_ms", "INTEGER"),
+            ("window_ended_at_ms", "INTEGER"),
+            (
+                "window_meaningful",
+                "INTEGER NOT NULL DEFAULT 0 CHECK(window_meaningful IN (0, 1))",
+            ),
+            ("recorder_gap_session_id", "TEXT"),
+        ];
+        const CHILD_SCHEMA: &str = "
+            CREATE TABLE IF NOT EXISTS action_event_workflow_links (
+                event_id TEXT NOT NULL,
+                workflow_session_id TEXT NOT NULL,
+                workflow_session_relation TEXT NOT NULL
+                    CHECK(workflow_session_relation IN ('recording', 'work_on_project')),
+                project TEXT,
+                linked_at_ms INTEGER NOT NULL,
+                PRIMARY KEY(event_id, workflow_session_id, workflow_session_relation),
+                FOREIGN KEY(event_id) REFERENCES action_events(event_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_action_event_workflow_links_session
+                ON action_event_workflow_links(workflow_session_id, linked_at_ms DESC);
+            CREATE INDEX IF NOT EXISTS idx_action_events_window_started
+                ON action_events(client_window_key, window_started_at_ms DESC)
+                WHERE client_window_key IS NOT NULL;";
+
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .context("begin ActionAudit Window schema migration")?;
+        let mut columns = table_columns(&tx, "action_events")?;
+        for (name, definition) in COLUMN_ADDITIONS {
+            if columns.iter().any(|column| column == name) {
+                continue;
+            }
+            tx.execute_batch(&format!(
+                "ALTER TABLE action_events ADD COLUMN {name} {definition};"
+            ))
+            .with_context(|| format!("add ActionAudit Window column {name}"))?;
+            columns.push((*name).to_string());
+        }
+        tx.execute_batch(CHILD_SCHEMA)
+            .context("create ActionAudit Window correlation schema")?;
+        tx.commit()
+            .context("commit ActionAudit Window schema migration")?;
         Ok(())
     }
 
@@ -826,6 +906,106 @@ mod schema_normalization_tests {
         assert_ne!(
             normalize_table_schema_sql("CHECK(identity_state = 'attributed')"),
             normalize_table_schema_sql("CHECK(identity_state = 'ATTRIBUTED')")
+        );
+    }
+}
+
+#[cfg(test)]
+mod action_event_window_migration_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_action_events_upgrade_additively_and_remain_readable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("legacy-window-audit.db");
+        // Build every unrelated table with the current schema, then downgrade only
+        // ActionAudit's event shape. This models an existing pre-Window database
+        // without making this migration fixture responsible for unrelated schemas.
+        drop(Database::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 DROP TABLE action_event_workflow_links;
+                 DROP TABLE action_events;
+                 CREATE TABLE action_events (
+                    event_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    ended_at INTEGER NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    endpoint TEXT NOT NULL,
+                    operation TEXT,
+                    action_name TEXT NOT NULL,
+                    project TEXT,
+                    principal_kind TEXT,
+                    principal_user_id TEXT,
+                    oauth_client_id TEXT,
+                    status TEXT NOT NULL,
+                    http_status INTEGER,
+                    error_summary TEXT,
+                    warning_summary TEXT,
+                    changed_files_json TEXT NOT NULL,
+                    ids_json TEXT NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    request_bytes INTEGER,
+                    response_bytes INTEGER
+                 );
+                 INSERT INTO action_events (
+                    event_id, session_id, started_at, ended_at, duration_ms,
+                    endpoint, operation, action_name, status,
+                    changed_files_json, ids_json, summary_json
+                 ) VALUES (
+                    'legacy-event', 'legacy-session', 10, 11, 1000,
+                    '/mcp', 'read_files', 'toolsCall', 'success',
+                    '[]', '{}', '{}'
+                 );",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let rows = db.list_action_events("legacy-session", 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event_id, "legacy-event");
+        assert!(rows[0].client_window_key.is_none());
+        assert!(rows[0].client_window_source.is_none());
+        assert!(rows[0].server_trace_id.is_none());
+        assert!(!rows[0].window_meaningful);
+        assert!(rows[0].recorder_gap_session_id.is_none());
+        {
+            let conn = db.conn.lock().unwrap();
+            let columns = table_columns(&conn, "action_events").unwrap();
+            for expected in [
+                "client_window_key",
+                "client_window_source",
+                "server_trace_id",
+                "principal_correlation_kind",
+                "principal_correlation_id",
+                "window_started_at_ms",
+                "window_ended_at_ms",
+                "window_meaningful",
+                "recorder_gap_session_id",
+            ] {
+                assert!(
+                    columns.iter().any(|column| column == expected),
+                    "{expected}"
+                );
+            }
+            assert!(!table_columns(&conn, "action_event_workflow_links")
+                .unwrap()
+                .is_empty());
+        }
+        drop(db);
+
+        let reopened = Database::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .list_action_events("legacy-session", 10)
+                .unwrap()
+                .len(),
+            1,
+            "migration must be idempotent and preserve legacy audit rows"
         );
     }
 }

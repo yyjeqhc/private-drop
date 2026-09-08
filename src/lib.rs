@@ -280,6 +280,7 @@ only for local/trusted-network demos."
     let mut tool_runtime_builder =
         tool_runtime::ToolRuntime::new(runner_registry.clone(), runtime_info.clone())
             .with_runtime_exposure(runtime_exposure)
+            .with_window_activity_database(db.clone())
             .with_memory_database(db.clone())
             .with_communication_database(db.clone())
             .with_checkpoint_state_dir(runtime_state_dir.clone())

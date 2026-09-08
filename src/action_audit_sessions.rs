@@ -1,3 +1,4 @@
+use crate::models::ActionEventWorkflowLinkRecord;
 use crate::{ActionEventRecord, ActionSessionRecord, Database};
 use salvo::prelude::*;
 use serde::Serialize;
@@ -79,6 +80,28 @@ pub struct ActionEventView {
     pub response_bytes: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowSessionRelation {
+    Recording,
+    WorkOnProject,
+}
+
+impl WorkflowSessionRelation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Recording => "recording",
+            Self::WorkOnProject => "work_on_project",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionAuditWorkflowLinkInput {
+    pub workflow_session_id: String,
+    pub relation: WorkflowSessionRelation,
+    pub project: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ActionAuditEventInput {
     pub explicit_session_id: Option<String>,
@@ -102,6 +125,16 @@ pub struct ActionAuditEventInput {
     pub summary: Value,
     pub request_bytes: Option<i64>,
     pub response_bytes: Option<i64>,
+    pub client_window_key: Option<String>,
+    pub client_window_source: Option<String>,
+    pub server_trace_id: Option<String>,
+    pub principal_correlation_kind: Option<String>,
+    pub principal_correlation_id: Option<String>,
+    pub window_started_at_ms: Option<i64>,
+    pub window_ended_at_ms: Option<i64>,
+    pub window_meaningful: bool,
+    pub recorder_gap_session_id: Option<String>,
+    pub workflow_links: Vec<ActionAuditWorkflowLinkInput>,
 }
 
 pub fn trim_and_truncate(value: &str, max_len: usize) -> String {
@@ -324,8 +357,13 @@ fn record_action_event_inner(db: &Database, input: ActionAuditEventInput) -> any
         .map(|s| !s.is_empty())
         .unwrap_or(false) as i64;
 
+    let event_id = uuid::Uuid::new_v4().to_string();
+    let window_ended_at_ms = input
+        .window_ended_at_ms
+        .or(input.window_started_at_ms)
+        .map(|ended| ended.max(input.window_started_at_ms.unwrap_or(ended)));
     let event = ActionEventRecord {
-        event_id: uuid::Uuid::new_v4().to_string(),
+        event_id: event_id.clone(),
         session_id: session.session_id,
         started_at: input.started_at,
         ended_at: input.ended_at,
@@ -333,7 +371,7 @@ fn record_action_event_inner(db: &Database, input: ActionAuditEventInput) -> any
         endpoint: input.endpoint,
         operation: input.operation.map(|v| trim_and_truncate(&v, 80)),
         action_name: trim_and_truncate(&input.action_name, 120),
-        project: input.project.map(|v| trim_and_truncate(&v, 120)),
+        project: input.project.map(|v| trim_and_truncate(&v, 512)),
         principal_kind: input.principal_kind,
         principal_user_id: input.principal_user_id,
         oauth_client_id: input.oauth_client_id,
@@ -346,7 +384,39 @@ fn record_action_event_inner(db: &Database, input: ActionAuditEventInput) -> any
         summary_json: serde_json::to_string(&summary)?,
         request_bytes: input.request_bytes,
         response_bytes: input.response_bytes,
+        client_window_key: input
+            .client_window_key
+            .map(|value| trim_and_truncate(&value, 128)),
+        client_window_source: input
+            .client_window_source
+            .map(|value| trim_and_truncate(&value, 64)),
+        server_trace_id: input
+            .server_trace_id
+            .map(|value| trim_and_truncate(&value, 128)),
+        principal_correlation_kind: input
+            .principal_correlation_kind
+            .map(|value| trim_and_truncate(&value, 64)),
+        principal_correlation_id: input
+            .principal_correlation_id
+            .map(|value| trim_and_truncate(&value, 512)),
+        window_started_at_ms: input.window_started_at_ms,
+        window_ended_at_ms,
+        window_meaningful: input.window_meaningful,
+        recorder_gap_session_id: input
+            .recorder_gap_session_id
+            .map(|value| trim_and_truncate(&value, 128)),
     };
+    let workflow_links = input
+        .workflow_links
+        .into_iter()
+        .map(|link| ActionEventWorkflowLinkRecord {
+            event_id: event_id.clone(),
+            workflow_session_id: trim_and_truncate(&link.workflow_session_id, 128),
+            workflow_session_relation: link.relation.as_str().to_string(),
+            project: link.project.map(|project| trim_and_truncate(&project, 512)),
+            linked_at_ms: window_ended_at_ms.unwrap_or_else(|| event.ended_at.saturating_mul(1000)),
+        })
+        .collect::<Vec<_>>();
 
     let (success_inc, failed_inc, timeout_inc) = match event.status.as_str() {
         "success" => (1, 0, 0),
@@ -355,6 +425,7 @@ fn record_action_event_inner(db: &Database, input: ActionAuditEventInput) -> any
     };
     db.append_action_event_and_update_session(
         &event,
+        &workflow_links,
         success_inc,
         failed_inc,
         timeout_inc,

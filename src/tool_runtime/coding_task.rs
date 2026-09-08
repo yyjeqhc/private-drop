@@ -40,6 +40,9 @@ use super::tool_inputs::{SessionMode, StartupDetail};
 use super::tool_result::{RecoveryKind, ToolResult};
 use super::unknown_session_result;
 use super::validation_events::skipped_validation_summary;
+use super::window_activity::{
+    ToolCallCorrelation, WorkflowSessionCorrelation, WorkflowSessionCorrelationRelation,
+};
 use super::{ToolCall, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_protocol::{
@@ -1220,6 +1223,7 @@ impl ToolRuntime {
         trusted_recording_session_id: Option<&str>,
         trusted_recording_session_project: Option<&str>,
         transport: SessionTransport,
+        correlation: &mut ToolCallCorrelation,
     ) -> ToolResult {
         let project_source = match resolve_project_source(project, client_id, path) {
             Ok(source) => source,
@@ -1338,10 +1342,11 @@ impl ToolRuntime {
         } else {
             project
         };
-        project_work_on_project_output_with_workflow(
+        project_work_on_project_output_with_workflow_inner(
             projected_project,
             result.output,
             include_workflow_guidance,
+            Some(correlation),
         )
     }
 
@@ -2185,10 +2190,34 @@ pub(crate) fn project_work_on_project_output(project: String, output: Value) -> 
     project_work_on_project_output_with_workflow(project, output, true)
 }
 
+#[cfg(test)]
 pub(crate) fn project_work_on_project_output_with_workflow(
     project: String,
     output: Value,
     include_workflow_guidance: bool,
+) -> ToolResult {
+    project_work_on_project_output_with_workflow_inner(
+        project,
+        output,
+        include_workflow_guidance,
+        None,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn project_work_on_project_output_with_correlation_for_test(
+    project: String,
+    output: Value,
+    correlation: &mut ToolCallCorrelation,
+) -> ToolResult {
+    project_work_on_project_output_with_workflow_inner(project, output, true, Some(correlation))
+}
+
+fn project_work_on_project_output_with_workflow_inner(
+    project: String,
+    output: Value,
+    include_workflow_guidance: bool,
+    correlation: Option<&mut ToolCallCorrelation>,
 ) -> ToolResult {
     let permission = output.get("permission").cloned();
     let Some(brief) = startup_brief_from_output(&output) else {
@@ -2266,6 +2295,15 @@ pub(crate) fn project_work_on_project_output_with_workflow(
             "non-canonical workflow projection",
             None,
         );
+    }
+
+    if let Some(correlation) = correlation {
+        correlation.resolved_project = Some(projection.project.resolved_id.clone());
+        correlation.add_workflow_session(WorkflowSessionCorrelation {
+            session_id: projection.session.session_id.clone(),
+            project: Some(projection.project.resolved_id.clone()),
+            relation: WorkflowSessionCorrelationRelation::WorkOnProject,
+        });
     }
 
     let suggested_next_actions = if projection.startup_verdict.suggested_next_actions.is_empty() {

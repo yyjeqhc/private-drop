@@ -1145,6 +1145,7 @@ pub(super) async fn handle_call(
     window: Option<&crate::client_window::ClientWindow>,
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
     mut model_ergonomics_out: Option<&mut Option<ModelErgonomicsRecord>>,
+    mut correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
 ) -> McpOutcome {
     let tasks_extension_declared = stateless_2026 && tasks::request_supports_tasks(&request_params);
     let mut params: McpToolCallParams = match serde_json::from_value(request_params) {
@@ -1434,6 +1435,20 @@ pub(super) async fn handle_call(
             }
         };
         let ok = invocation.success();
+        if let (Some(slot), Some(session_id)) = (
+            correlation_out.as_deref_mut(),
+            recording_session_id.as_deref(),
+        ) {
+            let mut correlation = crate::tool_runtime::ToolCallCorrelation::default();
+            let project = runtime.sessions.session_project(session_id).flatten();
+            correlation.resolved_project = project.clone();
+            correlation.add_workflow_session(crate::tool_runtime::WorkflowSessionCorrelation {
+                session_id: session_id.to_string(),
+                project,
+                relation: crate::tool_runtime::WorkflowSessionCorrelationRelation::Recording,
+            });
+            *slot = correlation;
+        }
         if let Some(lc) = lifecycle.as_deref() {
             lc.capture_payload(
                 "specialized_governance",
@@ -1553,6 +1568,20 @@ pub(super) async fn handle_call(
             }
         };
         let ok = invocation.success();
+        if let (Some(slot), Some(session_id)) = (
+            correlation_out.as_deref_mut(),
+            recording_session_id.as_deref(),
+        ) {
+            let mut correlation = crate::tool_runtime::ToolCallCorrelation::default();
+            let project = runtime.sessions.session_project(session_id).flatten();
+            correlation.resolved_project = project.clone();
+            correlation.add_workflow_session(crate::tool_runtime::WorkflowSessionCorrelation {
+                session_id: session_id.to_string(),
+                project,
+                relation: crate::tool_runtime::WorkflowSessionCorrelationRelation::Recording,
+            });
+            *slot = correlation;
+        }
         if let Some(lc) = lifecycle.as_deref() {
             lc.capture_payload("effective_arguments", &audit);
             lc.capture_payload(
@@ -1783,6 +1812,9 @@ pub(super) async fn handle_call(
         )
         .await;
     let model_ergonomics_completion = outcome.model_ergonomics;
+    if let Some(slot) = correlation_out.as_deref_mut() {
+        *slot = outcome.correlation.clone();
+    }
     let result = match outcome.error_status {
         Some(ToolCallErrorStatus::InsufficientScope {
             required_scope,

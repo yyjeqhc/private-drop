@@ -152,6 +152,12 @@ pub struct ToolRuntime {
     /// last successful meaningful tool call). Shared with the connector
     /// runtime; never stores payloads or secrets.
     pub(crate) observations: Arc<RuntimeObservations>,
+    /// Process-local payload-free view of currently in-flight MCP Window
+    /// requests. It is observability only and intentionally resets on restart.
+    pub(crate) window_activity: Arc<super::window_activity::WindowActivityRegistry>,
+    /// Durable ActionAudit-backed Window activity query handle. This shares the
+    /// normal Server SQLite database and never becomes an authorization store.
+    pub(crate) window_activity_db: Option<Arc<crate::Database>>,
     /// Optional Control-owned durable project Memory store. It is injected by
     /// the server from the existing webcodex.db handle; Runner-native project
     /// filesystems never own Memory v1 persistence.
@@ -202,6 +208,8 @@ impl ToolRuntime {
             permission_evaluator: PermissionEvaluator::from_env(),
             activity: Arc::new(NoopActivityRecorder),
             observations: Arc::new(RuntimeObservations::default()),
+            window_activity: Arc::new(super::window_activity::WindowActivityRegistry::default()),
+            window_activity_db: None,
             memory_db: None,
             communication_db: None,
             agent_continuations: None,
@@ -238,6 +246,17 @@ impl ToolRuntime {
     pub fn with_activity_recorder(mut self, recorder: Arc<dyn ActivityRecorder>) -> Self {
         self.activity = recorder;
         self
+    }
+
+    pub(crate) fn with_window_activity_database(mut self, db: Arc<crate::Database>) -> Self {
+        self.window_activity_db = Some(db);
+        self
+    }
+
+    pub(crate) fn window_activity_registry(
+        &self,
+    ) -> Arc<super::window_activity::WindowActivityRegistry> {
+        self.window_activity.clone()
     }
 
     pub(crate) fn with_memory_database(mut self, db: Arc<crate::Database>) -> Self {

@@ -48,6 +48,116 @@ pub struct ActionEventRecord {
     pub summary_json: String,
     pub request_bytes: Option<i64>,
     pub response_bytes: Option<i64>,
+    /// Domain-separated hashed host Window identity. Raw host/session values
+    /// never cross the adapter boundary into durable storage.
+    #[serde(default)]
+    pub client_window_key: Option<String>,
+    #[serde(default)]
+    pub client_window_source: Option<String>,
+    /// Safe Server request-trace correlation id. This is not a trace payload or
+    /// filesystem reference.
+    #[serde(default)]
+    pub server_trace_id: Option<String>,
+    /// Stable server-derived caller correlation used only to filter Window
+    /// observability. It never grants authorization.
+    #[serde(default)]
+    pub principal_correlation_kind: Option<String>,
+    #[serde(default)]
+    pub principal_correlation_id: Option<String>,
+    /// Millisecond-resolution Window activity timestamps. Existing ActionAudit
+    /// started_at / ended_at fields deliberately remain seconds.
+    #[serde(default)]
+    pub window_started_at_ms: Option<i64>,
+    #[serde(default)]
+    pub window_ended_at_ms: Option<i64>,
+    #[serde(default)]
+    pub window_meaningful: bool,
+    /// Diagnostic candidate for an omitted outer Workflow Session recorder.
+    /// This is observation evidence only and never a Session link/authority.
+    #[serde(default)]
+    pub recorder_gap_session_id: Option<String>,
+}
+
+/// Authoritative correlation evidence attached to one ActionAudit event. An
+/// event may carry multiple rows (for example an outer recorder plus a newly
+/// created work_on_project Session), so Window↔Session semantics stay genuinely
+/// many-to-many.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionEventWorkflowLinkRecord {
+    pub event_id: String,
+    pub workflow_session_id: String,
+    pub workflow_session_relation: String,
+    pub project: Option<String>,
+    pub linked_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowWorkflowLinkRecord {
+    pub workflow_session_id: String,
+    pub project: Option<String>,
+    pub relation: String,
+    pub linked_at_ms: i64,
+}
+
+/// Payload-safe durable Window activity row used by Runtime Console queries.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowActivityEventRecord {
+    pub event_id: String,
+    pub client_window_key: String,
+    pub client_window_source: String,
+    pub server_trace_id: Option<String>,
+    pub started_at_ms: i64,
+    pub ended_at_ms: i64,
+    pub duration_ms: i64,
+    pub action_name: String,
+    pub operation: Option<String>,
+    pub project: Option<String>,
+    pub status: String,
+    pub meaningful: bool,
+    pub recorder_gap_session_id: Option<String>,
+    pub workflow_links: Vec<WindowWorkflowLinkRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowActivitySummaryRecord {
+    pub client_window_key: String,
+    pub client_window_source: String,
+    pub last_seen_at_ms: i64,
+    pub last_tool_call_at_ms: Option<i64>,
+    pub last_meaningful_activity_at_ms: Option<i64>,
+    pub linked_session_count: usize,
+    pub recorder_gap_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowSessionLinkSummaryRecord {
+    pub client_window_key: String,
+    pub client_window_source: String,
+    pub first_linked_at_ms: i64,
+    pub last_linked_at_ms: i64,
+    pub relation_count: usize,
+    pub relations: Vec<String>,
+    pub last_seen_at_ms: i64,
+    pub last_meaningful_activity_at_ms: Option<i64>,
+    pub recorder_gap_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowWorkflowSessionSummaryRecord {
+    pub workflow_session_id: String,
+    pub project: Option<String>,
+    pub first_linked_at_ms: i64,
+    pub last_linked_at_ms: i64,
+    pub relation_count: usize,
+    pub relations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowWorkflowAffinityRecord {
+    pub workflow_session_id: String,
+    pub project: Option<String>,
+    pub relation: String,
+    pub linked_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
