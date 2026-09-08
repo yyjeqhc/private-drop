@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const IMPORT_TEST_AGENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const IMPORT_TEST_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+// The global import-network override is shared with MCP and DNS import fixtures.
+// Budget for queued full-suite contention while still failing a genuinely stuck wait.
+const IMPORT_TEST_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 const IMPORT_TEST_SERVER_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn run_import_http_in_large_stack_test_thread<F, Fut>(test: F)
