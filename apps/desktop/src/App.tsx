@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { desktopApi } from "./lib/desktop-api";
 import type {
   ActivityEntry,
@@ -40,6 +41,26 @@ export default function App() {
     mainRef.current?.focus({ preventScroll: true });
     mainRef.current?.scrollTo?.({ top: 0 });
   }, [navigation, showSetup]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<unknown>("desktop:navigate", (event) => {
+      if (event.payload !== "activity" && event.payload !== "settings") return;
+      setShowSetup(false);
+      setNavigation(event.payload);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch(() => {
+      // Host navigation is optional. Ordinary in-window navigation remains
+      // usable if the native event subscription is unavailable.
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   const openSetup = () => {
     setShowSetup(true);

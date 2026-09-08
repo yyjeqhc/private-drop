@@ -18,6 +18,13 @@ const api = vi.hoisted(() => ({
   stopRegularTunnel: vi.fn(),
   cancelOperation: vi.fn(),
   inspectProject: vi.fn(),
+  getLaunchAtLogin: vi.fn(),
+  setLaunchAtLogin: vi.fn(),
+}));
+
+const tauriEvents = vi.hoisted(() => ({
+  handler: null as null | ((event: { payload: unknown }) => void),
+  listen: vi.fn(),
 }));
 
 vi.mock("./lib/desktop-api", () => ({
@@ -26,6 +33,10 @@ vi.mock("./lib/desktop-api", () => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: tauriEvents.listen,
 }));
 
 import App from "./App";
@@ -161,7 +172,18 @@ function renderApp() {
 describe("semantic Desktop UI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tauriEvents.handler = null;
+    tauriEvents.listen.mockImplementation(
+      async (_eventName: string, handler: (event: { payload: unknown }) => void) => {
+        tauriEvents.handler = handler;
+        return () => {
+          if (tauriEvents.handler === handler) tauriEvents.handler = null;
+        };
+      },
+    );
     api.activity.mockResolvedValue([]);
+    api.getLaunchAtLogin.mockResolvedValue(false);
+    api.setLaunchAtLogin.mockImplementation(async (enabled: boolean) => enabled);
     api.resumeSavedRuntime.mockResolvedValue(readyState);
     api.updateTunnelProxy.mockResolvedValue(readyState);
     api.startRegularTunnel.mockResolvedValue(readyState);
@@ -218,6 +240,45 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("radiogroup", { name: "连接方式" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
     expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeDisabled();
+  });
+
+  it("navigates to existing Activity and Settings pages from the tray host event", async () => {
+    api.getState.mockResolvedValue(readyState);
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    await waitFor(() => expect(tauriEvents.handler).not.toBeNull());
+
+    act(() => {
+      tauriEvents.handler?.({ payload: "settings" });
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Desktop 设置" })).toBeInTheDocument();
+
+    act(() => {
+      tauriEvents.handler?.({ payload: "activity" });
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "最近的运行活动" })).toBeInTheDocument();
+    await waitFor(() => expect(api.activity).toHaveBeenCalled());
+
+    act(() => {
+      tauriEvents.handler?.({ payload: "https://example.invalid" });
+    });
+    expect(screen.getByRole("button", { name: "活动" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("reads and updates Launch at Login through the narrow Desktop host API", async () => {
+    api.getState.mockResolvedValue(readyState);
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    fireEvent.click(screen.getByRole("button", { name: "设置" }));
+
+    const launchAtLogin = await screen.findByRole("checkbox", { name: "登录时启动 WebCodex" });
+    await waitFor(() => expect(launchAtLogin).toBeEnabled());
+    expect(launchAtLogin).not.toBeChecked();
+    expect(screen.getByText(/WebCodex 会在后台启动/)).toBeInTheDocument();
+
+    fireEvent.click(launchAtLogin);
+    await waitFor(() => expect(api.setLaunchAtLogin).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(launchAtLogin).toBeChecked());
   });
 
   it("bootstraps a fresh Desktop with its default project and keeps setup choices accessible", async () => {

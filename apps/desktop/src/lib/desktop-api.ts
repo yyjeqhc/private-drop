@@ -8,6 +8,9 @@ import type {
 
 export const desktopApi = {
   getState: () => invoke<DesktopState>("get_desktop_state"),
+  getLaunchAtLogin: () => invoke<boolean>("get_launch_at_login"),
+  setLaunchAtLogin: (enabled: boolean) =>
+    invoke<boolean>("set_launch_at_login", { request: { enabled } }),
   refresh: () => invoke<DesktopState>("refresh_runtime_status"),
   resumeSavedRuntime: () => invoke<DesktopState>("resume_saved_runtime"),
   updateTunnelProxy: (mode: TunnelProxyMode, customUrl?: string | null) =>
