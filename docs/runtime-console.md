@@ -15,10 +15,18 @@ they do not create Sessions or send messages.
   attention, validation, and model-reported progress directly. **Activity** shows
   retained events and the existing follow-latest control. **Details** shows
   identity, lifecycle, mode, timestamps, and workspace information.
-- **Runtime & Agents** provides three separate destinations: **Overview**,
-  **Runner fleet**, and **Durable Agents**. Selecting a destination shows its
-  full content and updates the navigation highlight. Switching destinations
-  keeps existing forms mounted so unsent input is retained.
+- **Runtime & Agents** provides four separate destinations: **Overview**,
+  **Runner fleet**, **Windows**, and **Durable Agents**. Selecting a destination
+  shows its full content and updates the navigation highlight. Switching
+  destinations keeps existing forms mounted so unsent input is retained.
+- **Windows** is an observability view for ChatGPT/WebCodex call correlation. It
+  lists hashed `ClientWindow` identities, current in-flight WebCodex requests,
+  bounded durable call history, linked Workflow Sessions, and explicit recorder
+  continuity gaps. It never shows the raw host window value, tool arguments or
+  outputs, and it cannot observe model reasoning or determine whether a host UI
+  is frozen. Window/Session links are many-to-many evidence only: they do not
+  select a Workflow Session, grant Project authority, or make a Window an
+  execution/continuity owner.
 
 The context panel still adapts between a docked rail, popover, and mobile sheet.
 Closing it leaves a labeled Context entry in the header. Context navigation uses
@@ -28,6 +36,18 @@ Mobile operation navigation closes after selection and focuses the destination.
 These are presentation changes. Workflow Session and durable Agent identities,
 credential scopes, refresh behavior, and mutation handling keep their existing
 contracts. Model-reported progress remains informational.
+
+The Windows list and detail routes require `runtime:read`. Non-admin callers are
+first principal-filtered and then re-projected through current canonical Project
+authority, so revoked Project access cannot leave a Window timestamp, Session
+count, gap count, or direct-key existence oracle. Session detail itself keeps its
+existing Project-read contract; without `runtime:read` it reports Window activity
+as unavailable instead of elevating the whole Session read to a runtime-wide
+permission requirement. Durable terminal history is backed by ActionAudit, while
+currently-running requests are process-local and intentionally disappear on
+Server restart. The dedicated Windows refresh is three seconds only while that
+view is selected and the page is foregrounded; the normal Runtime Console refresh
+cadence is unchanged.
 
 Each selected Project/workspace has its own keyboard-accessible disclosure below
 its Runner. Closing it hides that workspace's Sessions without clearing the

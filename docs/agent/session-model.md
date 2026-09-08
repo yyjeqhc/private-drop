@@ -111,6 +111,26 @@ handoff, and finish can reason about the same unit of work.
 
 Stateless MCP 2026 never derives a Workflow Session or recorder identity from transport/window continuity. ChatGPT may supply `_meta["openai/session"]` as a hashed `ClientWindow` for Project Connector task continuity, but that identity is intentionally not a Workflow Session selector or trusted provenance source. Its `tools/list` schema therefore projects `recording_session_id` as explicit wrapper metadata for runtime tools. A call may carry `recording_session_id=W` while the concrete tool body carries business `session_id=C`; the MCP adapter removes the recorder field before concrete parsing and the kernel independently authorizes `W` before it can record evidence or supply trusted collaboration provenance. This does not revive legacy `mcp-session-id`, grant target authority, or infer a recorder from credentials, project identity, connection state, or `ClientWindow`.
 
+Window activity correlation is observational and does not weaken that targeting
+rule. Stateless MCP may persist the hashed `ClientWindow` on ActionAudit events
+and attach a normalized Window↔Workflow Session relation only after the existing
+Session/Project authority path has already established the fact: an authorized
+outer `recording_session_id` yields a `recording` relation, while a successful
+canonical `work_on_project` create/resume yields a `work_on_project` relation from
+its typed projection. These relations are intentionally many-to-many and confer
+no lease, ownership, authority, or implicit recorder selection.
+
+For a later successful meaningful Project tool call with no explicit recorder,
+WebCodex may diagnose a **recorder continuity gap** when the same hashed Window,
+canonical principal, and exact Project have a recent explicit Session affinity.
+The candidate must still be Active, match the exact Project, and pass the current
+caller through the ordinary Session authority check. The diagnostic may suggest
+that exact Session to the model, but the missing call is not backfilled into the
+Session ledger and the candidate never becomes a sticky recorder. Status and
+discovery calls are not meaningful gap evidence. This preserves the original
+Session event order, revisions, ACK state, validation evidence, and permission
+facts while making an otherwise silent recorder discontinuity observable.
+
 One real kernel tool request also receives one trusted runtime-generated logical invocation correlation id. The outer recorder event pair and any inner concrete business-execution event pair inherit that id while retaining independent pair-level `call_id` values. A small recorder/business role discriminator lets Session-local semantic projections deterministically prefer authoritative business execution facts when both pairs land in the same Workflow Session. Raw ledger facts remain intact. Correlation never grants authority and is not a permission identity, retry token, idempotency key, execution identity, lifecycle key, or model-supplied input. If recorder Session `W` and business Session `C` differ, each Session keeps its own one-invocation semantic evidence; correlation is never used for cross-Session global deduplication. Current-v2 ledger events without the additive correlation fields remain uncorrelated and are projected conservatively per event; restore never invents an id or rewrites persisted history.
 
 Stateless MCP 2026 also projects optional `ack_session_message_ids` wrapper metadata, bounded to eight opaque `wc_msg_*` ids. An ACK is request-scoped evidence that the current model context still remembers an unresolved message in the exact authorized recording Workflow Session. The adapter removes ACK metadata before concrete tool parsing; it never grants authority, resolves a message, or gates the concrete tool effect. In the first version only open high-priority Guidance can require ACK. Accepted ids suppress that Guidance body only in the current response; if a later request omits the id, the unresolved Guidance is eligible for bounded redelivery again. Historical ACK state is never used to infer current model-context retention.
