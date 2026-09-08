@@ -268,6 +268,49 @@ async fn bridge_dequeue_rechecks_exact_runner_instance_after_replacement() {
 }
 
 #[tokio::test]
+async fn bridge_dequeue_rejects_missing_exact_target_fence() {
+    let registry = RunnerRegistry::default();
+    register_bridge_runner(&registry).await;
+    let alice = auth_context(Some("alice"), false);
+    let (request_id, mut receiver) = registry
+        .enqueue_mcp_gateway(
+            "bridge-runner",
+            "bridge-instance",
+            list_request("provider-instance"),
+            Some(&alice),
+            "test".to_string(),
+        )
+        .await
+        .unwrap();
+
+    // Dequeue must fail closed even if admission's exact target fence is lost.
+    {
+        let mut inner = registry.inner.lock().await;
+        let pending = inner.pending_by_id.get_mut(&request_id).unwrap();
+        pending.expected_mcp_gateway_runner_instance_id = None;
+        pending.expected_mcp_gateway_provider_id = None;
+        pending.expected_mcp_gateway_provider_instance_id = None;
+    }
+    let polled = registry
+        .poll(RunnerPollRequest {
+            client_id: "bridge-runner".to_string(),
+            runner_instance_id: "bridge-instance".to_string(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        polled.is_none(),
+        "unfenced bridge work must not be dispatched"
+    );
+    let response = receiver.try_recv().unwrap();
+    assert_eq!(response.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(response.error.as_ref().unwrap().code, "stale_provider");
+    let inner = registry.inner.lock().await;
+    assert!(!inner.pending_by_id.contains_key(&request_id));
+    assert!(!inner.mcp_gateway_waiters.contains_key(&request_id));
+}
+
+#[tokio::test]
 async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change() {
     let registry = RunnerRegistry::default();
     register_bridge_runner(&registry).await;

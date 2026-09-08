@@ -270,7 +270,11 @@ impl RunnerRegistry {
                                     .to_string(),
                             ))
                         }
-                        (_, None, None, None) => None,
+                        (operation, None, None, None)
+                            if !matches!(operation, RunnerOperation::McpGateway(_)) =>
+                        {
+                            None
+                        }
                         _ => Some((
                             "stale_provider",
                             "stale_mcp_gateway: pending exact bridge fence is incomplete"
