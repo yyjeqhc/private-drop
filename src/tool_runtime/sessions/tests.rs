@@ -10,6 +10,8 @@ use super::*;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+mod audit_policy;
+
 fn record_model_facing_result(
     store: &SessionStore,
     session_id: &str,

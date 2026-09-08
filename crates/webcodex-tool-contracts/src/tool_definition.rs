@@ -293,6 +293,90 @@ impl ToolModelSurfaceDeclaration {
 pub struct ToolAuditPolicy {
     pub request: ToolAuditRequestPolicy,
     pub result: ToolAuditResultPolicy,
+    /// Final Workflow Session input projection. Runtime request auditing remains
+    /// the authoritative typed boundary; this is defense-in-depth for direct
+    /// SessionStore callers and persisted restore sanitization.
+    pub session_input: ToolAuditSessionInputPolicy,
+    /// Bounded result facts allowed to contribute to durable Session context.
+    pub context: ToolAuditContextPolicy,
+    /// Bounded execution stdout/stderr evidence eligibility and shape.
+    pub execution: ToolAuditExecutionPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditSessionInputPolicy {
+    /// Apply only the generic bounded/redacted Session value projection. This is
+    /// safe for an already-audited typed request and preserves historical shapes.
+    Bounded,
+    /// Remove explicit top-level fields if an internal caller bypasses the typed
+    /// ToolCall audit boundary.
+    OmitTopLevel(&'static [&'static str]),
+    /// Remove nested search patterns while retaining bounded query metadata.
+    SearchProjectTexts,
+    /// Remove opaque Job observation tokens from nested items.
+    ObserveJobs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditContextPolicy {
+    Omit,
+    /// Reuse this ToolDefinition's already-declared bounded result projection.
+    /// This is valid only for a non-canonical result policy.
+    ResultProjection,
+    Fields(&'static [ToolAuditResultField]),
+    /// Preserve the historical bounded porcelain-derived working-tree summary.
+    WorkingTreeStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditExecutionDetail {
+    Omit,
+    Text,
+    TestCounts,
+    TestAssertions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAuditExecutionShell {
+    /// Use the bounded shell/executor metadata already present in the result.
+    Output,
+    /// Structured argv execution has no shell; record the established marker.
+    DirectArgv,
+    /// Structured script execution uses the bounded language as shell identity.
+    ScriptLanguage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolAuditExecutionPolicy {
+    pub detail: ToolAuditExecutionDetail,
+    pub shell: ToolAuditExecutionShell,
+}
+
+impl ToolAuditExecutionPolicy {
+    pub const OMIT: Self = Self {
+        detail: ToolAuditExecutionDetail::Omit,
+        shell: ToolAuditExecutionShell::Output,
+    };
+    pub const TEXT: Self = Self {
+        detail: ToolAuditExecutionDetail::Text,
+        shell: ToolAuditExecutionShell::Output,
+    };
+    pub const TEST_COUNTS: Self = Self {
+        detail: ToolAuditExecutionDetail::TestCounts,
+        shell: ToolAuditExecutionShell::Output,
+    };
+    pub const TEST_ASSERTIONS: Self = Self {
+        detail: ToolAuditExecutionDetail::TestAssertions,
+        shell: ToolAuditExecutionShell::Output,
+    };
+    pub const DIRECT_ARGV_TEST_COUNTS: Self = Self {
+        detail: ToolAuditExecutionDetail::TestCounts,
+        shell: ToolAuditExecutionShell::DirectArgv,
+    };
+    pub const SCRIPT_TEST_COUNTS: Self = Self {
+        detail: ToolAuditExecutionDetail::TestCounts,
+        shell: ToolAuditExecutionShell::ScriptLanguage,
+    };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,12 +495,18 @@ impl ToolAuditPolicy {
     pub const TYPED_CANONICAL: Self = Self {
         request: ToolAuditRequestPolicy::Typed,
         result: ToolAuditResultPolicy::CanonicalLedgerEvidence,
+        session_input: ToolAuditSessionInputPolicy::Bounded,
+        context: ToolAuditContextPolicy::Omit,
+        execution: ToolAuditExecutionPolicy::OMIT,
     };
 
     pub const fn typed_fields(fields: &'static [ToolAuditResultField]) -> Self {
         Self {
             request: ToolAuditRequestPolicy::Typed,
             result: ToolAuditResultPolicy::Fields(fields),
+            session_input: ToolAuditSessionInputPolicy::Bounded,
+            context: ToolAuditContextPolicy::Omit,
+            execution: ToolAuditExecutionPolicy::OMIT,
         }
     }
 
@@ -429,7 +519,29 @@ impl ToolAuditPolicy {
         Self {
             request: ToolAuditRequestPolicy::Typed,
             result: ToolAuditResultPolicy::Semantic(result),
+            session_input: ToolAuditSessionInputPolicy::Bounded,
+            context: ToolAuditContextPolicy::Omit,
+            execution: ToolAuditExecutionPolicy::OMIT,
         }
+    }
+
+    pub const fn session_input(mut self, policy: ToolAuditSessionInputPolicy) -> Self {
+        self.session_input = policy;
+        self
+    }
+
+    pub const fn context(mut self, policy: ToolAuditContextPolicy) -> Self {
+        self.context = policy;
+        self
+    }
+
+    pub const fn context_from_result(self) -> Self {
+        self.context(ToolAuditContextPolicy::ResultProjection)
+    }
+
+    pub const fn execution(mut self, policy: ToolAuditExecutionPolicy) -> Self {
+        self.execution = policy;
+        self
     }
 }
 

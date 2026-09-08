@@ -187,6 +187,15 @@ established canonical audit evidence do so through an explicit policy, not an
 unknown-tool fallback. Missing/unknown policy therefore cannot widen persisted
 ActionAudit or Workflow Session evidence.
 
+Workflow Session's final persistence fence consumes the same definition-owned
+policy for its historical input redaction, bounded context-result projection,
+and execution excerpt eligibility. The typed `ToolCall` request projector remains
+the authoritative request sanitizer; Session does not duplicate that field
+registry. Context projections reuse declared bounded result fields where their
+shapes are identical, with semantic exceptions only where the persisted Session
+contract genuinely differs (for example Git working-tree status). Unknown
+runtime identities fail closed during final Session projection and restore.
+
 The audit projector is observational only. Its output is consumed by ActionAudit
 and bounded Workflow Session ledger extraction, but audit policy never feeds
 ToolCall parsing for execution, OAuth/scope checks, permission decisions,

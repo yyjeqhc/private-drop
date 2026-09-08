@@ -18,7 +18,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_projects",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+                super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
+                    "client_id",
+                    "project",
+                    "query",
+                ]),
+            ),
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
             None,
@@ -110,7 +116,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "list_runners",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+                super::ToolAuditSessionInputPolicy::OmitTopLevel(&["client_id", "client_ids"]),
+            ),
             ModelVisible,
             TOOL_CATEGORY_RUNTIME,
             None,
@@ -134,7 +142,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         context_recovery_only(model_spec(
             def(
                 "runtime_status",
-                super::ToolAuditPolicy::TYPED_CANONICAL,
+                super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+                    super::ToolAuditSessionInputPolicy::OmitTopLevel(&["client_id"]),
+                ),
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
                 None,

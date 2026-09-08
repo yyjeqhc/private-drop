@@ -1,6 +1,7 @@
 //! Protocol-neutral Workflow Session domain model, ledger/store, collaboration, and deterministic projections.
 
 mod assignment;
+mod audit;
 mod closeout;
 mod console;
 mod continuation;

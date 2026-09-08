@@ -5388,6 +5388,7 @@ dependencies = [
  "tracing",
  "uuid",
  "webcodex-core",
+ "webcodex-tool-contracts",
 ]
 
 [[package]]

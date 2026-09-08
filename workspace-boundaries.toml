@@ -205,7 +205,7 @@ test_support = [
 [packages.webcodex-workflow-session]
 layer = "domain"
 role = "Workflow Session continuity, evidence, and handoff domain."
-normal = ["webcodex-core"]
+normal = ["webcodex-core", "webcodex-tool-contracts"]
 dev = []
 build = []
 test_support = []

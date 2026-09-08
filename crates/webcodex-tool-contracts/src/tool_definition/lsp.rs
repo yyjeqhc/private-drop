@@ -108,7 +108,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     context_recovery_only(model_spec(
         def(
             "workspace_symbols",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+                super::ToolAuditSessionInputPolicy::OmitTopLevel(&["query"]),
+            ),
             ModelVisible,
             TOOL_CATEGORY_LSP,
             Some(LspReadOnlyNavigation),

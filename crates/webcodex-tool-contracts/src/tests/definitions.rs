@@ -68,6 +68,40 @@ fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
                 definition.name
             );
         }
+        match definition.audit_policy().session_input {
+            ToolAuditSessionInputPolicy::OmitTopLevel(fields) => assert!(
+                !fields.is_empty(),
+                "{} Session input omission policy must name at least one field",
+                definition.name
+            ),
+            ToolAuditSessionInputPolicy::Bounded
+            | ToolAuditSessionInputPolicy::SearchProjectTexts
+            | ToolAuditSessionInputPolicy::ObserveJobs => {}
+        }
+        match definition.audit_policy().context {
+            ToolAuditContextPolicy::ResultProjection => assert!(
+                matches!(
+                    definition.audit_policy().result,
+                    ToolAuditResultPolicy::Fields(_)
+                ),
+                "{} may reuse Session context only from a bounded field result projection",
+                definition.name
+            ),
+            ToolAuditContextPolicy::Fields(fields) => assert!(
+                !fields.is_empty(),
+                "{} Session context policy must declare at least one bounded field",
+                definition.name
+            ),
+            ToolAuditContextPolicy::Omit | ToolAuditContextPolicy::WorkingTreeStatus => {}
+        }
+        if definition.audit_policy().execution.detail == ToolAuditExecutionDetail::Omit {
+            assert_eq!(
+                definition.audit_policy().execution.shell,
+                ToolAuditExecutionShell::Output,
+                "{} omitted execution evidence must not declare synthetic shell provenance",
+                definition.name
+            );
+        }
     }
 
     assert_eq!(
