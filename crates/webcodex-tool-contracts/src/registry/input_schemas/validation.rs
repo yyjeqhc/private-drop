@@ -12,7 +12,7 @@ const VALIDATION_TIMEOUT_SECS_DESCRIPTION: &str =
 const VALIDATION_TIMEOUT_MIN: u64 = 1;
 const VALIDATION_TIMEOUT_MAX: u64 = 3600;
 const VALIDATION_SYNC_WAIT_SECS_DESCRIPTION: &str =
-    "Optional synchronous grace in seconds (1..=60). It only controls how long this tool call waits after validation starts; if it is still running and total timeout remains, the same execution is returned as a Job. It never extends timeout_secs or starts a second validation.";
+    "Optional synchronous grace in seconds (1..=60), no greater than the effective timeout_secs. Omission uses min(60, effective timeout_secs). It bounds the wait for the submitted validation, which may still be queued; unfinished work returns as the same execution Job when handoff is available. It never extends timeout_secs or starts a second validation. For cargo_fmt, accepted only with check=true.";
 const VALIDATION_SYNC_WAIT_MIN: u64 = 1;
 const VALIDATION_SYNC_WAIT_MAX: u64 =
     webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;

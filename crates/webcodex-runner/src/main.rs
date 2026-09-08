@@ -1293,9 +1293,10 @@ impl Drop for PollingDispatchCompletionOnDrop {
 }
 
 /// Process-local coordination for normal polling dispatches. The Server queue
-/// remains the only pending-work queue: this supervisor admits at most two
-/// already-dequeued requests, creates no local holding queue, and returns
-/// worker completion/fatal submission outcomes to the polling control loop.
+/// remains the only pending-work queue: this supervisor admits at most
+/// `POLLING_DISPATCH_MAX_IN_FLIGHT` already-dequeued requests, creates no local
+/// holding queue, and returns worker completion/fatal submission outcomes to
+/// the polling control loop.
 pub(crate) struct PollingDispatchSupervisor {
     completion_tx: mpsc::SyncSender<PollingDispatchCompletion>,
     completion_rx: mpsc::Receiver<PollingDispatchCompletion>,
@@ -1404,7 +1405,7 @@ impl PollingDispatchSupervisor {
     }
 
     /// Apply backpressure before another Server dequeue. There is no local
-    /// pending queue: when both slots are occupied the control loop waits for
+    /// pending queue: when all slots are occupied the control loop waits for
     /// one worker completion (or shutdown) and only then polls again.
     pub(crate) fn wait_for_capacity_or_shutdown(
         &mut self,

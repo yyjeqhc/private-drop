@@ -99,12 +99,13 @@ fn assert_sync_wait_rejected(result: &ToolResult, tool_name: &str) {
 }
 
 #[tokio::test]
-async fn cargo_fmt_check_accepts_long_total_runtime_budget_and_hands_off() {
+async fn cargo_fmt_check_short_grace_hands_off_within_short_total_budget() {
     // cargo_check and cargo_test long-budget promotion lifecycles are owned by
     // validation_handoff.rs. Keep only cargo_fmt(check=true)'s distinct branch.
     let client_id = "sync-timeout-cargo-fmt-long";
-    let runtime = runtime_with_agent_project(client_id)
-        .with_validation_sync_wait(std::time::Duration::from_millis(10));
+    // Keep the production grace: an internal test override would mask a
+    // regression that ignores the caller's shorter sync_wait_secs.
+    let runtime = runtime_with_agent_project(client_id);
     let caps = RunnerCapabilities {
         async_shell_jobs: true,
         structured_validation_argv: true,
@@ -112,10 +113,14 @@ async fn cargo_fmt_check_accepts_long_total_runtime_budget_and_hands_off() {
     };
     register_agent(&runtime, client_id, None, caps).await;
     let project = agent_test_project_id(client_id);
-    let timeout = 300u64;
+    // A total budget below the default grace must still use the Job path
+    // when the explicit grace leaves runtime headroom.
+    let timeout = 30u64;
 
-    let result = runtime
-        .cargo_fmt_with_context(
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        runtime.cargo_fmt_with_context(
             project,
             None,
             Some(true),
@@ -124,11 +129,14 @@ async fn cargo_fmt_check_accepts_long_total_runtime_budget_and_hands_off() {
             None,
             None,
             None,
-        )
-        .await;
+        ),
+    )
+    .await
+    .expect("explicit one-second grace must hand off before the default sixty-second wait");
+    assert!(started.elapsed() >= std::time::Duration::from_secs(1));
     assert!(
         result.success,
-        "cargo_fmt(check=true) long budget should be accepted: {:?}",
+        "cargo_fmt(check=true) short grace should hand off: {:?}",
         result.error
     );
     assert!(result.output["promoted_to_job"].as_bool().unwrap_or(false));
