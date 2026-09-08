@@ -128,6 +128,8 @@ launchctl setenv CONTROL_PLANE_API_KEY "$CONTROL_PLANE_API_KEY"
 
 首次启动后，选择 **Local Full Runtime / 在此电脑使用 WebCodex**，并直接选择**真正要让 ChatGPT 使用的代码仓库目录**。Desktop 会准备本机 Service + Runner，并让 Runner 加载这个精确项目。默认 workspace 只用于 Desktop 自身，不应该替代你的真实项目选择。
 
+选择项目后才能提交配置。如果项目配置或可选的 Tunnel 启动失败，配置页会保留你的项目选择并显示错误，方便重试。
+
 本地配对时，Desktop 会将操作系统用户名转换为 Server 接受的名称：原本合法的名称保持不变；否则 ASCII 字母转为小写，连续的不支持字符合并为一个 `-`，名称中原有的 `-` 保持原样，去掉首尾生成的 `-`，结果限制为 64 个字符；转换后为空时使用 `desktop`。这个本地配对名称不是操作系统登录身份；重启时会复用已保存的注册身份。
 
 这是有意的安全边界：默认项目不会自动获得其他目录或整块磁盘的访问权限。

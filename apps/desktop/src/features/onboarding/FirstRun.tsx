@@ -68,13 +68,12 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   };
 
   const run = async () => {
-    if (!mode || state.current_operation) return;
-    if ((mode === "remote" || mode === "share") && !project) return;
+    if (!mode || !project || mutationBusy) return;
     setBusy(true);
     setError(null);
     try {
       if (mode === "local") {
-        let next = await desktopApi.configureLocal(project?.path ?? null);
+        let next = await desktopApi.configureLocal(project.path);
         onState(next);
         if (connectAfterSetup && next.openai_tunnel_configured && next.readiness.runtime_ready) {
           next = await desktopApi.startRegularTunnel();
@@ -247,7 +246,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
           <span className="section-kicker">{t("setup.project")}</span>
           <strong>{project ? project.path : t("setup.chooseProject")}</strong>
           {mode === "local" && !project && (
-            <span className="project-meta">{t("setup.projectOptional")}</span>
+            <span className="project-meta">{t("setup.projectRequired")}</span>
           )}
           {project && (
             <span className="project-meta">
@@ -302,7 +301,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
           className="primary-button"
           disabled={
             mutationBusy ||
-            ((mode === "remote" || mode === "share") && !project) ||
+            !project ||
             (mode === "remote" &&
               (!serverUrl.trim() || (!canReuseRemoteEnrollment && !pairingCode.trim())))
           }
@@ -359,4 +358,3 @@ function providerDescription(provider: QuickShareProvider, t: Translate) {
   if (provider === "openai") return t("provider.openaiDescription");
   return t("provider.localDescription");
 }
-

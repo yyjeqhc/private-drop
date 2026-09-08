@@ -896,6 +896,9 @@ impl DesktopCore {
         let (identity, identity_replaced) = match reusable_identity {
             Some(identity) => (identity, false),
             None => {
+                // Login publishes with --overwrite. Keep the saved connection's
+                // files intact until activation and config persistence succeed.
+                let connections_dir = local_enrollment_directory(&self.data_dir, &self.config);
                 let pairing_code = self
                     .adapter
                     .create_local_pairing(&server_url, &env_file, cancellation)
@@ -905,7 +908,7 @@ impl DesktopCore {
                     .login_with_pairing(
                         &server_url,
                         &pairing_code,
-                        &self.data_dir.join("connections"),
+                        &connections_dir,
                         &project,
                         cancellation,
                     )
@@ -1034,7 +1037,7 @@ impl DesktopCore {
                 )
                 .await;
             }
-            if server_started && identity_replaced {
+            if server_started {
                 self.stop_process_until(
                     ProcessKind::LocalServer,
                     Deadline::after(READINESS_CLEANUP_SLACK),
@@ -1047,9 +1050,17 @@ impl DesktopCore {
                 } else {
                     ServerReadiness::Ready
                 },
-                RunnerReadiness::Stopped,
+                if runner_started || replacing_owned_runner {
+                    RunnerReadiness::Stopped
+                } else {
+                    RunnerReadiness::Ready
+                },
                 ExposureReadiness::Disabled,
-                ProjectReadiness::Configured,
+                self.config
+                    .project
+                    .as_ref()
+                    .map(|_| ProjectReadiness::Configured)
+                    .unwrap_or(ProjectReadiness::None),
             );
             self.publish_snapshot();
             return Err(error);
@@ -2157,6 +2168,30 @@ fn machine_event_overflow_error(event: &Value) -> DesktopError {
     }))
 }
 
+fn local_enrollment_directory(data_dir: &Path, config: &StoredDesktopConfig) -> PathBuf {
+    // Two reusable slots bound local credential storage while keeping login's
+    // --overwrite away from the currently committed recovery identity. Resolve
+    // native path aliases (notably /var on macOS) before comparing paths.
+    let root = data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| data_dir.to_path_buf())
+        .join("local-connections");
+    let first = root.join("a");
+    let saved_runner = config
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.runner_config.as_ref());
+    if saved_runner.is_some_and(|path| {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.clone())
+            .starts_with(&first)
+    }) {
+        root.join("b")
+    } else {
+        first
+    }
+}
+
 fn project_snapshot(config: &StoredDesktopConfig) -> Option<ProjectSelection> {
     let mut project = config.project.clone()?;
     if identity_from_config(config).is_none() {
@@ -2770,6 +2805,40 @@ mod tests {
     }
 
     #[test]
+    fn local_enrollment_preserves_saved_files_and_reuses_only_the_inactive_slot() {
+        let dir = unique_state_dir("enrollment-slots");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut config = test_stored_config("previous");
+        let first = local_enrollment_directory(&dir, &config);
+        let saved_runner = first.join("server").join("runner.toml");
+        std::fs::create_dir_all(saved_runner.parent().unwrap()).unwrap();
+        std::fs::write(&saved_runner, "previous project fixture").unwrap();
+        config.runtime = Some(StoredRuntime {
+            server_url: "http://127.0.0.1:7890".into(),
+            server_env_file: None,
+            runner_config: Some(saved_runner.clone()),
+            user_token_file: None,
+            project_id: None,
+            runtime_project_id: None,
+        });
+
+        let candidate = local_enrollment_directory(&dir, &config);
+        assert_ne!(candidate, first);
+        let candidate_runner = candidate.join("server").join("runner.toml");
+        std::fs::create_dir_all(candidate_runner.parent().unwrap()).unwrap();
+        std::fs::write(&candidate_runner, "replacement project fixture").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(saved_runner).unwrap(),
+            "previous project fixture"
+        );
+        // A failed activation retries the candidate, never the saved connection.
+        assert_eq!(local_enrollment_directory(&dir, &config), candidate);
+        config.runtime.as_mut().unwrap().runner_config = Some(candidate_runner);
+        assert_eq!(local_enrollment_directory(&dir, &config), first);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn atomic_save_interruption_keeps_prior_valid_state() {
         let dir = unique_state_dir("interrupted-save");
         std::fs::create_dir_all(&dir).expect("create state fixture dir");
@@ -3367,6 +3436,8 @@ mod tests {
             .expect("local setup stores managed user token path");
         let first_user_token =
             std::fs::read(&first_user_token_file).expect("read managed user token before restart");
+        let first_runner_config = first_runtime.runner_config.clone().unwrap();
+        let first_runner_bytes = std::fs::read(&first_runner_config).unwrap();
 
         let stopped = core
             .stop_local_runtime(&cancellation)
@@ -3460,6 +3531,14 @@ mod tests {
         );
         assert!(server_after_switch.owned_by_desktop);
         assert!(runner_after_switch.owned_by_desktop);
+        assert!(
+            std::fs::read(&first_runner_config).unwrap() == first_runner_bytes,
+            "switching projects must preserve the previous Runner config for recovery"
+        );
+        assert!(
+            std::fs::read(&first_user_token_file).unwrap() == first_user_token,
+            "switching projects must preserve the previous managed user token for recovery"
+        );
         core.stop_local_runtime(&cancellation)
             .await
             .expect("stop restarted local runtime");

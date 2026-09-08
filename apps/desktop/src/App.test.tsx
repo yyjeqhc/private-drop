@@ -40,6 +40,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import App from "./App";
+import { open } from "@tauri-apps/plugin-dialog";
 
 const readyState: DesktopState = {
   topology: {
@@ -126,10 +127,12 @@ const firstRunState: DesktopState = {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function setupState(): DesktopState {
@@ -368,7 +371,8 @@ describe("semantic Desktop UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
     expect(await screen.findByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择文件夹" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeDisabled();
+    fireEvent.submit(screen.getByRole("button", { name: "配置 WebCodex" }).closest("form")!);
     expect(api.configureLocal).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "← 返回全部配置方式" }));
@@ -376,6 +380,48 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("radiogroup", { name: "Quick Share 连接方式" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
+  });
+
+  it("keeps first-run errors and the selected project through intermediate polling and Tunnel failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const setupResult = deferred<DesktopState>();
+      api.getState.mockResolvedValue(firstRunState);
+      api.configureLocal.mockReturnValueOnce(setupResult.promise).mockResolvedValue(readyState);
+      api.startRegularTunnel.mockRejectedValue({ code: "tunnel_unavailable", message: "Tunnel failed", next_action: "Retry." });
+      vi.mocked(open).mockResolvedValue(readyState.project!.path);
+      api.inspectProject.mockResolvedValue(readyState.project);
+      const view = renderApp();
+      await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
+      fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));
+      await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+      expect(api.configureLocal).toHaveBeenCalledWith(readyState.project!.path);
+
+      api.getState.mockResolvedValue(localSetupOperationState());
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(screen.getByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "更改文件夹" })).toBeDisabled();
+
+      api.getState.mockResolvedValue(setupState());
+      await act(async () => {
+        setupResult.reject({ code: "project_not_loaded", message: "Project failed", next_action: "Retry." });
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("project_not_loaded");
+      fireEvent.click(screen.getByRole("button", { name: "重新加载项目" }));
+      await act(async () => {});
+      expect(screen.getByRole("alert")).toHaveTextContent("tunnel_unavailable");
+      expect(screen.getByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
+      api.startRegularTunnel.mockResolvedValue(readyState);
+      fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+      await act(async () => {});
+      expect(screen.getByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows an initial status failure and retries the complete fresh-start bootstrap", async () => {

@@ -78,6 +78,9 @@ export default function App() {
       try {
         const initial = await desktopApi.getState();
         if (cancelled) return;
+        // Keep first-run setup mounted through intermediate topology snapshots
+        // and the optional Tunnel handoff, including their error/retry paths.
+        if (!initial.topology) setShowSetup(true);
         commitState(initial);
         if (initial.current_operation) return;
         const resumeExisting = Boolean(
