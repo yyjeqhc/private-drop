@@ -71,7 +71,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("revision"),
                 super::ToolAuditResultField::value("bootstrap"),
                 super::ToolAuditResultField::value("priority"),
-                super::ToolAuditResultField::value("returned_body_bytes"),
+                super::ToolAuditResultField::string_bytes("returned_body_bytes", "body"),
                 super::ToolAuditResultField::value("error_kind"),
                 super::ToolAuditResultField::value("state_changed"),
             ])),

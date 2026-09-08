@@ -140,8 +140,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::value("error_kind"),
                 ])
                 .context(super::ToolAuditContextPolicy::Fields(&[
-                    super::ToolAuditResultField::value("endpoint_id"),
-                    super::ToolAuditResultField::value("agent_id"),
+                    super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
+                    super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
                     super::ToolAuditResultField::value("created"),
                     super::ToolAuditResultField::value("replayed"),
                     super::ToolAuditResultField::value("state_changed"),
@@ -223,8 +223,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::value("error_kind"),
                 ])
                 .context(super::ToolAuditContextPolicy::Fields(&[
-                    super::ToolAuditResultField::value("endpoint_id"),
-                    super::ToolAuditResultField::value("agent_id"),
+                    super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
+                    super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
                     super::ToolAuditResultField::value("created"),
                     super::ToolAuditResultField::value("replayed"),
                     super::ToolAuditResultField::value("state_changed"),
@@ -267,8 +267,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::value("error_kind"),
                 ])
                 .context(super::ToolAuditContextPolicy::Fields(&[
-                    super::ToolAuditResultField::value("conversation_id"),
-                    super::ToolAuditResultField::value("participant_count"),
+                    super::ToolAuditResultField::pointer(
+                        "conversation_id",
+                        "/conversation/conversation/conversation_id",
+                    ),
+                    super::ToolAuditResultField::pointer_array_len(
+                        "participant_count",
+                        "/conversation/participants",
+                    ),
                     super::ToolAuditResultField::value("created"),
                     super::ToolAuditResultField::value("replayed"),
                     super::ToolAuditResultField::value("state_changed"),

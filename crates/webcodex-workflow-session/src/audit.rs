@@ -72,6 +72,17 @@ pub fn session_input_summary_for_tool(tool_name: &str, arguments: &Value) -> Val
 fn project_context_fields(fields: &[ToolAuditResultField], output: &Value) -> Option<Value> {
     let mut summary = serde_json::Map::new();
     for field in fields {
+        // Session recording sees both shapes: ordinary runtime paths normally
+        // supply the already-audited flat result, while direct/internal callers
+        // may still supply canonical raw evidence. Prefer the declared output
+        // key when it already exists; otherwise derive it from the same field's
+        // canonical source. This makes final projection idempotent without a
+        // second tool-name registry.
+        let output_name = field_output_name(field);
+        if let Some(value) = output.get(output_name).cloned() {
+            summary.insert(output_name.to_string(), value);
+            continue;
+        }
         let (name, projected) = match *field {
             ToolAuditResultField::Value {
                 output: name,
@@ -157,21 +168,6 @@ fn field_output_name(field: &ToolAuditResultField) -> &'static str {
     }
 }
 
-fn project_already_audited_context_fields(
-    fields: &[ToolAuditResultField],
-    output: &Value,
-) -> Option<Value> {
-    let source = output.as_object()?;
-    let mut summary = serde_json::Map::new();
-    for field in fields {
-        let name = field_output_name(field);
-        if let Some(value) = source.get(name) {
-            summary.insert(name.to_string(), value.clone());
-        }
-    }
-    (!summary.is_empty()).then(|| Value::Object(summary))
-}
-
 pub(super) fn context_result_summary_for_tool_result(
     tool_name: &str,
     output: &Value,
@@ -180,13 +176,11 @@ pub(super) fn context_result_summary_for_tool_result(
     let summary = match policy.context {
         ToolAuditContextPolicy::Omit => return None,
         ToolAuditContextPolicy::ResultProjection => match policy.result {
-            // Runtime result auditing has already flattened pointer/derived fields
-            // to each declaration's output name before Session recording. Reuse
-            // that audited shape instead of traversing the original raw sources a
-            // second time.
-            ToolAuditResultPolicy::Fields(fields) => {
-                project_already_audited_context_fields(fields, output)
-            }
+            // Reuse the same result declaration for either canonical raw evidence
+            // or the already-audited flat result. `project_context_fields` prefers
+            // an existing output key and otherwise derives it from the declared
+            // raw source, so this remains idempotent across persistence restore.
+            ToolAuditResultPolicy::Fields(fields) => project_context_fields(fields, output),
             // Context reuse is intentionally invalid for canonical/raw evidence or
             // semantic result projectors; declaration tests prevent this shape.
             ToolAuditResultPolicy::CanonicalLedgerEvidence | ToolAuditResultPolicy::Semantic(_) => {
@@ -279,6 +273,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(agent["agent_id"], "wc_dagent_demo");
+        let raw_agent = context_result_summary_for_tool_result(
+            "create_agent_identity",
+            &json!({
+                "agent":{"agent_id":"wc_dagent_raw","profile_revision":4},
+                "created":true,"replayed":false,"state_changed":true
+            }),
+        )
+        .unwrap();
+        assert_eq!(raw_agent["agent_id"], "wc_dagent_raw");
+        let raw_memory = context_result_summary_for_tool_result(
+            "memory_read",
+            &json!({
+                "memory_id":"wc_mem_demo", "memory_key":"policy", "revision":"wc_memrev_demo",
+                "body":"PRIVATE_MEMORY_BODY", "bootstrap":false, "priority":"normal"
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            raw_memory["returned_body_bytes"],
+            "PRIVATE_MEMORY_BODY".len()
+        );
+        assert!(!raw_memory.to_string().contains("PRIVATE_MEMORY_BODY"));
         let status = context_result_summary_for_tool_result(
             "git_status",
             &json!({"stdout":" M src/lib.rs\n", "exit_code":0}),
