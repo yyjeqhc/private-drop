@@ -20,7 +20,7 @@ const STOP_RUNTIME_ID: &str = "tray.stop_runtime";
 const CONNECT_ID: &str = "tray.connect";
 const DISCONNECT_ID: &str = "tray.disconnect";
 const STOP_QUICK_SHARE_ID: &str = "tray.stop_quick_share";
-const CANCEL_OPERATION_ID: &str = "tray.cancel_operation";
+const CANCEL_OPERATION_PREFIX: &str = "tray.cancel_operation:";
 const LAUNCH_AT_LOGIN_ID: &str = "tray.launch_at_login";
 const QUIT_ID: &str = "tray.quit";
 
@@ -57,7 +57,7 @@ struct TrayProjection {
     runtime_action: Option<RuntimeAction>,
     connection_action: Option<ConnectionAction>,
     stop_quick_share: bool,
-    cancel_operation: bool,
+    cancel_operation_id: Option<String>,
     cancel_operation_enabled: bool,
     operation_busy: bool,
     launch_at_login: Option<bool>,
@@ -111,10 +111,11 @@ impl TrayProjection {
         } else {
             None
         };
-        let cancel_operation = snapshot
+        let cancel_operation_id = snapshot
             .current_operation
             .as_ref()
-            .is_some_and(|operation| operation.cancellable);
+            .filter(|operation| operation.cancellable)
+            .map(|operation| operation.id.clone());
         let cancel_operation_enabled =
             snapshot
                 .current_operation
@@ -128,7 +129,7 @@ impl TrayProjection {
             runtime_action,
             connection_action,
             stop_quick_share: snapshot.quick_share.is_some(),
-            cancel_operation,
+            cancel_operation_id,
             cancel_operation_enabled,
             operation_busy: snapshot.current_operation.is_some(),
             launch_at_login,
@@ -305,10 +306,10 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
         }
         menu.append(&item)?;
     }
-    if projection.cancel_operation {
+    if let Some(operation_id) = &projection.cancel_operation_id {
         let item = MenuItem::with_id(
             app,
-            CANCEL_OPERATION_ID,
+            format!("{CANCEL_OPERATION_PREFIX}{operation_id}"),
             "Cancel current operation",
             projection.cancel_operation_enabled,
             None::<&str>,
@@ -355,7 +356,6 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
         CONNECT_ID => spawn_state_action(app, TrayStateAction::ConnectChatGpt),
         DISCONNECT_ID => spawn_state_action(app, TrayStateAction::DisconnectChatGpt),
         STOP_QUICK_SHARE_ID => spawn_state_action(app, TrayStateAction::StopQuickShare),
-        CANCEL_OPERATION_ID => spawn_state_action(app, TrayStateAction::CancelCurrentOperation),
         LAUNCH_AT_LOGIN_ID => match desktop_shell::launch_at_login_enabled(app) {
             Ok(current) => match desktop_shell::set_launch_at_login(app, !current) {
                 Ok(enabled) => set_launch_at_login_observation(app, Some(enabled)),
@@ -370,18 +370,28 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             }
         },
         QUIT_ID => desktop_shell::request_application_exit(app),
-        _ => {}
+        _ => {
+            if let Some(action) = cancel_action_from_menu_id(id) {
+                spawn_state_action(app, action);
+            }
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+fn cancel_action_from_menu_id(id: &str) -> Option<TrayStateAction> {
+    id.strip_prefix(CANCEL_OPERATION_PREFIX)
+        .filter(|operation_id| !operation_id.is_empty())
+        .map(|operation_id| TrayStateAction::CancelOperation(operation_id.to_owned()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum TrayStateAction {
     ResumeRuntime,
     StopRuntime,
     ConnectChatGpt,
     DisconnectChatGpt,
     StopQuickShare,
-    CancelCurrentOperation,
+    CancelOperation(String),
 }
 
 fn spawn_state_action(app: &AppHandle, action: TrayStateAction) {
@@ -394,15 +404,9 @@ fn spawn_state_action(app: &AppHandle, action: TrayStateAction) {
             TrayStateAction::ConnectChatGpt => state.start_regular_tunnel().await,
             TrayStateAction::DisconnectChatGpt => state.stop_regular_tunnel().await,
             TrayStateAction::StopQuickShare => state.stop_quick_share().await,
-            TrayStateAction::CancelCurrentOperation => {
-                let snapshot = state.get_state();
-                match snapshot.current_operation {
-                    Some(operation) if operation.cancellable => {
-                        state.cancel_operation(&operation.id)
-                    }
-                    _ => Ok(snapshot),
-                }
-            }
+            // Keep the operation observed by the menu, even if a newer operation
+            // starts before this task runs. AppState rejects stale IDs.
+            TrayStateAction::CancelOperation(operation_id) => state.cancel_operation(&operation_id),
         };
         match result {
             Ok(snapshot) => refresh_from_snapshot(&app, &snapshot),
@@ -524,9 +528,41 @@ mod tests {
         });
         let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
         assert!(projection.stop_quick_share);
-        assert!(projection.cancel_operation);
+        assert_eq!(
+            projection.cancel_operation_id.as_deref(),
+            Some("operation-a")
+        );
         assert!(projection.cancel_operation_enabled);
         assert!(projection.operation_busy);
+    }
+
+    #[test]
+    fn cancel_menu_preserves_observed_operation_identity() {
+        let mut snapshot = local_snapshot();
+        snapshot.current_operation = Some(DesktopOperationSnapshot {
+            id: "operation-a".into(),
+            kind: DesktopOperationKind::RuntimeResume,
+            phase: DesktopOperationPhase::Running,
+            started_at_ms: 1,
+            cancellable: true,
+        });
+        let first = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let menu_id = format!(
+            "{CANCEL_OPERATION_PREFIX}{}",
+            first.cancel_operation_id.as_ref().unwrap()
+        );
+        snapshot.current_operation.as_mut().unwrap().id = "operation-b".into();
+        let second = TrayProjection::from_snapshot(&snapshot, Some(false));
+        assert_ne!(
+            first, second,
+            "a new operation must invalidate the menu cache"
+        );
+        assert_eq!(
+            cancel_action_from_menu_id(&menu_id),
+            Some(TrayStateAction::CancelOperation("operation-a".into()))
+        );
+        assert_eq!(cancel_action_from_menu_id(CANCEL_OPERATION_PREFIX), None);
+        assert_eq!(cancel_action_from_menu_id(QUIT_ID), None);
     }
 
     #[test]
