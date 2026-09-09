@@ -191,8 +191,8 @@ pub struct AgentTaskCodingRunObservation {
     pub provider_instance_id: String,
     pub authority_fingerprint: String,
     pub coding_agent_intent_fingerprint: String,
-    pub run_state: String,
-    pub execution_state: String,
+    pub run_state: CodingAgentRunState,
+    pub execution_state: CodingAgentExecutionState,
     pub observation_revision: i64,
     pub terminal_stop_reason: Option<String>,
     pub terminal_error_code: Option<String>,
@@ -212,8 +212,8 @@ pub struct AgentTaskCodingRunBindingRecord {
     pub coding_agent_intent_fingerprint: String,
     pub binding_intent_fingerprint: String,
     pub dispatch_state: AgentTaskCodingRunDispatchState,
-    pub last_observed_run_state: Option<String>,
-    pub last_observed_execution_state: Option<String>,
+    pub last_observed_run_state: Option<CodingAgentRunState>,
+    pub last_observed_execution_state: Option<CodingAgentExecutionState>,
     pub last_observation_revision: Option<i64>,
     pub terminal_stop_reason: Option<String>,
     pub terminal_error_code: Option<String>,
@@ -233,11 +233,16 @@ impl AgentTaskCodingRunBindingRecord {
                 AgentTaskExecutionStatus::OutcomeUnknown
             }
             AgentTaskCodingRunDispatchState::Terminal => AgentTaskExecutionStatus::Terminal,
-            AgentTaskCodingRunDispatchState::Bound => match self.last_observed_run_state.as_deref()
-            {
-                Some("waiting_permission") => AgentTaskExecutionStatus::WaitingPermission,
-                Some("lost") => AgentTaskExecutionStatus::OutcomeUnknown,
-                Some("completed" | "failed" | "cancelled") => AgentTaskExecutionStatus::Terminal,
+            AgentTaskCodingRunDispatchState::Bound => match self.last_observed_run_state.as_ref() {
+                Some(CodingAgentRunState::WaitingPermission) => {
+                    AgentTaskExecutionStatus::WaitingPermission
+                }
+                Some(CodingAgentRunState::Lost) => AgentTaskExecutionStatus::OutcomeUnknown,
+                Some(
+                    CodingAgentRunState::Completed
+                    | CodingAgentRunState::Failed
+                    | CodingAgentRunState::Cancelled,
+                ) => AgentTaskExecutionStatus::Terminal,
                 _ => AgentTaskExecutionStatus::Active,
             },
         }
@@ -2056,9 +2061,11 @@ impl Database {
                 "stale CodingAgentRun observation cannot terminalize AgentTask state",
             ));
         }
-        let desired_task_state = match binding.last_observed_run_state.as_deref() {
-            Some("completed") => AgentTaskState::Succeeded,
-            Some("failed" | "cancelled") => AgentTaskState::Failed,
+        let desired_task_state = match binding.last_observed_run_state.as_ref() {
+            Some(CodingAgentRunState::Completed) => AgentTaskState::Succeeded,
+            Some(CodingAgentRunState::Failed | CodingAgentRunState::Cancelled) => {
+                AgentTaskState::Failed
+            }
             _ => {
                 return Err(CommunicationStoreError::new(
                     "agent_task_coding_run_not_terminal",
@@ -2215,27 +2222,8 @@ fn canonical_coding_run_snapshot(
         }
     }
 
-    let state = match observation.run_state.as_str() {
-        "starting" => CodingAgentRunState::Starting,
-        "running" => CodingAgentRunState::Running,
-        "waiting_permission" => CodingAgentRunState::WaitingPermission,
-        "completed" => CodingAgentRunState::Completed,
-        "failed" => CodingAgentRunState::Failed,
-        "cancelled" => CodingAgentRunState::Cancelled,
-        "lost" => CodingAgentRunState::Lost,
-        _ => return Err("CodingAgentRun snapshot contains an unsupported run state".to_string()),
-    };
-    let execution_state = match observation.execution_state.as_str() {
-        "not_started" => CodingAgentExecutionState::NotStarted,
-        "started" => CodingAgentExecutionState::Started,
-        "outcome_unknown" => CodingAgentExecutionState::OutcomeUnknown,
-        "completed" => CodingAgentExecutionState::Completed,
-        _ => {
-            return Err(
-                "CodingAgentRun snapshot contains an unsupported execution state".to_string(),
-            )
-        }
-    };
+    let state = observation.run_state.clone();
+    let execution_state = observation.execution_state;
     let observation_revision = u64::try_from(observation.observation_revision).map_err(|_| {
         "CodingAgentRun snapshot contains a negative observation revision".to_string()
     })?;
@@ -2362,12 +2350,13 @@ fn merge_agent_task_coding_run_observation(
         return Ok((binding.clone(), disposition));
     }
 
-    let dispatch_state =
-        if observation.run_state == "lost" || observation.execution_state == "outcome_unknown" {
-            AgentTaskCodingRunDispatchState::OutcomeUnknown
-        } else {
-            AgentTaskCodingRunDispatchState::Bound
-        };
+    let dispatch_state = if observation.run_state == CodingAgentRunState::Lost
+        || observation.execution_state == CodingAgentExecutionState::OutcomeUnknown
+    {
+        AgentTaskCodingRunDispatchState::OutcomeUnknown
+    } else {
+        AgentTaskCodingRunDispatchState::Bound
+    };
     let updated = if let Some(expected_revision) = binding.last_observation_revision {
         transaction
             .execute(
@@ -2386,8 +2375,8 @@ fn merge_agent_task_coding_run_observation(
                     binding.task_id,
                     binding.attempt_id,
                     dispatch_state.as_str(),
-                    observation.run_state,
-                    observation.execution_state,
+                    observation.run_state.as_str(),
+                    observation.execution_state.as_str(),
                     observation.observation_revision,
                     observation.terminal_stop_reason,
                     observation.terminal_error_code,
@@ -2416,8 +2405,8 @@ fn merge_agent_task_coding_run_observation(
                     binding.task_id,
                     binding.attempt_id,
                     dispatch_state.as_str(),
-                    observation.run_state,
-                    observation.execution_state,
+                    observation.run_state.as_str(),
+                    observation.execution_state.as_str(),
                     observation.observation_revision,
                     observation.terminal_stop_reason,
                     observation.terminal_error_code,
@@ -2737,8 +2726,36 @@ fn load_coding_run_binding_for_attempt(
                     &row.get::<_, String>(9)?,
                     9,
                 )?,
-                last_observed_run_state: row.get(10)?,
-                last_observed_execution_state: row.get(11)?,
+                last_observed_run_state: row
+                    .get::<_, Option<String>>(10)?
+                    .as_deref()
+                    .map(|value| {
+                        CodingAgentRunState::from_str(value).ok_or_else(|| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                10,
+                                Type::Text,
+                                format!("unsupported observed CodingAgentRun state: {value}")
+                                    .into(),
+                            )
+                        })
+                    })
+                    .transpose()?,
+                last_observed_execution_state: row
+                    .get::<_, Option<String>>(11)?
+                    .as_deref()
+                    .map(|value| {
+                        CodingAgentExecutionState::from_str(value).ok_or_else(|| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                11,
+                                Type::Text,
+                                format!(
+                                    "unsupported observed CodingAgent execution state: {value}"
+                                )
+                                .into(),
+                            )
+                        })
+                    })
+                    .transpose()?,
                 last_observation_revision: row.get(12)?,
                 terminal_stop_reason: row.get(13)?,
                 terminal_error_code: row.get(14)?,
@@ -2759,7 +2776,7 @@ fn blocking_execution_error(
 ) -> Option<CommunicationStoreError> {
     let binding = binding.filter(|binding| binding.dispatch_state.blocks_replacement())?;
     if binding.dispatch_state == AgentTaskCodingRunDispatchState::OutcomeUnknown
-        || binding.last_observed_run_state.as_deref() == Some("lost")
+        || binding.last_observed_run_state.as_ref() == Some(&CodingAgentRunState::Lost)
     {
         Some(CommunicationStoreError::new(
             "agent_task_execution_outcome_unknown",

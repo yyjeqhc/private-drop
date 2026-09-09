@@ -7,6 +7,7 @@ use super::Database;
 use rusqlite::params;
 use std::sync::{mpsc, Arc, Barrier};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use webcodex_core::coding_agent::{CodingAgentExecutionState, CodingAgentRunState};
 
 const T0: i64 = 1_000_000;
 
@@ -108,8 +109,9 @@ fn coding_observation(
         provider_instance_id: intent.provider_instance_id.clone(),
         authority_fingerprint: intent.authority_fingerprint.clone(),
         coding_agent_intent_fingerprint: intent.coding_agent_intent_fingerprint.clone(),
-        run_state: run_state.to_string(),
-        execution_state: execution_state.to_string(),
+        run_state: CodingAgentRunState::from_str(run_state).expect("valid test run state"),
+        execution_state: CodingAgentExecutionState::from_str(execution_state)
+            .expect("valid test execution state"),
         observation_revision: revision,
         terminal_stop_reason: match (run_state, execution_state) {
             ("completed", _) => Some("end_turn".to_string()),
@@ -647,10 +649,13 @@ fn coding_run_observation_merge_preserves_newer_terminal_truth() {
         AgentTaskCodingRunDispatchState::Terminal
     );
     assert_eq!(stale.last_observation_revision, Some(2));
-    assert_eq!(stale.last_observed_run_state.as_deref(), Some("completed"));
     assert_eq!(
-        stale.last_observed_execution_state.as_deref(),
-        Some("completed")
+        stale.last_observed_run_state,
+        Some(CodingAgentRunState::Completed)
+    );
+    assert_eq!(
+        stale.last_observed_execution_state,
+        Some(CodingAgentExecutionState::Completed)
     );
     assert_eq!(stale.terminal_stop_reason.as_deref(), Some("end_turn"));
     assert_eq!(stale.terminal_error_code, None);
@@ -763,8 +768,8 @@ fn coding_run_observation_equal_revision_conflict_keeps_stored_truth() {
     assert_eq!(unchanged, stored);
     assert_eq!(unchanged.last_observation_revision, Some(2));
     assert_eq!(
-        unchanged.last_observed_run_state.as_deref(),
-        Some("running")
+        unchanged.last_observed_run_state,
+        Some(CodingAgentRunState::Running)
     );
     assert_eq!(unchanged.terminal_stop_reason, None);
     assert_eq!(unchanged.terminal_message, None);
@@ -844,7 +849,10 @@ fn coding_run_terminal_observation_stays_monotonic_after_restart() {
         AgentTaskCodingRunDispatchState::Terminal
     );
     assert_eq!(stale.last_observation_revision, Some(2));
-    assert_eq!(stale.last_observed_run_state.as_deref(), Some("completed"));
+    assert_eq!(
+        stale.last_observed_run_state,
+        Some(CodingAgentRunState::Completed)
+    );
     assert_eq!(
         stale.terminal_message.as_deref(),
         completed_rev2.terminal_message.as_deref()
@@ -1006,8 +1014,8 @@ fn failed_cancelled_and_lost_have_bounded_exact_terminal_semantics() {
     );
     assert_eq!(recovered.binding.last_observation_revision, Some(6));
     assert_eq!(
-        recovered.binding.last_observed_run_state.as_deref(),
-        Some("completed")
+        recovered.binding.last_observed_run_state,
+        Some(CodingAgentRunState::Completed)
     );
 }
 
@@ -1129,7 +1137,10 @@ fn coding_run_binding_survives_restart_without_endpoint_or_window_state() {
         binding.dispatch_state,
         AgentTaskCodingRunDispatchState::Bound
     );
-    assert_eq!(binding.last_observed_run_state.as_deref(), Some("running"));
+    assert_eq!(
+        binding.last_observed_run_state,
+        Some(CodingAgentRunState::Running)
+    );
     assert_eq!(binding.last_observation_revision, Some(11));
     let task = reopened.read_agent_task(&owner, &task_id).unwrap();
     assert!(task.summary.execution_bound);
@@ -1146,6 +1157,68 @@ fn coding_run_binding_survives_restart_without_endpoint_or_window_state() {
         .read_agent_task_coding_run_binding(&foreign, &task_id, &attempt_id)
         .unwrap_err();
     assert_eq!(foreign_error.code(), "agent_task_not_found");
+}
+
+#[test]
+fn corrupt_coding_run_observation_states_fail_closed_on_binding_load() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-coding-corrupt-observation.db")).unwrap();
+    let owner = principal('0');
+    let assignee = agent(&db, &owner, "coding-corrupt-observation-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "coding-corrupt-observation-task");
+    let now = wall_now_ms();
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "coding-corrupt-observation-start",
+        now,
+    );
+    let intent = coding_binding_intent("corrupt-observation-run");
+    prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 1);
+    db.claim_agent_task_coding_run_dispatch(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &assignee,
+        &started.attempt_fence,
+        1,
+        &intent.binding_intent_fingerprint,
+    )
+    .unwrap();
+    db.record_agent_task_coding_run_observation(
+        &owner,
+        &task_id,
+        &started.attempt.attempt_id,
+        &coding_observation(&intent, "running", "started", 1),
+    )
+    .unwrap();
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_task_coding_runs
+             SET last_observed_run_state = 'future_state'
+             WHERE task_id = ?1 AND attempt_id = ?2",
+            params![task_id, started.attempt.attempt_id],
+        )
+        .unwrap();
+    assert!(db
+        .read_agent_task_coding_run_binding(&owner, &task_id, &started.attempt.attempt_id)
+        .is_err());
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_task_coding_runs
+             SET last_observed_run_state = 'running',
+                 last_observed_execution_state = 'future_state'
+             WHERE task_id = ?1 AND attempt_id = ?2",
+            params![task_id, started.attempt.attempt_id],
+        )
+        .unwrap();
+    assert!(db
+        .read_agent_task_coding_run_binding(&owner, &task_id, &started.attempt.attempt_id)
+        .is_err());
 }
 
 #[test]

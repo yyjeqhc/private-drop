@@ -64,6 +64,31 @@ impl CodingAgentRunState {
             Self::Completed | Self::Failed | Self::Cancelled | Self::Lost
         )
     }
+
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::WaitingPermission => "waiting_permission",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Lost => "lost",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "starting" => Self::Starting,
+            "running" => Self::Running,
+            "waiting_permission" => Self::WaitingPermission,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            "lost" => Self::Lost,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +98,27 @@ pub enum CodingAgentExecutionState {
     Started,
     OutcomeUnknown,
     Completed,
+}
+
+impl CodingAgentExecutionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotStarted => "not_started",
+            Self::Started => "started",
+            Self::OutcomeUnknown => "outcome_unknown",
+            Self::Completed => "completed",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "not_started" => Self::NotStarted,
+            "started" => Self::Started,
+            "outcome_unknown" => Self::OutcomeUnknown,
+            "completed" => Self::Completed,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -915,6 +961,36 @@ mod tests {
             assert_eq!(kind.as_str(), expected);
             assert_eq!(serde_json::to_value(&kind).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn run_and_execution_state_wire_vocabulary_is_exact_and_parseable() {
+        for (state, expected) in [
+            (CodingAgentRunState::Starting, "starting"),
+            (CodingAgentRunState::Running, "running"),
+            (CodingAgentRunState::WaitingPermission, "waiting_permission"),
+            (CodingAgentRunState::Completed, "completed"),
+            (CodingAgentRunState::Failed, "failed"),
+            (CodingAgentRunState::Cancelled, "cancelled"),
+            (CodingAgentRunState::Lost, "lost"),
+        ] {
+            assert_eq!(state.as_str(), expected);
+            assert_eq!(CodingAgentRunState::from_str(expected), Some(state.clone()));
+            assert_eq!(serde_json::to_value(&state).unwrap(), expected);
+        }
+        assert!(CodingAgentRunState::from_str("future_state").is_none());
+
+        for (state, expected) in [
+            (CodingAgentExecutionState::NotStarted, "not_started"),
+            (CodingAgentExecutionState::Started, "started"),
+            (CodingAgentExecutionState::OutcomeUnknown, "outcome_unknown"),
+            (CodingAgentExecutionState::Completed, "completed"),
+        ] {
+            assert_eq!(state.as_str(), expected);
+            assert_eq!(CodingAgentExecutionState::from_str(expected), Some(state));
+            assert_eq!(serde_json::to_value(state).unwrap(), expected);
+        }
+        assert!(CodingAgentExecutionState::from_str("future_state").is_none());
     }
 
     #[test]

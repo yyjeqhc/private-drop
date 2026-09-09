@@ -15,7 +15,7 @@ use serde_json::{json, to_value, Value};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use webcodex_core::coding_agent::{
-    CodingAgentConfigValue, CodingAgentExecutionState, CodingAgentRunSnapshot, CodingAgentRunState,
+    CodingAgentConfigValue, CodingAgentRunSnapshot, CodingAgentRunState,
 };
 
 const DEFAULT_AGENT_TASK_LIST_LIMIT: usize = 50;
@@ -61,6 +61,7 @@ fn agent_task_recovery_kind(
 #[cfg(test)]
 mod observation_tests {
     use super::*;
+    use webcodex_core::coding_agent::CodingAgentExecutionState;
 
     #[test]
     fn coding_run_observation_revision_overflow_fails_closed() {
@@ -114,27 +115,6 @@ fn serialized_task_success<T: Serialize>(value: T) -> ToolResult {
             }),
         )
         .with_recovery(RecoveryKind::NoAction, None),
-    }
-}
-
-fn coding_run_state_name(state: &CodingAgentRunState) -> &'static str {
-    match state {
-        CodingAgentRunState::Starting => "starting",
-        CodingAgentRunState::Running => "running",
-        CodingAgentRunState::WaitingPermission => "waiting_permission",
-        CodingAgentRunState::Completed => "completed",
-        CodingAgentRunState::Failed => "failed",
-        CodingAgentRunState::Cancelled => "cancelled",
-        CodingAgentRunState::Lost => "lost",
-    }
-}
-
-fn coding_execution_state_name(state: CodingAgentExecutionState) -> &'static str {
-    match state {
-        CodingAgentExecutionState::NotStarted => "not_started",
-        CodingAgentExecutionState::Started => "started",
-        CodingAgentExecutionState::OutcomeUnknown => "outcome_unknown",
-        CodingAgentExecutionState::Completed => "completed",
     }
 }
 
@@ -203,8 +183,8 @@ fn coding_run_observation(
         provider_instance_id: run.provider_instance_id.clone(),
         authority_fingerprint: run.authority_fingerprint.clone(),
         coding_agent_intent_fingerprint: run.intent_fingerprint.clone(),
-        run_state: coding_run_state_name(&run.state).to_string(),
-        execution_state: coding_execution_state_name(run.execution_state).to_string(),
+        run_state: run.state.clone(),
+        execution_state: run.execution_state,
         observation_revision,
         terminal_stop_reason: bounded_optional_terminal(
             run.terminal
@@ -232,14 +212,16 @@ fn binding_execution_status(binding: &AgentTaskCodingRunBindingRecord) -> &'stat
         }
         AgentTaskCodingRunDispatchState::OutcomeUnknown => "outcome_unknown",
         AgentTaskCodingRunDispatchState::Terminal => "terminal",
-        AgentTaskCodingRunDispatchState::Bound => {
-            match binding.last_observed_run_state.as_deref() {
-                Some("waiting_permission") => "waiting_permission",
-                Some("lost") => "outcome_unknown",
-                Some("completed" | "failed" | "cancelled") => "terminal",
-                _ => "active",
-            }
-        }
+        AgentTaskCodingRunDispatchState::Bound => match binding.last_observed_run_state.as_ref() {
+            Some(CodingAgentRunState::WaitingPermission) => "waiting_permission",
+            Some(CodingAgentRunState::Lost) => "outcome_unknown",
+            Some(
+                CodingAgentRunState::Completed
+                | CodingAgentRunState::Failed
+                | CodingAgentRunState::Cancelled,
+            ) => "terminal",
+            _ => "active",
+        },
     }
 }
 
@@ -249,12 +231,15 @@ fn binding_recovery_kind(binding: &AgentTaskCodingRunBindingRecord) -> &'static 
         | AgentTaskCodingRunDispatchState::NotStarted
         | AgentTaskCodingRunDispatchState::Terminal => "none",
         AgentTaskCodingRunDispatchState::OutcomeUnknown => "reconcile",
-        AgentTaskCodingRunDispatchState::Bound => {
-            match binding.last_observed_run_state.as_deref() {
-                Some("lost" | "completed" | "failed" | "cancelled") => "reconcile",
-                _ => "observe",
-            }
-        }
+        AgentTaskCodingRunDispatchState::Bound => match binding.last_observed_run_state.as_ref() {
+            Some(
+                CodingAgentRunState::Lost
+                | CodingAgentRunState::Completed
+                | CodingAgentRunState::Failed
+                | CodingAgentRunState::Cancelled,
+            ) => "reconcile",
+            _ => "observe",
+        },
     }
 }
 
@@ -270,7 +255,7 @@ fn coding_run_binding_projection(
         "project": binding.runtime_project_id,
         "provider_id": binding.provider_id,
         "dispatch_state": binding.dispatch_state.as_str(),
-        "run_state": binding.last_observed_run_state,
+        "run_state": binding.last_observed_run_state.as_ref(),
         "execution_state": binding.last_observed_execution_state,
         "execution_status": binding_execution_status(binding),
         "execution_recovery": binding_recovery_kind(binding),
@@ -310,11 +295,7 @@ fn coding_run_failure_result(
 }
 
 fn coding_run_terminal_result(run: &CodingAgentRunSnapshot) -> String {
-    let mut result = format!(
-        "CodingAgentRun {} {}",
-        run.run_id,
-        coding_run_state_name(&run.state)
-    );
+    let mut result = format!("CodingAgentRun {} {}", run.run_id, run.state.as_str());
     if let Some(terminal) = run.terminal.as_ref() {
         if let Some(message) = terminal.message.as_deref() {
             result.push_str(": ");
@@ -680,8 +661,12 @@ impl ToolRuntime {
         };
         if observed_binding.last_observation_revision != Some(observation.observation_revision)
             || !matches!(
-                observed_binding.last_observed_run_state.as_deref(),
-                Some("completed" | "failed" | "cancelled")
+                observed_binding.last_observed_run_state.as_ref(),
+                Some(
+                    CodingAgentRunState::Completed
+                        | CodingAgentRunState::Failed
+                        | CodingAgentRunState::Cancelled
+                )
             )
         {
             return ToolResult::ok(coding_run_binding_projection(
