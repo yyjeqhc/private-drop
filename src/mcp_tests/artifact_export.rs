@@ -439,6 +439,56 @@ async fn mcp_artifact_export_surface_is_stateless_full_operator_only() {
     }
 }
 
+#[tokio::test]
+async fn adaptive_artifact_export_direct_and_gateway_preserve_protocol_and_caller_gates() {
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap);
+    auth.is_bootstrap = true;
+    for via_gateway in [false, true] {
+        let arguments = json!({"project": "agent:any:any", "path": "report.pdf"});
+        let params = if via_gateway {
+            json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {"tool": "export_project_artifact", "arguments": arguments}
+            })
+        } else {
+            json!({"name": "export_project_artifact", "arguments": arguments})
+        };
+        for (stateless, expected_error) in [
+            (false, "stateless-2026"),
+            (true, "authenticated caller identity is unavailable"),
+        ] {
+            let outcome = handle_mcp_request(
+                &runtime,
+                rpc(
+                    "tools/call",
+                    Some(json!(3101)),
+                    if stateless {
+                        mcp_2026_params(params.clone())
+                    } else {
+                        params.clone()
+                    },
+                ),
+                if stateless { None } else { Some(&auth) },
+            )
+            .await;
+            let McpOutcome::BadRequest(value) = outcome else {
+                panic!(
+                    "export must reject gateway={via_gateway}, stateless={stateless}: {outcome:?}"
+                );
+            };
+            assert_eq!(value["error"]["code"], -32602);
+            assert!(
+                value["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(expected_error),
+                "gateway={via_gateway}, stateless={stateless}: {value}"
+            );
+        }
+    }
+}
+
 #[test]
 fn mcp_artifact_export_oauth_binding_survives_access_token_refresh() {
     let oauth = |access_token_id: &str, client_id: &str| {
