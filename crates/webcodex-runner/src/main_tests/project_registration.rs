@@ -358,10 +358,14 @@ fn resolve_or_register_project_rejects_invalid_non_directory_and_disallowed_path
 
 #[cfg(windows)]
 #[test]
-fn resolve_or_register_project_network_paths_reach_filesystem_resolution() {
+fn resolve_or_register_project_authorized_network_paths_reach_filesystem_resolution() {
     let tmp = tempfile::tempdir().unwrap();
     let project_registry_dir = tmp.path().join("project-registry");
-    let policy = project_policy(tmp.path());
+    let policy = RunnerPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: vec![PathBuf::from(r"\\server\share")],
+        ..RunnerPolicy::default()
+    };
 
     for network_path in [
         r"\\server\share\webcodex-unreachable-repo",
@@ -377,10 +381,34 @@ fn resolve_or_register_project_network_paths_reach_filesystem_resolution() {
         ));
         assert_eq!(
             error["error_kind"], "project_path_not_found",
-            "supported network path {network_path} must reach filesystem resolution"
+            "authorized network path {network_path} must reach filesystem resolution"
         );
         assert_eq!(error["state_changed"], false);
     }
+    assert!(!project_registry_dir.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn model_facing_network_ingress_requires_authority_before_filesystem_resolution() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_registry_dir = tmp.path().join("project-registry");
+    let denied = RunnerPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: Vec::new(),
+        ..RunnerPolicy::default()
+    };
+    let raw = Path::new(r"\\untrusted-host\share\webcodex-unreachable-repo");
+    let error = project_error_value(handle_resolve_or_register_project(
+        &denied,
+        &project_registry_dir,
+        &project_request(
+            "resolve_or_register_project",
+            serde_json::json!({"path": raw.to_string_lossy()}),
+        ),
+    ));
+    assert_eq!(error["error_kind"], "path_outside_allowed_roots");
+    assert_eq!(error["state_changed"], false);
     assert!(!project_registry_dir.exists());
 }
 
@@ -475,29 +503,39 @@ fn resolve_or_register_project_accepts_local_drive_and_verbatim_disk_identity() 
 
 #[cfg(windows)]
 #[test]
-fn register_project_network_path_reaches_filesystem_resolution() {
+fn register_project_network_path_requires_authority_before_filesystem_resolution() {
     let tmp = tempfile::tempdir().unwrap();
     let project_registry_dir = tmp.path().join("project-registry");
-    let policy = project_policy(tmp.path());
-
-    let result = handle_project_op(
-        &policy,
-        &project_registry_dir,
-        &project_request(
-            "register_project",
-            serde_json::json!({
-                "id": "demo",
-                "name": "Demo",
-                "path": r"\\server\share\webcodex-unreachable-repo",
-                "description": "UNC project",
-                "allow_patch": false
-            }),
-        ),
+    let path = r"\\server\share\webcodex-unreachable-repo";
+    let request = project_request(
+        "register_project",
+        serde_json::json!({
+            "id": "demo",
+            "name": "Demo",
+            "path": path,
+            "description": "UNC project",
+            "allow_patch": false
+        }),
     );
+
+    let denied = RunnerPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: Vec::new(),
+        ..RunnerPolicy::default()
+    };
+    let denied_error =
+        project_error_value(handle_project_op(&denied, &project_registry_dir, &request));
+    assert_eq!(denied_error["error_code"], "path_outside_allowed_roots");
+
+    let allowed = RunnerPolicy {
+        allowed_roots: vec![PathBuf::from(r"\\server\share")],
+        ..RunnerPolicy::default()
+    };
+    let result = handle_project_op(&allowed, &project_registry_dir, &request);
     let error = result.error.as_deref().unwrap_or_default();
     assert!(
         error.contains("does not exist or cannot be canonicalized"),
-        "supported UNC registration must reach filesystem resolution: {error}"
+        "authorized UNC registration must reach filesystem resolution: {error}"
     );
     assert!(
         !error.contains("windows_project_path_unsupported"),

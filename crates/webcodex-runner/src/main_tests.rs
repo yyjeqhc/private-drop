@@ -1405,6 +1405,29 @@ fn managed_worktree_request(
     )
 }
 
+#[cfg(windows)]
+#[test]
+fn managed_worktree_network_source_requires_runner_authority_before_resolution() {
+    let tmp = tempfile::tempdir().unwrap();
+    let registry = tmp.path().join("project-registry");
+    let source = Path::new(r"\\untrusted-host\share\webcodex-unreachable-repo");
+    let policy = RunnerPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: Vec::new(),
+        ..RunnerPolicy::default()
+    };
+    let request = managed_worktree_request(
+        source,
+        serde_json::Value::Null,
+        "77777777-7777-4777-8777-777777777777",
+        None,
+    );
+
+    let result = handle_prepare_managed_worktree(&policy, &registry, &request);
+    assert_eq!(project_err(result), "path_outside_allowed_roots");
+    assert!(!registry.exists());
+}
+
 #[test]
 fn managed_worktree_bootstrap_is_detached_registered_and_same_operation_recovers() {
     let tmp = tempfile::tempdir().unwrap();

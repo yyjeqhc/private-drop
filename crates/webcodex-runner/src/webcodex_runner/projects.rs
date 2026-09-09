@@ -790,6 +790,47 @@ fn validate_windows_project_root(path: &Path) -> Result<(), &'static str> {
         .map_err(|_| "windows_project_path_unsupported")
 }
 
+/// Before a model-facing request dereferences a raw Windows network path, require
+/// it to fall under Runner authority that was already configured by the user.
+/// This prevents an untrusted `\\server\share` spelling from triggering SMB I/O
+/// (and possible OS authentication) merely to discover that policy rejects it.
+fn validate_model_network_project_ingress_authority(
+    policy: &RunnerPolicy,
+    path: &Path,
+) -> Result<(), &'static str> {
+    #[cfg(windows)]
+    {
+        if !webcodex_runner_config::paths::is_windows_network_share_path(path) {
+            return Ok(());
+        }
+        if policy
+            .allowed_roots
+            .iter()
+            .any(|root| webcodex_runner_config::paths::path_is_within(path, root))
+        {
+            return Ok(());
+        }
+        // A configured mapped drive may canonicalize to the same UNC share. It is
+        // safe to resolve configured roots here because those roots are already
+        // user-authorized; never canonicalize the untrusted target before this gate.
+        let canonical_roots =
+            webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+        if canonical_roots
+            .iter()
+            .any(|root| webcodex_runner_config::paths::path_is_within(path, root))
+        {
+            return Ok(());
+        }
+        return Err("path_outside_allowed_roots");
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (policy, path);
+        Ok(())
+    }
+}
+
 /// Escape a string for use as a TOML basic string (double-quoted). NUL is
 /// rejected up front by validation, so we only handle backslash, quote, and
 /// common control characters.
@@ -1327,10 +1368,20 @@ pub(crate) fn handle_resolve_or_register_project_operation(
             )
         }
     };
-    // Reject unsupported Windows namespaces before touching the filesystem.
-    // UNC/VerbatimUNC intentionally proceed so an unreachable share surfaces as
-    // the ordinary `project_path_not_found` availability result.
+    // Reject unsupported namespaces before filesystem access. Raw UNC/VerbatimUNC
+    // inputs must also be covered by pre-existing Runner authority before they may
+    // trigger SMB I/O; local CLI/Desktop onboarding owns any authority extension.
     if let Err(error_kind) = validate_windows_project_root(Path::new(path)) {
+        return structured_project_error_cmd(
+            start,
+            error_kind,
+            false,
+            serde_json::json!({"field": "path"}),
+        );
+    }
+    if let Err(error_kind) =
+        validate_model_network_project_ingress_authority(policy, Path::new(path))
+    {
         return structured_project_error_cmd(
             start,
             error_kind,
@@ -1926,6 +1977,11 @@ pub(crate) fn handle_prepare_managed_worktree_operation(
             None,
             None,
         );
+    }
+    if let Err(error_kind) =
+        validate_model_network_project_ingress_authority(policy, Path::new(path))
+    {
+        return managed_worktree_error(start, error_kind, false, Some(&base_ref), None, None);
     }
     let source = match canonicalize_existing(Path::new(path)) {
         Ok(source) if source.is_dir() && source.to_str().is_some() => source,
@@ -2770,6 +2826,13 @@ pub(crate) fn handle_project_operation(
     // special Windows namespaces still fail before filesystem access.
     if let Err(error_kind) = validate_windows_project_root(Path::new(&path)) {
         return project_error_cmd(start, error_kind);
+    }
+    if !create {
+        if let Err(error_kind) =
+            validate_model_network_project_ingress_authority(policy, Path::new(&path))
+        {
+            return project_error_cmd(start, error_kind);
+        }
     }
     #[cfg(windows)]
     if create && webcodex_runner_config::paths::is_windows_network_share_path(Path::new(&path)) {
