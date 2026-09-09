@@ -664,35 +664,208 @@ fn openapi_key_actions_have_examples() {
 }
 
 #[test]
-fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
-    let spec = build_openapi_spec();
+fn openapi_external_action_contract_matches_compatibility_golden() {
+    // External compatibility golden only. Production generation must never read
+    // this fixture; RouteSpec/OpenApiOperationSpec remain the runtime authority.
     let expected = [
-        ("/api/tools/list", "listRuntimeTools"),
-        ("/api/projects/list", "listProjects"),
-        ("/api/projects/register", "registerProject"),
-        ("/api/projects/create", "createProject"),
-        ("/api/runtime/status", "getRuntimeStatus"),
-        ("/api/jobs/status", "getRuntimeJobStatus"),
-        ("/api/jobs/log", "getRuntimeJobLog"),
-        ("/api/jobs/list", "listRuntimeJobs"),
-        ("/api/jobs/tail", "getRuntimeJobTail"),
-        ("/api/projects/read_file", "readProjectFile"),
-        ("/api/projects/git_status", "getProjectGitStatus"),
-        ("/api/projects/git_diff", "getProjectGitDiff"),
-        ("/api/projects/git_diff_summary", "getProjectGitDiffSummary"),
-        ("/api/projects/list_files", "listProjectFiles"),
-        ("/api/projects/search_text", "searchProjectText"),
-        ("/api/projects/apply_unified_diff", "applyUnifiedDiff"),
-        ("/api/projects/run_shell", "runProjectShellCommand"),
-        ("/api/projects/git_restore_paths", "gitRestorePaths"),
-        ("/api/projects/discard_untracked", "discardUntrackedFiles"),
-        ("/api/artifacts/import", "importConversationFilesToProject"),
-        ("/api/projects/run_job", "startProjectShellJob"),
-        ("/api/tools/call", "callRuntimeTool"),
+        (
+            "/api/tools/list",
+            "post",
+            "listRuntimeTools",
+            false,
+            "ToolsListRequest",
+            "ToolsListResponse",
+        ),
+        (
+            "/api/projects/list",
+            "post",
+            "listProjects",
+            false,
+            "ListProjectsRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/register",
+            "post",
+            "registerProject",
+            false,
+            "RegisterProjectRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/create",
+            "post",
+            "createProject",
+            false,
+            "CreateProjectRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/runtime/status",
+            "post",
+            "getRuntimeStatus",
+            false,
+            "RuntimeStatusRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/jobs/status",
+            "post",
+            "getRuntimeJobStatus",
+            false,
+            "JobStatusRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/jobs/log",
+            "post",
+            "getRuntimeJobLog",
+            false,
+            "JobLogRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/jobs/list",
+            "post",
+            "listRuntimeJobs",
+            false,
+            "ListJobsRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/jobs/tail",
+            "post",
+            "getRuntimeJobTail",
+            false,
+            "JobTailRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/read_file",
+            "post",
+            "readProjectFile",
+            false,
+            "ReadProjectFileRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/git_status",
+            "post",
+            "getProjectGitStatus",
+            false,
+            "ProjectIdRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/git_diff",
+            "post",
+            "getProjectGitDiff",
+            false,
+            "ProjectGitDiffRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/git_diff_summary",
+            "post",
+            "getProjectGitDiffSummary",
+            false,
+            "ProjectIdRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/list_files",
+            "post",
+            "listProjectFiles",
+            false,
+            "ListProjectFilesRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/search_text",
+            "post",
+            "searchProjectText",
+            false,
+            "SearchProjectTextRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/apply_unified_diff",
+            "post",
+            "applyUnifiedDiff",
+            true,
+            "ApplyUnifiedDiffRequest",
+            "ApplyUnifiedDiffToolResult",
+        ),
+        (
+            "/api/projects/run_shell",
+            "post",
+            "runProjectShellCommand",
+            true,
+            "RunShellRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/git_restore_paths",
+            "post",
+            "gitRestorePaths",
+            true,
+            "GitRestorePathsRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/projects/discard_untracked",
+            "post",
+            "discardUntrackedFiles",
+            true,
+            "DiscardUntrackedRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/artifacts/import",
+            "post",
+            "importConversationFilesToProject",
+            true,
+            "ImportConversationFilesRequest",
+            "ImportConversationFilesResponse",
+        ),
+        (
+            "/api/projects/run_job",
+            "post",
+            "startProjectShellJob",
+            true,
+            "StartProjectShellJobRequest",
+            "ToolResult",
+        ),
+        (
+            "/api/tools/call",
+            "post",
+            "callRuntimeTool",
+            true,
+            "ToolCallRequest",
+            "ToolResult",
+        ),
     ];
     assert_eq!(expected.len(), GPT_ACTION_OPS.len());
-    for (path, operation_id) in expected {
-        assert_eq!(spec["paths"][path]["post"]["operationId"], operation_id);
+
+    let spec = build_openapi_spec();
+    assert_eq!(spec["paths"].as_object().unwrap().len(), expected.len());
+    for (path, method, operation_id, consequential, request_schema, response_schema) in expected {
+        let operation = &spec["paths"][path][method];
+        assert_eq!(operation["operationId"], operation_id, "{path}");
+        assert_eq!(
+            operation["x-openai-isConsequential"], consequential,
+            "{path}"
+        );
+        assert_eq!(
+            operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{request_schema}"),
+            "{path}"
+        );
+        assert_eq!(
+            operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{response_schema}"),
+            "{path}"
+        );
     }
     let serialized = serde_json::to_string(&spec).unwrap();
     assert!(serialized.contains("Runner-registered"));

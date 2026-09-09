@@ -139,6 +139,10 @@ MCP / OpenAPI / Runtime HTTP --> ToolRuntime --+--> Project resolution --> Runne
 Runtime Console -----------------------> canonical Server HTTP/kernel paths above
 ```
 
+- `route_metadata` — canonical HTTP route identity, security/surface metadata,
+  and OpenAPI exposure. Public Action operation policy is bound directly to its
+  route; Connector routes bind canonical capability identities. Handler mounting
+  stays explicit in the HTTP modules.
 - `runtime_http` — REST runtime routes.
 - `mcp` — the MCP adapter and surface selection.
 - `openapi` — the GPT Actions schema.

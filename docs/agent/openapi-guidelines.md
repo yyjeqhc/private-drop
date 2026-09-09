@@ -27,6 +27,27 @@ The **model-visible** registry, MCP `tools/list`, `tool_manifest`, and GPT Actio
 `registered_tool_specs()`. Internal or retired runtime names must not leak names
 or implementation-only fields into the model-facing Action schema.
 
+## Route/OpenAPI ownership
+
+- `RouteSpec` owns canonical HTTP method/path, scope/auth surface, audit class,
+  and whether a route projects as `Hidden`, a dedicated Public Action, or a
+  Connector capability binding. Handler mounting remains explicit in the owning
+  HTTP modules; OpenAPI metadata is never an authorization source.
+- A Public Action projection carries the static product operation policy used by
+  `/openapi.json`: operation id, summary/description, request/response component
+  identities, explicit consequential policy, and typed request-example identity.
+  The Public OpenAPI projector iterates canonical routes directly; do not add a
+  second handwritten path/operation registry or post-generation route filter.
+- Connector capability semantics remain owned by
+  `webcodex_connector_runtime::surface::capability_specs()` (description, input
+  and output schemas, and annotations such as `readOnlyHint`). `RouteSpec` owns
+  only the capability-to-HTTP-route binding; the Connector OpenAPI projector
+  combines those two canonical sources.
+- Component construction in `openapi::schemas()` remains a separate manual schema
+  projection. Route operation ownership does not require a schema-DSL rewrite.
+
+---
+
 ---
 
 ## 2. Exposure rules (invariants)
