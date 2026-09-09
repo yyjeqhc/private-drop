@@ -3080,9 +3080,21 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;
-    use std::sync::Barrier;
+    use std::sync::{Barrier, Mutex};
 
     const PROJECT: &str = "agent:msi:test";
+    // These fixtures launch real Windows PowerShell/PowerShell 7 processes. On
+    // small hosted runners, starting all eleven cold shells at once can exceed
+    // the production initialization deadline even though each shell is healthy.
+    // Serialize only this real-process test module; production concurrency and
+    // the rest of the Rust test suite remain unchanged.
+    static WINDOWS_PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn windows_process_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        WINDOWS_PROCESS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn launch(root: &Path, shell_id: &str, session_id: &str) -> ShellLaunch {
         launch_with_program(root, shell_id, session_id, "powershell.exe")
@@ -3153,6 +3165,7 @@ mod windows_tests {
 
     #[test]
     fn state_stdout_stderr_and_unicode_persist() {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp.path().join("sub")).unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
@@ -3208,6 +3221,7 @@ mod windows_tests {
 
     #[test]
     fn command_failure_does_not_lose_shell() {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
         manager
@@ -3263,6 +3277,7 @@ mod windows_tests {
     }
 
     fn assert_status_integrity(program: &str, label: &str) {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp.path().join("sub")).unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
@@ -3413,6 +3428,7 @@ Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCom
 
     #[test]
     fn shell_exit_is_terminal_and_next_exec_fails_closed() {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
         manager
@@ -3435,6 +3451,7 @@ Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCom
 
     #[test]
     fn timeout_poisoning_is_bounded_and_never_reuses_uncertain_stream() {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
         manager
@@ -3468,6 +3485,7 @@ Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCom
 
     #[test]
     fn marker_like_user_output_cannot_complete_control_framing() {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
         manager
@@ -3534,6 +3552,7 @@ Start-Sleep -Milliseconds 500
 "#;
 
     fn assert_private_completion_isolation(program: &str, label: &str, token: &'static str) {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
         let shell_id = format!("wc_shell_forge_{label}");
@@ -3702,6 +3721,7 @@ Start-Sleep -Milliseconds 500
 
     #[test]
     fn concurrent_exec_is_serialized_by_busy_guard() {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
         manager
@@ -3745,6 +3765,7 @@ Start-Sleep -Milliseconds 500
 
     #[test]
     fn close_is_idempotent_and_kills_owned_descendants() {
+        let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
         manager

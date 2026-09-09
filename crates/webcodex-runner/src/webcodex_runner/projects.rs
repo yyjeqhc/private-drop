@@ -786,6 +786,9 @@ impl RunnerProjectCache {
 /// owns the grammar-based prefix rule; it never falls back to a string
 /// `starts_with` check.
 fn validate_windows_project_root(path: &Path) -> Result<(), &'static str> {
+    if webcodex_runner_config::paths::project_path_has_parent_traversal(path) {
+        return Err("path_outside_allowed_roots");
+    }
     webcodex_runner_config::paths::validate_project_path_ingress(path)
         .map_err(|_| "windows_project_path_unsupported")
 }
@@ -805,10 +808,7 @@ fn validate_model_network_project_ingress_authority(
         }
         // Containment below is lexical: a parent component could escape an
         // authorized directory before the canonical policy gets a chance to run.
-        if path
-            .components()
-            .any(|component| component == std::path::Component::ParentDir)
-        {
+        if webcodex_runner_config::paths::project_path_has_parent_traversal(path) {
             return Err("path_outside_allowed_roots");
         }
         if policy.allowed_roots.iter().any(|root| {

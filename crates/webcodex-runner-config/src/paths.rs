@@ -337,7 +337,11 @@ fn windows_unsupported_project_path_error(path: &Path) -> String {
     )
 }
 
-fn raw_project_path_has_parent_traversal(path: &Path) -> bool {
+/// Detect an explicit parent component in the raw project path spelling.
+///
+/// Windows verbatim paths need the raw-string fallback because `Path::components`
+/// may normalize `..` before an authority caller can classify the request.
+pub fn project_path_has_parent_traversal(path: &Path) -> bool {
     if path
         .components()
         .any(|component| matches!(component, std::path::Component::ParentDir))
@@ -369,7 +373,7 @@ fn raw_project_path_has_parent_traversal(path: &Path) -> bool {
 /// verbatim namespaces fail closed. Other relative/no-prefix inputs continue to
 /// canonicalization, where the canonical project policy applies.
 pub fn validate_project_path_ingress(path: &Path) -> Result<(), String> {
-    if raw_project_path_has_parent_traversal(path) {
+    if project_path_has_parent_traversal(path) {
         return Err("project path must not contain parent traversal".to_string());
     }
 
