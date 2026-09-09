@@ -1788,15 +1788,14 @@ mod tests {
     #[test]
     fn local_selection_rejects_parent_traversal() {
         let tmp = canonical_test_tempdir();
-        let error = register_existing_project(
-            &tmp.path().join("registry"),
-            &tmp.path().join("../"),
-            &[],
-            false,
-            None,
-        )
-        .unwrap_err();
-        assert!(error.contains("parent traversal"));
+        #[cfg(windows)]
+        let traversal = PathBuf::from(format!(r"{}\..", tmp.path().display()));
+        #[cfg(not(windows))]
+        let traversal = tmp.path().join("../");
+        let error =
+            register_existing_project(&tmp.path().join("registry"), &traversal, &[], false, None)
+                .unwrap_err();
+        assert!(error.contains("parent traversal"), "{error}");
     }
 
     #[cfg(windows)]

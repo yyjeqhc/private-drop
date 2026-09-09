@@ -1196,7 +1196,11 @@ mod tests {
             device_explicit: false,
             base_dir: base.to_path_buf(),
             transport: "websocket".to_string(),
-            allowed_roots: Vec::new(),
+            // Test fixtures should not depend on process-global HOME discovery:
+            // other tests intentionally remove HOME/USERPROFILE while exercising
+            // explicit project authority. Tests that need empty-root semantics
+            // can override this field explicitly.
+            allowed_roots: vec![base.to_path_buf()],
             overwrite,
             project: None,
             json: false,
