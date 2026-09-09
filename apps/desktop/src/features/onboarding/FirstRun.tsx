@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi, type QuickShareProvider } from "../../lib/desktop-api";
 import { useLocale } from "../../i18n/locale";
 import { TunnelConfigDiagnostics } from "../connection/TunnelConfigDiagnostics";
+import { PowerShellInstallGuidance } from "../settings/PowerShellInstallGuidance";
 import {
   desktopErrorPresentation,
   normalizeDesktopError,
@@ -149,6 +150,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       <div className="eyebrow">{modeLabel(mode, t)}</div>
       <h1 id="setup-title">{setupTitle(mode, t)}</h1>
       <p className="lede">{setupDescription(mode, t)}</p>
+      <PowerShellInstallGuidance state={state} onState={onState} />
 
       {mode === "local" && <TunnelConfigDiagnostics state={state} onState={onState} />}
 

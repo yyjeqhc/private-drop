@@ -8,6 +8,7 @@ import type {
 
 export const desktopApi = {
   getState: () => invoke<DesktopState>("get_desktop_state"),
+  openPowerShellInstallGuide: () => invoke<void>("open_powershell_install_guide"),
   getLaunchAtLogin: () => invoke<boolean>("get_launch_at_login"),
   setLaunchAtLogin: (enabled: boolean) =>
     invoke<boolean>("set_launch_at_login", { request: { enabled } }),

@@ -108,6 +108,7 @@ impl AppState {
         snapshot.activity_sequence = self.activity.latest_sequence();
         apply_openai_tunnel_configuration(&mut snapshot);
         snapshot.regular_tunnel_available = true;
+        snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         snapshot
     }
 
@@ -480,6 +481,7 @@ impl DesktopCore {
         snapshot.project = project_snapshot(&config);
         apply_openai_tunnel_configuration(&mut snapshot);
         snapshot.regular_tunnel_available = true;
+        snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         apply_config_projection(&mut snapshot, &config);
         let published = Arc::new(RwLock::new(snapshot.clone()));
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
@@ -637,6 +639,7 @@ impl DesktopCore {
         self.snapshot.activity_sequence = self.activity.latest_sequence();
         apply_openai_tunnel_configuration(&mut self.snapshot);
         self.snapshot.regular_tunnel_available = true;
+        self.snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         apply_config_projection(&mut self.snapshot, &self.config);
         let snapshot = self.snapshot.clone();
         *self

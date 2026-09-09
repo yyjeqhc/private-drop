@@ -74,6 +74,11 @@ pub async fn get_desktop_state(
 }
 
 #[tauri::command]
+pub fn open_powershell_install_guide() -> Result<(), DesktopError> {
+    crate::platform::open_powershell_install_guide()
+}
+
+#[tauri::command]
 pub async fn get_launch_at_login(app: AppHandle) -> Result<bool, DesktopError> {
     match desktop_shell::launch_at_login_enabled(&app) {
         Ok(enabled) => {

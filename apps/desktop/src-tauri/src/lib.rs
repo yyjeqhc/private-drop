@@ -44,6 +44,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_desktop_state,
+            commands::open_powershell_install_guide,
             commands::get_launch_at_login,
             commands::set_launch_at_login,
             commands::refresh_runtime_status,

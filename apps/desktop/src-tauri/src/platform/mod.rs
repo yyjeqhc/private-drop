@@ -1,7 +1,13 @@
 #[cfg(target_os = "windows")]
 mod windows;
 
+use crate::error::{DesktopError, DesktopResult};
+use crate::models::PowerShellRuntimeSnapshot;
 use webcodex_process::SpawnOptions;
+
+#[cfg(target_os = "windows")]
+const POWERSHELL_INSTALL_GUIDE_URL: &str =
+    "https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows";
 
 pub fn managed_spawn_options(silent_child_breakaway: bool) -> SpawnOptions {
     #[cfg(target_os = "windows")]
@@ -12,6 +18,38 @@ pub fn managed_spawn_options(silent_child_breakaway: bool) -> SpawnOptions {
     {
         let _ = silent_child_breakaway;
         SpawnOptions::new()
+    }
+}
+
+pub fn powershell_runtime_snapshot() -> Option<PowerShellRuntimeSnapshot> {
+    #[cfg(target_os = "windows")]
+    {
+        return Some(windows::powershell_runtime_snapshot());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+pub fn open_powershell_install_guide() -> DesktopResult<()> {
+    #[cfg(target_os = "windows")]
+    {
+        return windows::open_external_url(POWERSHELL_INSTALL_GUIDE_URL).map_err(|error| {
+            DesktopError::new(
+                "powershell_install_guide_unavailable",
+                format!("failed to open the PowerShell 7 installation guide: {error}"),
+                "Open the Microsoft PowerShell installation documentation in your browser.",
+            )
+        });
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(DesktopError::new(
+            "powershell_install_guide_unsupported",
+            "PowerShell 7 installation guidance is only shown on Windows",
+            "No PowerShell installation is required on this platform.",
+        ))
     }
 }
 

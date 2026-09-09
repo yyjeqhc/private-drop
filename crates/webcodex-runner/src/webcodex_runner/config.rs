@@ -1017,7 +1017,9 @@ pub(crate) fn restart_required_fields(
     )
 }
 
-/// Windows default shell: native PowerShell (no sh/Git Bash/WSL required).
+/// Windows default shell: prefer PowerShell 7 when `pwsh.exe` is available on
+/// the Runner process PATH, while retaining Windows PowerShell 5.1 as the
+/// compatibility fallback. No sh/Git Bash/WSL is required.
 /// `-NoProfile` skips the user's interactive profile, `-NonInteractive` never
 /// prompts, `-ExecutionPolicy Bypass` is process-scoped and lets configured
 /// init/profile scripts dot-source `.ps1` files even under the stock
@@ -1026,7 +1028,23 @@ pub(crate) fn restart_required_fields(
 /// script text appends an explicit `exit $LASTEXITCODE`.
 #[cfg(windows)]
 fn default_shell_program() -> String {
-    "powershell.exe".to_string()
+    default_windows_shell_program_for_path(std::env::var_os("PATH").as_deref())
+}
+
+#[cfg(windows)]
+pub(crate) fn default_windows_shell_program_for_path(path: Option<&std::ffi::OsStr>) -> String {
+    if windows_program_on_path("pwsh.exe", path) {
+        "pwsh.exe".to_string()
+    } else {
+        "powershell.exe".to_string()
+    }
+}
+
+#[cfg(windows)]
+fn windows_program_on_path(program: &str, path: Option<&std::ffi::OsStr>) -> bool {
+    path.into_iter()
+        .flat_map(std::env::split_paths)
+        .any(|directory| directory.join(program).is_file())
 }
 
 #[cfg(windows)]

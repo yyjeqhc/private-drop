@@ -4,6 +4,7 @@ import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/t
 import { useLocale } from "../../i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
 import { TunnelConfigDiagnostics } from "../connection/TunnelConfigDiagnostics";
+import { PowerShellInstallGuidance } from "./PowerShellInstallGuidance";
 
 export function SettingsPanel({
   state,
@@ -161,6 +162,7 @@ export function SettingsPanel({
 
       <section className="settings-section" aria-labelledby="settings-diagnostics-title">
         <h2 id="settings-diagnostics-title">{t("settings.diagnostics")}</h2>
+        <PowerShellInstallGuidance state={state} onState={onState} />
         <article className="detail-card">
         {state.binaries ? (
           <dl className="detail-list">

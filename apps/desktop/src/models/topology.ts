@@ -157,11 +157,17 @@ export interface OpenAiTunnelConfigSnapshot {
   api_key_present: boolean;
 }
 
+export interface PowerShellRuntimeSnapshot {
+  pwsh_available: boolean;
+  windows_powershell_available: boolean;
+}
+
 export interface DesktopState {
   topology?: RuntimeTopology | null;
   readiness: ReadinessSnapshot;
   project?: ProjectSelection | null;
   binaries?: BinaryInfo | null;
+  powershell_runtime?: PowerShellRuntimeSnapshot | null;
   quick_share?: QuickShareState | null;
   regular_tunnel?: RegularTunnelState | null;
   current_operation?: DesktopOperation | null;

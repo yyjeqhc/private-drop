@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(windows)]
+use crate::webcodex_runner::config::default_windows_shell_program_for_path;
 
 /// Write a shell init script for this platform's default shell into `dir`
 /// that exports `name=value`, and return its path.
@@ -43,9 +45,13 @@ fn shell_config_default_shell_is_platform_native() {
     let shell = ShellConfig::default();
     #[cfg(windows)]
     {
-        // The default Windows shell is native PowerShell; the default command
-        // must execute without any sh/Git Bash/WSL on PATH.
-        assert_eq!(shell.program, "powershell.exe");
+        // Prefer PowerShell 7 when it is discoverable, while preserving the
+        // native Windows PowerShell fallback and avoiding any sh/Git Bash/WSL
+        // dependency for ordinary configured-shell work.
+        assert_eq!(
+            shell.program,
+            default_windows_shell_program_for_path(std::env::var_os("PATH").as_deref())
+        );
         assert!(shell.args.iter().any(|arg| arg == "-Command"));
         assert!(
             shell.args.iter().any(|arg| arg == "-NoProfile"),
@@ -68,6 +74,25 @@ fn shell_config_default_shell_is_platform_native() {
         assert_eq!(shell.program, "sh");
         assert_eq!(shell.args, vec!["-c".to_string()]);
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn shell_config_windows_default_prefers_pwsh_and_falls_back() {
+    let pwsh_dir = tempfile::tempdir().unwrap();
+    std::fs::write(pwsh_dir.path().join("pwsh.exe"), b"").unwrap();
+    let pwsh_path = std::env::join_paths([pwsh_dir.path()]).unwrap();
+    assert_eq!(
+        default_windows_shell_program_for_path(Some(pwsh_path.as_os_str())),
+        "pwsh.exe"
+    );
+
+    let fallback_dir = tempfile::tempdir().unwrap();
+    let fallback_path = std::env::join_paths([fallback_dir.path()]).unwrap();
+    assert_eq!(
+        default_windows_shell_program_for_path(Some(fallback_path.as_os_str())),
+        "powershell.exe"
+    );
 }
 
 #[cfg(unix)]

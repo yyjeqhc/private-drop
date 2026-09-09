@@ -5,6 +5,7 @@ import { LocaleProvider } from "./i18n/locale";
 
 const api = vi.hoisted(() => ({
   getState: vi.fn(),
+  openPowerShellInstallGuide: vi.fn(),
   refresh: vi.fn(),
   resumeSavedRuntime: vi.fn(),
   updateTunnelProxy: vi.fn(),
@@ -194,6 +195,7 @@ describe("semantic Desktop UI", () => {
     );
     api.activity.mockResolvedValue([]);
     api.getLaunchAtLogin.mockResolvedValue(false);
+    api.openPowerShellInstallGuide.mockResolvedValue(undefined);
     api.setLaunchAtLogin.mockImplementation(async (enabled: boolean) => enabled);
     api.resumeSavedRuntime.mockResolvedValue(readyState);
     api.updateTunnelProxy.mockResolvedValue(readyState);
@@ -380,6 +382,43 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("radiogroup", { name: "Quick Share 连接方式" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
+  });
+
+  it("guides Windows users to PowerShell 7 without blocking the 5.1 fallback", async () => {
+    const missingPwsh: DesktopState = {
+      ...firstRunState,
+      powershell_runtime: {
+        pwsh_available: false,
+        windows_powershell_available: true,
+      },
+    };
+    const detectedPwsh: DesktopState = {
+      ...missingPwsh,
+      powershell_runtime: {
+        pwsh_available: true,
+        windows_powershell_available: true,
+      },
+    };
+    api.getState.mockResolvedValueOnce(missingPwsh).mockResolvedValueOnce(detectedPwsh);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    const guidance = screen.getByText("建议安装 PowerShell 7").closest("article");
+    expect(guidance).not.toBeNull();
+    expect(guidance).toHaveTextContent("Windows PowerShell 5.1");
+    expect(guidance).toHaveTextContent("winget install --id Microsoft.PowerShell --source winget");
+    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeDisabled();
+
+    vi.mocked(open).mockResolvedValue(readyState.project!.path);
+    api.inspectProject.mockResolvedValue(readyState.project);
+    fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeEnabled());
+
+    fireEvent.click(within(guidance!).getByRole("button", { name: "打开 Microsoft 安装说明" }));
+    await waitFor(() => expect(api.openPowerShellInstallGuide).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(guidance!).getByRole("button", { name: "重新检测" }));
+    await waitFor(() => expect(screen.queryByText("建议安装 PowerShell 7")).not.toBeInTheDocument());
+    expect(api.configureLocal).not.toHaveBeenCalled();
   });
 
   it("keeps first-run errors and the selected project through intermediate polling and Tunnel failure", async () => {

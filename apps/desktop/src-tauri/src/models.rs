@@ -346,11 +346,19 @@ impl OpenAiTunnelConfigSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PowerShellRuntimeSnapshot {
+    pub pwsh_available: bool,
+    pub windows_powershell_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
     pub topology: Option<RuntimeTopology>,
     pub readiness: ReadinessSnapshot,
     pub project: Option<ProjectSelection>,
     pub binaries: Option<BinaryInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub powershell_runtime: Option<PowerShellRuntimeSnapshot>,
     pub quick_share: Option<QuickShareState>,
     pub regular_tunnel: Option<RegularTunnelState>,
     pub current_operation: Option<DesktopOperationSnapshot>,
@@ -370,6 +378,7 @@ impl Default for DesktopStateSnapshot {
             readiness: ReadinessSnapshot::default(),
             project: None,
             binaries: None,
+            powershell_runtime: None,
             quick_share: None,
             regular_tunnel: None,
             current_operation: None,
