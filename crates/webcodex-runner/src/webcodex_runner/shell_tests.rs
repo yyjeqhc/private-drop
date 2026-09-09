@@ -1432,7 +1432,7 @@ fn phase_f_windows_timeout_retains_unicode_and_runs_child_once() {
 
 #[cfg(windows)]
 #[test]
-fn windows_run_process_accepts_only_native_resolution() {
+fn windows_run_process_preserves_native_argv_and_rejects_unsafe_batch_argv() {
     let temp = tempfile::tempdir().unwrap();
     let native = temp.path().join("native.exe");
     std::fs::write(&native, b"MZ").unwrap();
@@ -1464,17 +1464,22 @@ fn windows_run_process_accepts_only_native_resolution() {
         format!("@echo off\r\ncopy nul \"{}\"\r\n", marker.display()),
     )
     .unwrap();
+    let shell = ShellConfig {
+        env: HashMap::from([("PATH".into(), temp.path().to_string_lossy().into_owned())]),
+        ..ShellConfig::default()
+    };
+    let resolved =
+        configured_process_command(&shell, None, "script", &["test".into()], Some(temp.path()))
+            .unwrap();
+    assert!(Path::new(resolved.get_program()).ends_with("cmd.exe"));
     let batch_result = run_direct_process(temp.path(), &batch, &args, None, 10);
     assert_eq!(
         batch_result.execution_state,
         ShellCommandExecutionState::NotStarted
     );
     let batch_error = batch_result.result.error.as_deref().unwrap_or_default();
-    assert!(
-        batch_error.contains("unsupported_executable_type"),
-        "{batch_error}"
-    );
-    assert!(batch_error.contains("run_shell"), "{batch_error}");
+    assert!(batch_error.contains("invalid_arguments"), "{batch_error}");
+    assert!(batch_error.contains("native runtime"), "{batch_error}");
     assert!(
         !marker.exists(),
         "run_process must reject Batch before child spawn"
@@ -1493,4 +1498,106 @@ fn windows_run_process_accepts_only_native_resolution() {
         .as_deref()
         .unwrap_or_default()
         .contains("unsupported Windows extension"));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_batch_shim_forwards_supported_argv_to_native_child() {
+    let temp = tempfile::tempdir().unwrap();
+    let batch = temp.path().join("package shim.cmd");
+    std::fs::write(
+        &batch,
+        format!(
+            "@echo off\r\n\"{}\" %*\r\n",
+            process_argv_helper().display()
+        ),
+    )
+    .unwrap();
+    let args = ["argv", "space value", "&", "|", "(value)", ""].map(String::from);
+    let result = run_direct_process(temp.path(), &batch, &args, None, 10);
+    assert_eq!(result.result.exit_code, Some(0), "{:?}", result.result);
+    let expected = args[1..]
+        .iter()
+        .map(|arg| format!("{}:{arg}\n", arg.len()))
+        .collect::<String>();
+    assert_eq!(result.result.stdout.as_deref(), Some(expected.as_str()));
+}
+
+#[test]
+fn execution_environment_inherits_path_filters_credentials_and_honors_overrides() {
+    let _lock = crate::tests::test_env_lock();
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("runner-toolchain");
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::iter::once(marker.clone()).chain(std::env::split_paths(&inherited)),
+    )
+    .unwrap();
+    let _env = crate::tests::EnvGuard::new()
+        .set("PATH", path)
+        .set("WEBCODEX_TOKEN", "test-secret");
+    let shell = ShellConfig::default();
+    let env = base_shell_env(&shell, &ShellProfileConfig::default()).unwrap();
+    assert_eq!(
+        env_lookup(&env, "PATH").cloned(),
+        std::env::var("PATH").ok()
+    );
+    assert!(std::env::split_paths(env_lookup(&env, "PATH").unwrap()).any(|path| path == marker));
+    assert!(!env.contains_key("WEBCODEX_TOKEN"));
+    let shell = ShellConfig {
+        environment_mode: ShellEnvironmentMode::Isolated,
+        env: HashMap::from([
+            ("PATH".into(), "shell-path".into()),
+            ("WEBCODEX_TOKEN".into(), "test-secret".into()),
+        ]),
+        ..ShellConfig::default()
+    };
+    let profile = ShellProfileConfig {
+        env: std::collections::BTreeMap::from([("PATH".into(), "profile-path".into())]),
+        ..ShellProfileConfig::default()
+    };
+    let env = base_shell_env(&shell, &profile).unwrap();
+    assert_eq!(
+        env_lookup(&env, "PATH").map(String::as_str),
+        Some("profile-path")
+    );
+    assert!(!env.contains_key("WEBCODEX_TOKEN"));
+    assert!(!env.contains_key("HOME"));
+    let provider = PreparedExecutionEnvironment::prepare(
+        1,
+        &shell,
+        None,
+        Path::new("."),
+        &PreparedShellProfileCache::default(),
+        None,
+    )
+    .unwrap();
+    assert!(!provider.env_snapshot.contains_key("WEBCODEX_TOKEN"));
+}
+
+#[test]
+fn isolated_environment_is_explicit_and_does_not_inherit_user_path() {
+    let shell: ShellConfig = toml::from_str("environment_mode = 'isolated'").unwrap();
+    assert_eq!(shell.environment_mode, ShellEnvironmentMode::Isolated);
+    let env = base_shell_env(&shell, &ShellProfileConfig::default()).unwrap();
+    assert!(!env.contains_key("HOME"));
+    assert!(!env.contains_key("USERPROFILE"));
+    #[cfg(not(windows))]
+    assert_eq!(
+        env_lookup(&env, "PATH").map(String::as_str),
+        Some("/usr/bin:/bin")
+    );
+    assert!(toml::from_str::<ShellConfig>("environment_mode = 'unknown'").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn default_shell_preserves_non_unicode_environment_without_panicking() {
+    use std::os::unix::ffi::OsStringExt;
+    let _lock = crate::tests::test_env_lock();
+    let _env = crate::tests::EnvGuard::new().set(
+        "WEBCODEX_OPAQUE_TOOLCHAIN_ENV",
+        OsString::from_vec(vec![0xff]),
+    );
+    configured_process_command(&ShellConfig::default(), None, "true", &[], None).unwrap();
 }

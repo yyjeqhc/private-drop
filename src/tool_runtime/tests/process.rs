@@ -1568,7 +1568,7 @@ async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
 }
 
 #[tokio::test]
-async fn run_process_batch_rejection_from_runner_has_stable_prestart_contract() {
+async fn run_process_unsafe_batch_argument_has_stable_prestart_contract() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
@@ -1594,7 +1594,7 @@ async fn run_process_batch_rejection_from_runner_has_stable_prestart_contract() 
         "",
         "",
         Some(
-            "unsupported_executable_type: Windows .cmd/.bat files require shell/script semantics; use run_shell as the current explicit escape hatch",
+            "invalid_arguments: Windows batch arguments cannot contain quotes; use a native runtime executable for these arguments",
         ),
     )
     .await;
@@ -1604,12 +1604,12 @@ async fn run_process_batch_rejection_from_runner_has_stable_prestart_contract() 
     assert_eq!(result.output["execution_state"], "not_started");
     assert_eq!(result.output["command_started"], false);
     assert_eq!(result.output["command_completed"], false);
-    assert_eq!(result.output["failure_kind"], "unsupported_executable_type");
+    assert_eq!(result.output["failure_kind"], "invalid_arguments");
     assert!(result
         .error
         .as_deref()
         .unwrap_or_default()
-        .contains("run_shell"));
+        .contains("native runtime"));
 }
 
 #[tokio::test]

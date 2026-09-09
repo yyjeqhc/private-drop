@@ -1228,3 +1228,28 @@ fn write_runner_toml_without_plugins(path: &Path, project_registry_dir: &Path) {
     )
     .unwrap();
 }
+
+#[test]
+fn plugin_environment_projection_tracks_explicit_isolation() {
+    let plugins = PluginConfig {
+        providers: vec![PluginProviderConfig {
+            id: "projection-test".into(),
+            name: "Projection test".into(),
+            command: "node".into(),
+            args: Vec::new(),
+            cwd: None,
+            profile: None,
+            timeout_secs: None,
+        }],
+        ..Default::default()
+    };
+    let inherited = ShellConfig::default();
+    let isolated = ShellConfig {
+        environment_mode: super::super::config::ShellEnvironmentMode::Isolated,
+        ..ShellConfig::default()
+    };
+    assert_ne!(
+        PluginEnvironmentSnapshot::from_config(&inherited, &plugins),
+        PluginEnvironmentSnapshot::from_config(&isolated, &plugins)
+    );
+}

@@ -158,16 +158,36 @@ Unsupported protocol/content shapes fail closed instead of being silently transl
 
 ## Shell profiles
 
-By default, `run_shell` and `run_job` do not keep a persistent shell session.
-They prepare an environment snapshot once per project/profile and then run each
-command as an independent process with that snapshot. The snapshot is captured
-by starting the profile program with a cleared environment, applying the
-profile `env`, running the profile `init_script` (if any), and capturing the
-resulting environment.
+Ordinary project shell/process execution defaults to `[shell] environment_mode =
+"inherit"`: PATH, HOME/USERPROFILE and toolchain variables come from the process
+that started the Runner. WebCodex transport/account credentials are filtered.
+Shell `env` overrides inherited values; profile `env` overrides shell `env`.
+Profiles cache this environment per project/config generation. An explicit
+`init_script` can modify the snapshot; no startup script runs otherwise.
 
-WebCodex does **not** source `~/.bashrc` or `~/.profile` by default: they can
-be slow, interactive-only, environment-polluting, and non-reproducible. Use an
-explicit profile instead.
+Set `environment_mode = "isolated"` for a minimal environment: `/usr/bin:/bin` on
+Unix, or SystemRoot and its System32 PATH on Windows, plus configured env and
+path_prepend. This is environment isolation, not a filesystem sandbox.
+WebCodex does not automatically source `~/.bashrc` or `~/.profile`.
+Configured MCP credential delegation remains explicit; this setting does not
+expand its `env_from_env` allowlist. Native Plugins continue to use the existing
+filtered shell/profile environment and native-only executable contract.
+
+Windows `run_process` and `run_detached_process` accept `.cmd`/`.bat` shims through
+Runner-owned `cmd.exe /d /s /v:off /c` conversion. Each argument is quoted; spaces,
+empty arguments, `&`, `|`, and parentheses are supported. Quotes, `%`, `!`, `^`,
+control characters and trailing backslashes are rejected before startup. The
+command is bounded to 8000 UTF-16 units. Batch shims require a local drive cwd;
+UNC cwd is rejected before spawn because cmd.exe cannot preserve it. Use a native runtime executable when
+arguments fall outside this contract. Batch scripts remain responsible for how
+they handle their own arguments (for example, forwarding with `%*`). Process
+ownership, stdin, cwd, timeout, cancellation and detached reconciliation are
+unchanged; a rejected argument never starts a Job payload.
+
+Structured exact reads can inspect `node_modules` and `target`; recursive
+search/listing skip those trees. Structured edits still reject generated trees.
+Credentials, `.env*`, Runner configuration and `.git` control data remain protected
+for both reads and writes.
 
 Example Rust/Cargo profile in `runner.toml`:
 

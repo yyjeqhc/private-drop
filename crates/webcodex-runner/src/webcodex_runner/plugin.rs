@@ -55,6 +55,7 @@ struct CommittedState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PluginEnvironmentSnapshot {
+    environment_mode: super::config::ShellEnvironmentMode,
     default_profile: Option<String>,
     profiles: BTreeMap<String, PluginProfileEnvironment>,
     program: String,
@@ -89,6 +90,11 @@ impl PluginEnvironmentSnapshot {
         }
         let has_providers = !plugins.providers.is_empty();
         Self {
+            environment_mode: if has_providers {
+                shell.environment_mode
+            } else {
+                Default::default()
+            },
             default_profile: uses_default_profile
                 .then(|| shell.default_profile.clone())
                 .flatten(),

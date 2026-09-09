@@ -289,7 +289,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let run_process_desc = desc("run_process");
     for phrase in [
-        "isolated one-shot native executable",
+        "one-shot executable with structured argv",
+        "windows batch shims",
+        "bounded runner-owned quoting contract",
         "literal argv",
         "ordinary local command sequences",
         "do not open a persistent shell merely to run several commands",

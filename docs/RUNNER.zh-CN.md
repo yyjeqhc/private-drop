@@ -147,13 +147,21 @@ Runner 到 configured local provider 的内建 gateway 有意限制为 bounded s
 
 ## Shell profile
 
-默认情况下 `run_shell` 与 `run_job` 不保留持久 shell 会话。它们会为每个
-项目/profile 对准备一次环境快照，然后让每条命令以应用了该快照的独立进程运行。
-快照的生成方式是：以清空的环境启动 profile 程序，应用 profile 的 `env`，执行
-profile 的 `init_script`（如果有），再捕获最终环境。
+普通 Project Shell/Process 默认使用 `[shell] environment_mode = "inherit"`，继承
+启动 Runner 的 PATH、HOME/USERPROFILE 和工具链环境，继续过滤 WebCodex 内部凭据。
+Shell env 覆盖继承值，profile env 再覆盖 Shell env；未配置 init_script 时不执行
+启动脚本，也不会自动 source `.bashrc` / `.profile`。
 
-WebCodex 默认不 source `~/.bashrc` 或 `~/.profile`：它们可能很慢、面向交互、
-污染环境且不可复现。请改用显式 profile。
+可显式选择 `environment_mode = "isolated"`：Unix 仅提供 `/usr/bin:/bin` PATH，
+Windows 提供 SystemRoot 与 System32 PATH，再应用配置 env/path_prepend。这不是文件系统沙箱。
+MCP 的显式 credential delegation 规则不变；Native Plugin 继续使用已有的凭据过滤。
+
+Windows structured process 支持 `.cmd`/`.bat`，由 Runner 内部转换 argv。支持空参数、
+空格、`&`、`|`、括号；双引号、`%`、`!`、`^`、控制字符和尾部反斜杠在启动前拒绝，
+命令上限为 8000 UTF-16 units；UNC cwd 会在启动前拒绝，避免 cmd.exe 静默切换工作目录。这些参数应改用 native runtime。进程树和 Job 契约不变。
+
+精确 read_file 可读取 node_modules/target，普通搜索仍跳过它们，structured edit 仍拒绝。
+`.env*`、凭据、Runner 配置及 `.git` 控制数据继续保护。
 
 `runner.toml` 中的 Rust/Cargo 示例：
 

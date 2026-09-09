@@ -391,8 +391,18 @@ pub(crate) fn platform_default_dialect() -> ShellDialect {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ShellEnvironmentMode {
+    #[default]
+    Inherit,
+    Isolated,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct ShellConfig {
+    #[serde(default)]
+    pub(crate) environment_mode: ShellEnvironmentMode,
     #[serde(default)]
     pub(crate) default_profile: Option<String>,
     #[serde(default)]
@@ -426,6 +436,7 @@ pub(crate) struct ShellConfig {
 impl Default for ShellConfig {
     fn default() -> Self {
         Self {
+            environment_mode: ShellEnvironmentMode::default(),
             default_profile: None,
             profiles: BTreeMap::new(),
             program: default_shell_program(),

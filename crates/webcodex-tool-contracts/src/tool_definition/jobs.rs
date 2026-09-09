@@ -50,7 +50,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Run one isolated one-shot native executable with literal argv and no shell parsing. Ordinary local command sequences stay on structured tools/run_process; do not open a persistent shell merely to run several commands. Use local persistent shell only when the same local shell process must retain cwd/env/exports/functions/umask. For repeated commands on one named SSH resource with remote state, prefer persistent shell; a new persistent SSH target uses ssh_resource onboarding first. Explicit one-shot/no-persistence SSH remains valid here. Long work continues as the same execution and stays Runner-owned; discover run_detached_process only when accepted native work must outlive the Runner.",
+            "Run one one-shot executable with structured argv. Native executables use literal argv; Windows batch shims use the bounded Runner-owned quoting contract documented on executable. Ordinary local command sequences stay on structured tools/run_process; do not open a persistent shell merely to run several commands. Use local persistent shell only when the same local shell process must retain cwd/env/exports/functions/umask. For repeated commands on one named SSH resource with remote state, prefer persistent shell; a new persistent SSH target uses ssh_resource onboarding first. Explicit one-shot/no-persistence SSH remains valid here. Long work continues as the same execution and stays Runner-owned; discover run_detached_process only when accepted native work must outlive the Runner.",
             run_process_input_schema,
         ),
         70,

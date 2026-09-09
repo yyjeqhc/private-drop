@@ -212,7 +212,9 @@ pub(crate) fn classify_process_failure(message: &str) -> &'static str {
         || lower.contains("temporary script setup failed")
     {
         "script_setup_failed"
-    } else if lower.contains("invalid_structured_script_request") {
+    } else if lower.contains("invalid_structured_script_request")
+        || lower.starts_with("invalid_arguments:")
+    {
         "invalid_arguments"
     } else if lower.contains("unsupported_executable_type") {
         "unsupported_executable_type"

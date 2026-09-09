@@ -1,6 +1,6 @@
 use super::config::{
     dialect_for_program, platform_default_dialect, validate_shell_config, RunnerPolicy,
-    ShellConfig, ShellDialect, ShellProfileConfig,
+    ShellConfig, ShellDialect, ShellEnvironmentMode, ShellProfileConfig,
 };
 use super::output::{CommandResult, ShellCommandResult};
 use super::output_text::{
@@ -21,6 +21,10 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use webcodex_process::{GracefulTermination, ManagedChild};
+
+#[path = "process_command.rs"]
+mod process_command;
+pub(crate) use process_command::structured_process_command;
 
 const SHELL_PROFILE_PREPARE_TIMEOUT_SECS: u64 = 30;
 const PROCESS_GROUP_TERMINATION_GRACE: Duration = Duration::from_millis(50);
@@ -240,6 +244,11 @@ fn prepared_shell_command_text(dialect: ShellDialect, command: &str) -> String {
 }
 
 fn apply_shell_environment(cmd: &mut Command, shell: &ShellConfig) -> Result<(), String> {
+    if shell.environment_mode == ShellEnvironmentMode::Isolated {
+        let env = base_shell_env(shell, &ShellProfileConfig::default())?;
+        apply_env_snapshot(cmd, &env);
+        return Ok(());
+    }
     // Rust's Windows env handling is case-insensitive (like the OS itself), so
     // removing the canonical spellings also removes mixed-case variants such
     // as `WebCodex_Token`.
@@ -365,11 +374,12 @@ pub(crate) fn configured_validation_job_command(
     profile: Option<&PreparedShellProfile>,
     program: &str,
     args: &[String],
+    cwd: &Path,
 ) -> Result<Command, String> {
     if profile.is_none() {
         validate_shell_config(shell)?;
     }
-    configured_process_command(shell, profile, program, args, None)
+    configured_process_command(shell, profile, program, args, Some(cwd))
 }
 
 fn configured_process_command(
@@ -380,10 +390,9 @@ fn configured_process_command(
     cwd: Option<&Path>,
 ) -> Result<Command, String> {
     let resolved_program = resolve_process_program(shell, profile, program, cwd)?;
-    let mut cmd = Command::new(resolved_program);
-    cmd.args(args);
+    let mut cmd = structured_process_command(&resolved_program, args, cwd)?;
     // ManagedChild (or JobManager for structured validation) owns this process
-    // tree. The executable and every argument remain separate OS values.
+    // tree. Native argv stays literal; batch conversion belongs to the helper.
     match profile {
         Some(profile) => apply_env_snapshot(&mut cmd, &profile.env_snapshot),
         None => apply_shell_environment(&mut cmd, shell)?,
@@ -412,10 +421,7 @@ fn resolve_process_program(
         };
         match super::util::resolve_program_in_path(&resolved_input, &path) {
             Some(super::util::ResolvedProgram::Native(path)) => Ok(path.into_os_string()),
-            Some(super::util::ResolvedProgram::Batch(_)) => Err(
-                "unsupported_executable_type: Windows .cmd/.bat files require shell/script semantics and cannot preserve run_process native argv; use run_shell as the current explicit escape hatch"
-                    .to_string(),
-            ),
+            Some(super::util::ResolvedProgram::Batch(path)) => Ok(path.into_os_string()),
             None => Err(format!(
                 "structured process executable is unavailable or has an unsupported Windows extension: {program}"
             )),
@@ -434,6 +440,12 @@ fn configured_process_path(
 ) -> Result<OsString, String> {
     if let Some(profile) = profile {
         return Ok(env_lookup(&profile.env_snapshot, "PATH")
+            .map(OsString::from)
+            .unwrap_or_default());
+    }
+    if shell.environment_mode == ShellEnvironmentMode::Isolated {
+        let env = base_shell_env(shell, &ShellProfileConfig::default())?;
+        return Ok(env_lookup(&env, "PATH")
             .map(OsString::from)
             .unwrap_or_default());
     }
@@ -692,9 +704,23 @@ pub(crate) fn base_shell_env(
     shell: &ShellConfig,
     profile: &ShellProfileConfig,
 ) -> Result<HashMap<String, String>, String> {
-    let mut env: HashMap<String, String> = std::env::vars()
-        .filter(|(key, _)| should_inherit_env_key(key))
-        .collect();
+    let mut env: HashMap<String, String> = match shell.environment_mode {
+        ShellEnvironmentMode::Inherit => std::env::vars()
+            .filter(|(key, _)| should_inherit_env_key(key))
+            .collect(),
+        ShellEnvironmentMode::Isolated => {
+            let mut env = HashMap::new();
+            #[cfg(not(windows))]
+            env.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
+            #[cfg(windows)]
+            if let Ok(root) = std::env::var("SystemRoot") {
+                let path = Path::new(&root).join("System32");
+                env.insert("PATH".to_string(), path.to_string_lossy().into_owned());
+                env.insert("SystemRoot".to_string(), root);
+            }
+            env
+        }
+    };
     if !shell.path_prepend.is_empty() {
         let mut paths = shell.path_prepend.clone();
         // The inherited Windows PATH may be spelled `Path`; lookup must be
@@ -1894,6 +1920,8 @@ pub(crate) fn prepare_detached_process_launch(
     )?;
     let resolved_program =
         resolve_process_program(shell, profile.as_deref(), executable, Some(&cwd_path))?;
+    // Validate the same batch argv contract before a detached Job is accepted.
+    let _ = structured_process_command(&resolved_program, args, Some(&cwd_path))?;
     let resolved_program = resolved_program.into_string().map_err(|_| {
         "structured process executable resolved to a non-UTF-8 native path".to_string()
     })?;

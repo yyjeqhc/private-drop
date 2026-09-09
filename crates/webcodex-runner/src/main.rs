@@ -2586,7 +2586,8 @@ fn validation_module_available(
     const PROBE: &str =
         "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 42)";
     let args = ["-I", "-c", PROBE, module].map(str::to_string);
-    let Ok(mut command) = configured_validation_job_command(shell, profile, &step.program, &args)
+    let Ok(mut command) =
+        configured_validation_job_command(shell, profile, &step.program, &args, cwd)
     else {
         return false;
     };
@@ -4672,6 +4673,7 @@ impl JobManager {
                     prepared_profile.as_deref(),
                     &steps[index].program,
                     &steps[index].args,
+                    &cwd_path,
                 )
             } else {
                 let raw_command = raw_command

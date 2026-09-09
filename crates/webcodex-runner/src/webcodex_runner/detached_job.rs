@@ -2627,8 +2627,12 @@ fn run_accepted_payload(
     launch: DetachedLaunchSpec,
 ) -> Result<DetachedJobRecord, String> {
     let tree_birth = format!("birth_{}", Uuid::new_v4().simple());
-    let mut payload_command = Command::new(&launch.process.executable);
-    payload_command.args(&launch.process.args).env_clear();
+    let mut payload_command = super::shell::structured_process_command(
+        std::ffi::OsStr::new(&launch.process.executable),
+        &launch.process.args,
+        launch.cwd.as_deref().map(Path::new),
+    )?;
+    payload_command.env_clear();
     for (key, value) in &launch.env {
         payload_command.env(key, value);
     }
