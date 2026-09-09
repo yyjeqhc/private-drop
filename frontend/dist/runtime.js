@@ -2126,8 +2126,29 @@ function renderWindowActivityRows(node, activities, compact = false) {
             appendChip(facts, "meaningful", "tone-runtime");
         if (activity?.recorder_gap_session_id)
             appendChip(facts, "recorder gap", "tone-warn");
-        if (typeof activity?.duration_ms === "number")
-            appendChip(facts, String(activity.duration_ms) + " ms");
+        if (activity?.response_streaming === true) {
+            appendChip(facts, "streaming timing unavailable", "tone-warn");
+        }
+        else if (typeof activity?.service_ms === "number") {
+            appendChip(facts, "service " + String(activity.service_ms) + " ms");
+        }
+        else if (activity?.meaningful) {
+            appendChip(facts, "service unavailable");
+        }
+        if (activity?.meaningful) {
+            if (typeof activity?.next_call_gap_ms === "number") {
+                appendChip(facts, "next gap " + String(activity.next_call_gap_ms) + " ms");
+            }
+            else {
+                appendChip(facts, "next gap unavailable");
+            }
+            if (typeof activity?.cycle_ms === "number") {
+                appendChip(facts, "cycle " + String(activity.cycle_ms) + " ms");
+            }
+        }
+        if (activity?.window_transition_kind === "overlap") {
+            appendChip(facts, "overlap from previous", "tone-warn");
+        }
         item.appendChild(facts);
         const links = Array.isArray(activity?.workflow_sessions) ? activity.workflow_sessions : [];
         if (links.length) {
