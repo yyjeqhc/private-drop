@@ -1,6 +1,6 @@
 use super::RouteAuth::{AuthMiddleware, HandlerManaged};
 use super::{
-    route, AuditClass::*, OpenApiVisibility::*, RouteId::*, RouteMethod::*, RouteSpec,
+    route, AuditClass::*, RouteId::*, RouteMethod::*, RouteOpenApiProjection::*, RouteSpec,
     RouteSurface::*,
 };
 use webcodex_core::authority::{OAuthRouteScopePolicy::*, SCOPE_ACCOUNT_MANAGE};

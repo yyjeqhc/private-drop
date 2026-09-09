@@ -208,14 +208,17 @@ fn openapi_route_visibility_matches_canonical_metadata() {
         .collect::<BTreeSet<_>>();
     let expected = crate::route_metadata::iter_routes()
         .filter(|route| {
-            route.openapi_visibility == crate::route_metadata::OpenApiVisibility::PublicActions
+            matches!(
+                route.openapi_projection,
+                crate::route_metadata::RouteOpenApiProjection::PublicAction(_)
+            )
         })
         .map(|route| route.path.to_string())
         .collect::<BTreeSet<_>>();
     assert_eq!(actual, expected);
 
     for route in crate::route_metadata::iter_routes().filter(|route| {
-        route.openapi_visibility == crate::route_metadata::OpenApiVisibility::Hidden
+        route.openapi_projection == crate::route_metadata::RouteOpenApiProjection::Hidden
     }) {
         assert!(
             !actual.contains(route.path),

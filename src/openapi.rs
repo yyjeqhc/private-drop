@@ -830,7 +830,10 @@ pub(crate) fn build_openapi_spec() -> Value {
         .expect("OpenAPI paths object")
         .retain(|path, _| {
             crate::route_metadata::lookup("POST", path).is_some_and(|route| {
-                route.openapi_visibility == crate::route_metadata::OpenApiVisibility::PublicActions
+                matches!(
+                    route.openapi_projection,
+                    crate::route_metadata::RouteOpenApiProjection::PublicAction(_)
+                )
             })
         });
     spec

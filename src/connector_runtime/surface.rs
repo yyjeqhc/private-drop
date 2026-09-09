@@ -115,8 +115,10 @@ mod tests {
         );
         let expected_paths = crate::route_metadata::iter_routes()
             .filter(|route| {
-                route.openapi_visibility
-                    == crate::route_metadata::OpenApiVisibility::ConnectorActions
+                matches!(
+                    route.openapi_projection,
+                    crate::route_metadata::RouteOpenApiProjection::ConnectorCapability(_)
+                )
             })
             .map(|route| route.path.to_string())
             .collect::<BTreeSet<_>>();
