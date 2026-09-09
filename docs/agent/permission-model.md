@@ -237,5 +237,5 @@ results or stdout/stderr.
 - No approval UI or notification system for `trusted_agent`.
 - No multi-person approval, RBAC, or distributed policy engine.
 - No per-tool authority overrides in env; one global mode plus tool metadata.
-- No compatibility alias or migration path for the removed
-  `WEBCODEX_PERMISSION_MODE` system.
+- No restoration of the former permission system; only the unambiguous
+  configuration aliases in section 1 migrate to the current authority modes.

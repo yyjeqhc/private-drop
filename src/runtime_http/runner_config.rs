@@ -31,7 +31,7 @@ pub async fn runner_config_check(req: &mut Request, depot: &mut Depot, res: &mut
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch_runner_config_tool(
+        .dispatch_with_auth(
             ToolCall::RunnerConfigCheck {
                 client_id: body.client_id,
             },
@@ -43,7 +43,7 @@ pub async fn runner_config_check(req: &mut Request, depot: &mut Depot, res: &mut
 
 /// Hidden operator surface over the existing generation-CAS Runner config
 /// reload. It does not accept a config path and never bypasses ToolRuntime's
-/// exact Runner/capability fence.
+/// exact Runner/capability fence or the shared authority decision gate.
 #[handler]
 pub async fn runner_config_reload(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(
@@ -60,7 +60,7 @@ pub async fn runner_config_reload(req: &mut Request, depot: &mut Depot, res: &mu
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch_runner_config_tool(
+        .dispatch_with_auth(
             ToolCall::RunnerConfigReload {
                 client_id: body.client_id,
                 expected_generation: body.expected_generation,

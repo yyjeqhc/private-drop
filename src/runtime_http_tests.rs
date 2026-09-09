@@ -15,6 +15,8 @@ mod model_ergonomics_tests;
 mod project_files_tests;
 #[path = "runtime_http/tests/projects_tests.rs"]
 mod projects_tests;
+#[path = "runtime_http/tests/runner_config_tests.rs"]
+mod runner_config_tests;
 
 #[test]
 fn computer_action_audit_projection_omits_sensitive_observation_payloads() {

@@ -6,6 +6,10 @@ use webcodex_admin::ServerHttpOptions;
 use super::connect::profile::{atomic_write, render_project_file, resolve_project};
 use super::{http_post_json_status, read_optional_token, shell_command, validate_user_api_token};
 
+#[cfg(test)]
+#[path = "tests/project_activation_identity.rs"]
+mod activation_identity_tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectRegisterOptions {
     pub(crate) config: PathBuf,
@@ -380,6 +384,20 @@ fn read_activation_config(path: &Path) -> Result<(ActivationRunnerConfig, String
     url::Url::parse(&config.server_url)
         .map_err(|_| "Runner config server_url is invalid".to_string())?;
     Ok((config, content))
+}
+
+fn reread_activation_config(
+    path: &Path,
+    server_url: &str,
+    client_id: &str,
+) -> Result<(ActivationRunnerConfig, String), String> {
+    let snapshot = read_activation_config(path)?;
+    // A retry can merge policy edits only within the original connection.
+    // Re-enrollment must not let this operation extend another Runner's roots.
+    if snapshot.0.server_url != server_url || snapshot.0.client_id != client_id {
+        return Err("project_activation_config_conflict: Runner connection identity changed during activation; start a new activation from the current configuration".to_string());
+    }
+    Ok(snapshot)
 }
 
 async fn operator_tool_call(
@@ -765,7 +783,7 @@ pub(crate) async fn run_project_activate(opts: ProjectActivateOptions) -> Result
         // candidate after check and refuse to reload if another writer replaced
         // it in that window; the next iteration merges from the latest config.
         if !runner_config_candidate_unchanged(&opts.config, &config_content)? {
-            let snapshot = read_activation_config(&opts.config)?;
+            let snapshot = reread_activation_config(&opts.config, &server_url, &client_id)?;
             config = snapshot.0;
             config_content = snapshot.1;
             prepared = prepare_exact_project_authority(
@@ -804,7 +822,7 @@ pub(crate) async fn run_project_activate(opts: ProjectActivateOptions) -> Result
                 return Err("project_activation_capability_unavailable: this Runner does not support hot config reload".to_string());
             }
             Ok(result) if operator_error_code(&result) == Some("config_generation_conflict") => {
-                let snapshot = read_activation_config(&opts.config)?;
+                let snapshot = reread_activation_config(&opts.config, &server_url, &client_id)?;
                 config = snapshot.0;
                 config_content = snapshot.1;
                 prepared = prepare_exact_project_authority(
@@ -1010,7 +1028,7 @@ mod tests {
 
     const TEST_USER_TOKEN: &str = "wc_pat_project_activation_test";
 
-    fn activation_config(
+    pub(super) fn activation_config(
         path: &Path,
         server_url: &str,
         roots: &[PathBuf],
@@ -1034,6 +1052,13 @@ mod tests {
     fn spawn_operator_server(
         responses: Vec<(&'static str, Value)>,
     ) -> (String, thread::JoinHandle<Vec<String>>) {
+        spawn_operator_server_with_hook(responses, |_| {})
+    }
+
+    pub(super) fn spawn_operator_server_with_hook(
+        responses: Vec<(&'static str, Value)>,
+        mut before_response: impl FnMut(usize) + Send + 'static,
+    ) -> (String, thread::JoinHandle<Vec<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
@@ -1053,6 +1078,7 @@ mod tests {
                     "operator request must use the managed user token"
                 );
                 requests.push(request);
+                before_response(requests.len());
                 let payload = body.to_string();
                 write!(
                     stream,
