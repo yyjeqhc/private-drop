@@ -215,6 +215,7 @@ fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'stat
         "agent_task" => &["agent_task"],
         "communication" => &["communication"],
         "edit" => &["artifact", "edit", "patch"],
+        "file_transfer" => &["artifact"],
         "git" => &["checkpoint", "cleanup", "file", "git"],
         "inspect" => &[
             "checkpoint",
@@ -248,6 +249,15 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         "cargo_test" => Some(&["shell", "validation"]),
         "discard_untracked" => Some(&["cleanup", "git"]),
         "finish_coding_task" => Some(&["review", "runtime"]),
+        "artifact_upload_abort"
+        | "artifact_upload_begin"
+        | "artifact_upload_chunk"
+        | "artifact_upload_finish"
+        | "export_project_artifact"
+        | "import_conversation_files_to_project"
+        | "read_project_artifact"
+        | "read_project_artifact_metadata"
+        | "save_project_artifact" => Some(&["edit", "file_transfer"]),
         "git_diff" => Some(&["git", "inspect", "review"]),
         "git_diff_hunks" => Some(&["git", "inspect", "review"]),
         "git_review_summary" => Some(&["git", "inspect", "review"]),
