@@ -6,8 +6,9 @@ use std::process::Command;
 use std::sync::{Arc, Barrier};
 use webcodex_runner_registry::RunnerRegistry;
 use webcodex_store::{
-    ConnectorBinding, ConnectorTaskResult, ConnectorTaskStoreError, Database, NewConnectorResult,
-    NewConnectorTask,
+    ConnectorBinding, ConnectorResultDecisionRecoveryState, ConnectorResultDecisionStatus,
+    ConnectorRunState, ConnectorTaskMode, ConnectorTaskResult, ConnectorTaskState,
+    ConnectorTaskStoreError, Database, NewConnectorResult, NewConnectorTask,
 };
 
 const TASK_ID: &str = "wc_task_f123456789abcdef0123456789abcdef";
@@ -305,7 +306,7 @@ fn finalization_failure_is_recovered_once_after_reopen() {
             .unwrap()
             .unwrap()
             .decision_status,
-        "pending"
+        ConnectorResultDecisionStatus::Pending
     );
     let Fixture { temp, context, db } = fx;
     drop(db);
@@ -326,7 +327,7 @@ fn finalization_failure_is_recovered_once_after_reopen() {
             .unwrap()
             .unwrap()
             .decision_status,
-        "accepted"
+        ConnectorResultDecisionStatus::Accepted
     );
     assert_eq!(fs::read_to_string(target(&context)).unwrap(), "after\n");
     assert_eq!(
@@ -434,8 +435,11 @@ fn unrecoverable_accept_is_quarantined_while_other_intents_recover_and_runtime_s
         .recovery
         .as_ref()
         .expect("stale intent must be observable");
-    assert_eq!(bad.decision_status, "pending");
-    assert_eq!(recovery.state, "needs_attention");
+    assert_eq!(bad.decision_status, ConnectorResultDecisionStatus::Pending);
+    assert_eq!(
+        recovery.state,
+        ConnectorResultDecisionRecoveryState::NeedsAttention
+    );
     assert_eq!(
         recovery.error_code.as_deref(),
         Some("target_checkout_changed")
@@ -450,14 +454,15 @@ fn unrecoverable_accept_is_quarantined_while_other_intents_recover_and_runtime_s
             .unwrap()
             .unwrap()
             .decision_status,
-        "rejected"
+        ConnectorResultDecisionStatus::Rejected
     );
     let queue = reopened
         .local_reviewable_tasks(&context.project_id, false, 20)
         .unwrap();
     assert!(queue
         .iter()
-        .any(|task| task.task_id == TASK_ID && task.task_status == "needs_attention"));
+        .any(|task| task.task_id == TASK_ID
+            && task.task_status == ConnectorTaskState::NeedsAttention));
     assert_decision_error(
         WorkspaceManager::decide_connector_result_local(
             &reopened,
@@ -499,13 +504,16 @@ fn unrecoverable_accept_is_quarantined_while_other_intents_recover_and_runtime_s
         10,
     )
     .unwrap();
-    assert_eq!(rejected.decision_status, "rejected");
+    assert_eq!(
+        rejected.decision_status,
+        ConnectorResultDecisionStatus::Rejected
+    );
     assert!(rejected.recovery.is_none());
     let task = reopened
         .local_connector_task(TASK_ID, &context.project_id)
         .unwrap();
-    assert_eq!(task.task_status, "rejected");
-    assert_eq!(task.run_status, "completed");
+    assert_eq!(task.task_status, ConnectorTaskState::Rejected);
+    assert_eq!(task.run_status, ConnectorRunState::Completed);
     let (stored_task_status, stored_run_status, finished_at): (String, String, Option<i64>) =
         reopened
             .conn_for_tests()
@@ -619,7 +627,7 @@ fn interrupted_no_result_reject_is_the_only_identity_exception() {
             .unwrap()
             .unwrap()
             .decision_status,
-        "rejected"
+        ConnectorResultDecisionStatus::Rejected
     );
 }
 
@@ -637,7 +645,7 @@ fn persisted_read_only_isolated_result_cannot_be_accepted() {
         .db
         .local_connector_task(TASK_ID, &fx.context.project_id)
         .unwrap();
-    assert_eq!(malformed.mode, "read_only");
+    assert_eq!(malformed.mode, ConnectorTaskMode::ReadOnly);
     assert!(malformed.isolated);
 
     assert_decision_error(
@@ -651,7 +659,7 @@ fn persisted_read_only_isolated_result_cannot_be_accepted() {
             .unwrap()
             .unwrap()
             .decision_status,
-        "pending"
+        ConnectorResultDecisionStatus::Pending
     );
 }
 
@@ -676,13 +684,16 @@ fn legacy_inspect_interrupted_task_can_be_rejected_but_never_accepted() {
     let rejected = fx
         .decide(None, LocalResultDecision::Reject, 6)
         .expect("legacy inspect cleanup must remain rejectable");
-    assert_eq!(rejected.decision_status, "rejected");
+    assert_eq!(
+        rejected.decision_status,
+        ConnectorResultDecisionStatus::Rejected
+    );
     let task = fx
         .db
         .local_connector_task(TASK_ID, &fx.context.project_id)
         .unwrap();
-    assert_eq!(task.mode, "inspect");
-    assert_eq!(task.task_status, "rejected");
+    assert_eq!(task.mode, ConnectorTaskMode::InspectLegacy);
+    assert_eq!(task.task_status, ConnectorTaskState::Rejected);
     assert_eq!(fs::read_to_string(target(&fx.context)).unwrap(), "before\n");
 }
 
@@ -744,7 +755,10 @@ fn reject_reason_reaches_the_model_as_guidance_once() {
         5,
     )
     .unwrap();
-    assert_eq!(rejected.decision_status, "rejected");
+    assert_eq!(
+        rejected.decision_status,
+        ConnectorResultDecisionStatus::Rejected
+    );
     let payload: String = fixture
         .db
         .conn_for_tests()
@@ -825,7 +839,7 @@ fn connector_tasks_for_subject_scopes_to_the_owner() {
         .unwrap();
     assert_eq!(mine.len(), 1);
     assert_eq!(mine[0].task_id, TASK_ID);
-    assert_eq!(mine[0].task_status, "ready_for_review");
+    assert_eq!(mine[0].task_status, ConnectorTaskState::ReadyForReview);
     assert_eq!(mine[0].next_action, "review_and_accept");
     assert_eq!(mine[0].unread_guidance, 0, "no guidance recorded yet");
 

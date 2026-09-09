@@ -237,7 +237,14 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         .endpoint_id
         .starts_with(AGENT_ENDPOINT_ID_PREFIX));
     assert_eq!(attached.endpoint.controller_generation, 1);
-    assert_eq!(attached.endpoint.lifecycle, "attached");
+    assert_eq!(
+        attached.endpoint.lifecycle,
+        AgentEndpointLifecycle::Attached
+    );
+    assert_eq!(
+        serde_json::to_value(&attached.endpoint).unwrap()["lifecycle"],
+        "attached"
+    );
     assert!(attached.endpoint.lease_expires_at_unix_ms > attached.endpoint.attached_at_unix_ms);
 
     let replay = db
@@ -256,7 +263,10 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         .detach_agent_endpoint(&owner, &attached.endpoint.endpoint_id)
         .unwrap();
     assert!(detached.state_changed);
-    assert_eq!(detached.endpoint.lifecycle, "detached");
+    assert_eq!(
+        detached.endpoint.lifecycle,
+        AgentEndpointLifecycle::Detached
+    );
     assert!(detached.endpoint.detached_at_unix_ms.is_some());
     let desired_state_retry = db
         .detach_agent_endpoint(&owner, &attached.endpoint.endpoint_id)
@@ -281,7 +291,10 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
     );
     assert_eq!(replacement.endpoint.agent_id, agent.agent_id);
     assert_eq!(replacement.endpoint.controller_generation, 2);
-    assert_eq!(replacement.endpoint.lifecycle, "attached");
+    assert_eq!(
+        replacement.endpoint.lifecycle,
+        AgentEndpointLifecycle::Attached
+    );
     let after_replacement = db
         .list_agent_identities(&owner, Some(&agent.agent_id), 0, 10)
         .unwrap()
@@ -290,6 +303,36 @@ fn endpoint_attachment_is_principal_bound_and_detach_preserves_agent() {
         .unwrap();
     assert_eq!(after_replacement.current_controller_generation, 2);
     assert_eq!(after_replacement.active_endpoint_count, 1);
+}
+
+#[test]
+fn corrupt_endpoint_lifecycle_fails_closed_in_authority_load_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("corrupt-endpoint.db")).unwrap();
+    let owner = principal("user", '7');
+    let agent = db
+        .create_agent_identity(&owner, new_agent("corrupt", "Corrupt", "agent"))
+        .unwrap()
+        .agent;
+    let attached = db
+        .attach_agent_endpoint(&owner, endpoint(&agent.agent_id, "ChatGPT", "endpoint"))
+        .unwrap()
+        .endpoint;
+    let conn = db.conn_for_tests();
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON;")
+        .unwrap();
+    conn.execute(
+        "UPDATE wc_agent_endpoints SET lifecycle = 'future_state' WHERE endpoint_id = ?1",
+        [&attached.endpoint_id],
+    )
+    .unwrap();
+    conn.execute_batch("PRAGMA ignore_check_constraints = OFF;")
+        .unwrap();
+    drop(conn);
+
+    assert!(db
+        .detach_agent_endpoint(&owner, &attached.endpoint_id)
+        .is_err());
 }
 
 #[test]
@@ -334,6 +377,14 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
         .conversation_id
         .starts_with(CONVERSATION_ID_PREFIX));
     assert_eq!(created.conversation.participants.len(), 3);
+    assert_eq!(
+        created.conversation.conversation.lifecycle,
+        ConversationLifecycle::Open
+    );
+    assert_eq!(
+        serde_json::to_value(&created.conversation.conversation).unwrap()["lifecycle"],
+        "open"
+    );
     let conversation_id = created.conversation.conversation.conversation_id.clone();
 
     let room_replay = db
@@ -360,6 +411,15 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
     assert_eq!(human.message.seq, 1);
     assert_eq!(human.message.author.participant_kind, "human");
     assert_eq!(human.message.deliveries.len(), 2);
+    assert!(human
+        .message
+        .deliveries
+        .iter()
+        .all(|delivery| delivery.state == MessageDeliveryState::Queued));
+    assert_eq!(
+        serde_json::to_value(&human.message.deliveries[0]).unwrap()["state"],
+        "queued"
+    );
 
     let exact_retry = db
         .post_conversation_message(
@@ -478,6 +538,10 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
         vec![1, 2]
     );
     assert!(inbox_b.deliveries[0].message.deliveries[0].delivery_order > 0);
+    assert!(inbox_b
+        .deliveries
+        .iter()
+        .all(|item| item.state == MessageDeliveryState::Queued));
 
     let b_delivery_ids = inbox_b
         .deliveries
@@ -497,6 +561,15 @@ fn conversation_transcript_delivery_replay_offline_and_restart_are_durable() {
         .unwrap();
     assert!(consumed.state_changed);
     assert_eq!(consumed.consumed_delivery_ids, expected_b_delivery_ids);
+    let consumed_transcript = db
+        .read_conversation(&owner, &ConversationAccess::Human, &conversation_id, 0, 10)
+        .unwrap();
+    assert!(consumed_transcript.messages.iter().any(|message| {
+        message.deliveries.iter().any(|delivery| {
+            delivery.recipient_agent_id == agent_b.agent_id
+                && delivery.state == MessageDeliveryState::Consumed
+        })
+    }));
     let consume_retry = db
         .consume_agent_deliveries(
             &owner,

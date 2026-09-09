@@ -39,9 +39,10 @@ use webcodex_core::runner_protocol::{
 use webcodex_runner_registry::{command_preview, RunnerRegistry};
 use webcodex_store::{
     ConnectorApprovalGate, ConnectorBinding, ConnectorEditOperationGate, ConnectorExecution,
-    ConnectorExecutionReservation, ConnectorTaskContinuation, ConnectorTaskResult,
-    ConnectorTaskSnapshot, ConnectorTaskStoreError, ConnectorWorkspaceTransition, Database,
-    NewConnectorResult, NewConnectorTask,
+    ConnectorExecutionReservation, ConnectorExecutionState, ConnectorResultDecisionStatus,
+    ConnectorRunState, ConnectorTaskContinuation, ConnectorTaskMode, ConnectorTaskResult,
+    ConnectorTaskSnapshot, ConnectorTaskState, ConnectorTaskStoreError,
+    ConnectorWorkspaceTransition, Database, NewConnectorResult, NewConnectorTask,
 };
 use webcodex_validation::{resolve_validation_recipe, RecipeId, SemanticCheck};
 use webcodex_workspace::project_context::{
@@ -721,7 +722,7 @@ impl ConnectorRuntime {
                 Err(error) => return store_error_outcome(error, None),
             };
             if let Some(task) = existing {
-                if task.mode == "inspect" {
+                if task.mode == ConnectorTaskMode::InspectLegacy {
                     return Self::retired_inspect_task_outcome(&task);
                 }
                 if let Some(outcome) = Self::invalid_mode_transition_outcome(&task, mode) {
@@ -729,7 +730,9 @@ impl ConnectorRuntime {
                 }
                 let refresh =
                     compare_project_context(Some(&existing_context.fingerprint), &fingerprint);
-                if task.task_status == "active" && task.run_status == "running" {
+                if task.task_status == ConnectorTaskState::Active
+                    && task.run_status == ConnectorRunState::Running
+                {
                     return self
                         .continue_window_task(
                             task,
@@ -743,7 +746,9 @@ impl ConnectorRuntime {
                         )
                         .await;
                 }
-                if task.run_status == "interrupted" && task.task_status == "needs_attention" {
+                if task.run_status == ConnectorRunState::Interrupted
+                    && task.task_status == ConnectorTaskState::NeedsAttention
+                {
                     let window = window.expect("existing window context has a window");
                     let cursor = match self.db.append_interrupted_connector_instruction_and_bind(
                         &task.task_id,
@@ -1024,7 +1029,7 @@ impl ConnectorRuntime {
         now: i64,
     ) -> ConnectorCallOutcome {
         let event_cursor_before = task.event_cursor;
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Self::retired_inspect_task_outcome(&task);
         }
         if let Some(outcome) = Self::invalid_mode_transition_outcome(&task, mode) {
@@ -2288,7 +2293,7 @@ impl ConnectorRuntime {
                     "diff_preview": diff_preview
                 }),
             )
-        } else if task.task_status == "cancelled" {
+        } else if task.task_status == ConnectorTaskState::Cancelled {
             json!({
                 "source": "cancelled_task",
                 "changed_paths": [],
@@ -2416,9 +2421,9 @@ impl ConnectorRuntime {
             .and_then(|value| value["next_action"].as_str())
             .map(str::to_string)
             .unwrap_or_else(|| {
-                if task.task_status == "cancelled" {
+                if task.task_status == ConnectorTaskState::Cancelled {
                     "start_a_new_task"
-                } else if task.run_status == "interrupted" {
+                } else if task.run_status == ConnectorRunState::Interrupted {
                     "resume_or_reject_on_the_host"
                 } else {
                     "continue_or_finish"
@@ -2477,7 +2482,7 @@ impl ConnectorRuntime {
                     "updated_at": task.updated_at,
                     "execution_status": task.execution_status,
                     "validation_status": task.validation_status,
-                    "next_action": model_next_action(&task.task_status, &task.next_action),
+                    "next_action": model_next_action(task.task_status, &task.next_action),
                 })
             })
             .collect();
@@ -2506,7 +2511,7 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Self::retired_inspect_task_outcome(&task);
         }
         let context_lock = window.map(|window| self.context_lock(subject_id, window.key()));
@@ -2544,16 +2549,14 @@ impl ConnectorRuntime {
             execution.map(|execution| execution::execution_projection(&execution, now, None));
         // A local decision outranks stale execution advice: an accepted or
         // rejected result decides the story, whatever the last run said.
-        let decision_action = result.as_ref().and_then(|result| {
-            match result.decision_status.as_str() {
-                "accepted" => {
-                    Some("the result was accepted locally; start the next piece of work with task_start")
-                }
-                "rejected" => Some(
-                    "the result was rejected; apply the guidance and start a corrected task with task_start",
-                ),
-                _ => None,
+        let decision_action = result.as_ref().and_then(|result| match result.decision_status {
+            ConnectorResultDecisionStatus::Accepted => {
+                Some("the result was accepted locally; start the next piece of work with task_start")
             }
+            ConnectorResultDecisionStatus::Rejected => Some(
+                "the result was rejected; apply the guidance and start a corrected task with task_start",
+            ),
+            ConnectorResultDecisionStatus::Pending => None,
         });
         let next_action = decision_action
             .map(str::to_string)
@@ -2566,9 +2569,9 @@ impl ConnectorRuntime {
             .unwrap_or_else(|| {
                 if result.is_some() {
                     "task_review, then ask the project owner to accept or reject locally"
-                } else if task.task_status == "cancelled" {
+                } else if task.task_status == ConnectorTaskState::Cancelled {
                     "start_a_new_task"
-                } else if task.run_status == "interrupted" {
+                } else if task.run_status == ConnectorRunState::Interrupted {
                     "ask the project owner to resume or reject this task on the host"
                 } else {
                     "continue with files_read/edits_apply, then task_review"
@@ -2667,7 +2670,9 @@ impl ConnectorRuntime {
         // Timeline visibility for the console; terminal tasks skip the
         // running-only event guard on purpose, and a failed advisory event
         // must not fail the bootstrap.
-        let cursor = if task.task_status == "active" && task.run_status == "running" {
+        let cursor = if task.task_status == ConnectorTaskState::Active
+            && task.run_status == ConnectorRunState::Running
+        {
             match self.record_event(
                 &task,
                 "task_resume",
@@ -2772,7 +2777,7 @@ impl ConnectorRuntime {
             Ok(task) => task,
             Err(outcome) => return outcome,
         };
-        if visible_task.mode == "inspect" {
+        if visible_task.mode == ConnectorTaskMode::InspectLegacy {
             return Self::retired_inspect_task_outcome(&visible_task);
         }
         if let Some(outcome) = Self::invalid_task_workspace_outcome(&visible_task) {
@@ -2793,8 +2798,8 @@ impl ConnectorRuntime {
                 "execution_not_terminal",
                 "task_finish is blocked until the active execution reaches a known terminal state",
                 true,
-                execution.state == "unknown",
-                Some(if execution.state == "unknown" {
+                execution.state == ConnectorExecutionState::Unknown,
+                Some(if execution.state == ConnectorExecutionState::Unknown {
                     "Inspect the executor state on the host before finishing this task."
                 } else {
                     "Use task_review to wait for completion or task_cancel to stop the execution."
@@ -2835,7 +2840,7 @@ impl ConnectorRuntime {
         }
         if let Some(check) = check_execution
             .as_ref()
-            .filter(|check| check.state == "succeeded")
+            .filter(|check| check.state == ConnectorExecutionState::Succeeded)
         {
             let Some(validated) = check.validated_workspace_sha256.as_deref() else {
                 return checks_stale_outcome(
@@ -3044,7 +3049,7 @@ impl ConnectorRuntime {
         task: &ConnectorTaskSnapshot,
         requested_mode: &str,
     ) -> Option<ConnectorCallOutcome> {
-        (task.mode == "normal" && requested_mode == "read_only").then(|| {
+        (task.mode == ConnectorTaskMode::Normal && requested_mode == "read_only").then(|| {
             ConnectorCallOutcome::error_for_task(
                 409,
                 "mode_transition_invalid",
@@ -3064,8 +3069,8 @@ impl ConnectorRuntime {
     fn invalid_task_workspace_outcome(
         task: &ConnectorTaskSnapshot,
     ) -> Option<ConnectorCallOutcome> {
-        let message = match task.mode.as_str() {
-            "normal"
+        let message = match task.mode {
+            ConnectorTaskMode::Normal
                 if !task.isolated
                     || task.execution_root == task.target_root
                     || task.baseline_commit.as_deref().is_none_or(str::is_empty)
@@ -3073,11 +3078,14 @@ impl ConnectorRuntime {
             {
                 "normal task has an invalid isolated writable-workspace state"
             }
-            "read_only" if task.isolated || task.execution_root != task.target_root => {
+            ConnectorTaskMode::ReadOnly
+                if task.isolated || task.execution_root != task.target_root =>
+            {
                 "read_only task has an invalid workspace state"
             }
-            "normal" | "read_only" | "inspect" => return None,
-            _ => "task mode is not part of the canonical Connector execution contract",
+            ConnectorTaskMode::Normal
+            | ConnectorTaskMode::ReadOnly
+            | ConnectorTaskMode::InspectLegacy => return None,
         };
         Some(ConnectorCallOutcome::error_for_task(
             409,
@@ -3100,12 +3108,12 @@ impl ConnectorRuntime {
         subject_id: &str,
     ) -> Result<ConnectorTaskSnapshot, ConnectorCallOutcome> {
         let task = self.task(task_id, subject_id)?;
-        if task.mode != "inspect" {
+        if task.mode != ConnectorTaskMode::InspectLegacy {
             if let Some(outcome) = Self::invalid_task_workspace_outcome(&task) {
                 return Err(outcome);
             }
         }
-        if task.run_status == "interrupted" {
+        if task.run_status == ConnectorRunState::Interrupted {
             return Err(ConnectorCallOutcome::error_for_task(
                 409,
                 "task_interrupted",
@@ -3119,7 +3127,9 @@ impl ConnectorRuntime {
                 }),
             ));
         }
-        if task.task_status != "active" || task.run_status != "running" {
+        if task.task_status != ConnectorTaskState::Active
+            || task.run_status != ConnectorRunState::Running
+        {
             return Err(ConnectorCallOutcome::error_for_task(
                 409,
                 "task_not_active",
@@ -3142,10 +3152,10 @@ impl ConnectorRuntime {
         now: i64,
     ) -> Result<ConnectorTaskSnapshot, ConnectorCallOutcome> {
         let task = self.active_task(task_id, subject_id)?;
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Err(Self::retired_inspect_task_outcome(&task));
         }
-        if task.mode == "read_only" {
+        if task.mode == ConnectorTaskMode::ReadOnly {
             let cursor = self.record_event(
                 &task,
                 capability,
@@ -3175,10 +3185,10 @@ impl ConnectorRuntime {
         now: i64,
     ) -> Result<ConnectorTaskSnapshot, ConnectorCallOutcome> {
         let task = self.active_task(task_id, subject_id)?;
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Err(Self::retired_inspect_task_outcome(&task));
         }
-        if task.mode == "read_only" {
+        if task.mode == ConnectorTaskMode::ReadOnly {
             let cursor = self.record_event(
                 &task,
                 capability,

@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use webcodex_core::apply_edits_shared::ApplyFileChangeInput;
 use webcodex_store::{
     ConnectorApproval, ConnectorApprovalGate, ConnectorTaskResult, ConnectorTaskSnapshot,
-    ConnectorTaskStoreError, ConnectorWindowBinding,
+    ConnectorTaskState, ConnectorTaskStoreError, ConnectorWindowBinding,
 };
 use webcodex_validation::RecipeError;
 use webcodex_workspace::project_context::{ContextRefreshSummary, ProjectContextFingerprint};
@@ -984,15 +984,16 @@ pub(super) fn bounded_goal(goal: &str) -> String {
 }
 
 /// The host queue speaks reviewer verbs; the model needs capability verbs.
-pub(super) fn model_next_action(task_status: &str, host_action: &str) -> &'static str {
+pub(super) fn model_next_action(
+    task_status: ConnectorTaskState,
+    host_action: &str,
+) -> &'static str {
     match host_action {
         "in_progress" => "task_resume",
         "review_and_accept" => "task_review_then_ask_the_owner_to_decide_locally",
         "resume_or_reject" => "ask_the_owner_to_resume_or_reject_on_the_host",
-        _ => match task_status {
-            "rejected" => "task_resume_for_the_rejection_reason",
-            _ => "task_start_new_work",
-        },
+        _ if task_status == ConnectorTaskState::Rejected => "task_resume_for_the_rejection_reason",
+        _ => "task_start_new_work",
     }
 }
 

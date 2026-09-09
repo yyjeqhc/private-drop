@@ -4,6 +4,7 @@
 //! session ledger. A connector task is the product-level unit of work; a run is
 //! one executor attempt; events are its bounded, ordered audit trail.
 
+use super::execution_model::ConnectorExecutionState;
 use super::Database;
 use rusqlite::types::Type;
 use rusqlite::{params, OptionalExtension, Transaction};
@@ -12,6 +13,389 @@ use serde_json::Value;
 use std::collections::HashSet;
 use uuid::Uuid;
 use webcodex_core::project_context_contract::ProjectContextFingerprint;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorTaskMode {
+    Normal,
+    ReadOnly,
+    #[serde(rename = "inspect")]
+    InspectLegacy,
+}
+
+impl ConnectorTaskMode {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::ReadOnly => "read_only",
+            Self::InspectLegacy => "inspect",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "normal" => Ok(Self::Normal),
+            "read_only" => Ok(Self::ReadOnly),
+            "inspect" => Ok(Self::InspectLegacy),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Task mode: {other}").into(),
+            )),
+        }
+    }
+
+    fn requested(value: &str) -> Result<Self, ConnectorTaskStoreError> {
+        match value {
+            "normal" => Ok(Self::Normal),
+            "read_only" => Ok(Self::ReadOnly),
+            _ => Err(ConnectorTaskStoreError::InvalidState(
+                "task mode must be normal or read_only".to_string(),
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for ConnectorTaskMode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_db())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorTaskLifecycle {
+    Active,
+    ReadyForReview,
+    Accepted,
+    Rejected,
+}
+
+impl ConnectorTaskLifecycle {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::ReadyForReview => "ready_for_review",
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "active" => Ok(Self::Active),
+            "ready_for_review" => Ok(Self::ReadyForReview),
+            "accepted" => Ok(Self::Accepted),
+            "rejected" => Ok(Self::Rejected),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Task lifecycle: {other}").into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorTaskState {
+    Active,
+    ReadyForReview,
+    Accepted,
+    Rejected,
+    Cancelled,
+    NeedsAttention,
+}
+
+impl ConnectorTaskState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::ReadyForReview => "ready_for_review",
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+            Self::NeedsAttention => "needs_attention",
+        }
+    }
+
+    fn from_projection(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "active" => Ok(Self::Active),
+            "ready_for_review" => Ok(Self::ReadyForReview),
+            "accepted" => Ok(Self::Accepted),
+            "rejected" => Ok(Self::Rejected),
+            "cancelled" => Ok(Self::Cancelled),
+            "needs_attention" => Ok(Self::NeedsAttention),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported effective Connector Task state: {other}").into(),
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for ConnectorTaskState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorRunLifecycle {
+    Running,
+    Completed,
+    Interrupted,
+}
+
+impl ConnectorRunLifecycle {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "interrupted" => Ok(Self::Interrupted),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Run lifecycle: {other}").into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorRunState {
+    Running,
+    Completed,
+    Interrupted,
+    Cancelled,
+}
+
+impl ConnectorRunState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Interrupted => "interrupted",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl std::fmt::Display for ConnectorRunState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorResultDecisionStatus {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
+impl ConnectorResultDecisionStatus {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "accepted" => Ok(Self::Accepted),
+            "rejected" => Ok(Self::Rejected),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Result decision status: {other}").into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorResultDecision {
+    Accepted,
+    Rejected,
+}
+
+impl ConnectorResultDecision {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    pub fn requested(value: &str) -> Result<Self, ConnectorTaskStoreError> {
+        match value {
+            "accepted" => Ok(Self::Accepted),
+            "rejected" => Ok(Self::Rejected),
+            _ => Err(ConnectorTaskStoreError::InvalidState(
+                "result decision must be accepted or rejected".to_string(),
+            )),
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "accepted" => Ok(Self::Accepted),
+            "rejected" => Ok(Self::Rejected),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Result decision: {other}").into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorResultDecisionRecoveryState {
+    Pending,
+    NeedsAttention,
+}
+
+impl ConnectorResultDecisionRecoveryState {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::NeedsAttention => "needs_attention",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "needs_attention" => Ok(Self::NeedsAttention),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Result decision recovery state: {other}").into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorApprovalState {
+    Pending,
+    Approved,
+    Denied,
+    Consumed,
+    Expired,
+}
+
+impl ConnectorApprovalState {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Consumed => "consumed",
+            Self::Expired => "expired",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "approved" => Ok(Self::Approved),
+            "denied" => Ok(Self::Denied),
+            "consumed" => Ok(Self::Consumed),
+            "expired" => Ok(Self::Expired),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Approval state: {other}").into(),
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for ConnectorApprovalState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_db())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectorEditOperationState {
+    Pending,
+    Completed,
+    Failed,
+}
+
+impl ConnectorEditOperationState {
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Connector Edit Operation state: {other}").into(),
+            )),
+        }
+    }
+}
+
+fn effective_task_state(
+    lifecycle: ConnectorTaskLifecycle,
+    run_lifecycle: ConnectorRunLifecycle,
+    result_decision: Option<ConnectorResultDecisionStatus>,
+    cancelled: bool,
+) -> ConnectorTaskState {
+    if cancelled {
+        return ConnectorTaskState::Cancelled;
+    }
+    match result_decision {
+        Some(ConnectorResultDecisionStatus::Accepted) => return ConnectorTaskState::Accepted,
+        Some(ConnectorResultDecisionStatus::Rejected) => return ConnectorTaskState::Rejected,
+        Some(ConnectorResultDecisionStatus::Pending) | None => {}
+    }
+    if run_lifecycle == ConnectorRunLifecycle::Interrupted {
+        return ConnectorTaskState::NeedsAttention;
+    }
+    match lifecycle {
+        ConnectorTaskLifecycle::Active => ConnectorTaskState::Active,
+        ConnectorTaskLifecycle::ReadyForReview => ConnectorTaskState::ReadyForReview,
+        ConnectorTaskLifecycle::Accepted => ConnectorTaskState::Accepted,
+        ConnectorTaskLifecycle::Rejected => ConnectorTaskState::Rejected,
+    }
+}
+
+fn effective_run_state(lifecycle: ConnectorRunLifecycle, cancelled: bool) -> ConnectorRunState {
+    if cancelled {
+        return ConnectorRunState::Cancelled;
+    }
+    match lifecycle {
+        ConnectorRunLifecycle::Running => ConnectorRunState::Running,
+        ConnectorRunLifecycle::Completed => ConnectorRunState::Completed,
+        ConnectorRunLifecycle::Interrupted => ConnectorRunState::Interrupted,
+    }
+}
 
 pub struct ConnectorBinding<'a> {
     pub project_id: &'a str,
@@ -114,9 +498,13 @@ pub struct ConnectorTaskSnapshot {
     #[serde(skip_serializing)]
     pub owner_subject_id: String,
     pub goal: String,
-    pub mode: String,
-    pub task_status: String,
-    pub run_status: String,
+    pub mode: ConnectorTaskMode,
+    #[serde(skip_serializing)]
+    pub task_lifecycle: ConnectorTaskLifecycle,
+    pub task_status: ConnectorTaskState,
+    #[serde(skip_serializing)]
+    pub run_lifecycle: ConnectorRunLifecycle,
+    pub run_status: ConnectorRunState,
     pub event_cursor: i64,
     #[serde(skip_serializing)]
     pub target_executor_ref: String,
@@ -139,9 +527,9 @@ pub struct ConnectorTaskSnapshot {
 pub struct LocalReviewableTask {
     pub task_id: String,
     pub goal: String,
-    pub task_status: String,
+    pub task_status: ConnectorTaskState,
     pub updated_at: i64,
-    pub execution_status: Option<String>,
+    pub execution_status: Option<ConnectorExecutionState>,
     pub validation_status: Option<String>,
     pub next_action: String,
     /// Count of `human_guidance` events the model has not yet claimed (above
@@ -163,7 +551,7 @@ pub struct ConnectorTaskResult {
     pub changed_paths: Vec<String>,
     pub validation: Value,
     pub warnings: Vec<String>,
-    pub decision_status: String,
+    pub decision_status: ConnectorResultDecisionStatus,
     pub decided_by: Option<String>,
     pub decided_at: Option<i64>,
     pub cleanup_warning: Option<String>,
@@ -174,8 +562,8 @@ pub struct ConnectorTaskResult {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ConnectorResultDecisionRecovery {
-    pub state: String,
-    pub decision: String,
+    pub state: ConnectorResultDecisionRecoveryState,
+    pub decision: ConnectorResultDecision,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub last_attempt_at: Option<i64>,
@@ -189,7 +577,7 @@ pub struct ConnectorApproval {
     pub action_kind: String,
     pub action_hash: String,
     pub action_summary: String,
-    pub state: String,
+    pub state: ConnectorApprovalState,
     pub requested_at: i64,
     pub expires_at: i64,
     pub decided_by: Option<String>,
@@ -493,8 +881,9 @@ impl Database {
         task: NewConnectorTask<'_>,
         binding: Option<ConnectorWindowBinding<'_>>,
     ) -> Result<ConnectorTaskSnapshot, ConnectorTaskStoreError> {
+        let mode = ConnectorTaskMode::requested(task.mode)?;
         validate_connector_task_workspace_shape(
-            task.mode,
+            mode,
             task.isolated,
             task.target_root,
             task.execution_root,
@@ -525,7 +914,7 @@ impl Database {
                 task.project_id,
                 task.subject_id,
                 task.goal,
-                task.mode,
+                mode.as_db(),
                 task.now
             ],
         )?;
@@ -559,7 +948,7 @@ impl Database {
             "task_started",
             &serde_json::json!({
                 "goal": task.goal,
-                "mode": task.mode,
+                "mode": mode,
                 "isolated": task.isolated,
                 "baseline_commit": task.baseline_commit
             }),
@@ -577,9 +966,11 @@ impl Database {
             workspace_id: task.workspace_id.to_string(),
             owner_subject_id: task.subject_id.to_string(),
             goal: task.goal.to_string(),
-            mode: task.mode.to_string(),
-            task_status: "active".to_string(),
-            run_status: "running".to_string(),
+            mode,
+            task_lifecycle: ConnectorTaskLifecycle::Active,
+            task_status: ConnectorTaskState::Active,
+            run_lifecycle: ConnectorRunLifecycle::Running,
+            run_status: ConnectorRunState::Running,
             event_cursor: 1,
             target_executor_ref: task.target_executor_ref.to_string(),
             execution_executor_ref: task.execution_executor_ref.to_string(),
@@ -597,7 +988,7 @@ impl Database {
         &self,
         continuation: ConnectorTaskContinuation<'_>,
         binding: ConnectorWindowBinding<'_>,
-    ) -> Result<(ConnectorTaskSnapshot, i64, String), ConnectorTaskStoreError> {
+    ) -> Result<(ConnectorTaskSnapshot, i64, ConnectorTaskMode), ConnectorTaskStoreError> {
         self.continue_connector_task_transaction(continuation, Some(binding))
     }
 
@@ -605,12 +996,8 @@ impl Database {
         &self,
         continuation: ConnectorTaskContinuation<'_>,
         binding: Option<ConnectorWindowBinding<'_>>,
-    ) -> Result<(ConnectorTaskSnapshot, i64, String), ConnectorTaskStoreError> {
-        if !matches!(continuation.mode, "normal" | "read_only") {
-            return Err(ConnectorTaskStoreError::InvalidState(
-                "task mode must be normal or read_only".to_string(),
-            ));
-        }
+    ) -> Result<(ConnectorTaskSnapshot, i64, ConnectorTaskMode), ConnectorTaskStoreError> {
+        let requested_mode = ConnectorTaskMode::requested(continuation.mode)?;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let task = load_task(
@@ -621,29 +1008,32 @@ impl Database {
         )?
         .ok_or(ConnectorTaskStoreError::NotFound)?;
         require_running(&task)?;
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "inspect_mode_retired: this pre-0.4 inspect task can no longer execute; start a new read_only task for analysis or a new normal task for writable work"
                     .to_string(),
             ));
         }
-        if task.task_status != "active" {
+        if task.task_status != ConnectorTaskState::Active {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an active task can continue".to_string(),
             ));
         }
-        if task.mode == "normal" && continuation.mode == "read_only" {
+        if task.mode == ConnectorTaskMode::Normal && requested_mode == ConnectorTaskMode::ReadOnly {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "normal tasks cannot transition to read_only; finish or reject the current writable task and start a new read_only task"
                     .to_string(),
             ));
         }
-        if continuation.mode == "normal" && !task.isolated && continuation.workspace.is_none() {
+        if requested_mode == ConnectorTaskMode::Normal
+            && !task.isolated
+            && continuation.workspace.is_none()
+        {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "read-only workspace must be upgraded before enabling writes".to_string(),
             ));
         }
-        let previous_mode = task.mode.clone();
+        let previous_mode = task.mode;
         let workspace_upgraded = continuation.workspace.is_some();
         let (
             final_isolated,
@@ -668,7 +1058,7 @@ impl Database {
             ),
         };
         validate_connector_task_workspace_shape(
-            continuation.mode,
+            requested_mode,
             final_isolated,
             final_target_root,
             final_execution_root,
@@ -695,7 +1085,11 @@ impl Database {
         }
         tx.execute(
             "UPDATE wc_tasks SET mode = ?1, updated_at = ?2 WHERE id = ?3",
-            params![continuation.mode, continuation.now, continuation.task_id],
+            params![
+                requested_mode.as_db(),
+                continuation.now,
+                continuation.task_id
+            ],
         )?;
         let sequence = task.event_cursor + 1;
         insert_event(
@@ -707,8 +1101,8 @@ impl Database {
             &serde_json::json!({
                 "instruction": continuation.instruction,
                 "previous_mode": previous_mode,
-                "mode": continuation.mode,
-                "capability_changed": previous_mode != continuation.mode,
+                "mode": requested_mode,
+                "capability_changed": previous_mode != requested_mode,
                 "workspace_upgraded": workspace_upgraded
             }),
             continuation.now,
@@ -769,36 +1163,34 @@ impl Database {
         now: i64,
         binding: Option<ConnectorWindowBinding<'_>>,
     ) -> Result<i64, ConnectorTaskStoreError> {
+        let requested_mode = ConnectorTaskMode::requested(requested_mode)?;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let task = load_task(&tx, task_id, project_id, subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "inspect_mode_retired: this pre-0.4 inspect task can no longer execute; start a new read_only task for analysis or a new normal task for writable work"
                     .to_string(),
             ));
         }
-        if !matches!(requested_mode, "normal" | "read_only") {
-            return Err(ConnectorTaskStoreError::InvalidState(
-                "task mode must be normal or read_only".to_string(),
-            ));
-        }
-        if task.mode == "normal" && requested_mode == "read_only" {
+        if task.mode == ConnectorTaskMode::Normal && requested_mode == ConnectorTaskMode::ReadOnly {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "normal tasks cannot transition to read_only; finish or reject the current writable task and start a new read_only task"
                     .to_string(),
             ));
         }
         validate_connector_task_workspace_shape(
-            &task.mode,
+            task.mode,
             task.isolated,
             &task.target_root,
             &task.execution_root,
             task.baseline_commit.as_deref(),
             task.baseline_tree.as_deref(),
         )?;
-        if task.run_status != "interrupted" || task.task_status != "needs_attention" {
+        if task.run_status != ConnectorRunState::Interrupted
+            || task.task_status != ConnectorTaskState::NeedsAttention
+        {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an interrupted task accepts a blocked continuation instruction".to_string(),
             ));
@@ -919,9 +1311,10 @@ impl Database {
                  WHERE task_id = ?1 AND operation_id = ?2",
                 params![task_id, operation_id],
                 |row| {
+                    let state = row.get::<_, String>(1)?;
                     Ok((
                         row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
+                        ConnectorEditOperationState::from_db(&state, 1)?,
                         row.get::<_, Option<String>>(2)?,
                     ))
                 },
@@ -932,12 +1325,14 @@ impl Database {
             if stored_hash != request_sha256 {
                 return Ok(ConnectorEditOperationGate::Conflict);
             }
-            return match (state.as_str(), result_json) {
-                ("pending", None) => Ok(ConnectorEditOperationGate::Pending),
-                ("completed", Some(result_json)) => Ok(ConnectorEditOperationGate::Replay(
-                    serde_json::from_str(&result_json)?,
-                )),
-                ("failed", None) => {
+            return match (state, result_json) {
+                (ConnectorEditOperationState::Pending, None) => {
+                    Ok(ConnectorEditOperationGate::Pending)
+                }
+                (ConnectorEditOperationState::Completed, Some(result_json)) => Ok(
+                    ConnectorEditOperationGate::Replay(serde_json::from_str(&result_json)?),
+                ),
+                (ConnectorEditOperationState::Failed, None) => {
                     let updated = conn.execute(
                         "UPDATE wc_edit_operations SET state = 'pending', updated_at = ?1
                          WHERE task_id = ?2 AND operation_id = ?3 AND request_sha256 = ?4
@@ -1111,9 +1506,11 @@ impl Database {
         let task = load_task(&tx, task_id, project_id, subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
         if !matches!(
-            task.task_status.as_str(),
-            "ready_for_review" | "accepted" | "rejected"
-        ) || task.run_status != "completed"
+            task.task_status,
+            ConnectorTaskState::ReadyForReview
+                | ConnectorTaskState::Accepted
+                | ConnectorTaskState::Rejected
+        ) || task.run_status != ConnectorRunState::Completed
         {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "workspace release can only follow a completed task result".to_string(),
@@ -1493,25 +1890,25 @@ impl Database {
             approval = load_approval_by_hash(&tx, task_id, &task.run_id, action_hash)?;
         }
         let mut approval = approval.expect("approval inserted or loaded");
-        let gate = match approval.state.as_str() {
-            "pending" if approval.expires_at <= now => {
+        let gate = match approval.state {
+            ConnectorApprovalState::Pending if approval.expires_at <= now => {
                 tx.execute(
                     "UPDATE wc_approvals SET state = 'expired' WHERE id = ?1 AND state = 'pending'",
                     params![approval.approval_id],
                 )?;
-                approval.state = "expired".to_string();
+                approval.state = ConnectorApprovalState::Expired;
                 ConnectorApprovalGate::Expired(approval)
             }
-            "pending" => ConnectorApprovalGate::Pending(approval),
-            "approved" if approval.expires_at <= now => {
+            ConnectorApprovalState::Pending => ConnectorApprovalGate::Pending(approval),
+            ConnectorApprovalState::Approved if approval.expires_at <= now => {
                 tx.execute(
                     "UPDATE wc_approvals SET state = 'expired' WHERE id = ?1 AND state = 'approved'",
                     params![approval.approval_id],
                 )?;
-                approval.state = "expired".to_string();
+                approval.state = ConnectorApprovalState::Expired;
                 ConnectorApprovalGate::Expired(approval)
             }
-            "approved" => {
+            ConnectorApprovalState::Approved => {
                 let updated = tx.execute(
                     "UPDATE wc_approvals SET state = 'consumed', consumed_at = ?1
                      WHERE id = ?2 AND state = 'approved'",
@@ -1522,7 +1919,7 @@ impl Database {
                         "approval was already consumed".to_string(),
                     ));
                 }
-                approval.state = "consumed".to_string();
+                approval.state = ConnectorApprovalState::Consumed;
                 approval.consumed_at = Some(now);
                 insert_event(
                     &tx,
@@ -1539,8 +1936,8 @@ impl Database {
                 touch_task(&tx, task_id, now)?;
                 ConnectorApprovalGate::Authorized(approval)
             }
-            "denied" => ConnectorApprovalGate::Denied(approval),
-            "expired" => {
+            ConnectorApprovalState::Denied => ConnectorApprovalGate::Denied(approval),
+            ConnectorApprovalState::Expired => {
                 tx.execute(
                     "UPDATE wc_approvals
                      SET state = 'pending', requested_at = ?1, expires_at = ?2,
@@ -1564,7 +1961,7 @@ impl Database {
                     now,
                 )?;
                 touch_task(&tx, task_id, now)?;
-                approval.state = "pending".to_string();
+                approval.state = ConnectorApprovalState::Pending;
                 approval.requested_at = now;
                 approval.expires_at = expires_at;
                 approval.decided_by = None;
@@ -1572,12 +1969,7 @@ impl Database {
                 approval.consumed_at = None;
                 ConnectorApprovalGate::Pending(approval)
             }
-            "consumed" => ConnectorApprovalGate::Consumed(approval),
-            other => {
-                return Err(ConnectorTaskStoreError::InvalidState(format!(
-                    "unknown approval state {other}"
-                )))
-            }
+            ConnectorApprovalState::Consumed => ConnectorApprovalGate::Consumed(approval),
         };
         tx.commit()?;
         Ok(gate)
@@ -1625,7 +2017,8 @@ impl Database {
                         WHEN q.task_status = 'active' THEN 'in_progress'
                         ELSE 'review'
                     END,
-                    q.unread_guidance
+                    q.unread_guidance,
+                    q.task_lifecycle, q.run_lifecycle, q.result_decision_status, q.cancelled
              FROM (
                 SELECT t.id AS task_id, t.goal, t.updated_at,
                     CASE
@@ -1636,6 +2029,11 @@ impl Database {
                         WHEN r.status = 'interrupted' THEN 'needs_attention'
                         ELSE t.status
                     END AS task_status,
+                    t.status AS task_lifecycle,
+                    r.status AS run_lifecycle,
+                    res.decision_status AS result_decision_status,
+                    EXISTS (SELECT 1 FROM wc_task_events c
+                            WHERE c.task_id = t.id AND c.kind = 'task_cancelled') AS cancelled,
                     r.status AS run_status, res.id AS result_id, res.validation_json,
                     (SELECT ex.state FROM wc_executions ex WHERE ex.task_id = t.id
                      ORDER BY ex.submitted_at DESC, ex.rowid DESC LIMIT 1) AS execution_status,
@@ -1662,18 +2060,7 @@ impl Database {
         )?;
         let rows = statement.query_map(
             params![project_id, include_completed as i64, limit.max(1) as i64],
-            |row| {
-                Ok(LocalReviewableTask {
-                    task_id: row.get(0)?,
-                    goal: row.get(1)?,
-                    task_status: row.get(2)?,
-                    updated_at: row.get(3)?,
-                    execution_status: row.get(4)?,
-                    validation_status: row.get(5)?,
-                    next_action: row.get(6)?,
-                    unread_guidance: row.get(7)?,
-                })
-            },
+            map_reviewable_task,
         )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
@@ -1699,7 +2086,8 @@ impl Database {
                         WHEN q.task_status = 'active' THEN 'in_progress'
                         ELSE 'review'
                     END,
-                    q.unread_guidance
+                    q.unread_guidance,
+                    q.task_lifecycle, q.run_lifecycle, q.result_decision_status, q.cancelled
              FROM (
                 SELECT t.id AS task_id, t.goal, t.updated_at,
                     CASE
@@ -1710,6 +2098,11 @@ impl Database {
                         WHEN r.status = 'interrupted' THEN 'needs_attention'
                         ELSE t.status
                     END AS task_status,
+                    t.status AS task_lifecycle,
+                    r.status AS run_lifecycle,
+                    res.decision_status AS result_decision_status,
+                    EXISTS (SELECT 1 FROM wc_task_events c
+                            WHERE c.task_id = t.id AND c.kind = 'task_cancelled') AS cancelled,
                     r.status AS run_status, res.id AS result_id, res.validation_json,
                     (SELECT ex.state FROM wc_executions ex WHERE ex.task_id = t.id
                      ORDER BY ex.submitted_at DESC, ex.rowid DESC LIMIT 1) AS execution_status,
@@ -1735,18 +2128,7 @@ impl Database {
         )?;
         let rows = statement.query_map(
             params![project_id, subject_id, limit.max(1) as i64],
-            |row| {
-                Ok(LocalReviewableTask {
-                    task_id: row.get(0)?,
-                    goal: row.get(1)?,
-                    task_status: row.get(2)?,
-                    updated_at: row.get(3)?,
-                    execution_status: row.get(4)?,
-                    validation_status: row.get(5)?,
-                    next_action: row.get(6)?,
-                    unread_guidance: row.get(7)?,
-                })
-            },
+            map_reviewable_task,
         )?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
@@ -1865,21 +2247,23 @@ impl Database {
             .ok_or(ConnectorTaskStoreError::NotFound)?;
         let task = load_task(&tx, task_id, project_id, &subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "inspect_mode_retired: this pre-0.4 inspect task can no longer execute; reject it locally and start a new read_only or normal task"
                     .to_string(),
             ));
         }
         validate_connector_task_workspace_shape(
-            &task.mode,
+            task.mode,
             task.isolated,
             &task.target_root,
             &task.execution_root,
             task.baseline_commit.as_deref(),
             task.baseline_tree.as_deref(),
         )?;
-        if task.run_status != "interrupted" || task.task_status != "needs_attention" {
+        if task.run_status != ConnectorRunState::Interrupted
+            || task.task_status != ConnectorTaskState::NeedsAttention
+        {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "only an interrupted task can be resumed".to_string(),
             ));
@@ -1991,6 +2375,7 @@ impl Database {
         actor: &str,
         now: i64,
     ) -> Result<(), ConnectorTaskStoreError> {
+        let decision = ConnectorResultDecision::requested(decision)?;
         let conn = self.conn.lock().unwrap();
         let inserted = conn.execute(
             "INSERT INTO wc_result_decision_intents
@@ -2010,7 +2395,7 @@ impl Database {
              WHERE wc_result_decision_intents.result_id = excluded.result_id
                AND wc_result_decision_intents.state = 'needs_attention'
                AND excluded.decision = 'rejected'",
-            params![task_id, project_id, decision, actor, now, result_id],
+            params![task_id, project_id, decision.as_db(), actor, now, result_id],
         )?;
         if inserted == 1 {
             return Ok(());
@@ -2037,7 +2422,7 @@ impl Database {
     pub fn connector_result_decision_intents(
         &self,
         project_id: &str,
-    ) -> Result<Vec<(String, String, String)>, ConnectorTaskStoreError> {
+    ) -> Result<Vec<(String, String, ConnectorResultDecision)>, ConnectorTaskStoreError> {
         let conn = self.conn.lock().unwrap();
         let mut statement = conn.prepare(
             "SELECT i.task_id, i.result_id, i.decision
@@ -2047,7 +2432,12 @@ impl Database {
              ORDER BY i.started_at, i.task_id",
         )?;
         let rows = statement.query_map([project_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            let decision = row.get::<_, String>(2)?;
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                ConnectorResultDecision::from_db(&decision, 2)?,
+            ))
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
@@ -2137,8 +2527,9 @@ impl Database {
                  ORDER BY r.started_at DESC LIMIT 1",
                 params![task_id, result_id, project_id],
                 |row| {
+                    let decision = row.get::<_, String>(0)?;
                     Ok((
-                        row.get::<_, String>(0)?,
+                        ConnectorResultDecision::from_db(&decision, 0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, i64>(3)?,
@@ -2157,7 +2548,14 @@ impl Database {
              SET decision_status = ?1, decided_by = ?2, decided_at = ?3,
                  cleanup_warning = COALESCE(?4, cleanup_warning)
              WHERE task_id = ?5 AND id = ?6 AND decision_status = 'pending'",
-            params![decision, actor, now, cleanup_warning, task_id, result_id],
+            params![
+                decision.as_db(),
+                actor,
+                now,
+                cleanup_warning,
+                task_id,
+                result_id
+            ],
         )?;
         if updated != 1 {
             return Err(ConnectorTaskStoreError::decision(
@@ -2167,7 +2565,7 @@ impl Database {
         }
         tx.execute(
             "UPDATE wc_tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            params![decision, now, task_id],
+            params![decision.as_db(), now, task_id],
         )?;
         tx.execute(
             "UPDATE wc_runs
@@ -2180,10 +2578,9 @@ impl Database {
             task_id,
             &run_id,
             cursor + 1,
-            if decision == "accepted" {
-                "task_accepted"
-            } else {
-                "task_rejected"
+            match decision {
+                ConnectorResultDecision::Accepted => "task_accepted",
+                ConnectorResultDecision::Rejected => "task_rejected",
             },
             &serde_json::json!({
                 "decision": decision,
@@ -2226,7 +2623,7 @@ impl Database {
         require_running(&task)?;
         let approval =
             load_approval(&tx, approval_id, task_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
-        if approval.state != "pending" {
+        if approval.state != ConnectorApprovalState::Pending {
             return Err(ConnectorTaskStoreError::InvalidState(format!(
                 "approval is {}; only pending approvals can be decided",
                 approval.state
@@ -2243,13 +2640,17 @@ impl Database {
                     .to_string(),
             ));
         }
-        let state = if approve { "approved" } else { "denied" };
+        let state = if approve {
+            ConnectorApprovalState::Approved
+        } else {
+            ConnectorApprovalState::Denied
+        };
         let reason = reason.map(str::trim).filter(|reason| !reason.is_empty());
         tx.execute(
             "UPDATE wc_approvals SET state = ?1, decided_by = ?2, decided_at = ?3,
                     decision_reason = ?5
              WHERE id = ?4 AND state = 'pending'",
-            params![state, actor, now, approval_id, reason],
+            params![state.as_db(), actor, now, approval_id, reason],
         )?;
         let cursor: i64 = tx.query_row(
             "SELECT COALESCE(MAX(sequence), 0) FROM wc_task_events WHERE task_id = ?1",
@@ -2280,6 +2681,47 @@ impl Database {
     }
 }
 
+fn map_reviewable_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalReviewableTask> {
+    let projected_raw = row.get::<_, String>(2)?;
+    let task_lifecycle_raw = row.get::<_, String>(8)?;
+    let run_lifecycle_raw = row.get::<_, String>(9)?;
+    let result_decision_raw = row.get::<_, Option<String>>(10)?;
+    let cancelled = row.get::<_, i64>(11)? != 0;
+    let task_lifecycle = ConnectorTaskLifecycle::from_db(&task_lifecycle_raw, 8)?;
+    let run_lifecycle = ConnectorRunLifecycle::from_db(&run_lifecycle_raw, 9)?;
+    let result_decision = result_decision_raw
+        .as_deref()
+        .map(|value| ConnectorResultDecisionStatus::from_db(value, 10))
+        .transpose()?;
+    let canonical = effective_task_state(task_lifecycle, run_lifecycle, result_decision, cancelled);
+    let projected = ConnectorTaskState::from_projection(&projected_raw, 2)?;
+    if projected != canonical {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            2,
+            Type::Text,
+            format!(
+                "Connector Task SQL projection diverged from canonical Rust projection: SQL={projected}, Rust={canonical}"
+            )
+            .into(),
+        ));
+    }
+    let execution_status = row
+        .get::<_, Option<String>>(4)?
+        .as_deref()
+        .map(|value| ConnectorExecutionState::from_db(value, 4))
+        .transpose()?;
+    Ok(LocalReviewableTask {
+        task_id: row.get(0)?,
+        goal: row.get(1)?,
+        task_status: canonical,
+        updated_at: row.get(3)?,
+        execution_status,
+        validation_status: row.get(5)?,
+        next_action: row.get(6)?,
+        unread_guidance: row.get(7)?,
+    })
+}
+
 pub(super) fn load_task(
     conn: &rusqlite::Connection,
     task_id: &str,
@@ -2288,23 +2730,11 @@ pub(super) fn load_task(
 ) -> Result<Option<ConnectorTaskSnapshot>, rusqlite::Error> {
     conn.query_row(
         "SELECT t.id, r.id, t.project_id, r.workspace_id, t.owner_subject_id, t.goal, t.mode,
-                CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM wc_task_events cancelled
-                        WHERE cancelled.task_id = t.id AND cancelled.kind = 'task_cancelled'
-                    ) THEN 'cancelled'
-                    WHEN result.decision_status = 'accepted' THEN 'accepted'
-                    WHEN result.decision_status = 'rejected' THEN 'rejected'
-                    WHEN r.status = 'interrupted' THEN 'needs_attention'
-                    ELSE t.status
-                END,
-                CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM wc_task_events cancelled
-                        WHERE cancelled.task_id = t.id AND cancelled.kind = 'task_cancelled'
-                    ) THEN 'cancelled'
-                    ELSE r.status
-                END,
+                t.status, r.status, result.decision_status,
+                EXISTS (
+                    SELECT 1 FROM wc_task_events cancelled
+                    WHERE cancelled.task_id = t.id AND cancelled.kind = 'task_cancelled'
+                ),
                 COALESCE(MAX(e.sequence), 0),
                 ctx.target_executor_ref, ctx.execution_executor_ref,
                 ctx.target_root, ctx.execution_root,
@@ -2321,6 +2751,18 @@ pub(super) fn load_task(
          LIMIT 1",
         params![task_id, project_id, subject_id],
         |row| {
+            let mode_raw = row.get::<_, String>(6)?;
+            let task_lifecycle_raw = row.get::<_, String>(7)?;
+            let run_lifecycle_raw = row.get::<_, String>(8)?;
+            let result_decision_raw = row.get::<_, Option<String>>(9)?;
+            let cancelled = row.get::<_, i64>(10)? != 0;
+            let mode = ConnectorTaskMode::from_db(&mode_raw, 6)?;
+            let task_lifecycle = ConnectorTaskLifecycle::from_db(&task_lifecycle_raw, 7)?;
+            let run_lifecycle = ConnectorRunLifecycle::from_db(&run_lifecycle_raw, 8)?;
+            let result_decision = result_decision_raw
+                .as_deref()
+                .map(|value| ConnectorResultDecisionStatus::from_db(value, 9))
+                .transpose()?;
             Ok(ConnectorTaskSnapshot {
                 task_id: row.get(0)?,
                 run_id: row.get(1)?,
@@ -2328,19 +2770,26 @@ pub(super) fn load_task(
                 workspace_id: row.get(3)?,
                 owner_subject_id: row.get(4)?,
                 goal: row.get(5)?,
-                mode: row.get(6)?,
-                task_status: row.get(7)?,
-                run_status: row.get(8)?,
-                event_cursor: row.get(9)?,
-                target_executor_ref: row.get(10)?,
-                execution_executor_ref: row.get(11)?,
-                target_root: row.get(12)?,
-                execution_root: row.get(13)?,
-                baseline_commit: row.get(14)?,
-                baseline_tree: row.get(15)?,
-                isolated: row.get::<_, i64>(16)? != 0,
-                created_at: row.get(17)?,
-                updated_at: row.get(18)?,
+                mode,
+                task_lifecycle,
+                task_status: effective_task_state(
+                    task_lifecycle,
+                    run_lifecycle,
+                    result_decision,
+                    cancelled,
+                ),
+                run_lifecycle,
+                run_status: effective_run_state(run_lifecycle, cancelled),
+                event_cursor: row.get(11)?,
+                target_executor_ref: row.get(12)?,
+                execution_executor_ref: row.get(13)?,
+                target_root: row.get(14)?,
+                execution_root: row.get(15)?,
+                baseline_commit: row.get(16)?,
+                baseline_tree: row.get(17)?,
+                isolated: row.get::<_, i64>(18)? != 0,
+                created_at: row.get(19)?,
+                updated_at: row.get(20)?,
             })
         },
     )
@@ -2383,13 +2832,16 @@ fn map_result(row: &rusqlite::Row<'_>) -> Result<ConnectorTaskResult, rusqlite::
     let patch_bytes = usize::try_from(patch_bytes_raw)
         .map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, Type::Integer, Box::new(e)))?;
     let recovery = match row.get::<_, Option<String>>(15)? {
-        Some(state) => Some(ConnectorResultDecisionRecovery {
-            state,
-            decision: row.get(16)?,
-            error_code: row.get(17)?,
-            error_message: row.get(18)?,
-            last_attempt_at: row.get(19)?,
-        }),
+        Some(state) => {
+            let decision = row.get::<_, String>(16)?;
+            Some(ConnectorResultDecisionRecovery {
+                state: ConnectorResultDecisionRecoveryState::from_db(&state, 15)?,
+                decision: ConnectorResultDecision::from_db(&decision, 16)?,
+                error_code: row.get(17)?,
+                error_message: row.get(18)?,
+                last_attempt_at: row.get(19)?,
+            })
+        }
         None => None,
     };
     Ok(ConnectorTaskResult {
@@ -2403,7 +2855,7 @@ fn map_result(row: &rusqlite::Row<'_>) -> Result<ConnectorTaskResult, rusqlite::
         changed_paths: json_col(row, 7)?,
         validation: json_col(row, 8)?,
         warnings: json_col(row, 9)?,
-        decision_status: row.get(10)?,
+        decision_status: ConnectorResultDecisionStatus::from_db(&row.get::<_, String>(10)?, 10)?,
         decided_by: row.get(11)?,
         decided_at: row.get(12)?,
         cleanup_warning: row.get(13)?,
@@ -2455,7 +2907,7 @@ fn map_approval(row: &rusqlite::Row<'_>) -> Result<ConnectorApproval, rusqlite::
         action_kind: row.get(3)?,
         action_hash: row.get(4)?,
         action_summary: row.get(5)?,
-        state: row.get(6)?,
+        state: ConnectorApprovalState::from_db(&row.get::<_, String>(6)?, 6)?,
         requested_at: row.get(7)?,
         expires_at: row.get(8)?,
         decided_by: row.get(9)?,
@@ -2492,7 +2944,7 @@ pub(super) fn expire_task_approvals(
 }
 
 fn validate_connector_task_workspace_shape(
-    mode: &str,
+    mode: ConnectorTaskMode,
     isolated: bool,
     target_root: &str,
     execution_root: &str,
@@ -2500,7 +2952,7 @@ fn validate_connector_task_workspace_shape(
     baseline_tree: Option<&str>,
 ) -> Result<(), ConnectorTaskStoreError> {
     match mode {
-        "normal"
+        ConnectorTaskMode::Normal
             if !isolated
                 || execution_root == target_root
                 || baseline_commit.is_none_or(str::is_empty)
@@ -2510,20 +2962,22 @@ fn validate_connector_task_workspace_shape(
                 "normal tasks require an isolated execution root and Git baseline".to_string(),
             ))
         }
-        "read_only" if isolated || execution_root != target_root => {
+        ConnectorTaskMode::ReadOnly if isolated || execution_root != target_root => {
             Err(ConnectorTaskStoreError::InvalidState(
                 "read_only tasks must use the target workspace without isolation".to_string(),
             ))
         }
-        "normal" | "read_only" => Ok(()),
-        _ => Err(ConnectorTaskStoreError::InvalidState(
+        ConnectorTaskMode::Normal | ConnectorTaskMode::ReadOnly => Ok(()),
+        ConnectorTaskMode::InspectLegacy => Err(ConnectorTaskStoreError::InvalidState(
             "task mode must be normal or read_only".to_string(),
         )),
     }
 }
 
 pub(super) fn require_running(task: &ConnectorTaskSnapshot) -> Result<(), ConnectorTaskStoreError> {
-    if task.task_status != "active" || task.run_status != "running" {
+    if task.task_status != ConnectorTaskState::Active
+        || task.run_status != ConnectorRunState::Running
+    {
         return Err(ConnectorTaskStoreError::InvalidState(format!(
             "task {} is {}, run is {}; start a new task for more work",
             task.task_id, task.task_status, task.run_status

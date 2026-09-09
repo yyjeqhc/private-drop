@@ -4,14 +4,14 @@
 use super::execution_model::{
     execution_event_kind, latest_execution, latest_execution_by_kind, load_execution,
     load_execution_by_operation, observed_state, ConnectorExecution,
-    ConnectorExecutionContinuationIntent, ConnectorExecutionFailure, ConnectorExecutionObservation,
-    ConnectorExecutionReservation, ConnectorTerminalContinuationDeliveryState,
-    MAX_MCP_TASK_OUTPUT_TAIL_BYTES,
+    ConnectorExecutionContinuationIntent, ConnectorExecutionFailure, ConnectorExecutionKind,
+    ConnectorExecutionObservation, ConnectorExecutionReservation, ConnectorExecutionState,
+    ConnectorTerminalContinuationDeliveryState, MAX_MCP_TASK_OUTPUT_TAIL_BYTES,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 use super::execution_model::{ConnectorTerminalContinuationClaim, EXECUTION_COLUMNS};
 use super::task_kernel::{
-    expire_task_approvals, insert_event, load_task, require_running, touch_task,
+    expire_task_approvals, insert_event, load_task, require_running, touch_task, ConnectorTaskState,
 };
 use super::{ConnectorTaskSnapshot, ConnectorTaskStoreError, Database};
 use rusqlite::{params, Transaction};
@@ -59,6 +59,11 @@ impl Database {
         queue_deadline: i64,
         now: i64,
     ) -> Result<ConnectorExecutionReservation, ConnectorTaskStoreError> {
+        let kind = ConnectorExecutionKind::requested(kind).ok_or_else(|| {
+            ConnectorTaskStoreError::InvalidState(
+                "execution kind and check plan do not match".to_string(),
+            )
+        })?;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let current = load_task(&tx, &task.task_id, &task.project_id, &task.owner_subject_id)?
@@ -83,20 +88,19 @@ impl Database {
                 active.execution_id, active.state
             )));
         }
-        if !matches!(kind, "command" | "check")
-            || (kind == "command" && !check_plan.is_empty())
-            || (kind == "check" && check_plan.is_empty())
-            || (kind == "command" && check_workspace_sha256.is_some())
-            || (kind == "check" && check_workspace_sha256.is_none())
-            || (kind == "command" && check_recipe.is_some())
-            || (kind == "check" && check_recipe.is_none())
+        if (kind == ConnectorExecutionKind::Command && !check_plan.is_empty())
+            || (kind == ConnectorExecutionKind::Check && check_plan.is_empty())
+            || (kind == ConnectorExecutionKind::Command && check_workspace_sha256.is_some())
+            || (kind == ConnectorExecutionKind::Check && check_workspace_sha256.is_none())
+            || (kind == ConnectorExecutionKind::Command && check_recipe.is_some())
+            || (kind == ConnectorExecutionKind::Check && check_recipe.is_none())
         {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "execution kind and check plan do not match".to_string(),
             ));
         }
         let execution_id = format!("wc_exec_{}", uuid::Uuid::new_v4().simple());
-        let check_plan = (kind == "check").then(|| check_plan.join(","));
+        let check_plan = (kind == ConnectorExecutionKind::Check).then(|| check_plan.join(","));
         let check_recipe_json = check_recipe
             .map(serde_json::to_string)
             .transpose()
@@ -109,7 +113,7 @@ impl Database {
              VALUES (?1, ?2, ?3, ?4, 'accepted', ?5, ?6, 1, 1, ?7, ?8, ?9, ?10, ?11)",
             params![
                 execution_id,
-                kind,
+                kind.as_db(),
                 task.task_id,
                 task.run_id,
                 now,
@@ -123,7 +127,7 @@ impl Database {
         )?;
         let execution =
             load_execution(&tx, &execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
-        append_execution_event(&tx, &execution, "accepted", now)?;
+        append_execution_event(&tx, &execution, ConnectorExecutionState::Accepted, now)?;
         touch_task(&tx, &task.task_id, now)?;
         tx.commit()?;
         Ok(ConnectorExecutionReservation::Created(execution))
@@ -138,7 +142,7 @@ impl Database {
         let tx = conn.transaction()?;
         let execution =
             load_execution(&tx, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
-        if execution.state != "accepted" {
+        if execution.state != ConnectorExecutionState::Accepted {
             tx.commit()?;
             return Ok(execution);
         }
@@ -146,7 +150,7 @@ impl Database {
             "UPDATE wc_executions SET state = 'starting' WHERE id = ?1",
             params![execution_id],
         )?;
-        append_execution_event(&tx, &execution, "starting", now)?;
+        append_execution_event(&tx, &execution, ConnectorExecutionState::Starting, now)?;
         touch_task(&tx, &execution.task_id, now)?;
         commit_execution(tx, execution_id)
     }
@@ -502,6 +506,11 @@ impl Database {
         subject_id: &str,
         kind: &str,
     ) -> Result<Option<ConnectorExecution>, ConnectorTaskStoreError> {
+        let kind = ConnectorExecutionKind::requested(kind).ok_or_else(|| {
+            ConnectorTaskStoreError::InvalidState(
+                "execution kind must be command or check".to_string(),
+            )
+        })?;
         let conn = self.conn.lock().unwrap();
         load_task(&conn, task_id, project_id, subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
@@ -541,20 +550,20 @@ impl Database {
         }
         let lifecycle = RunnerJobLifecycle::from_wire(executor_status).ok();
         let recognized = ConnectorExecution::executor_status_recognized(executor_status);
-        let state = if execution.state == "cancel_requested" {
-            "cancel_requested"
+        let state = if execution.state == ConnectorExecutionState::CancelRequested {
+            ConnectorExecutionState::CancelRequested
         } else if matches!(
             lifecycle,
             Some(RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued)
         ) {
-            "queued"
+            ConnectorExecutionState::Queued
         } else if matches!(
             lifecycle,
             Some(RunnerJobLifecycle::Running | RunnerJobLifecycle::StartedLegacy)
         ) {
-            "running"
+            ConnectorExecutionState::Running
         } else {
-            execution.state.as_str()
+            execution.state
         };
         tx.execute(
             "UPDATE wc_executions SET executor_reference = ?1, state = ?2,
@@ -565,7 +574,7 @@ impl Database {
                     status_failure_code = CASE WHEN ?4 THEN status_failure_code
                         ELSE 'executor_status_unrecognized' END
              WHERE id = ?5",
-            params![executor_reference, state, now, recognized, execution_id],
+            params![executor_reference, state.as_db(), now, recognized, execution_id],
         )?;
         if execution.state != state {
             append_execution_event(&tx, &execution, state, now)?;
@@ -644,7 +653,7 @@ impl Database {
                 "validation progress cannot move backwards".to_string(),
             ));
         }
-        if execution.kind == "command"
+        if execution.kind == ConnectorExecutionKind::Command
             && (observation.check_completed.is_some()
                 || observation.failed_check.is_some()
                 || observation.validated_workspace_sha256.is_some())
@@ -684,14 +693,16 @@ impl Database {
             ));
         }
         if observation.assertion_evidence.is_some()
-            && (observation.failed_check.is_none() || state != "failed" || source != Some("check"))
+            && (observation.failed_check.is_none()
+                || state != ConnectorExecutionState::Failed
+                || source != Some("check"))
         {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "assertion evidence requires trusted failed-check progress".to_string(),
             ));
         }
-        if state == "succeeded"
-            && execution.kind == "check"
+        if state == ConnectorExecutionState::Succeeded
+            && execution.kind == ConnectorExecutionKind::Check
             && (observation.check_completed != Some(execution.check_plan.len())
                 || observation.failed_check.is_some()
                 || observation.validated_workspace_sha256.is_none()
@@ -704,7 +715,8 @@ impl Database {
             ));
         }
         if observation.validated_workspace_sha256.is_some()
-            && !(state == "succeeded" && execution.kind == "check")
+            && !(state == ConnectorExecutionState::Succeeded
+                && execution.kind == ConnectorExecutionKind::Check)
         {
             return Err(ConnectorTaskStoreError::InvalidState(
                 "validated workspace provenance requires a successful check".to_string(),
@@ -712,7 +724,7 @@ impl Database {
         }
         let validated_workspace = observation.validated_workspace_sha256;
         let state_changed = state != execution.state;
-        let terminal = !ConnectorExecution::state_is_active(state);
+        let terminal = state.is_terminal();
         tx.execute(
             "UPDATE wc_executions SET state = ?1, stdout_cursor = ?2, stderr_cursor = ?3,
                     last_output_at = CASE WHEN ?4 THEN ?5 ELSE last_output_at END,
@@ -747,7 +759,7 @@ impl Database {
                     END
                     WHERE id = ?13",
             params![
-                state,
+                state.as_db(),
                 stdout_cursor as i64,
                 stderr_cursor as i64,
                 output_advanced,
@@ -770,7 +782,7 @@ impl Database {
         if state_changed {
             append_execution_event(&tx, &execution, state, observation.now)?;
         }
-        if state == "unknown" {
+        if state == ConnectorExecutionState::Unknown {
             interrupt_run(
                 &tx,
                 &execution.run_id,
@@ -778,7 +790,7 @@ impl Database {
                 "execution_terminal_unknown",
                 observation.now,
             )?;
-        } else if state == "cancelled" {
+        } else if state == ConnectorExecutionState::Cancelled {
             finalize_task_cancel(
                 &tx,
                 &execution.task_id,
@@ -801,7 +813,7 @@ impl Database {
         let tx = conn.transaction()?;
         let current = load_task(&tx, &task.task_id, &task.project_id, &task.owner_subject_id)?
             .ok_or(ConnectorTaskStoreError::NotFound)?;
-        if current.task_status == "cancelled" {
+        if current.task_status == ConnectorTaskState::Cancelled {
             let execution = latest_execution(&tx, &task.task_id)?;
             tx.commit()?;
             return Ok(execution);
@@ -819,11 +831,12 @@ impl Database {
                 tx.commit()?;
                 return Ok(Some(execution));
             }
-            let immediate = execution.state == "accepted" && execution.executor_reference.is_none();
+            let immediate = execution.state == ConnectorExecutionState::Accepted
+                && execution.executor_reference.is_none();
             let state = if immediate {
-                "cancelled"
+                ConnectorExecutionState::Cancelled
             } else {
-                "cancel_requested"
+                ConnectorExecutionState::CancelRequested
             };
             tx.execute(
                 "UPDATE wc_executions SET state = ?1,
@@ -836,9 +849,9 @@ impl Database {
                             ELSE mcp_task_result_finalized_at
                         END
                  WHERE id = ?4",
-                params![state, now, immediate, execution.execution_id],
+                params![state.as_db(), now, immediate, execution.execution_id],
             )?;
-            if execution.state != "cancel_requested" {
+            if execution.state != ConnectorExecutionState::CancelRequested {
                 append_execution_event(&tx, &execution, state, now)?;
             }
             if immediate {
@@ -849,7 +862,10 @@ impl Database {
                     &json!({ "execution_id": execution.execution_id }),
                     now,
                 )?;
-            } else if let (false, Some(reason)) = (execution.state == "cancel_requested", reason) {
+            } else if let (false, Some(reason)) = (
+                execution.state == ConnectorExecutionState::CancelRequested,
+                reason,
+            ) {
                 insert_event(
                     &tx,
                     &task.task_id,
@@ -883,7 +899,7 @@ impl Database {
         let tx = conn.transaction()?;
         let execution =
             load_execution(&tx, execution_id)?.ok_or(ConnectorTaskStoreError::NotFound)?;
-        if execution.state != "queued" {
+        if execution.state != ConnectorExecutionState::Queued {
             tx.commit()?;
             return Ok(execution);
         }
@@ -894,7 +910,12 @@ impl Database {
              WHERE id = ?2",
             params![now, execution_id],
         )?;
-        append_execution_event(&tx, &execution, "cancel_requested", now)?;
+        append_execution_event(
+            &tx,
+            &execution,
+            ConnectorExecutionState::CancelRequested,
+            now,
+        )?;
         touch_task(&tx, &execution.task_id, now)?;
         commit_execution(tx, execution_id)
     }
@@ -999,7 +1020,7 @@ impl Database {
                      WHERE id = ?2",
                     params![now, execution_id],
                 )?;
-                append_execution_event(&tx, &execution, "interrupted", now)?;
+                append_execution_event(&tx, &execution, ConnectorExecutionState::Interrupted, now)?;
                 executions_interrupted += 1;
             }
             interrupt_run(&tx, run_id, task_id, "runtime_restarted", now)?;
@@ -1039,21 +1060,34 @@ impl Database {
             _ => None,
         };
         let (state, source, code, reason) = match failure {
-            ConnectorExecutionFailure::Submission(_) if execution.state == "cancel_requested" => (
-                "cancelled",
-                "cancellation",
-                "cancelled_before_submission",
-                "user_cancelled",
+            ConnectorExecutionFailure::Submission(_)
+                if execution.state == ConnectorExecutionState::CancelRequested =>
+            {
+                (
+                    ConnectorExecutionState::Cancelled,
+                    "cancellation",
+                    "cancelled_before_submission",
+                    "user_cancelled",
+                )
+            }
+            ConnectorExecutionFailure::Submission(code) => (
+                ConnectorExecutionState::Failed,
+                "submission",
+                code,
+                "submission_failed",
             ),
-            ConnectorExecutionFailure::Submission(code) => {
-                ("failed", "submission", code, "submission_failed")
-            }
-            ConnectorExecutionFailure::Unknown(code) => {
-                ("unknown", "transport", code, "executor_terminal_unknown")
-            }
-            ConnectorExecutionFailure::Workspace { code, .. } => {
-                ("failed", "workspace", code, "workspace_invariant_failed")
-            }
+            ConnectorExecutionFailure::Unknown(code) => (
+                ConnectorExecutionState::Unknown,
+                "transport",
+                code,
+                "executor_terminal_unknown",
+            ),
+            ConnectorExecutionFailure::Workspace { code, .. } => (
+                ConnectorExecutionState::Failed,
+                "workspace",
+                code,
+                "workspace_invariant_failed",
+            ),
         };
         tx.execute(
             "UPDATE wc_executions SET state = ?1, finished_at = ?2, exit_code = ?3,
@@ -1066,7 +1100,7 @@ impl Database {
                         END
              WHERE id = ?8",
             params![
-                state,
+                state.as_db(),
                 now,
                 Option::<i32>::None,
                 source,
@@ -1077,7 +1111,7 @@ impl Database {
             ],
         )?;
         append_execution_event(&tx, &execution, state, now)?;
-        if state == "cancelled" {
+        if state == ConnectorExecutionState::Cancelled {
             finalize_task_cancel(
                 &tx,
                 &execution.task_id,
@@ -1085,7 +1119,7 @@ impl Database {
                 &json!({ "execution_id": execution.execution_id }),
                 now,
             )?;
-        } else if state == "unknown" {
+        } else if state == ConnectorExecutionState::Unknown {
             interrupt_run(
                 &tx,
                 &execution.run_id,
@@ -1153,7 +1187,7 @@ fn finalize_task_cancel(
 fn append_execution_event(
     tx: &Transaction<'_>,
     execution: &ConnectorExecution,
-    state: &str,
+    state: ConnectorExecutionState,
     now: i64,
 ) -> Result<(), ConnectorTaskStoreError> {
     insert_event(

@@ -792,5 +792,5 @@ async fn missing_job_permission_blocks_cancel_without_mutating_task() {
             "project:wc_pgrant_1111111111111111",
         )
         .unwrap();
-    assert_eq!(task.task_status, "active");
+    assert_eq!(task.task_status, webcodex_store::ConnectorTaskState::Active);
 }

@@ -242,7 +242,7 @@ fn failed_continuation_binding_rolls_back_mode_workspace_and_instruction() {
     let restored = db
         .connector_task(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap();
-    assert_eq!(restored.mode, "read_only");
+    assert_eq!(restored.mode, ConnectorTaskMode::ReadOnly);
     assert!(!restored.isolated);
     assert_eq!(restored.execution_root, "/workspace/demo");
     assert_eq!(restored.event_cursor, 1);
@@ -294,7 +294,7 @@ fn normal_task_cannot_downgrade_to_read_only() {
     let restored = db
         .connector_task(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap();
-    assert_eq!(restored.mode, "normal");
+    assert_eq!(restored.mode, ConnectorTaskMode::Normal);
     assert!(restored.isolated);
     assert_eq!(restored.execution_root, task.execution_root);
     assert_eq!(restored.event_cursor, 1);
@@ -352,7 +352,7 @@ fn malformed_persisted_read_only_isolated_task_cannot_continue() {
     let restored = db
         .connector_task(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap();
-    assert_eq!(restored.mode, "read_only");
+    assert_eq!(restored.mode, ConnectorTaskMode::ReadOnly);
     assert!(restored.isolated);
     assert_eq!(restored.execution_root, task.execution_root);
     assert_eq!(restored.event_cursor, 1);
@@ -501,14 +501,17 @@ fn finish_is_atomic_and_prevents_more_events() {
     let snapshot = db
         .connector_task(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap();
-    assert_eq!(snapshot.task_status, "ready_for_review");
-    assert_eq!(snapshot.run_status, "completed");
+    assert_eq!(snapshot.task_status, ConnectorTaskState::ReadyForReview);
+    assert_eq!(snapshot.run_status, ConnectorRunState::Completed);
     let result = db
         .connector_task_result(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap()
         .unwrap();
     assert_eq!(result.changed_paths, changed_paths);
-    assert_eq!(result.decision_status, "pending");
+    assert_eq!(
+        result.decision_status,
+        ConnectorResultDecisionStatus::Pending
+    );
     assert!(matches!(
         db.append_connector_task_event(
             &task.task_id,
@@ -520,6 +523,278 @@ fn finish_is_atomic_and_prevents_more_events() {
         ),
         Err(ConnectorTaskStoreError::InvalidState(_))
     ));
+}
+
+#[test]
+fn task_and_run_lifecycle_contracts_are_distinct_from_effective_state() {
+    assert_eq!(
+        effective_task_state(
+            ConnectorTaskLifecycle::Active,
+            ConnectorRunLifecycle::Running,
+            None,
+            false,
+        ),
+        ConnectorTaskState::Active
+    );
+    assert_eq!(
+        effective_task_state(
+            ConnectorTaskLifecycle::ReadyForReview,
+            ConnectorRunLifecycle::Completed,
+            Some(ConnectorResultDecisionStatus::Pending),
+            false,
+        ),
+        ConnectorTaskState::ReadyForReview
+    );
+    assert_eq!(
+        effective_task_state(
+            ConnectorTaskLifecycle::ReadyForReview,
+            ConnectorRunLifecycle::Completed,
+            Some(ConnectorResultDecisionStatus::Accepted),
+            false,
+        ),
+        ConnectorTaskState::Accepted
+    );
+    assert_eq!(
+        effective_task_state(
+            ConnectorTaskLifecycle::ReadyForReview,
+            ConnectorRunLifecycle::Completed,
+            Some(ConnectorResultDecisionStatus::Rejected),
+            false,
+        ),
+        ConnectorTaskState::Rejected
+    );
+    assert_eq!(
+        effective_task_state(
+            ConnectorTaskLifecycle::Active,
+            ConnectorRunLifecycle::Interrupted,
+            None,
+            false,
+        ),
+        ConnectorTaskState::NeedsAttention
+    );
+    assert_eq!(
+        effective_task_state(
+            ConnectorTaskLifecycle::Rejected,
+            ConnectorRunLifecycle::Interrupted,
+            Some(ConnectorResultDecisionStatus::Accepted),
+            true,
+        ),
+        ConnectorTaskState::Cancelled,
+        "cancellation must retain precedence over result and interruption projections"
+    );
+    for (mode, db) in [
+        (ConnectorTaskMode::Normal, "normal"),
+        (ConnectorTaskMode::ReadOnly, "read_only"),
+        (ConnectorTaskMode::InspectLegacy, "inspect"),
+    ] {
+        assert_eq!(mode.as_db(), db);
+        assert_eq!(ConnectorTaskMode::from_db(db, 0).unwrap(), mode);
+    }
+    assert!(ConnectorTaskMode::from_db("future_mode", 0).is_err());
+    assert!(ConnectorTaskMode::requested("inspect").is_err());
+
+    assert_eq!(
+        effective_run_state(ConnectorRunLifecycle::Completed, true),
+        ConnectorRunState::Cancelled
+    );
+
+    for (lifecycle, db) in [
+        (ConnectorTaskLifecycle::Active, "active"),
+        (ConnectorTaskLifecycle::ReadyForReview, "ready_for_review"),
+        (ConnectorTaskLifecycle::Accepted, "accepted"),
+        (ConnectorTaskLifecycle::Rejected, "rejected"),
+    ] {
+        assert_eq!(lifecycle.as_db(), db);
+        assert_eq!(ConnectorTaskLifecycle::from_db(db, 0).unwrap(), lifecycle);
+    }
+    assert!(ConnectorTaskLifecycle::from_db("cancelled", 0).is_err());
+    assert!(ConnectorTaskLifecycle::from_db("needs_attention", 0).is_err());
+
+    for (lifecycle, db) in [
+        (ConnectorRunLifecycle::Running, "running"),
+        (ConnectorRunLifecycle::Completed, "completed"),
+        (ConnectorRunLifecycle::Interrupted, "interrupted"),
+    ] {
+        assert_eq!(lifecycle.as_db(), db);
+        assert_eq!(ConnectorRunLifecycle::from_db(db, 0).unwrap(), lifecycle);
+    }
+    assert!(ConnectorRunLifecycle::from_db("cancelled", 0).is_err());
+
+    for (status, db) in [
+        (ConnectorResultDecisionStatus::Pending, "pending"),
+        (ConnectorResultDecisionStatus::Accepted, "accepted"),
+        (ConnectorResultDecisionStatus::Rejected, "rejected"),
+    ] {
+        assert_eq!(status.as_db(), db);
+        assert_eq!(
+            ConnectorResultDecisionStatus::from_db(db, 0).unwrap(),
+            status
+        );
+    }
+    assert!(ConnectorResultDecisionStatus::from_db("future_state", 0).is_err());
+
+    for (decision, db) in [
+        (ConnectorResultDecision::Accepted, "accepted"),
+        (ConnectorResultDecision::Rejected, "rejected"),
+    ] {
+        assert_eq!(decision.as_db(), db);
+        assert_eq!(ConnectorResultDecision::from_db(db, 0).unwrap(), decision);
+    }
+    assert!(ConnectorResultDecision::from_db("pending", 0).is_err());
+
+    for (state, db) in [
+        (ConnectorResultDecisionRecoveryState::Pending, "pending"),
+        (
+            ConnectorResultDecisionRecoveryState::NeedsAttention,
+            "needs_attention",
+        ),
+    ] {
+        assert_eq!(state.as_db(), db);
+        assert_eq!(
+            ConnectorResultDecisionRecoveryState::from_db(db, 0).unwrap(),
+            state
+        );
+    }
+    assert!(ConnectorResultDecisionRecoveryState::from_db("future_state", 0).is_err());
+
+    for (state, db) in [
+        (ConnectorApprovalState::Pending, "pending"),
+        (ConnectorApprovalState::Approved, "approved"),
+        (ConnectorApprovalState::Denied, "denied"),
+        (ConnectorApprovalState::Consumed, "consumed"),
+        (ConnectorApprovalState::Expired, "expired"),
+    ] {
+        assert_eq!(state.as_db(), db);
+        assert_eq!(ConnectorApprovalState::from_db(db, 0).unwrap(), state);
+    }
+    assert!(ConnectorApprovalState::from_db("future_state", 0).is_err());
+
+    for (state, db) in [
+        (ConnectorEditOperationState::Pending, "pending"),
+        (ConnectorEditOperationState::Completed, "completed"),
+        (ConnectorEditOperationState::Failed, "failed"),
+    ] {
+        assert_eq!(ConnectorEditOperationState::from_db(db, 0).unwrap(), state);
+    }
+    assert!(ConnectorEditOperationState::from_db("future_state", 0).is_err());
+}
+
+#[test]
+fn cancellation_projection_does_not_pollute_persisted_task_or_run_lifecycle() {
+    let (_temp, db) = database();
+    bind(&db, "user:one");
+    let task = start(&db, "user:one", "project cancellation separately");
+    db.finish_connector_task(
+        &task.task_id,
+        "wc_proj_demo",
+        "user:one",
+        NewConnectorResult {
+            result_id: "wc_result_cancel_projection",
+            summary: "done",
+            patch_artifact: None,
+            patch_sha256: None,
+            patch_bytes: 0,
+            changed_paths: &[],
+            validation: &json!({"status": "recorded"}),
+            warnings: &[],
+        },
+        102,
+    )
+    .unwrap();
+    {
+        let conn = db.conn_for_tests();
+        conn.execute(
+            "UPDATE wc_tasks SET status = 'accepted' WHERE id = ?1",
+            [&task.task_id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE wc_task_results SET decision_status = 'accepted' WHERE task_id = ?1",
+            [&task.task_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO wc_task_events
+                 (id, task_id, run_id, sequence, kind, payload_json, created_at)
+             VALUES (?1, ?2, ?3, 3, 'task_cancelled', '{}', 103)",
+            rusqlite::params![new_id("wc_evt"), task.task_id, task.run_id],
+        )
+        .unwrap();
+    }
+
+    let projected = db
+        .connector_task(&task.task_id, "wc_proj_demo", "user:one")
+        .unwrap();
+    assert_eq!(projected.task_lifecycle, ConnectorTaskLifecycle::Accepted);
+    assert_eq!(projected.run_lifecycle, ConnectorRunLifecycle::Completed);
+    assert_eq!(projected.task_status, ConnectorTaskState::Cancelled);
+    assert_eq!(projected.run_status, ConnectorRunState::Cancelled);
+    let reviewable = db.local_reviewable_tasks("wc_proj_demo", true, 20).unwrap();
+    assert_eq!(reviewable.len(), 1);
+    assert_eq!(reviewable[0].task_status, ConnectorTaskState::Cancelled);
+    let mine = db
+        .connector_tasks_for_subject("wc_proj_demo", "user:one", 20)
+        .unwrap();
+    assert_eq!(mine.len(), 1);
+    assert_eq!(mine[0].task_status, ConnectorTaskState::Cancelled);
+}
+
+#[test]
+fn task_snapshot_json_preserves_legacy_strings_and_hides_persisted_lifecycle_fields() {
+    let (_temp, db) = database();
+    bind(&db, "user:one");
+    let task = start(&db, "user:one", "serialize compatibly");
+    let value = serde_json::to_value(&task).unwrap();
+    assert_eq!(value["mode"], "normal");
+    assert_eq!(value["task_status"], "active");
+    assert_eq!(value["run_status"], "running");
+    assert!(value.get("task_lifecycle").is_none());
+    assert!(value.get("run_lifecycle").is_none());
+    assert_eq!(
+        serde_json::to_value(ConnectorApprovalState::Pending).unwrap(),
+        "pending"
+    );
+    assert_eq!(
+        serde_json::to_value(ConnectorResultDecisionRecoveryState::NeedsAttention).unwrap(),
+        "needs_attention"
+    );
+}
+
+#[test]
+fn corrupt_persisted_task_and_run_lifecycles_fail_closed_on_load() {
+    for target in ["task", "run"] {
+        let (_temp, db) = database();
+        bind(&db, "user:one");
+        let task = start(&db, "user:one", "reject future state");
+        let conn = db.conn_for_tests();
+        conn.execute_batch("PRAGMA ignore_check_constraints = ON;")
+            .unwrap();
+        match target {
+            "task" => {
+                conn.execute(
+                    "UPDATE wc_tasks SET status = 'future_state' WHERE id = ?1",
+                    [&task.task_id],
+                )
+                .unwrap();
+            }
+            "run" => {
+                conn.execute(
+                    "UPDATE wc_runs SET status = 'future_state' WHERE id = ?1",
+                    [&task.run_id],
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        conn.execute_batch("PRAGMA ignore_check_constraints = OFF;")
+            .unwrap();
+        drop(conn);
+        assert!(
+            db.connector_task(&task.task_id, "wc_proj_demo", "user:one")
+                .is_err(),
+            "{target} future state was accepted"
+        );
+    }
 }
 
 #[test]
@@ -553,7 +828,7 @@ fn raw_command_approval_is_exact_and_consumed_once() {
             103,
         )
         .unwrap();
-    assert_eq!(approved.state, "approved");
+    assert_eq!(approved.state, ConnectorApprovalState::Approved);
 
     let authorized = db
         .request_or_consume_connector_approval(
@@ -638,7 +913,7 @@ fn finishing_task_expires_unconsumed_command_approval() {
     let stored = db
         .local_connector_task_approvals(&task.task_id, "wc_proj_demo")
         .unwrap();
-    assert_eq!(stored[0].state, "expired");
+    assert_eq!(stored[0].state, ConnectorApprovalState::Expired);
     assert!(matches!(
         db.decide_connector_approval(
             &task.task_id,
@@ -665,8 +940,8 @@ fn restart_marks_unfinished_runs_for_attention() {
     let recovered = db
         .connector_task(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap();
-    assert_eq!(recovered.task_status, "needs_attention");
-    assert_eq!(recovered.run_status, "interrupted");
+    assert_eq!(recovered.task_status, ConnectorTaskState::NeedsAttention);
+    assert_eq!(recovered.run_status, ConnectorRunState::Interrupted);
     let preserved = db.connector_preserved_workspaces("wc_proj_demo").unwrap();
     assert_eq!(preserved.len(), 1);
     assert_eq!(preserved[0].task_id, task.task_id);
@@ -678,8 +953,8 @@ fn restart_marks_unfinished_runs_for_attention() {
     let resumed = db
         .resume_connector_task(&task.task_id, "wc_proj_demo", "local_cli", 103)
         .unwrap();
-    assert_eq!(resumed.task_status, "active");
-    assert_eq!(resumed.run_status, "running");
+    assert_eq!(resumed.task_status, ConnectorTaskState::Active);
+    assert_eq!(resumed.run_status, ConnectorRunState::Running);
     let events = db
         .connector_task_events(&task.task_id, "wc_proj_demo", "user:one", 20)
         .unwrap();
@@ -697,7 +972,10 @@ fn interrupted_task_can_be_abandoned_without_capturing_workspace_changes() {
     let result = db
         .abandon_interrupted_connector_task(&task.task_id, "wc_proj_demo", "local_cli", 103)
         .unwrap();
-    assert_eq!(result.decision_status, "rejected");
+    assert_eq!(
+        result.decision_status,
+        ConnectorResultDecisionStatus::Rejected
+    );
     assert_eq!(result.patch_bytes, 0);
     assert_eq!(result.validation["status"], "not_run");
     assert!(db
@@ -707,7 +985,7 @@ fn interrupted_task_can_be_abandoned_without_capturing_workspace_changes() {
     let decided = db
         .connector_task(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap();
-    assert_eq!(decided.task_status, "rejected");
+    assert_eq!(decided.task_status, ConnectorTaskState::Rejected);
     let cursor = db
         .record_connector_workspace_release(
             &task.task_id,
@@ -773,7 +1051,10 @@ fn local_result_decision_becomes_canonical_task_status() {
     let result = db
         .finalize_connector_result_decision(&task.task_id, "wc_proj_demo", result_id, None, 104)
         .unwrap();
-    assert_eq!(result.decision_status, "accepted");
+    assert_eq!(
+        result.decision_status,
+        ConnectorResultDecisionStatus::Accepted
+    );
     assert_eq!(
         result.cleanup_warning.as_deref(),
         Some("slot cleanup needs retry")
@@ -781,7 +1062,7 @@ fn local_result_decision_becomes_canonical_task_status() {
     let decided = db
         .connector_task(&task.task_id, "wc_proj_demo", "user:one")
         .unwrap();
-    assert_eq!(decided.task_status, "accepted");
+    assert_eq!(decided.task_status, ConnectorTaskState::Accepted);
 }
 // -----------------------------------------------------------------------
 // Guidance claim

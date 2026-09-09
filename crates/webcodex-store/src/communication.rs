@@ -1,4 +1,6 @@
-use super::agent_wake::{coalesce_agent_wake_for_delivery, reconcile_wakes_for_endpoint_loss};
+use super::agent_wake::{
+    coalesce_agent_wake_for_delivery, reconcile_wakes_for_endpoint_loss, AgentWakeState,
+};
 use super::Database;
 use rusqlite::{
     params, types::Type, Connection, OptionalExtension, Transaction, TransactionBehavior,
@@ -106,6 +108,99 @@ pub struct CommunicationPrincipal {
     pub digest: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentEndpointLifecycle {
+    Attached,
+    Detached,
+    Expired,
+}
+
+impl AgentEndpointLifecycle {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Attached => "attached",
+            Self::Detached => "detached",
+            Self::Expired => "expired",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "attached" => Ok(Self::Attached),
+            "detached" => Ok(Self::Detached),
+            "expired" => Ok(Self::Expired),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Agent Endpoint lifecycle: {other}").into(),
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for AgentEndpointLifecycle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_db())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationLifecycle {
+    Open,
+    Closed,
+}
+
+impl ConversationLifecycle {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "open" => Ok(Self::Open),
+            "closed" => Ok(Self::Closed),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Conversation lifecycle: {other}").into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageDeliveryState {
+    Queued,
+    Consumed,
+}
+
+impl MessageDeliveryState {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Consumed => "consumed",
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "consumed" => Ok(Self::Consumed),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                Type::Text,
+                format!("unsupported Message Delivery state: {other}").into(),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct NewAgentIdentity {
     pub handle: String,
@@ -211,7 +306,7 @@ pub struct AgentEndpointRecord {
     pub client_attachment_id: Option<String>,
     pub wake_capable: bool,
     pub controller_generation: i64,
-    pub lifecycle: String,
+    pub lifecycle: AgentEndpointLifecycle,
     pub attached_at_unix_ms: i64,
     pub last_seen_at_unix_ms: i64,
     pub lease_expires_at_unix_ms: i64,
@@ -252,7 +347,7 @@ pub struct MessageDeliveryRecord {
     pub delivery_order: i64,
     pub delivery_id: String,
     pub recipient_agent_id: String,
-    pub state: String,
+    pub state: MessageDeliveryState,
     pub created_at_unix_ms: i64,
     pub consumed_at_unix_ms: Option<i64>,
 }
@@ -273,7 +368,7 @@ pub struct ConversationMessageRecord {
 pub struct ConversationSummaryRecord {
     pub conversation_id: String,
     pub title: Option<String>,
-    pub lifecycle: String,
+    pub lifecycle: ConversationLifecycle,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
     pub participant_count: i64,
@@ -319,7 +414,7 @@ pub struct ConversationMessageMutation {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AgentInboxItem {
     pub delivery_id: String,
-    pub state: String,
+    pub state: MessageDeliveryState,
     pub conversation_id: String,
     pub conversation_title: Option<String>,
     pub message: ConversationMessageRecord,
@@ -958,7 +1053,7 @@ impl Database {
             .ok_or_else(|| {
                 CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist")
             })?;
-        if current.lifecycle != "attached" {
+        if current.lifecycle != AgentEndpointLifecycle::Attached {
             return Ok(AgentEndpointMutation {
                 endpoint: current,
                 created: false,
@@ -1520,13 +1615,20 @@ impl Database {
             else {
                 unreachable!("Wake reply identity requires Agent access");
             };
-            let wake_binding: Option<(String, Option<String>, Option<i64>)> = transaction
+            let wake_binding: Option<(AgentWakeState, Option<String>, Option<i64>)> = transaction
                 .query_row(
                     "SELECT state, claimed_endpoint_id, claimed_controller_generation
                      FROM wc_agent_wakes
                      WHERE wake_id = ?1 AND target_agent_id = ?2",
                     params![wake_id, agent_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| {
+                        let state = row.get::<_, String>(0)?;
+                        Ok((
+                            AgentWakeState::from_db(&state, 0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                        ))
+                    },
                 )
                 .optional()
                 .map_err(store_error)?;
@@ -1536,8 +1638,10 @@ impl Database {
                     "Agent Wake does not exist",
                 ));
             };
-            match wake_state.as_str() {
-                "prepared" | "delivered" | "delivery_unknown" => {
+            match wake_state {
+                AgentWakeState::Prepared
+                | AgentWakeState::Delivered
+                | AgentWakeState::DeliveryUnknown => {
                     if claimed_endpoint_id.as_deref() != Some(endpoint_id.as_str())
                         || claimed_generation != Some(*expected_controller_generation)
                     {
@@ -1547,34 +1651,31 @@ impl Database {
                         ));
                     }
                 }
-                "pending" | "claimed" => {
+                AgentWakeState::Pending | AgentWakeState::Claimed => {
                     return Err(CommunicationStoreError::new(
                         "wake_not_dispatched",
                         "Agent Wake reply requires a dispatch or explicit-activation fence",
                     ));
                 }
-                "consumed" => {
+                AgentWakeState::Consumed => {
                     return Err(CommunicationStoreError::new(
                         "wake_already_consumed",
                         "Agent Wake was already consumed; re-read the Conversation before posting new work",
                     ));
                 }
-                _ => {
-                    return Err(CommunicationStoreError::new(
-                        "wake_state_invalid",
-                        "Agent Wake is in an unsupported state",
-                    ));
-                }
             }
         }
-        let lifecycle: String = transaction
+        let lifecycle = transaction
             .query_row(
                 "SELECT lifecycle FROM wc_conversations WHERE conversation_id = ?1",
                 params![input.conversation_id],
-                |row| row.get(0),
+                |row| {
+                    let lifecycle = row.get::<_, String>(0)?;
+                    ConversationLifecycle::from_db(&lifecycle, 0)
+                },
             )
             .map_err(store_error)?;
-        if lifecycle != "open" {
+        if lifecycle != ConversationLifecycle::Open {
             return Err(CommunicationStoreError::new(
                 "conversation_closed",
                 "Conversation is closed",
@@ -1844,7 +1945,7 @@ impl Database {
             })?;
             deliveries.push(AgentInboxItem {
                 delivery_id,
-                state: "queued".to_string(),
+                state: MessageDeliveryState::Queued,
                 conversation_id,
                 conversation_title,
                 message,
@@ -1892,12 +1993,15 @@ impl Database {
         let mut consumed_delivery_ids = Vec::new();
         let mut already_consumed_delivery_ids = Vec::new();
         for delivery_id in &delivery_ids {
-            let state: Option<String> = transaction
+            let state = transaction
                 .query_row(
                     "SELECT state FROM wc_agent_deliveries
                      WHERE delivery_id = ?1 AND recipient_agent_id = ?2",
                     params![delivery_id, agent_id],
-                    |row| row.get(0),
+                    |row| {
+                        let state = row.get::<_, String>(0)?;
+                        MessageDeliveryState::from_db(&state, 0)
+                    },
                 )
                 .optional()
                 .map_err(store_error)?;
@@ -1907,7 +2011,7 @@ impl Database {
                     "Agent delivery does not exist",
                 ));
             };
-            if state == "consumed" {
+            if state == MessageDeliveryState::Consumed {
                 already_consumed_delivery_ids.push(delivery_id.clone());
                 continue;
             }
@@ -2162,26 +2266,20 @@ pub(super) fn require_current_endpoint(
             "Agent Endpoint is attached to a different Agent",
         ));
     }
-    match row.lifecycle.as_str() {
-        "detached" => {
+    match row.lifecycle {
+        AgentEndpointLifecycle::Detached => {
             return Err(CommunicationStoreError::new(
                 "endpoint_detached",
                 "Agent Endpoint is detached",
             ));
         }
-        "expired" => {
+        AgentEndpointLifecycle::Expired => {
             return Err(CommunicationStoreError::new(
                 "endpoint_expired",
                 "Agent Endpoint is expired or stale",
             ));
         }
-        "attached" => {}
-        _ => {
-            return Err(CommunicationStoreError::new(
-                "endpoint_not_active",
-                "Agent Endpoint is not active",
-            ));
-        }
+        AgentEndpointLifecycle::Attached => {}
     }
     if row.lease_expires_at_unix_ms <= now_unix_ms() {
         return Err(CommunicationStoreError::new(
@@ -2307,7 +2405,7 @@ fn row_to_endpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentEndpointRec
         client_attachment_id: row.get(3)?,
         wake_capable: row.get::<_, i64>(4)? != 0,
         controller_generation: row.get(5)?,
-        lifecycle: row.get(6)?,
+        lifecycle: AgentEndpointLifecycle::from_db(&row.get::<_, String>(6)?, 6)?,
         attached_at_unix_ms: row.get(7)?,
         last_seen_at_unix_ms: row.get(8)?,
         lease_expires_at_unix_ms: row.get(9)?,
@@ -2322,7 +2420,7 @@ fn row_to_conversation_summary(
     Ok(ConversationSummaryRecord {
         conversation_id: row.get(0)?,
         title: row.get(1)?,
-        lifecycle: row.get(2)?,
+        lifecycle: ConversationLifecycle::from_db(&row.get::<_, String>(2)?, 2)?,
         created_at_unix_ms: row.get(3)?,
         updated_at_unix_ms: row.get(4)?,
         participant_count: row.get(5)?,
@@ -2409,7 +2507,7 @@ fn load_message(
                 delivery_order: row.get(0)?,
                 delivery_id: row.get(1)?,
                 recipient_agent_id: row.get(2)?,
-                state: row.get(3)?,
+                state: MessageDeliveryState::from_db(&row.get::<_, String>(3)?, 3)?,
                 created_at_unix_ms: row.get(4)?,
                 consumed_at_unix_ms: row.get(5)?,
             })
@@ -2756,4 +2854,43 @@ pub(super) fn digest_text(domain: &str, value: &str) -> String {
 
 pub(super) fn now_unix_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+#[cfg(test)]
+mod lifecycle_contract_tests {
+    use super::*;
+
+    #[test]
+    fn durable_communication_lifecycle_encodings_are_closed_and_serde_stable() {
+        for (lifecycle, db) in [
+            (AgentEndpointLifecycle::Attached, "attached"),
+            (AgentEndpointLifecycle::Detached, "detached"),
+            (AgentEndpointLifecycle::Expired, "expired"),
+        ] {
+            assert_eq!(lifecycle.as_db(), db);
+            assert_eq!(AgentEndpointLifecycle::from_db(db, 0).unwrap(), lifecycle);
+            assert_eq!(serde_json::to_value(lifecycle).unwrap(), db);
+        }
+        assert!(AgentEndpointLifecycle::from_db("future_state", 0).is_err());
+
+        for (lifecycle, db) in [
+            (ConversationLifecycle::Open, "open"),
+            (ConversationLifecycle::Closed, "closed"),
+        ] {
+            assert_eq!(lifecycle.as_db(), db);
+            assert_eq!(ConversationLifecycle::from_db(db, 0).unwrap(), lifecycle);
+            assert_eq!(serde_json::to_value(lifecycle).unwrap(), db);
+        }
+        assert!(ConversationLifecycle::from_db("future_state", 0).is_err());
+
+        for (state, db) in [
+            (MessageDeliveryState::Queued, "queued"),
+            (MessageDeliveryState::Consumed, "consumed"),
+        ] {
+            assert_eq!(state.as_db(), db);
+            assert_eq!(MessageDeliveryState::from_db(db, 0).unwrap(), state);
+            assert_eq!(serde_json::to_value(state).unwrap(), db);
+        }
+        assert!(MessageDeliveryState::from_db("future_state", 0).is_err());
+    }
 }

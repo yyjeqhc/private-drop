@@ -1,4 +1,5 @@
 use rusqlite::{params, OptionalExtension};
+use serde::Serialize;
 use serde_json::Value;
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
@@ -7,6 +8,119 @@ pub const MAX_ASSERTION_EVIDENCE_BYTES: usize = 16 * 1024;
 // JSON escaping. Keep the persisted MCP task snapshot hard-bounded while
 // allowing any ordinary Connector output-tail projection to serialize.
 pub(crate) const MAX_MCP_TASK_OUTPUT_TAIL_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorExecutionKind {
+    Command,
+    Check,
+}
+
+impl ConnectorExecutionKind {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Command => "command",
+            Self::Check => "check",
+        }
+    }
+
+    pub(crate) fn requested(value: &str) -> Option<Self> {
+        match value {
+            "command" => Some(Self::Command),
+            "check" => Some(Self::Check),
+            _ => None,
+        }
+    }
+
+    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        Self::requested(value).ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                format!("unsupported Connector Execution kind: {value}").into(),
+            )
+        })
+    }
+}
+
+impl std::fmt::Display for ConnectorExecutionKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_db())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorExecutionState {
+    Accepted,
+    Queued,
+    Starting,
+    Running,
+    CancelRequested,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Interrupted,
+    Unknown,
+}
+
+impl ConnectorExecutionState {
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Queued => "queued",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::CancelRequested => "cancel_requested",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Interrupted => "interrupted",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub(crate) const fn is_active(self) -> bool {
+        matches!(
+            self,
+            Self::Accepted | Self::Queued | Self::Starting | Self::Running | Self::CancelRequested
+        )
+    }
+
+    pub(crate) const fn is_terminal(self) -> bool {
+        !self.is_active()
+    }
+
+    pub(crate) const fn blocks_finish(self) -> bool {
+        self.is_active() || matches!(self, Self::Unknown)
+    }
+
+    pub(crate) fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+        match value {
+            "accepted" => Ok(Self::Accepted),
+            "queued" => Ok(Self::Queued),
+            "starting" => Ok(Self::Starting),
+            "running" => Ok(Self::Running),
+            "cancel_requested" => Ok(Self::CancelRequested),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            "interrupted" => Ok(Self::Interrupted),
+            "unknown" => Ok(Self::Unknown),
+            other => Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                format!("unsupported Connector Execution state: {other}").into(),
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for ConnectorExecutionState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_db())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectorExecutionContinuationIntent {
@@ -83,10 +197,10 @@ pub struct ConnectorTerminalContinuationClaim {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorExecution {
     pub execution_id: String,
-    pub kind: String,
+    pub kind: ConnectorExecutionKind,
     pub task_id: String,
     pub run_id: String,
-    pub state: String,
+    pub state: ConnectorExecutionState,
     pub submitted_at: i64,
     pub queued_at: Option<i64>,
     pub queue_deadline: i64,
@@ -121,19 +235,12 @@ pub struct ConnectorExecution {
 }
 
 impl ConnectorExecution {
-    pub fn state_is_active(state: &str) -> bool {
-        matches!(
-            state,
-            "accepted" | "queued" | "starting" | "running" | "cancel_requested"
-        )
-    }
-
     pub fn is_active(&self) -> bool {
-        Self::state_is_active(&self.state)
+        self.state.is_active()
     }
 
     pub fn is_terminal(&self) -> bool {
-        !self.is_active()
+        self.state.is_terminal()
     }
 
     pub fn terminal_continuation_is_armed(&self) -> bool {
@@ -150,7 +257,7 @@ impl ConnectorExecution {
     }
 
     pub fn blocks_finish(&self) -> bool {
-        self.is_active() || self.state == "unknown"
+        self.state.blocks_finish()
     }
 
     pub fn executor_status_recognized(status: &str) -> bool {
@@ -193,13 +300,13 @@ pub struct ConnectorExecutionObservation<'a> {
 }
 
 type Fact = Option<&'static str>;
-type StateOutcome = (&'static str, Fact, Fact, Fact);
+type StateOutcome = (ConnectorExecutionState, Fact, Fact, Fact);
 const EXECUTOR: Fact = Some("executor");
 const UNKNOWN_REASON: &str = "executor_terminal_unknown";
 
-fn active_state(execution: &ConnectorExecution, state: &'static str) -> StateOutcome {
-    let state = if execution.state == "cancel_requested" {
-        "cancel_requested"
+fn active_state(execution: &ConnectorExecution, state: ConnectorExecutionState) -> StateOutcome {
+    let state = if execution.state == ConnectorExecutionState::CancelRequested {
+        ConnectorExecutionState::CancelRequested
     } else {
         state
     };
@@ -207,11 +314,21 @@ fn active_state(execution: &ConnectorExecution, state: &'static str) -> StateOut
 }
 
 fn failed(source: &'static str, code: &'static str, reason: &'static str) -> StateOutcome {
-    ("failed", Some(source), Some(code), Some(reason))
+    (
+        ConnectorExecutionState::Failed,
+        Some(source),
+        Some(code),
+        Some(reason),
+    )
 }
 
 fn unknown(code: &'static str) -> StateOutcome {
-    ("unknown", EXECUTOR, Some(code), Some(UNKNOWN_REASON))
+    (
+        ConnectorExecutionState::Unknown,
+        EXECUTOR,
+        Some(code),
+        Some(UNKNOWN_REASON),
+    )
 }
 
 pub(super) fn observed_state(
@@ -224,35 +341,42 @@ pub(super) fn observed_state(
     if observation.executor_status == "recovering" {
         return active_state(
             execution,
-            if execution.state == "queued" {
-                "queued"
+            if execution.state == ConnectorExecutionState::Queued {
+                ConnectorExecutionState::Queued
             } else {
-                "running"
+                ConnectorExecutionState::Running
             },
         );
     }
     let Ok(lifecycle) = RunnerJobLifecycle::from_wire(observation.executor_status) else {
         // Callers reject unrecognized observation status before this projection.
         // Keep the historical conservative fallback for direct/internal callers.
-        return active_state(execution, "running");
+        return active_state(execution, ConnectorExecutionState::Running);
     };
     match lifecycle {
         RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued => {
-            active_state(execution, "queued")
+            active_state(execution, ConnectorExecutionState::Queued)
         }
         RunnerJobLifecycle::Running | RunnerJobLifecycle::StartedLegacy => {
-            active_state(execution, "running")
+            active_state(execution, ConnectorExecutionState::Running)
         }
-        RunnerJobLifecycle::StopRequested => active_state(execution, "running"),
+        RunnerJobLifecycle::StopRequested => {
+            active_state(execution, ConnectorExecutionState::Running)
+        }
         RunnerJobLifecycle::Completed
-            if execution.kind == "check"
+            if execution.kind == ConnectorExecutionKind::Check
                 && observation.exit_code == Some(0)
                 && observation.check_completed == Some(execution.check_plan.len())
                 && observation.failed_check.is_none() =>
         {
-            ("succeeded", None, None, Some("exit_zero"))
+            (
+                ConnectorExecutionState::Succeeded,
+                None,
+                None,
+                Some("exit_zero"),
+            )
         }
-        RunnerJobLifecycle::Completed if execution.kind == "check" => failed(
+        RunnerJobLifecycle::Completed if execution.kind == ConnectorExecutionKind::Check => failed(
             "executor",
             if observation.check_completed.is_none() {
                 "validation_progress_missing"
@@ -261,32 +385,40 @@ pub(super) fn observed_state(
             },
             "executor_protocol_violation",
         ),
-        RunnerJobLifecycle::Completed if observation.exit_code == Some(0) => {
-            ("succeeded", None, None, Some("exit_zero"))
-        }
+        RunnerJobLifecycle::Completed if observation.exit_code == Some(0) => (
+            ConnectorExecutionState::Succeeded,
+            None,
+            None,
+            Some("exit_zero"),
+        ),
         RunnerJobLifecycle::Completed if observation.exit_code.is_none() => {
             unknown("executor_exit_code_missing")
         }
         RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled
-            if execution.state == "cancel_requested"
+            if execution.state == ConnectorExecutionState::CancelRequested
                 && execution.failure_code.as_deref() == Some("queue_deadline") =>
         {
             failed("queue", "queue_deadline", "queue_timeout")
         }
         RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled
-            if execution.state == "cancel_requested" =>
+            if execution.state == ConnectorExecutionState::CancelRequested =>
         {
-            ("cancelled", None, None, Some("user_cancelled"))
+            (
+                ConnectorExecutionState::Cancelled,
+                None,
+                None,
+                Some("user_cancelled"),
+            )
         }
         RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled => {
-            active_state(execution, "running")
+            active_state(execution, ConnectorExecutionState::Running)
         }
         RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut => {
             failed("executor", "command_timeout", "timeout")
         }
         RunnerJobLifecycle::Lost => unknown("executor_lost"),
         RunnerJobLifecycle::Failed
-            if execution.kind == "check"
+            if execution.kind == ConnectorExecutionKind::Check
                 && observation.failed_check.is_some()
                 && observation
                     .check_completed
@@ -294,7 +426,7 @@ pub(super) fn observed_state(
         {
             failed("check", "assertion_failed", "nonzero_exit")
         }
-        RunnerJobLifecycle::Failed if execution.kind == "check" => failed(
+        RunnerJobLifecycle::Failed if execution.kind == ConnectorExecutionKind::Check => failed(
             "executor",
             if observation.check_completed.is_none() {
                 "validation_progress_missing"
@@ -334,7 +466,7 @@ pub(super) fn latest_execution(
 pub(super) fn latest_execution_by_kind(
     conn: &rusqlite::Connection,
     task_id: &str,
-    kind: &str,
+    kind: ConnectorExecutionKind,
 ) -> rusqlite::Result<Option<ConnectorExecution>> {
     query_execution(
         conn,
@@ -343,7 +475,7 @@ pub(super) fn latest_execution_by_kind(
              WHERE task_id = ?1 AND kind = ?2
              ORDER BY submitted_at DESC, rowid DESC LIMIT 1"
         ),
-        params![task_id, kind],
+        params![task_id, kind.as_db()],
     )
 }
 
@@ -392,10 +524,10 @@ pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect
     };
     Ok(ConnectorExecution {
         execution_id: row.get(0)?,
-        kind: row.get(1)?,
+        kind: ConnectorExecutionKind::from_db(&row.get::<_, String>(1)?, 1)?,
         task_id: row.get(2)?,
         run_id: row.get(3)?,
-        state: row.get(4)?,
+        state: ConnectorExecutionState::from_db(&row.get::<_, String>(4)?, 4)?,
         submitted_at: row.get(5)?,
         queued_at: row.get(6)?,
         queue_deadline: row.get(7)?,
@@ -472,17 +604,17 @@ pub(super) fn map_execution(row: &rusqlite::Row<'_>) -> rusqlite::Result<Connect
     })
 }
 
-pub(super) fn execution_event_kind(state: &str) -> &'static str {
+pub(super) fn execution_event_kind(state: ConnectorExecutionState) -> &'static str {
     match state {
-        "accepted" => "execution_accepted",
-        "queued" => "execution_queued",
-        "starting" | "running" => "execution_started",
-        "cancel_requested" => "execution_cancel_requested",
-        "succeeded" => "execution_succeeded",
-        "cancelled" => "execution_cancelled",
-        "interrupted" => "execution_interrupted",
-        "unknown" => "execution_unknown",
-        _ => "execution_failed",
+        ConnectorExecutionState::Accepted => "execution_accepted",
+        ConnectorExecutionState::Queued => "execution_queued",
+        ConnectorExecutionState::Starting | ConnectorExecutionState::Running => "execution_started",
+        ConnectorExecutionState::CancelRequested => "execution_cancel_requested",
+        ConnectorExecutionState::Succeeded => "execution_succeeded",
+        ConnectorExecutionState::Failed => "execution_failed",
+        ConnectorExecutionState::Cancelled => "execution_cancelled",
+        ConnectorExecutionState::Interrupted => "execution_interrupted",
+        ConnectorExecutionState::Unknown => "execution_unknown",
     }
 }
 
@@ -490,13 +622,13 @@ pub(super) fn execution_event_kind(state: &str) -> &'static str {
 mod runner_job_lifecycle_projection_tests {
     use super::*;
 
-    fn execution(state: &str) -> ConnectorExecution {
+    fn execution(state: ConnectorExecutionState) -> ConnectorExecution {
         ConnectorExecution {
             execution_id: "execution".to_string(),
-            kind: "command".to_string(),
+            kind: ConnectorExecutionKind::Command,
             task_id: "task".to_string(),
             run_id: "run".to_string(),
-            state: state.to_string(),
+            state,
             submitted_at: 1,
             queued_at: None,
             queue_deadline: 10,
@@ -550,18 +682,89 @@ mod runner_job_lifecycle_projection_tests {
     }
 
     #[test]
+    fn execution_lifecycle_contract_is_closed_and_preserves_conservative_finish_blocking() {
+        let cases = [
+            (ConnectorExecutionState::Accepted, "accepted", true, true),
+            (ConnectorExecutionState::Queued, "queued", true, true),
+            (ConnectorExecutionState::Starting, "starting", true, true),
+            (ConnectorExecutionState::Running, "running", true, true),
+            (
+                ConnectorExecutionState::CancelRequested,
+                "cancel_requested",
+                true,
+                true,
+            ),
+            (
+                ConnectorExecutionState::Succeeded,
+                "succeeded",
+                false,
+                false,
+            ),
+            (ConnectorExecutionState::Failed, "failed", false, false),
+            (
+                ConnectorExecutionState::Cancelled,
+                "cancelled",
+                false,
+                false,
+            ),
+            (
+                ConnectorExecutionState::Interrupted,
+                "interrupted",
+                false,
+                false,
+            ),
+            (ConnectorExecutionState::Unknown, "unknown", false, true),
+        ];
+
+        for (state, db, active, blocks_finish) in cases {
+            assert_eq!(state.as_db(), db);
+            assert_eq!(ConnectorExecutionState::from_db(db, 0).unwrap(), state);
+            assert_eq!(state.is_active(), active, "{db}");
+            assert_eq!(state.is_terminal(), !active, "{db}");
+            assert_eq!(state.blocks_finish(), blocks_finish, "{db}");
+            assert_eq!(serde_json::to_value(state).unwrap(), db);
+        }
+        assert!(ConnectorExecutionState::from_db("future_state", 0).is_err());
+
+        for (kind, db) in [
+            (ConnectorExecutionKind::Command, "command"),
+            (ConnectorExecutionKind::Check, "check"),
+        ] {
+            assert_eq!(kind.as_db(), db);
+            assert_eq!(ConnectorExecutionKind::from_db(db, 0).unwrap(), kind);
+            assert_eq!(serde_json::to_value(kind).unwrap(), db);
+        }
+        assert!(ConnectorExecutionKind::from_db("future_kind", 0).is_err());
+    }
+
+    #[test]
     fn runner_job_lifecycle_projects_to_connector_execution_semantics() {
-        let execution = execution("accepted");
+        let execution = execution(ConnectorExecutionState::Accepted);
         let cases: [(&str, StateOutcome); 9] = [
-            ("queued", ("queued", None, None, None)),
-            ("agent_queued", ("queued", None, None, None)),
-            ("started", ("running", None, None, None)),
-            ("running", ("running", None, None, None)),
-            ("stop_requested", ("running", None, None, None)),
+            (
+                "queued",
+                (ConnectorExecutionState::Queued, None, None, None),
+            ),
+            (
+                "agent_queued",
+                (ConnectorExecutionState::Queued, None, None, None),
+            ),
+            (
+                "started",
+                (ConnectorExecutionState::Running, None, None, None),
+            ),
+            (
+                "running",
+                (ConnectorExecutionState::Running, None, None, None),
+            ),
+            (
+                "stop_requested",
+                (ConnectorExecutionState::Running, None, None, None),
+            ),
             (
                 "timeout",
                 (
-                    "failed",
+                    ConnectorExecutionState::Failed,
                     Some("executor"),
                     Some("command_timeout"),
                     Some("timeout"),
@@ -570,7 +773,7 @@ mod runner_job_lifecycle_projection_tests {
             (
                 "timed_out",
                 (
-                    "failed",
+                    ConnectorExecutionState::Failed,
                     Some("executor"),
                     Some("command_timeout"),
                     Some("timeout"),
@@ -579,13 +782,21 @@ mod runner_job_lifecycle_projection_tests {
             (
                 "lost",
                 (
-                    "unknown",
+                    ConnectorExecutionState::Unknown,
                     Some("executor"),
                     Some("executor_lost"),
                     Some("executor_terminal_unknown"),
                 ),
             ),
-            ("completed", ("succeeded", None, None, Some("exit_zero"))),
+            (
+                "completed",
+                (
+                    ConnectorExecutionState::Succeeded,
+                    None,
+                    None,
+                    Some("exit_zero"),
+                ),
+            ),
         ];
 
         for (status, expected) in cases {
@@ -603,16 +814,25 @@ mod runner_job_lifecycle_projection_tests {
         assert!(ConnectorExecution::executor_status_recognized("recovering"));
         assert!(!ConnectorExecution::executor_status_recognized("unknown"));
         assert_eq!(
-            observed_state(&execution("queued"), &observation("recovering", None)),
-            ("queued", None, None, None)
+            observed_state(
+                &execution(ConnectorExecutionState::Queued),
+                &observation("recovering", None)
+            ),
+            (ConnectorExecutionState::Queued, None, None, None)
         );
         assert_eq!(
-            observed_state(&execution("running"), &observation("recovering", None)),
-            ("running", None, None, None)
+            observed_state(
+                &execution(ConnectorExecutionState::Running),
+                &observation("recovering", None)
+            ),
+            (ConnectorExecutionState::Running, None, None, None)
         );
         assert_eq!(
-            observed_state(&execution("accepted"), &observation("unknown", None)),
-            ("running", None, None, None),
+            observed_state(
+                &execution(ConnectorExecutionState::Accepted),
+                &observation("unknown", None)
+            ),
+            (ConnectorExecutionState::Running, None, None, None),
             "direct/internal unknown fallback stays conservative; callers reject it before projection"
         );
     }

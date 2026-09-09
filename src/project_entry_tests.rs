@@ -2154,7 +2154,10 @@ async fn console_accept_requires_result_id_and_stale_identity_has_no_effect() {
         .db
         .local_connector_task(&task_id, &fixture.connector.context().project_id)
         .unwrap();
-    assert_eq!(task.task_status, "ready_for_review");
+    assert_eq!(
+        task.task_status,
+        webcodex_store::ConnectorTaskState::ReadyForReview
+    );
 }
 
 #[test]

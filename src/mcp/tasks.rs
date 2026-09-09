@@ -9,6 +9,7 @@ use crate::db::ConnectorExecution;
 use crate::model_surface::RuntimeExposure;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use webcodex_store::ConnectorExecutionState;
 
 pub(super) const MCP_TASKS_EXTENSION: &str = "io.modelcontextprotocol/tasks";
 pub(super) const MCP_MISSING_REQUIRED_CLIENT_CAPABILITY: i64 = -32021;
@@ -82,7 +83,7 @@ fn mcp_task_id_is_valid(task_id: &str) -> bool {
 }
 
 fn mcp_task_status(execution: &ConnectorExecution) -> &'static str {
-    if execution.state == "cancelled" {
+    if execution.state == ConnectorExecutionState::Cancelled {
         "cancelled"
     } else if execution.is_terminal() {
         "completed"

@@ -892,7 +892,7 @@ async fn http_project_connector_2026_tasks_poll_durable_execution_across_reopen(
             },
         )
         .unwrap();
-    assert_eq!(finalized.state, "failed");
+    assert_eq!(finalized.state, crate::db::ConnectorExecutionState::Failed);
     assert_eq!(finalized.mcp_task_result_finalized_at, Some(20));
     assert_eq!(finalized.mcp_task_output_tail.as_ref(), Some(&durable_tail));
     let mut completed = mcp_2026_task_request(
@@ -1075,7 +1075,7 @@ async fn http_project_connector_2026_tasks_cancel_reuses_execution_cancellation(
     );
     assert_eq!(
         db.connector_execution(&task_id).unwrap().state,
-        "cancel_requested"
+        crate::db::ConnectorExecutionState::CancelRequested
     );
 
     db.observe_connector_execution(

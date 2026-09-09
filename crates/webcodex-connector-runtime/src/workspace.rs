@@ -16,8 +16,9 @@ use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
 use webcodex_store::{
-    ConnectorPreservedWorkspace, ConnectorTaskResult, ConnectorTaskSnapshot,
-    ConnectorTaskStoreError, Database,
+    ConnectorPreservedWorkspace, ConnectorResultDecision, ConnectorResultDecisionStatus,
+    ConnectorRunState, ConnectorTaskMode, ConnectorTaskResult, ConnectorTaskSnapshot,
+    ConnectorTaskState, ConnectorTaskStoreError, Database,
 };
 
 const MAX_RESULT_PATCH_BYTES: usize = 4 * 1024 * 1024;
@@ -878,14 +879,14 @@ impl WorkspaceManager {
         result: &ConnectorTaskResult,
         recovering: bool,
     ) -> Result<Option<String>, ConnectorTaskStoreError> {
-        match task.mode.as_str() {
-            "inspect" => {
+        match task.mode {
+            ConnectorTaskMode::InspectLegacy => {
                 return Err(ConnectorTaskStoreError::decision(
                     "inspect_mode_retired",
                     "a pre-0.4 inspect task cannot be accepted as writable work; reject it locally and start a new task",
                 ));
             }
-            "read_only" => {
+            ConnectorTaskMode::ReadOnly => {
                 if task.isolated || task.execution_root != task.target_root {
                     return Err(ConnectorTaskStoreError::decision(
                         "result_precondition_failed",
@@ -900,7 +901,7 @@ impl WorkspaceManager {
                 }
                 return Ok(None);
             }
-            "normal" => {
+            ConnectorTaskMode::Normal => {
                 if !task.isolated
                     || task.execution_root == task.target_root
                     || task.baseline_commit.as_deref().is_none_or(str::is_empty)
@@ -911,12 +912,6 @@ impl WorkspaceManager {
                         "normal task result is not backed by a canonical isolated writable workspace",
                     ));
                 }
-            }
-            _ => {
-                return Err(ConnectorTaskStoreError::decision(
-                    "result_precondition_failed",
-                    "task result mode is not part of the canonical Connector execution contract",
-                ));
             }
         }
         let baseline = task
@@ -1004,10 +999,12 @@ impl WorkspaceManager {
         runs_root: &Path,
         project_registry_dir: &Path,
     ) -> Result<(), String> {
-        if task.mode == "inspect" {
+        if task.mode == ConnectorTaskMode::InspectLegacy {
             return Err("inspect_mode_retired: this pre-0.4 inspect task can no longer execute; reject it locally and start a new read_only or normal task".to_string());
         }
-        if task.run_status != "interrupted" || task.task_status != "needs_attention" {
+        if task.run_status != ConnectorRunState::Interrupted
+            || task.task_status != ConnectorTaskState::NeedsAttention
+        {
             return Err("only an interrupted task can be resumed".to_string());
         }
         let execution_root = Path::new(&task.execution_root);
@@ -1050,7 +1047,8 @@ impl WorkspaceManager {
         now: i64,
     ) -> Result<ConnectorTaskResult, ConnectorTaskStoreError> {
         let task = local_decision_task(db, project_id, task_id, target_root)?;
-        if task.mode == "inspect" && decision == LocalResultDecision::Accept {
+        if task.mode == ConnectorTaskMode::InspectLegacy && decision == LocalResultDecision::Accept
+        {
             return Err(ConnectorTaskStoreError::decision(
                 "inspect_mode_retired",
                 "a pre-0.4 inspect task cannot be accepted as writable work; reject it locally and start a new task",
@@ -1059,7 +1057,7 @@ impl WorkspaceManager {
         let result = db.local_connector_task_result(task_id, project_id)?;
         if result.is_none()
             && decision == LocalResultDecision::Reject
-            && task.run_status == "interrupted"
+            && task.run_status == ConnectorRunState::Interrupted
         {
             if expected_result_id.is_some() {
                 return Err(result_changed());
@@ -1084,7 +1082,9 @@ impl WorkspaceManager {
         if expected_result_id != Some(result.result_id.as_str()) {
             return Err(result_changed());
         }
-        if decision == LocalResultDecision::Reject && result.decision_status == "rejected" {
+        if decision == LocalResultDecision::Reject
+            && result.decision_status == ConnectorResultDecisionStatus::Rejected
+        {
             if result.cleanup_warning.is_some() {
                 Self::release_and_record(db, project_id, &task, now)?;
                 return db
@@ -1093,7 +1093,7 @@ impl WorkspaceManager {
             }
             return Ok(result);
         }
-        if result.decision_status != "pending" {
+        if result.decision_status != ConnectorResultDecisionStatus::Pending {
             return Err(ConnectorTaskStoreError::decision(
                 "result_already_decided",
                 "task result was already decided",
@@ -1182,10 +1182,9 @@ impl WorkspaceManager {
         let intents = db.connector_result_decision_intents(project_id)?;
         let mut recovered = 0;
         for (task_id, result_id, decision) in &intents {
-            let decision = if decision == "accepted" {
-                LocalResultDecision::Accept
-            } else {
-                LocalResultDecision::Reject
+            let decision = match decision {
+                ConnectorResultDecision::Accepted => LocalResultDecision::Accept,
+                ConnectorResultDecision::Rejected => LocalResultDecision::Reject,
             };
             let outcome = (|| {
                 let task = local_decision_task(db, project_id, task_id, target_root)?;
@@ -1961,6 +1960,7 @@ fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use webcodex_store::{ConnectorRunLifecycle, ConnectorTaskLifecycle};
 
     fn git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
@@ -2033,9 +2033,11 @@ mod tests {
             workspace_id: context.workspace_id.clone(),
             owner_subject_id: "user:owner".to_string(),
             goal: "edit the readme".to_string(),
-            mode: "normal".to_string(),
-            task_status: "ready_for_review".to_string(),
-            run_status: "completed".to_string(),
+            mode: ConnectorTaskMode::Normal,
+            task_lifecycle: ConnectorTaskLifecycle::ReadyForReview,
+            task_status: ConnectorTaskState::ReadyForReview,
+            run_lifecycle: ConnectorRunLifecycle::Completed,
+            run_status: ConnectorRunState::Completed,
             event_cursor: 2,
             target_executor_ref: context.executor_project.clone(),
             execution_executor_ref: prepared.execution_executor_ref.clone(),
@@ -2061,7 +2063,7 @@ mod tests {
             changed_paths: captured.changed_paths.clone(),
             validation: serde_json::json!({"status": "not_run"}),
             warnings: captured.warnings.clone(),
-            decision_status: "pending".to_string(),
+            decision_status: ConnectorResultDecisionStatus::Pending,
             decided_by: None,
             decided_at: None,
             cleanup_warning: None,

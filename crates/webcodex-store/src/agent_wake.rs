@@ -46,7 +46,7 @@ impl AgentWakeState {
         }
     }
 
-    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+    pub(crate) fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
         match value {
             "pending" => Ok(Self::Pending),
             "claimed" => Ok(Self::Claimed),

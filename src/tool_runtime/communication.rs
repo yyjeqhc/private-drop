@@ -1,9 +1,9 @@
 use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::{AuthContext, AuthKind};
 use crate::db::{
-    AgentProfilePatch, AgentWakeState, CommunicationPrincipal, CommunicationStoreError,
-    ConversationAccess, NewAgentEndpoint, NewAgentIdentity, NewConversation,
-    NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
+    AgentEndpointLifecycle, AgentProfilePatch, AgentWakeState, CommunicationPrincipal,
+    CommunicationStoreError, ConversationAccess, NewAgentEndpoint, NewAgentIdentity,
+    NewConversation, NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
 };
 use serde::Serialize;
 use serde_json::{json, to_value};
@@ -761,8 +761,8 @@ impl ToolRuntime {
             });
         // Visible capability is the conjunction of durable Endpoint state and
         // a current callable process-local registration.
-        bootstrap.endpoint.wake_capable &=
-            binding.adapter_registered && bootstrap.endpoint.lifecycle == "attached";
+        bootstrap.endpoint.wake_capable &= binding.adapter_registered
+            && bootstrap.endpoint.lifecycle == AgentEndpointLifecycle::Attached;
         let wake_reply = bootstrap
             .wake
             .as_ref()

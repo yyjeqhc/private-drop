@@ -181,7 +181,7 @@ fn mcp_task_materialization_and_terminal_result_finalize_durably_together() {
             },
         )
         .unwrap();
-    assert_eq!(terminal.state, "succeeded");
+    assert_eq!(terminal.state, ConnectorExecutionState::Succeeded);
     assert_eq!(terminal.mcp_task_result_finalized_at, Some(23));
     assert_eq!(terminal.mcp_task_output_tail.as_ref(), Some(&tail));
 
@@ -248,7 +248,7 @@ fn startup_reconciliation_preserves_armed_intent_and_makes_it_ready() {
         .unwrap();
     assert_eq!(recovery.1, 1);
     let interrupted = db.connector_execution(&execution.execution_id).unwrap();
-    assert_eq!(interrupted.state, "interrupted");
+    assert_eq!(interrupted.state, ConnectorExecutionState::Interrupted);
     assert_eq!(
         interrupted.continuation_intent,
         ConnectorExecutionContinuationIntent::ArmedForTerminal
@@ -265,4 +265,24 @@ fn startup_reconciliation_preserves_armed_intent_and_makes_it_ready() {
     assert!(events
         .iter()
         .any(|event| event.kind == "execution_interrupted"));
+}
+
+#[test]
+fn corrupt_execution_state_fails_closed_on_load() {
+    let (_temp, _path, db) = database();
+    let task = task(&db, "corrupt-state");
+    let execution = reserve(&db, &task, "op-corrupt-state");
+    let conn = db.conn_for_tests();
+    conn.execute_batch("PRAGMA ignore_check_constraints = ON;")
+        .unwrap();
+    conn.execute(
+        "UPDATE wc_executions SET state = 'future_state' WHERE id = ?1",
+        [&execution.execution_id],
+    )
+    .unwrap();
+    conn.execute_batch("PRAGMA ignore_check_constraints = OFF;")
+        .unwrap();
+    drop(conn);
+
+    assert!(db.connector_execution(&execution.execution_id).is_err());
 }

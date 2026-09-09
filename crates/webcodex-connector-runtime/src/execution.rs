@@ -13,8 +13,9 @@ use webcodex_core::runner_protocol::ShellJobValidationStep;
 use webcodex_runner_registry::{RunnerAccess, RunnerRegistry};
 use webcodex_store::Database;
 use webcodex_store::{
-    ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
-    ConnectorExecutionReservation, ConnectorTaskSnapshot, ConnectorTaskStoreError,
+    ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionKind,
+    ConnectorExecutionObservation, ConnectorExecutionReservation, ConnectorExecutionState,
+    ConnectorTaskSnapshot, ConnectorTaskStoreError,
 };
 
 const DEFAULT_YIELD_MS: u64 = 8_000;
@@ -215,7 +216,7 @@ impl ExecutionService {
                 )?
             }
         };
-        if execution.state != "starting" {
+        if execution.state != ConnectorExecutionState::Starting {
             return Ok(execution);
         }
         let submission = match host
@@ -262,7 +263,7 @@ impl ExecutionService {
             &submission.status,
             chrono::Utc::now().timestamp(),
         )?;
-        if attached.state == "cancel_requested"
+        if attached.state == ConnectorExecutionState::CancelRequested
             && self.dispatch_cancel(&task, &attached, host.as_ref()).await == CancelDispatch::Failed
         {
             return self.db.finish_connector_execution(
@@ -328,7 +329,7 @@ impl ExecutionService {
                     .await?;
             }
         }
-        if execution.state == "cancelled" {
+        if execution.state == ConnectorExecutionState::Cancelled {
             self.release_cancelled_workspace(task).await;
         }
         Ok(Some(execution))
@@ -533,16 +534,22 @@ pub(crate) fn execution_projection(
         .or(execution.started_at)
         .or(execution.queued_at)
         .unwrap_or(execution.submitted_at);
-    let capability_outcome = match execution.state.as_str() {
-        "succeeded" => "completed",
-        "failed" => "failed",
-        "cancelled" => "cancelled",
-        "interrupted" | "unknown" => "needs_attention",
-        _ => "in_progress",
+    let capability_outcome = match execution.state {
+        ConnectorExecutionState::Succeeded => "completed",
+        ConnectorExecutionState::Failed => "failed",
+        ConnectorExecutionState::Cancelled => "cancelled",
+        ConnectorExecutionState::Interrupted | ConnectorExecutionState::Unknown => {
+            "needs_attention"
+        }
+        ConnectorExecutionState::Accepted
+        | ConnectorExecutionState::Queued
+        | ConnectorExecutionState::Starting
+        | ConnectorExecutionState::Running
+        | ConnectorExecutionState::CancelRequested => "in_progress",
     };
     let queue_reason = if execution.failure_source.as_deref() == Some("queue") {
         Some("queue_deadline")
-    } else if execution.state == "queued" {
+    } else if execution.state == ConnectorExecutionState::Queued {
         Some("executor_queue")
     } else {
         None
@@ -603,19 +610,28 @@ fn recipe_projection(execution: &ConnectorExecution) -> Value {
 }
 
 fn assertion_status(execution: &ConnectorExecution) -> &'static str {
-    if execution.kind != "check" {
+    if execution.kind != ConnectorExecutionKind::Check {
         return "not_run";
     }
-    match execution.state.as_str() {
-        "succeeded" => "passed",
-        "failed" if execution.failure_source.as_deref() == Some("check") => "failed",
-        "accepted" | "queued" | "starting" | "running" | "cancel_requested" => "in_progress",
-        _ => "not_run",
+    match execution.state {
+        ConnectorExecutionState::Succeeded => "passed",
+        ConnectorExecutionState::Failed if execution.failure_source.as_deref() == Some("check") => {
+            "failed"
+        }
+        ConnectorExecutionState::Accepted
+        | ConnectorExecutionState::Queued
+        | ConnectorExecutionState::Starting
+        | ConnectorExecutionState::Running
+        | ConnectorExecutionState::CancelRequested => "in_progress",
+        ConnectorExecutionState::Failed
+        | ConnectorExecutionState::Cancelled
+        | ConnectorExecutionState::Interrupted
+        | ConnectorExecutionState::Unknown => "not_run",
     }
 }
 
 fn check_results(execution: &ConnectorExecution) -> Value {
-    if execution.kind != "check" {
+    if execution.kind != ConnectorExecutionKind::Check {
         return Value::Null;
     }
     let assertion = assertion_status(execution);
@@ -654,23 +670,27 @@ fn execution_next_action(execution: &ConnectorExecution) -> &'static str {
     if execution.failure_code.as_deref() == Some("workspace_provenance_mismatch") {
         return "inspect_workspace_changes_then_rerun_checks";
     }
-    match execution.state.as_str() {
-        "accepted" | "queued" | "starting" | "running" => "review_or_cancel",
-        "cancel_requested" => "wait_for_cancellation",
-        "succeeded" | "failed" => "continue_or_finish",
-        "cancelled" => "start_a_new_task",
-        "interrupted" => "resume_or_reject_on_the_host",
-        "unknown" => "inspect_executor_state_before_continuing",
-        _ => "review_task",
+    match execution.state {
+        ConnectorExecutionState::Accepted
+        | ConnectorExecutionState::Queued
+        | ConnectorExecutionState::Starting
+        | ConnectorExecutionState::Running => "review_or_cancel",
+        ConnectorExecutionState::CancelRequested => "wait_for_cancellation",
+        ConnectorExecutionState::Succeeded | ConnectorExecutionState::Failed => {
+            "continue_or_finish"
+        }
+        ConnectorExecutionState::Cancelled => "start_a_new_task",
+        ConnectorExecutionState::Interrupted => "resume_or_reject_on_the_host",
+        ConnectorExecutionState::Unknown => "inspect_executor_state_before_continuing",
     }
 }
 
 fn execution_signature(
     execution: Option<&ConnectorExecution>,
-) -> Option<(&str, usize, usize, Option<i64>)> {
+) -> Option<(ConnectorExecutionState, usize, usize, Option<i64>)> {
     execution.map(|execution| {
         (
-            execution.state.as_str(),
+            execution.state,
             execution.stdout_cursor,
             execution.stderr_cursor,
             execution.first_status_failure_at,
@@ -854,7 +874,7 @@ mod service_tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(cancelled.state, "cancel_requested");
+        assert_eq!(cancelled.state, ConnectorExecutionState::CancelRequested);
         assert!(cancelled.executor_reference.is_none());
         assert_eq!(host.stops.load(Ordering::SeqCst), 0);
     }
@@ -900,7 +920,7 @@ mod service_tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(pending.state, "cancel_requested");
+        assert_eq!(pending.state, ConnectorExecutionState::CancelRequested);
         assert!(pending.executor_reference.is_none());
         assert_eq!(host.stops.load(Ordering::SeqCst), 0);
         gate.release_attach().await;
@@ -985,7 +1005,7 @@ mod service_tests {
             .db
             .attach_connector_executor(&execution.execution_id, "job-stop", "running", 5)
             .unwrap();
-        assert_eq!(attached.state, "running");
+        assert_eq!(attached.state, ConnectorExecutionState::Running);
         let host = Arc::new(TestHost::default());
         host.stop_unknown.store(true, Ordering::SeqCst);
         let cancelled = fx
@@ -994,7 +1014,7 @@ mod service_tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(cancelled.state, "unknown");
+        assert_eq!(cancelled.state, ConnectorExecutionState::Unknown);
         assert_eq!(
             cancelled.failure_code.as_deref(),
             Some("cancel_transport_unknown")

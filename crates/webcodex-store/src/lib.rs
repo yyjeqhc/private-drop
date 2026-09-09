@@ -42,19 +42,19 @@ pub use self::agent_wake::{
     AgentWakeState, AGENT_WAKE_CONSUME_TOKEN_PREFIX, AGENT_WAKE_ID_PREFIX,
 };
 pub use self::communication::{
-    AgentEndpointMutation, AgentEndpointRecord, AgentIdentityMutation, AgentIdentityPage,
-    AgentInboxItem, AgentInboxPage, AgentProfilePatch, CommunicationPrincipal,
-    CommunicationStoreError, ConversationAccess, ConversationDetailRecord,
+    AgentEndpointLifecycle, AgentEndpointMutation, AgentEndpointRecord, AgentIdentityMutation,
+    AgentIdentityPage, AgentInboxItem, AgentInboxPage, AgentProfilePatch, CommunicationPrincipal,
+    CommunicationStoreError, ConversationAccess, ConversationDetailRecord, ConversationLifecycle,
     ConversationMessageMutation, ConversationMessageRecord, ConversationMutation, ConversationPage,
     ConversationParticipantRecord, ConversationSummaryRecord, DeliveryConsumeResult,
-    DurableAgentIdentity, MessageAuthorRecord, MessageDeliveryRecord, NewAgentEndpoint,
-    NewAgentIdentity, NewConversation, NewConversationMessage,
+    DurableAgentIdentity, MessageAuthorRecord, MessageDeliveryRecord, MessageDeliveryState,
+    NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
     COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_DURABLE_AGENTS,
 };
 pub use self::execution_model::{
-    ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionObservation,
-    ConnectorExecutionReservation, ConnectorTerminalContinuationDeliveryState,
-    MAX_ASSERTION_EVIDENCE_BYTES,
+    ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionKind,
+    ConnectorExecutionObservation, ConnectorExecutionReservation, ConnectorExecutionState,
+    ConnectorTerminalContinuationDeliveryState, MAX_ASSERTION_EVIDENCE_BYTES,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 pub use self::execution_model::{
@@ -80,12 +80,15 @@ pub use self::memory::{
 pub use self::oauth::RotateResult;
 pub use self::server_instance::ServerInstanceGuard;
 pub use self::task_kernel::{
-    AppliedPaths, ConnectorApproval, ConnectorApprovalGate, ConnectorBinding,
-    ConnectorEditOperationGate, ConnectorPreservedWorkspace, ConnectorResultDecisionRecovery,
-    ConnectorTaskContinuation, ConnectorTaskEvent, ConnectorTaskResult, ConnectorTaskSnapshot,
-    ConnectorTaskStoreError, ConnectorWindowBinding, ConnectorWindowContext,
-    ConnectorWorkspaceTransition, GuidanceReadState, LocalReviewableTask, NewConnectorResult,
-    NewConnectorTask, WindowProjectActivation,
+    AppliedPaths, ConnectorApproval, ConnectorApprovalGate, ConnectorApprovalState,
+    ConnectorBinding, ConnectorEditOperationGate, ConnectorPreservedWorkspace,
+    ConnectorResultDecision, ConnectorResultDecisionRecovery, ConnectorResultDecisionRecoveryState,
+    ConnectorResultDecisionStatus, ConnectorRunLifecycle, ConnectorRunState,
+    ConnectorTaskContinuation, ConnectorTaskEvent, ConnectorTaskLifecycle, ConnectorTaskMode,
+    ConnectorTaskResult, ConnectorTaskSnapshot, ConnectorTaskState, ConnectorTaskStoreError,
+    ConnectorWindowBinding, ConnectorWindowContext, ConnectorWorkspaceTransition,
+    GuidanceReadState, LocalReviewableTask, NewConnectorResult, NewConnectorTask,
+    WindowProjectActivation,
 };
 pub use self::window_activity::{MAX_WINDOW_ACTIVITY_LIMIT, MAX_WINDOW_LINK_LIMIT};
 pub struct Database {

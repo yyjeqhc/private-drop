@@ -415,7 +415,7 @@ fn startup_reconciliation_releases_claimed_but_quarantines_dispatching() {
     let safely_released = db
         .connector_execution(&claimed_execution.execution_id)
         .unwrap();
-    assert_eq!(safely_released.state, "succeeded");
+    assert_eq!(safely_released.state, ConnectorExecutionState::Succeeded);
     assert_eq!(
         safely_released.continuation_delivery_state,
         ConnectorTerminalContinuationDeliveryState::Unclaimed
@@ -425,7 +425,7 @@ fn startup_reconciliation_releases_claimed_but_quarantines_dispatching() {
     let uncertain = db
         .connector_execution(&dispatching_execution.execution_id)
         .unwrap();
-    assert_eq!(uncertain.state, "succeeded");
+    assert_eq!(uncertain.state, ConnectorExecutionState::Succeeded);
     assert_eq!(
         uncertain.continuation_delivery_state,
         ConnectorTerminalContinuationDeliveryState::DeliveryUnknown
@@ -495,7 +495,7 @@ fn inconsistent_delivery_state_and_fence_fail_closed() {
     assert!(db.claim_next_terminal_continuation().unwrap().is_none());
 
     let recovered_active = db.connector_execution(&active.execution_id).unwrap();
-    assert_eq!(recovered_active.state, "interrupted");
+    assert_eq!(recovered_active.state, ConnectorExecutionState::Interrupted);
     assert_eq!(
         recovered_active.continuation_delivery_state,
         ConnectorTerminalContinuationDeliveryState::Claimed
