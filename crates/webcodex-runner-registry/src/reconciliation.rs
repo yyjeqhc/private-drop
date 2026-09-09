@@ -182,12 +182,7 @@ fn validate_snapshot(
     }
     let lifecycle = parse_job_lifecycle(&snapshot.status)
         .map_err(|_| format!("job inventory status '{}' is invalid", snapshot.status))?;
-    let active = matches!(
-        lifecycle,
-        JobLifecycleState::RunnerQueued
-            | JobLifecycleState::Running
-            | JobLifecycleState::StopRequested
-    );
+    let active = lifecycle.is_runner_active();
     let terminal = lifecycle.is_terminal();
     if !active && !terminal {
         return Err(format!(

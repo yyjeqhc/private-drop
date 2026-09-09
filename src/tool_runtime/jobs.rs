@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 use super::helpers::{
     command_rejected_message, explicit_shell_dispatch_command, is_safe_job_id,
@@ -14,21 +15,18 @@ use crate::runner_protocol::{
 };
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
-    matches!(
-        status,
-        "queued" | "running" | "started" | "agent_queued" | "recovering"
-    )
+    status == "recovering"
+        || RunnerJobLifecycle::from_wire(status).is_ok_and(|lifecycle| {
+            lifecycle.is_active() && lifecycle != RunnerJobLifecycle::StopRequested
+        })
 }
 
 pub(crate) fn is_stop_pending_job_status(status: &str) -> bool {
-    status == "stop_requested"
+    RunnerJobLifecycle::from_wire(status) == Ok(RunnerJobLifecycle::StopRequested)
 }
 
 pub(crate) fn is_terminal_job_status(status: &str) -> bool {
-    matches!(
-        status,
-        "completed" | "failed" | "stopped" | "lost" | "timeout" | "timed_out" | "cancelled"
-    )
+    RunnerJobLifecycle::from_wire(status).is_ok_and(RunnerJobLifecycle::is_terminal)
 }
 
 pub(crate) fn detected_job_summary(
@@ -120,13 +118,17 @@ pub(crate) fn detected_job_summary_with_activity(
             Some(purpose) => purpose,
         }
     };
-    let outcome = if !is_terminal_job_status(status) {
+    let lifecycle = RunnerJobLifecycle::from_wire(status).ok();
+    let outcome = if !lifecycle.is_some_and(RunnerJobLifecycle::is_terminal) {
         "in_progress"
-    } else if status == "completed" && exit_code == Some(0) {
+    } else if lifecycle == Some(RunnerJobLifecycle::Completed) && exit_code == Some(0) {
         "passed"
-    } else if matches!(status, "timeout" | "timed_out") {
+    } else if lifecycle.is_some_and(RunnerJobLifecycle::is_timed_out) {
         "timed_out"
-    } else if matches!(status, "stopped" | "cancelled") {
+    } else if matches!(
+        lifecycle,
+        Some(RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled)
+    ) {
         "cancelled"
     } else {
         "failed"
@@ -378,26 +380,36 @@ pub(crate) fn validation_job_projection_with_policy(
         "cargo_fmt" => "format",
         _ => "check",
     });
-    if !is_terminal_job_status(status) {
+    let lifecycle = RunnerJobLifecycle::from_wire(status).ok();
+    if !lifecycle.is_some_and(RunnerJobLifecycle::is_terminal) {
         let mut value = json!({
             "tool": tool,
             "kind": kind,
-            "state": if status == "queued" || status == "agent_queued" { "pending" } else { "running" },
+            "state": if matches!(
+                lifecycle,
+                Some(RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued)
+            ) { "pending" } else { "running" },
         });
         apply_cargo_test_execution_policy(&mut value, tool, require_tests, no_run);
         return Some(value);
     }
     if matches!(
-        status,
-        "timeout" | "timed_out" | "stopped" | "cancelled" | "lost"
+        lifecycle,
+        Some(
+            RunnerJobLifecycle::Timeout
+                | RunnerJobLifecycle::TimedOut
+                | RunnerJobLifecycle::Stopped
+                | RunnerJobLifecycle::Cancelled
+                | RunnerJobLifecycle::Lost
+        )
     ) {
         let evidence = structured_validation_evidence(tool, kind, stdout, stderr, true);
         let mut value = json!({
             "tool": tool,
             "kind": kind,
-            "state": match status {
-                "timeout" | "timed_out" => "timed_out",
-                "stopped" | "cancelled" => "cancelled",
+            "state": match lifecycle {
+                Some(RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut) => "timed_out",
+                Some(RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled) => "cancelled",
                 _ => "lost",
             },
             "passed": Value::Null,
@@ -423,7 +435,7 @@ pub(crate) fn validation_job_projection_with_policy(
         apply_cargo_test_execution_policy(&mut value, tool, require_tests, no_run);
         return Some(value);
     }
-    let process_passed = status == "completed" && exit_code == Some(0);
+    let process_passed = lifecycle == Some(RunnerJobLifecycle::Completed) && exit_code == Some(0);
     let evidence = structured_validation_evidence(tool, kind, stdout, stderr, truncated);
     let mut passed = process_passed;
     let mut value = json!({

@@ -1,11 +1,12 @@
-/// Canonical Runner-registry definition of a broadly active Runner Job.
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
+
+/// Broad activity for the Registry's public Job status projection.
 ///
+/// `recovering` is a Server recovery overlay, not a Runner lifecycle value.
 /// `stop_requested` remains active until authoritative terminal truth arrives.
 pub fn job_status_is_active(status: &str) -> bool {
-    matches!(
-        status,
-        "running" | "queued" | "started" | "agent_queued" | "stop_requested" | "recovering"
-    )
+    status == "recovering"
+        || RunnerJobLifecycle::from_wire(status).is_ok_and(RunnerJobLifecycle::is_active)
 }
 
 #[cfg(test)]
@@ -35,5 +36,7 @@ mod tests {
         ] {
             assert!(!job_status_is_active(status), "{status}");
         }
+        assert!(!job_status_is_active("unknown"));
+        assert!(RunnerJobLifecycle::from_wire("recovering").is_err());
     }
 }

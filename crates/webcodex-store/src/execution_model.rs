@@ -1,5 +1,6 @@
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 pub const MAX_ASSERTION_EVIDENCE_BYTES: usize = 16 * 1024;
 // Two already-bounded 256 KiB UTF-8 streams can expand substantially under
@@ -153,22 +154,7 @@ impl ConnectorExecution {
     }
 
     pub fn executor_status_recognized(status: &str) -> bool {
-        matches!(
-            status,
-            "queued"
-                | "agent_queued"
-                | "running"
-                | "started"
-                | "stop_requested"
-                | "recovering"
-                | "completed"
-                | "stopped"
-                | "cancelled"
-                | "timeout"
-                | "timed_out"
-                | "lost"
-                | "failed"
-        )
+        status == "recovering" || RunnerJobLifecycle::from_wire(status).is_ok()
     }
 }
 
@@ -235,19 +221,30 @@ pub(super) fn observed_state(
     if let Some(code) = observation.executor_failure_code {
         return failed("executor", code, "executor_protocol_violation");
     }
-    match observation.executor_status {
-        "queued" | "agent_queued" => active_state(execution, "queued"),
-        "running" | "started" => active_state(execution, "running"),
-        "stop_requested" => active_state(execution, "running"),
-        "recovering" => active_state(
+    if observation.executor_status == "recovering" {
+        return active_state(
             execution,
             if execution.state == "queued" {
                 "queued"
             } else {
                 "running"
             },
-        ),
-        "completed"
+        );
+    }
+    let Ok(lifecycle) = RunnerJobLifecycle::from_wire(observation.executor_status) else {
+        // Callers reject unrecognized observation status before this projection.
+        // Keep the historical conservative fallback for direct/internal callers.
+        return active_state(execution, "running");
+    };
+    match lifecycle {
+        RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued => {
+            active_state(execution, "queued")
+        }
+        RunnerJobLifecycle::Running | RunnerJobLifecycle::StartedLegacy => {
+            active_state(execution, "running")
+        }
+        RunnerJobLifecycle::StopRequested => active_state(execution, "running"),
+        RunnerJobLifecycle::Completed
             if execution.kind == "check"
                 && observation.exit_code == Some(0)
                 && observation.check_completed == Some(execution.check_plan.len())
@@ -255,7 +252,7 @@ pub(super) fn observed_state(
         {
             ("succeeded", None, None, Some("exit_zero"))
         }
-        "completed" if execution.kind == "check" => failed(
+        RunnerJobLifecycle::Completed if execution.kind == "check" => failed(
             "executor",
             if observation.check_completed.is_none() {
                 "validation_progress_missing"
@@ -264,22 +261,31 @@ pub(super) fn observed_state(
             },
             "executor_protocol_violation",
         ),
-        "completed" if observation.exit_code == Some(0) => {
+        RunnerJobLifecycle::Completed if observation.exit_code == Some(0) => {
             ("succeeded", None, None, Some("exit_zero"))
         }
-        "completed" if observation.exit_code.is_none() => unknown("executor_exit_code_missing"),
-        "stopped" | "cancelled"
+        RunnerJobLifecycle::Completed if observation.exit_code.is_none() => {
+            unknown("executor_exit_code_missing")
+        }
+        RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled
             if execution.state == "cancel_requested"
                 && execution.failure_code.as_deref() == Some("queue_deadline") =>
         {
             failed("queue", "queue_deadline", "queue_timeout")
         }
-        "stopped" | "cancelled" if execution.state == "cancel_requested" => {
+        RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled
+            if execution.state == "cancel_requested" =>
+        {
             ("cancelled", None, None, Some("user_cancelled"))
         }
-        "timeout" | "timed_out" => failed("executor", "command_timeout", "timeout"),
-        "lost" => unknown("executor_lost"),
-        "failed"
+        RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled => {
+            active_state(execution, "running")
+        }
+        RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut => {
+            failed("executor", "command_timeout", "timeout")
+        }
+        RunnerJobLifecycle::Lost => unknown("executor_lost"),
+        RunnerJobLifecycle::Failed
             if execution.kind == "check"
                 && observation.failed_check.is_some()
                 && observation
@@ -288,7 +294,7 @@ pub(super) fn observed_state(
         {
             failed("check", "assertion_failed", "nonzero_exit")
         }
-        "failed" if execution.kind == "check" => failed(
+        RunnerJobLifecycle::Failed if execution.kind == "check" => failed(
             "executor",
             if observation.check_completed.is_none() {
                 "validation_progress_missing"
@@ -297,8 +303,9 @@ pub(super) fn observed_state(
             },
             "executor_protocol_violation",
         ),
-        "failed" | "completed" => failed("command", "nonzero_exit", "nonzero_exit"),
-        _ => active_state(execution, "running"),
+        RunnerJobLifecycle::Failed | RunnerJobLifecycle::Completed => {
+            failed("command", "nonzero_exit", "nonzero_exit")
+        }
     }
 }
 
@@ -476,5 +483,137 @@ pub(super) fn execution_event_kind(state: &str) -> &'static str {
         "interrupted" => "execution_interrupted",
         "unknown" => "execution_unknown",
         _ => "execution_failed",
+    }
+}
+
+#[cfg(test)]
+mod runner_job_lifecycle_projection_tests {
+    use super::*;
+
+    fn execution(state: &str) -> ConnectorExecution {
+        ConnectorExecution {
+            execution_id: "execution".to_string(),
+            kind: "command".to_string(),
+            task_id: "task".to_string(),
+            run_id: "run".to_string(),
+            state: state.to_string(),
+            submitted_at: 1,
+            queued_at: None,
+            queue_deadline: 10,
+            started_at: None,
+            last_output_at: None,
+            finished_at: None,
+            stdout_cursor: 0,
+            stderr_cursor: 0,
+            exit_code: None,
+            failure_source: None,
+            failure_code: None,
+            terminal_reason: None,
+            operation_id: "operation".to_string(),
+            request_sha256: "request".to_string(),
+            executor_reference: None,
+            first_status_failure_at: None,
+            last_successful_observation_at: None,
+            status_failure_code: None,
+            check_plan: Vec::new(),
+            check_recipe: None,
+            check_completed: 0,
+            check_workspace_sha256: None,
+            validated_workspace_sha256: None,
+            failed_check: None,
+            assertion_evidence: None,
+            continuation_intent: ConnectorExecutionContinuationIntent::None,
+            continuation_armed_at: None,
+            continuation_delivery_state: ConnectorTerminalContinuationDeliveryState::Unclaimed,
+            mcp_task_materialized_at: None,
+            mcp_task_result_finalized_at: None,
+            mcp_task_output_tail: None,
+        }
+    }
+
+    fn observation(status: &str, exit_code: Option<i32>) -> ConnectorExecutionObservation<'_> {
+        ConnectorExecutionObservation {
+            executor_status: status,
+            stdout_cursor: 0,
+            stderr_cursor: 0,
+            exit_code,
+            started_at: None,
+            finished_at: None,
+            check_completed: None,
+            failed_check: None,
+            assertion_evidence: None,
+            validated_workspace_sha256: None,
+            executor_failure_code: None,
+            mcp_task_output_tail: None,
+            now: 2,
+        }
+    }
+
+    #[test]
+    fn runner_job_lifecycle_projects_to_connector_execution_semantics() {
+        let execution = execution("accepted");
+        let cases: [(&str, StateOutcome); 9] = [
+            ("queued", ("queued", None, None, None)),
+            ("agent_queued", ("queued", None, None, None)),
+            ("started", ("running", None, None, None)),
+            ("running", ("running", None, None, None)),
+            ("stop_requested", ("running", None, None, None)),
+            (
+                "timeout",
+                (
+                    "failed",
+                    Some("executor"),
+                    Some("command_timeout"),
+                    Some("timeout"),
+                ),
+            ),
+            (
+                "timed_out",
+                (
+                    "failed",
+                    Some("executor"),
+                    Some("command_timeout"),
+                    Some("timeout"),
+                ),
+            ),
+            (
+                "lost",
+                (
+                    "unknown",
+                    Some("executor"),
+                    Some("executor_lost"),
+                    Some("executor_terminal_unknown"),
+                ),
+            ),
+            ("completed", ("succeeded", None, None, Some("exit_zero"))),
+        ];
+
+        for (status, expected) in cases {
+            let exit_code = (status == "completed").then_some(0);
+            assert_eq!(
+                observed_state(&execution, &observation(status, exit_code)),
+                expected,
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn runner_recovery_overlay_and_unknown_status_keep_boundary_specific_semantics() {
+        assert!(ConnectorExecution::executor_status_recognized("recovering"));
+        assert!(!ConnectorExecution::executor_status_recognized("unknown"));
+        assert_eq!(
+            observed_state(&execution("queued"), &observation("recovering", None)),
+            ("queued", None, None, None)
+        );
+        assert_eq!(
+            observed_state(&execution("running"), &observation("recovering", None)),
+            ("running", None, None, None)
+        );
+        assert_eq!(
+            observed_state(&execution("accepted"), &observation("unknown", None)),
+            ("running", None, None, None),
+            "direct/internal unknown fallback stays conservative; callers reject it before projection"
+        );
     }
 }

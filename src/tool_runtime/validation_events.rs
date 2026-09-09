@@ -5,6 +5,7 @@
 //! mutation, and model-facing ToolResult composition.
 
 use serde_json::{json, Value};
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_tool_runtime_contracts::tool_audit::{
     assertion_validation_identity, is_structured_validation_target_identity,
     is_validation_execution_identity,
@@ -175,8 +176,10 @@ impl ToolRuntime {
                 .get("status")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
+            let job_lifecycle = RunnerJobLifecycle::from_wire(job_status).ok();
             let exit_code = status.output.get("exit_code").and_then(Value::as_i64);
-            let succeeded = job_status == "completed" && exit_code == Some(0);
+            let succeeded =
+                job_lifecycle == Some(RunnerJobLifecycle::Completed) && exit_code == Some(0);
             observed.status = Some(if succeeded { "succeeded" } else { "failed" }.to_string());
             observed.exit_code = exit_code;
             observed.started_at = status.output.get("started_at").and_then(Value::as_i64);
@@ -185,10 +188,14 @@ impl ToolRuntime {
                 observed.timestamp = completed_at;
             }
             observed.duration_ms = status.output.get("duration_ms").and_then(Value::as_u64);
-            observed.failure_kind = (!succeeded).then(|| match job_status {
-                "timeout" | "timed_out" => "timeout".to_string(),
-                "stopped" | "cancelled" => "cancelled".to_string(),
-                "lost" => "execution_lost".to_string(),
+            observed.failure_kind = (!succeeded).then(|| match job_lifecycle {
+                Some(RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut) => {
+                    "timeout".to_string()
+                }
+                Some(RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled) => {
+                    "cancelled".to_string()
+                }
+                Some(RunnerJobLifecycle::Lost) => "execution_lost".to_string(),
                 _ => "command_exit_nonzero".to_string(),
             });
 
@@ -212,10 +219,10 @@ impl ToolRuntime {
                         .unwrap_or(Value::Null);
                 }
             }
-            output["execution_state"] = json!(match job_status {
-                "timeout" | "timed_out" => "timed_out",
-                "stopped" | "cancelled" => "cancelled",
-                "lost" => "lost",
+            output["execution_state"] = json!(match job_lifecycle {
+                Some(RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut) => "timed_out",
+                Some(RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled) => "cancelled",
+                Some(RunnerJobLifecycle::Lost) => "lost",
                 _ => "completed",
             });
             output["exit_code"] = status
@@ -293,18 +300,10 @@ impl ToolRuntime {
         let retained_terminal_job_ids = jobs
             .iter()
             .filter(|job| {
-                matches!(
-                    job.get("status").and_then(Value::as_str),
-                    Some(
-                        "completed"
-                            | "failed"
-                            | "timeout"
-                            | "timed_out"
-                            | "stopped"
-                            | "cancelled"
-                            | "lost"
-                    )
-                )
+                job.get("status")
+                    .and_then(Value::as_str)
+                    .and_then(|status| RunnerJobLifecycle::from_wire(status).ok())
+                    .is_some_and(RunnerJobLifecycle::is_terminal)
             })
             .filter_map(|job| job.get("job_id").and_then(Value::as_str))
             .collect::<Vec<_>>();
@@ -316,10 +315,9 @@ impl ToolRuntime {
                 .get("status")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !matches!(
-                status_name,
-                "completed" | "failed" | "timeout" | "timed_out" | "stopped" | "cancelled" | "lost"
-            ) {
+            if !RunnerJobLifecycle::from_wire(status_name)
+                .is_ok_and(RunnerJobLifecycle::is_terminal)
+            {
                 continue;
             }
             let status = self
@@ -339,6 +337,7 @@ impl ToolRuntime {
                 .get("status")
                 .and_then(Value::as_str)
                 .unwrap_or(status_name);
+            let terminal_lifecycle = RunnerJobLifecycle::from_wire(terminal_status).ok();
             let (
                 tool_name,
                 validation_target_id,
@@ -466,10 +465,10 @@ impl ToolRuntime {
             if let Some(validation_tool) = validation_tool {
                 output["validation_tool"] = json!(validation_tool);
             }
-            output["execution_state"] = json!(match terminal_status {
-                "timeout" | "timed_out" => "timed_out",
-                "stopped" | "cancelled" => "cancelled",
-                "lost" => "lost",
+            output["execution_state"] = json!(match terminal_lifecycle {
+                Some(RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut) => "timed_out",
+                Some(RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled) => "cancelled",
+                Some(RunnerJobLifecycle::Lost) => "lost",
                 _ => "completed",
             });
             output["exit_code"] = status

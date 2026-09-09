@@ -19,6 +19,7 @@ mod webcodex_runner;
 #[cfg(test)]
 use runner_operation::RunnerOperation;
 use runner_operation::{RunnerFileOperation, RunnerInvocationMetadata, RunnerJobOperation};
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_core::{
     apply_edits_shared, apply_patch_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway,
     runner_operation, runner_protocol, validation_bridge,
@@ -2852,14 +2853,11 @@ fn cargo_activity_from_stderr(
 }
 
 fn runner_job_is_terminal(status: &str) -> bool {
-    matches!(
-        status,
-        "completed" | "failed" | "stopped" | "timeout" | "timed_out" | "lost" | "cancelled"
-    )
+    RunnerJobLifecycle::from_wire(status).is_ok_and(RunnerJobLifecycle::is_terminal)
 }
 
 fn runner_job_is_active(status: &str) -> bool {
-    matches!(status, "agent_queued" | "running" | "stop_requested")
+    RunnerJobLifecycle::from_wire(status).is_ok_and(RunnerJobLifecycle::is_runner_active)
 }
 
 fn job_prestart_lifecycle(operation: &RunnerJobOperation) -> Option<ShellCommandExecutionState> {
@@ -2928,10 +2926,16 @@ fn raw_shell_job_terminal_lifecycle(
     status: &str,
     exit_code: Option<i32>,
 ) -> ShellCommandExecutionState {
-    match status {
-        "timeout" | "timed_out" => ShellCommandExecutionState::TimedOut,
-        "completed" | "stopped" | "cancelled" => ShellCommandExecutionState::Completed,
-        "failed" if exit_code.is_some() => ShellCommandExecutionState::Completed,
+    match RunnerJobLifecycle::from_wire(status).ok() {
+        Some(lifecycle) if lifecycle.is_timed_out() => ShellCommandExecutionState::TimedOut,
+        Some(
+            RunnerJobLifecycle::Completed
+            | RunnerJobLifecycle::Stopped
+            | RunnerJobLifecycle::Cancelled,
+        ) => ShellCommandExecutionState::Completed,
+        Some(RunnerJobLifecycle::Failed) if exit_code.is_some() => {
+            ShellCommandExecutionState::Completed
+        }
         _ => ShellCommandExecutionState::OutcomeUnknown,
     }
 }
@@ -3477,10 +3481,16 @@ impl JobManager {
             job.snapshot.update_seq = job.snapshot.update_seq.saturating_add(1);
             if !delta.status.trim().is_empty() {
                 let incoming_status = delta.status.trim();
-                let would_regress_stop = job.snapshot.status == "stop_requested"
-                    && matches!(incoming_status, "agent_queued" | "running");
-                let would_regress_running =
-                    job.snapshot.status == "running" && incoming_status == "agent_queued";
+                let current_lifecycle = RunnerJobLifecycle::from_wire(&job.snapshot.status).ok();
+                let incoming_lifecycle = RunnerJobLifecycle::from_wire(incoming_status).ok();
+                let would_regress_stop = current_lifecycle
+                    == Some(RunnerJobLifecycle::StopRequested)
+                    && matches!(
+                        incoming_lifecycle,
+                        Some(RunnerJobLifecycle::RunnerQueued | RunnerJobLifecycle::Running)
+                    );
+                let would_regress_running = current_lifecycle == Some(RunnerJobLifecycle::Running)
+                    && incoming_lifecycle == Some(RunnerJobLifecycle::RunnerQueued);
                 if !would_regress_stop && !would_regress_running {
                     job.snapshot.status = incoming_status.to_string();
                 }
@@ -3491,16 +3501,18 @@ impl JobManager {
             if job.snapshot.started_at.is_none()
                 && job.snapshot.command_execution_state
                     != Some(ShellCommandExecutionState::NotStarted)
-                && matches!(
-                    job.snapshot.status.as_str(),
-                    "running"
-                        | "completed"
-                        | "failed"
-                        | "stopped"
-                        | "timeout"
-                        | "timed_out"
-                        | "cancelled"
-                )
+                && RunnerJobLifecycle::from_wire(&job.snapshot.status).is_ok_and(|lifecycle| {
+                    matches!(
+                        lifecycle,
+                        RunnerJobLifecycle::Running
+                            | RunnerJobLifecycle::Completed
+                            | RunnerJobLifecycle::Failed
+                            | RunnerJobLifecycle::Stopped
+                            | RunnerJobLifecycle::Timeout
+                            | RunnerJobLifecycle::TimedOut
+                            | RunnerJobLifecycle::Cancelled
+                    )
+                })
             {
                 job.snapshot.started_at = Some(now);
             }

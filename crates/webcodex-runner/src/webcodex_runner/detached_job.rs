@@ -27,6 +27,7 @@ use std::sync::mpsc;
 #[cfg(any(unix, windows))]
 use std::time::Instant;
 use uuid::Uuid;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_core::runner_protocol::{
     validate_process_argv, ShellCommandExecutionState, ShellJobActivity, ShellJobActivityPhase,
     ShellJobActivitySource, ShellJobActivityState, ShellJobContext, ShellJobSnapshot,
@@ -1338,16 +1339,16 @@ pub(crate) fn snapshot_from_detached_record(
     }
     let terminal = record.terminal.as_ref();
     let status = match terminal.map(|value| value.status.as_str()) {
-        Some("handoff_failed") => "failed",
-        Some("supervisor_lost") => "lost",
-        Some("timeout") => "timeout",
-        Some("completed") => "completed",
-        Some("failed") => "failed",
-        Some("stopped") => "stopped",
+        Some("handoff_failed") => RunnerJobLifecycle::Failed,
+        Some("supervisor_lost") => RunnerJobLifecycle::Lost,
+        Some("timeout") => RunnerJobLifecycle::Timeout,
+        Some("completed") => RunnerJobLifecycle::Completed,
+        Some("failed") => RunnerJobLifecycle::Failed,
+        Some("stopped") => RunnerJobLifecycle::Stopped,
         Some(other) => return Err(format!("unsupported detached terminal status {other}")),
-        None if record.stop_requested => "stop_requested",
-        None if record.ownership_accepted_at_unix_ms.is_some() => "running",
-        None => "agent_queued",
+        None if record.stop_requested => RunnerJobLifecycle::StopRequested,
+        None if record.ownership_accepted_at_unix_ms.is_some() => RunnerJobLifecycle::Running,
+        None => RunnerJobLifecycle::RunnerQueued,
     };
     let command_execution_state = match terminal.map(|value| value.status.as_str()) {
         Some("handoff_failed") => Some(ShellCommandExecutionState::NotStarted),
@@ -1357,7 +1358,11 @@ pub(crate) fn snapshot_from_detached_record(
         Some(_) => None,
         None => None,
     };
-    let activity = matches!(status, "running" | "stop_requested").then_some(ShellJobActivity {
+    let activity = matches!(
+        status,
+        RunnerJobLifecycle::Running | RunnerJobLifecycle::StopRequested
+    )
+    .then_some(ShellJobActivity {
         state: ShellJobActivityState::Working,
         phase: ShellJobActivityPhase::ProcessRunning,
         source: ShellJobActivitySource::RunnerExecution,
@@ -1371,7 +1376,7 @@ pub(crate) fn snapshot_from_detached_record(
     Ok(ShellJobSnapshot {
         job_id: record.job_id.clone(),
         request_id: record.request_id.clone(),
-        status: status.to_string(),
+        status: status.as_wire().to_string(),
         update_seq: record.update_seq,
         created_at: record.created_at_unix_ms.div_euclid(1000),
         started_at: record

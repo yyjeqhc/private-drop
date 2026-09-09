@@ -1,41 +1,22 @@
 use super::*;
 
 #[test]
-fn typed_job_lifecycle_preserves_exact_wire_contract_and_rejects_unknown() {
+fn registry_lifecycle_alias_consumes_core_contract_without_absorbing_recovery() {
     use crate::state::JobLifecycleState;
+    use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
-    let cases = [
-        ("queued", JobLifecycleState::Queued, false, false),
-        ("agent_queued", JobLifecycleState::RunnerQueued, false, true),
-        ("started", JobLifecycleState::StartedLegacy, false, false),
-        ("running", JobLifecycleState::Running, false, true),
-        (
-            "stop_requested",
-            JobLifecycleState::StopRequested,
-            false,
-            true,
-        ),
-        ("completed", JobLifecycleState::Completed, true, false),
-        ("failed", JobLifecycleState::Failed, true, false),
-        ("stopped", JobLifecycleState::Stopped, true, false),
-        ("timeout", JobLifecycleState::Timeout, true, false),
-        ("timed_out", JobLifecycleState::TimedOut, true, false),
-        ("lost", JobLifecycleState::Lost, true, false),
-        ("cancelled", JobLifecycleState::Cancelled, true, false),
-    ];
-    for (wire, expected, terminal, runner_active) in cases {
-        let parsed = JobLifecycleState::from_wire(wire).unwrap();
-        assert_eq!(parsed, expected);
-        assert_eq!(parsed.as_wire(), wire);
-        assert_eq!(parsed.is_terminal(), terminal);
-        assert_eq!(parsed.is_runner_active(), runner_active);
-    }
+    let runner_queued = JobLifecycleState::from_wire("agent_queued").unwrap();
+    let started = JobLifecycleState::from_wire("started").unwrap();
+    assert_eq!(runner_queued, RunnerJobLifecycle::RunnerQueued);
+    assert!(runner_queued.is_runner_active());
+    assert_eq!(started, RunnerJobLifecycle::StartedLegacy);
+    assert!(started.is_active());
+    assert!(!started.is_runner_active());
+
     assert!(JobLifecycleState::from_wire("recovering").is_err());
+    assert!(crate::job_status_is_active("recovering"));
     assert!(JobLifecycleState::from_wire("mystery").is_err());
-    assert!(JobLifecycleState::Queued.is_active());
-    assert!(JobLifecycleState::StartedLegacy.is_active());
-    assert!(JobLifecycleState::RunnerQueued.is_active());
-    assert!(!JobLifecycleState::Completed.is_active());
+    assert!(!crate::job_status_is_active("mystery"));
 }
 
 #[tokio::test]

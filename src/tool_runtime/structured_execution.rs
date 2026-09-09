@@ -7,6 +7,7 @@ use crate::runner_protocol::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_runner_registry::RunnerAccess;
 
 pub(crate) const STRUCTURED_EXECUTION_SYNC_WAIT_SECS: u64 = 10;
@@ -168,15 +169,25 @@ pub(crate) async fn await_hidden_structured_job(
 }
 
 fn continued_execution_state(status: &str, started: bool) -> (&'static str, bool) {
-    match status {
-        "queued" | "agent_queued" | "started" if started => ("running", true),
-        "queued" | "agent_queued" | "started" => ("queued", false),
-        "running" => ("running", true),
-        "stop_requested" if started => ("running", true),
-        "stop_requested" => ("queued", false),
-        // Recovery is a real retained Job contract, but it is not proof that
-        // the execution is presently running. Preserve uncertainty explicitly.
-        "recovering" => ("outcome_unknown", true),
+    // Recovery is a Server observation overlay, not Runner lifecycle truth, and
+    // does not prove that execution is presently running.
+    if status == "recovering" {
+        return ("outcome_unknown", true);
+    }
+    match RunnerJobLifecycle::from_wire(status).ok() {
+        Some(
+            RunnerJobLifecycle::Queued
+            | RunnerJobLifecycle::RunnerQueued
+            | RunnerJobLifecycle::StartedLegacy,
+        ) if started => ("running", true),
+        Some(
+            RunnerJobLifecycle::Queued
+            | RunnerJobLifecycle::RunnerQueued
+            | RunnerJobLifecycle::StartedLegacy,
+        ) => ("queued", false),
+        Some(RunnerJobLifecycle::Running) => ("running", true),
+        Some(RunnerJobLifecycle::StopRequested) if started => ("running", true),
+        Some(RunnerJobLifecycle::StopRequested) => ("queued", false),
         _ => ("outcome_unknown", true),
     }
 }

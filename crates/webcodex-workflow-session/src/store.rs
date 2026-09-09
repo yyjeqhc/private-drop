@@ -8,6 +8,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_core::validation_identity::{
     assertion_validation_identity, is_validation_execution_identity,
 };
@@ -1654,6 +1655,9 @@ impl SessionStore {
             // authoritative execution activity.
             return false;
         };
+        let Ok(job_lifecycle) = RunnerJobLifecycle::from_wire(job_status) else {
+            return false;
+        };
         if !is_valid_session_id(session_id)
             || !is_safe_job_id(job_id)
             || retained_terminal_job_ids.len() > MAX_MATERIALIZED_VALIDATION_JOB_IDS
@@ -1675,10 +1679,7 @@ impl SessionStore {
                     | "run_job"
             )
             || !valid_target
-            || !matches!(
-                job_status,
-                "completed" | "failed" | "timeout" | "timed_out" | "stopped" | "cancelled" | "lost"
-            )
+            || !job_lifecycle.is_terminal()
         {
             return false;
         }
@@ -1708,27 +1709,31 @@ impl SessionStore {
                     })
             })
             .unwrap_or_default();
-        let process_succeeded = job_status == "completed" && exit_code == Some(0);
+        let process_succeeded =
+            job_lifecycle == RunnerJobLifecycle::Completed && exit_code == Some(0);
         let succeeded = process_succeeded && validation_passed.unwrap_or(true);
-        let failure_kind = (!succeeded).then(|| match job_status {
-            "timeout" | "timed_out" => "timeout".to_string(),
-            "stopped" | "cancelled" => "cancelled".to_string(),
-            "lost" => "execution_lost".to_string(),
+        let failure_kind = (!succeeded).then(|| match job_lifecycle {
+            RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut => "timeout".to_string(),
+            RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled => "cancelled".to_string(),
+            RunnerJobLifecycle::Lost => "execution_lost".to_string(),
             _ if process_succeeded => "validation_failed".to_string(),
             _ => "command_exit_nonzero".to_string(),
         });
-        let terminal_execution_state = match job_status {
-            "completed" | "failed" => "completed",
-            "timeout" | "timed_out" => "timed_out",
-            "stopped" | "cancelled" => "cancelled",
-            "lost" => "outcome_unknown",
+        let terminal_execution_state = match job_lifecycle {
+            RunnerJobLifecycle::Completed | RunnerJobLifecycle::Failed => "completed",
+            RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut => "timed_out",
+            RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled => "cancelled",
+            RunnerJobLifecycle::Lost => "outcome_unknown",
             _ => "outcome_unknown",
         };
         let expectation_output = serde_json::json!({
             "job_id": job_id,
             "exit_code": exit_code,
             "execution_state": terminal_execution_state,
-            "command_completed": matches!(job_status, "completed" | "failed") && exit_code.is_some(),
+            "command_completed": matches!(
+                job_lifecycle,
+                RunnerJobLifecycle::Completed | RunnerJobLifecycle::Failed
+            ) && exit_code.is_some(),
         });
         let failure_expectation_result = classify_failure_expectation(
             succeeded,

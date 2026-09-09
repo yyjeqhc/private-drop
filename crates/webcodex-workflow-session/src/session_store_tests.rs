@@ -1257,3 +1257,100 @@ fn read_only_guards_block_write_and_shell_classifications() {
         .guard_denial(&read_only.session_id, session_tool_contract("read_file"))
         .is_none());
 }
+
+#[test]
+fn validation_job_terminal_projects_typed_runner_lifecycle_without_absorbing_active_or_recovery() {
+    let store = SessionStore::default();
+    let project = "agent:workflow-session:runner-lifecycle".to_string();
+    let session = store.start_session(Some(project.clone()), Some("runner lifecycle".to_string()));
+    let target = "target:0123456789abcdef01234567";
+    let cases = [
+        ("completed", Some(0), Some(true), "succeeded", None),
+        (
+            "completed",
+            Some(0),
+            Some(false),
+            "failed",
+            Some("validation_failed"),
+        ),
+        (
+            "failed",
+            Some(1),
+            Some(false),
+            "failed",
+            Some("command_exit_nonzero"),
+        ),
+        ("timeout", None, Some(false), "failed", Some("timeout")),
+        ("timed_out", None, Some(false), "failed", Some("timeout")),
+        ("stopped", None, Some(false), "failed", Some("cancelled")),
+        ("cancelled", None, Some(false), "failed", Some("cancelled")),
+        ("lost", None, Some(false), "failed", Some("execution_lost")),
+    ];
+
+    for (index, (job_status, exit_code, validation_passed, status, failure_kind)) in
+        cases.into_iter().enumerate()
+    {
+        let job_id = format!("job-lifecycle-{index}");
+        assert!(store.record_validation_job_terminal(
+            &session.session_id,
+            &job_id,
+            &[job_id.as_str()],
+            "cargo_check",
+            session_tool_contract("cargo_check"),
+            Some(project.clone()),
+            target,
+            None,
+            job_status,
+            exit_code,
+            validation_passed,
+            Some(90),
+            Some(100 + index as i64),
+            Some(10_000),
+            None,
+        ));
+        let summary = store.summary(&session.session_id, None).unwrap();
+        let event = summary
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.job_id.as_deref() == Some(job_id.as_str()))
+            .expect("terminal validation event");
+        assert_eq!(event.status.as_deref(), Some(status), "{job_status}");
+        assert_eq!(event.failure_kind.as_deref(), failure_kind, "{job_status}");
+    }
+
+    for (index, status) in [
+        "queued",
+        "agent_queued",
+        "started",
+        "running",
+        "stop_requested",
+        "recovering",
+        "unknown",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let job_id = format!("nonterminal-lifecycle-{index}");
+        assert!(
+            !store.record_validation_job_terminal(
+                &session.session_id,
+                &job_id,
+                &[job_id.as_str()],
+                "cargo_check",
+                session_tool_contract("cargo_check"),
+                Some(project.clone()),
+                target,
+                None,
+                status,
+                None,
+                None,
+                Some(90),
+                Some(200 + index as i64),
+                Some(10_000),
+                None,
+            ),
+            "{status} must not materialize terminal validation evidence"
+        );
+    }
+}

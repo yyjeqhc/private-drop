@@ -5,9 +5,8 @@ use super::{permissions, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_protocol::{RunnerView, ShellJobInfo};
 use serde_json::{json, Value};
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
-const RUNNING_JOB_STATUSES: &[&str] = &["running", "started"];
-const RUNNER_QUEUED_JOB_STATUSES: &[&str] = &["queued", "agent_queued"];
 const LIST_RUNNERS_MAX_CLIENT_IDS: usize = 8;
 const TARGET_CLIENT_ID_MAX_CHARS: usize = 128;
 
@@ -1326,11 +1325,17 @@ fn active_jobs_for_client(runner_jobs: &[ShellJobInfo], client_id: &str) -> usiz
 }
 
 fn job_status_is_running(status: &str) -> bool {
-    RUNNING_JOB_STATUSES.contains(&status)
+    matches!(
+        RunnerJobLifecycle::from_wire(status),
+        Ok(RunnerJobLifecycle::Running | RunnerJobLifecycle::StartedLegacy)
+    )
 }
 
 fn job_status_is_runner_queued(status: &str) -> bool {
-    RUNNER_QUEUED_JOB_STATUSES.contains(&status)
+    matches!(
+        RunnerJobLifecycle::from_wire(status),
+        Ok(RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued)
+    )
 }
 
 fn job_concurrency_for_client(client: &RunnerView, runner_jobs: &[ShellJobInfo]) -> Value {

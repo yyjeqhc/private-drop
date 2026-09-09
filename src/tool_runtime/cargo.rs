@@ -21,6 +21,7 @@ use crate::runner_protocol::{
     ShellCommandExecutionState, ShellJobOpRequest, ShellJobValidationMetadata,
     ShellJobValidationStep,
 };
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 pub(crate) use webcodex_validation::parse_cargo_test_run_metadata;
 
@@ -1155,8 +1156,10 @@ impl ToolRuntime {
         let stdout_truncated = stdout_source_truncated || bounded_stdout_truncated;
         let stderr_truncated = stderr_source_truncated || bounded_stderr_truncated;
         let exit_code = job.as_ref().and_then(|job| job.exit_code);
-        let timed_out = matches!(job_status, "timeout" | "timed_out");
-        let process_passed = job_status == "completed" && exit_code == Some(0);
+        let lifecycle = RunnerJobLifecycle::from_wire(job_status).ok();
+        let timed_out = lifecycle.is_some_and(RunnerJobLifecycle::is_timed_out);
+        let process_passed =
+            lifecycle == Some(RunnerJobLifecycle::Completed) && exit_code == Some(0);
         let mut payload = json!({
             "project": handoff.project,
             "command_summary": handoff.command_summary,
@@ -1668,7 +1671,12 @@ impl Drop for ValidationCleanupGuard {
 }
 
 fn validation_handoff_execution_state(status: &str, started: bool) -> (&'static str, bool) {
-    let pending_status = matches!(status, "queued" | "agent_queued" | "started");
+    let pending_status = matches!(
+        RunnerJobLifecycle::from_wire(status),
+        Ok(RunnerJobLifecycle::Queued
+            | RunnerJobLifecycle::RunnerQueued
+            | RunnerJobLifecycle::StartedLegacy)
+    );
     let command_started = !pending_status || started;
     (
         if command_started { "running" } else { "queued" },

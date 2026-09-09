@@ -18,6 +18,7 @@ use rusqlite::{params, Transaction};
 #[cfg(any(test, feature = "root-test-support"))]
 use rusqlite::{OptionalExtension, TransactionBehavior};
 use serde_json::json;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 #[cfg(any(test, feature = "root-test-support"))]
 const TERMINAL_CONTINUATION_READY_PREDICATE: &str =
@@ -538,12 +539,19 @@ impl Database {
             touch_task(&tx, &execution.task_id, now)?;
             return commit_execution(tx, execution_id);
         }
-        let recognized = ConnectorExecution::executor_status_recognized(executor_status);
+        let lifecycle = RunnerJobLifecycle::from_wire(executor_status).ok();
+        let recognized = executor_status == "recovering" || lifecycle.is_some();
         let state = if execution.state == "cancel_requested" {
             "cancel_requested"
-        } else if matches!(executor_status, "queued" | "agent_queued") {
+        } else if matches!(
+            lifecycle,
+            Some(RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued)
+        ) {
             "queued"
-        } else if matches!(executor_status, "running" | "started") {
+        } else if matches!(
+            lifecycle,
+            Some(RunnerJobLifecycle::Running | RunnerJobLifecycle::StartedLegacy)
+        ) {
             "running"
         } else {
             execution.state.as_str()

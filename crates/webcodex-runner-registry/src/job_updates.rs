@@ -326,6 +326,7 @@ fn invalid_progress(code: &'static str) -> Result<(), ValidationProtocolError> {
 fn validate_validation_progress(
     job: &ShellJobRecord,
     update: &RunnerJobUpdateRequest,
+    lifecycle: JobLifecycleState,
 ) -> Result<(), ValidationProtocolError> {
     if job.validation_steps.is_empty() {
         return if update.validation_progress.is_none() {
@@ -337,22 +338,31 @@ fn validate_validation_progress(
     if job.validation_steps.iter().collect::<HashSet<_>>().len() != job.validation_steps.len() {
         return invalid_progress("validation_plan_invalid");
     }
-    let status = update.status.trim();
-    if update.finished && !is_final_job_status(status) {
+    if update.finished && !lifecycle.is_terminal() {
         return invalid_progress("validation_progress_invalid");
     }
     let cancelling = matches!(
-        status,
-        "stopped" | "cancelled" | "timeout" | "timed_out" | "lost"
+        lifecycle,
+        JobLifecycleState::Stopped
+            | JobLifecycleState::Cancelled
+            | JobLifecycleState::Timeout
+            | JobLifecycleState::TimedOut
+            | JobLifecycleState::Lost
     );
     let Some(progress) = update.validation_progress.as_ref() else {
-        if matches!(status, "queued" | "agent_queued") || cancelling {
+        if matches!(
+            lifecycle,
+            JobLifecycleState::Queued | JobLifecycleState::RunnerQueued
+        ) || cancelling
+        {
             return Ok(());
         }
         return invalid_progress("validation_progress_missing");
     };
-    if matches!(status, "queued" | "agent_queued")
-        || progress.completed > job.validation_steps.len()
+    if matches!(
+        lifecycle,
+        JobLifecycleState::Queued | JobLifecycleState::RunnerQueued
+    ) || progress.completed > job.validation_steps.len()
     {
         return invalid_progress("validation_progress_invalid");
     }
@@ -370,7 +380,7 @@ fn validate_validation_progress(
         return invalid_progress("validation_progress_invalid");
     }
     let no_active_step = progress.current_step.is_none() && progress.failed_step.is_none();
-    let infrastructure_failure = status == "failed"
+    let infrastructure_failure = lifecycle == JobLifecycleState::Failed
         && update.finished
         && update.exit_code.is_none()
         && update
@@ -382,13 +392,13 @@ fn validate_validation_progress(
         no_active_step
     } else if infrastructure_failure {
         progress.completed < job.validation_steps.len() && no_active_step
-    } else if !is_final_job_status(status) {
+    } else if !lifecycle.is_terminal() {
         let expected = job.validation_steps.get(progress.completed);
         expected.map(String::as_str) == progress.current_step.as_deref()
             && progress.failed_step.is_none()
-    } else if status == "completed" && update.exit_code == Some(0) {
+    } else if lifecycle == JobLifecycleState::Completed && update.exit_code == Some(0) {
         progress.completed == job.validation_steps.len() && no_active_step
-    } else if status == "failed" {
+    } else if lifecycle == JobLifecycleState::Failed {
         let expected = job.validation_steps.get(progress.completed);
         expected.map(String::as_str) == progress.failed_step.as_deref()
             && progress.current_step.is_none()
@@ -397,7 +407,7 @@ fn validate_validation_progress(
     };
     if valid {
         Ok(())
-    } else if status == "completed" && update.exit_code == Some(0) {
+    } else if lifecycle == JobLifecycleState::Completed && update.exit_code == Some(0) {
         invalid_progress("validation_progress_incomplete")
     } else {
         invalid_progress("validation_progress_invalid")
@@ -416,14 +426,19 @@ fn validation_activity_phase(step: &str) -> Option<ShellJobActivityPhase> {
 fn validate_job_activity(
     job: &ShellJobRecord,
     update: &RunnerJobUpdateRequest,
+    lifecycle: JobLifecycleState,
 ) -> Result<(), ValidationProtocolError> {
     let Some(activity) = update.activity else {
         // Activity was added as an optional protocol field. Older Runners may
         // omit it without changing canonical Job lifecycle semantics.
         return Ok(());
     };
-    let status = update.status.trim();
-    if !activity.is_canonical() || !matches!(status, "running" | "stop_requested") {
+    if !activity.is_canonical()
+        || !matches!(
+            lifecycle,
+            JobLifecycleState::Running | JobLifecycleState::StopRequested
+        )
+    {
         return invalid_progress("job_activity_invalid");
     }
     match activity.source {
@@ -474,9 +489,9 @@ fn validate_job_activity(
 fn validate_command_execution_state(
     job: &ShellJobRecord,
     update: &RunnerJobUpdateRequest,
+    lifecycle: JobLifecycleState,
 ) -> Result<(), ValidationProtocolError> {
-    let status = update.status.trim();
-    let terminal = is_final_job_status(status);
+    let terminal = lifecycle.is_terminal();
     if !terminal && update.command_execution_state.is_some() {
         return invalid_progress("command_execution_state_on_active_job");
     }
@@ -488,14 +503,26 @@ fn validate_command_execution_state(
     };
     let valid = match state {
         ShellCommandExecutionState::NotStarted => {
-            matches!(status, "failed" | "stopped" | "cancelled" | "lost")
-                && job.started_at.is_none()
+            matches!(
+                lifecycle,
+                JobLifecycleState::Failed
+                    | JobLifecycleState::Stopped
+                    | JobLifecycleState::Cancelled
+                    | JobLifecycleState::Lost
+            ) && job.started_at.is_none()
         }
-        ShellCommandExecutionState::OutcomeUnknown => matches!(status, "failed" | "lost"),
-        ShellCommandExecutionState::TimedOut => matches!(status, "timeout" | "timed_out"),
-        ShellCommandExecutionState::Completed => {
-            matches!(status, "completed" | "failed" | "stopped" | "cancelled")
-        }
+        ShellCommandExecutionState::OutcomeUnknown => matches!(
+            lifecycle,
+            JobLifecycleState::Failed | JobLifecycleState::Lost
+        ),
+        ShellCommandExecutionState::TimedOut => lifecycle.is_timed_out(),
+        ShellCommandExecutionState::Completed => matches!(
+            lifecycle,
+            JobLifecycleState::Completed
+                | JobLifecycleState::Failed
+                | JobLifecycleState::Stopped
+                | JobLifecycleState::Cancelled
+        ),
     };
     if valid {
         Ok(())
@@ -1914,20 +1941,7 @@ impl RunnerRegistry {
                 format!("job update status '{}' is invalid", incoming_status)
             }
         })?;
-        if sequenced
-            && !matches!(
-                incoming_lifecycle,
-                JobLifecycleState::RunnerQueued
-                    | JobLifecycleState::Running
-                    | JobLifecycleState::StopRequested
-                    | JobLifecycleState::Completed
-                    | JobLifecycleState::Failed
-                    | JobLifecycleState::Stopped
-                    | JobLifecycleState::Timeout
-                    | JobLifecycleState::TimedOut
-                    | JobLifecycleState::Cancelled
-                    | JobLifecycleState::Lost
-            )
+        if sequenced && !(incoming_lifecycle.is_runner_active() || incoming_lifecycle.is_terminal())
         {
             return Err(format!(
                 "job_state_reconciliation update status '{}' is invalid",
@@ -2023,9 +2037,9 @@ impl RunnerRegistry {
                 &body.job_id,
                 &body,
             );
-            if let Err(error) = validate_validation_progress(job, &body)
-                .and_then(|_| validate_command_execution_state(job, &body))
-                .and_then(|_| validate_job_activity(job, &body))
+            if let Err(error) = validate_validation_progress(job, &body, incoming_lifecycle)
+                .and_then(|_| validate_command_execution_state(job, &body, incoming_lifecycle))
+                .and_then(|_| validate_job_activity(job, &body, incoming_lifecycle))
             {
                 let terminal_now = now_ts();
                 job.lifecycle = JobLifecycleState::Failed;

@@ -1,4 +1,5 @@
 use super::*;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_core::validation_bridge::sanitize_bridge_text;
 use webcodex_core::validation_evidence::{PARSER_KIND, PARSER_VERSION};
 use webcodex_store::MAX_ASSERTION_EVIDENCE_BYTES;
@@ -273,11 +274,9 @@ impl ExecutionService {
             .await
             .map_err(|error| ("executor_status_unavailable", error))?;
         let executor_failure_code = job.error.as_deref().and_then(executor_failure_code);
+        let lifecycle = RunnerJobLifecycle::from_wire(&job.status).ok();
         let terminal_candidate = executor_failure_code.is_some()
-            || matches!(
-                job.status.as_str(),
-                "completed" | "stopped" | "cancelled" | "timeout" | "timed_out" | "lost" | "failed"
-            );
+            || lifecycle.is_some_and(RunnerJobLifecycle::is_terminal);
         let mcp_task_output_tail = if terminal_candidate {
             self.bounded_output_tail(&execution, runner_access).await
         } else {
@@ -288,7 +287,7 @@ impl ExecutionService {
                 .record_connector_mcp_task_output_tail(execution_id, output_tail)
                 .map_err(|error| ("task_store_error", error.to_string()))?;
         }
-        if job.status == "lost" {
+        if lifecycle == Some(RunnerJobLifecycle::Lost) {
             return Err((
                 "executor_status_unavailable",
                 job.error
@@ -325,7 +324,7 @@ impl ExecutionService {
             None
         };
         let check_succeeded_completely = execution.kind == "check"
-            && job.status == "completed"
+            && lifecycle == Some(RunnerJobLifecycle::Completed)
             && job.exit_code == Some(0)
             && progress.is_some_and(|progress| {
                 progress.completed == execution.check_plan.len()

@@ -101,6 +101,12 @@ The Runner is the trust boundary closest to the repository:
   fact: active Jobs enter a bounded `recovering` state and are restored from
   the Runner's inventory when the same instance reconnects.
 
+Runner Job wire lifecycle vocabulary is interpreted once by the canonical typed
+contract in `webcodex-core`; the Runner, Registry, Store, Connector runtime, and
+Workflow Session then project that lifecycle into their own domain states. Server
+recovery remains an orthogonal Registry overlay, so `recovering` is an observed
+recovery state rather than a Runner wire lifecycle value.
+
 ## Security boundary
 
 ```mermaid

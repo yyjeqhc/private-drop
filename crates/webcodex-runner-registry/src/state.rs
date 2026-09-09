@@ -10,6 +10,7 @@ use webcodex_core::coding_agent::{
 };
 use webcodex_core::mcp_gateway::McpGatewayResponse;
 use webcodex_core::plugin::PluginGatewayResponse;
+pub(super) use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle as JobLifecycleState;
 use webcodex_core::runner_operation::RunnerOperation;
 use webcodex_core::runner_protocol::{
     PersistentShellResult, RunnerBuildInfo, RunnerHostContext, RunnerPolicySummary,
@@ -264,87 +265,6 @@ pub enum ShellJobVisibility {
     Public,
     HiddenUntilHandoff,
     CleanupPending,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum JobLifecycleState {
-    Queued,
-    RunnerQueued,
-    StartedLegacy,
-    Running,
-    StopRequested,
-    Completed,
-    Failed,
-    Stopped,
-    Timeout,
-    TimedOut,
-    Lost,
-    Cancelled,
-}
-
-impl JobLifecycleState {
-    pub(super) fn from_wire(status: &str) -> Result<Self, String> {
-        match status {
-            "queued" => Ok(Self::Queued),
-            "agent_queued" => Ok(Self::RunnerQueued),
-            "started" => Ok(Self::StartedLegacy),
-            "running" => Ok(Self::Running),
-            "stop_requested" => Ok(Self::StopRequested),
-            "completed" => Ok(Self::Completed),
-            "failed" => Ok(Self::Failed),
-            "stopped" => Ok(Self::Stopped),
-            "timeout" => Ok(Self::Timeout),
-            "timed_out" => Ok(Self::TimedOut),
-            "lost" => Ok(Self::Lost),
-            "cancelled" => Ok(Self::Cancelled),
-            _ => Err(format!("unknown Runner Job lifecycle status: {status}")),
-        }
-    }
-
-    pub(super) const fn as_wire(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::RunnerQueued => "agent_queued",
-            Self::StartedLegacy => "started",
-            Self::Running => "running",
-            Self::StopRequested => "stop_requested",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Stopped => "stopped",
-            Self::Timeout => "timeout",
-            Self::TimedOut => "timed_out",
-            Self::Lost => "lost",
-            Self::Cancelled => "cancelled",
-        }
-    }
-
-    pub(super) const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Completed
-                | Self::Failed
-                | Self::Stopped
-                | Self::Timeout
-                | Self::TimedOut
-                | Self::Lost
-                | Self::Cancelled
-        )
-    }
-
-    /// Runner-owned active execution states. `StartedLegacy` is deliberately
-    /// excluded: the historical public vocabulary treats it as broadly active,
-    /// but it never participated in Runner recovery, reconciliation, or stop
-    /// delivery semantics.
-    pub(super) const fn is_runner_active(self) -> bool {
-        matches!(
-            self,
-            Self::RunnerQueued | Self::Running | Self::StopRequested
-        )
-    }
-
-    pub(super) const fn is_active(self) -> bool {
-        matches!(self, Self::Queued | Self::StartedLegacy) || self.is_runner_active()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
