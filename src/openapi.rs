@@ -1,7 +1,10 @@
+mod examples;
+
 use salvo::prelude::*;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
+use crate::route_metadata::{OpenApiOperationSpec, RouteOpenApiProjection};
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
     generic_tool_call_flattened_args_for_spec, registered_tool_specs, MAX_UNIFIED_DIFF_BYTES,
@@ -180,7 +183,7 @@ pub async fn openapi_json(depot: &mut Depot, res: &mut Response) {
 }
 
 pub(crate) fn build_openapi_spec() -> Value {
-    let mut spec = json!({
+    json!({
         "openapi": "3.1.0",
         "info": {
             "title": "WebCodex Runtime API",
@@ -193,622 +196,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "description": "WebCodex server"
             }
         ],
-        "paths": {
-            "/api/tools/list": {
-                "post": operation(
-                    "listRuntimeTools",
-                    "List runtime tools",
-                    "Read-only. Full detail returns MCP-compatible tool specs and can be too large for GPT Actions. Prefer callRuntimeTool with tool=tool_manifest for daily discovery; when using listRuntimeTools, pass summary_only=true plus category, features, or limit for bounded discovery.",
-                    "ToolsListRequest",
-                    "ToolsListResponse"
-                )
-            },
-            "/api/projects/list": {
-                "post": operation(
-                    "listProjects",
-                    "List Runner-registered Projects",
-                    "Read-only. When a Runner or Project is already known, pass exact client_id/project instead of reading the full registry; query is bounded text filtering over already-visible metadata and summary_only returns a compact workspace-selection projection.",
-                    "ListProjectsRequest",
-                    "ToolResult"
-                )
-            },
-            "/api/projects/register": {
-                "post": operation_with_examples(
-                    "registerProject",
-                    "Register an existing project",
-                    "Mutation with side effects. Registers an existing directory as a WebCodex project on the selected Runner. Executes on the Runner and is constrained by Runner policy. Requires Bearer auth.",
-                    "RegisterProjectRequest",
-                    "ToolResult",
-                    json!({
-                        "basic": {
-                            "summary": "Register an existing directory",
-                            "value": {
-                                "client_id": "oe",
-                                "id": "my-project",
-                                "name": "My Project",
-                                "path": "/root/git/my-project",
-                                "description": "Optional description",
-                                "allow_patch": true,
-                                "overwrite": false
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/create": {
-                "post": operation_with_examples(
-                    "createProject",
-                    "Create and register a new project",
-                    "Mutation with side effects. Creates a new directory, or explicitly adopts an already-existing empty directory, on the selected Runner and registers it as a WebCodex Project. Executes on the Runner and is constrained by Runner policy. Requires Bearer auth.",
-                    "CreateProjectRequest",
-                    "ToolResult",
-                    json!({
-                        "basicTemplate": {
-                            "summary": "Create a project with the basic template",
-                            "value": {
-                                "client_id": "oe",
-                                "id": "hello",
-                                "name": "Hello",
-                                "path": "/root/git/hello",
-                                "description": "A new project",
-                                "allow_patch": true,
-                                "template": "basic",
-                                "git_init": true,
-                                "adopt_existing_empty": false,
-                                "overwrite": false
-                            }
-                        },
-                        "emptyTemplate": {
-                            "summary": "Create an empty project",
-                            "value": {
-                                "client_id": "oe",
-                                "id": "scratch",
-                                "name": "Scratch",
-                                "path": "/root/git/scratch"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/runtime/status": {
-                "post": operation(
-                    "getRuntimeStatus",
-                    "Get runtime status",
-                    "Read-only runtime health/observability with Runner count/online_count/stale_count, project/Job counts, and safe allowlisted effective_config. compact=true compacts this response, not MCP schema discovery. Pass exact client_id for one Runner; omit it for fleet-wide status.",
-                    "RuntimeStatusRequest",
-                    "ToolResult"
-                )
-            },
-            "/api/jobs/status": {
-                "post": operation_with_examples(
-                    "getRuntimeJobStatus",
-                    "Get job status",
-                    "Read-only. Returns status, timing, and exit metadata for a runtime job. Use this to poll the job_id returned by run_job until status is completed, failed, stopped, or lost.",
-                    "JobStatusRequest",
-                    "ToolResult",
-                    json!({
-                        "byJobId": {
-                            "summary": "Poll a job by id",
-                            "value": {
-                                "job_id": "11111111-2222-3333-4444-555555555555"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/jobs/log": {
-                "post": operation_with_examples(
-                    "getRuntimeJobLog",
-                    "Get job log",
-                    "Read-only. Returns bounded tails, line totals, truncation, cursor, exit status, and detected summary for a job_id. Use cursor.stdout as offset to continue.",
-                    "JobLogRequest",
-                    "ToolResult",
-                    json!({
-                        "byJobId": {
-                            "summary": "Read the tail of a job log",
-                            "value": {
-                                "job_id": "11111111-2222-3333-4444-555555555555"
-                            }
-                        },
-                        "withTailLines": {
-                            "summary": "Read the last N stdout lines",
-                            "value": {
-                                "job_id": "11111111-2222-3333-4444-555555555555",
-                                "tail_lines": 200
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/jobs/list": {
-                "post": operation_with_examples(
-                    "listRuntimeJobs",
-                    "List runtime jobs",
-                    "Read-only bounded runtime job summaries. Inside a coding Session, prefer exact project/session_id filters; status combines with them using AND semantics. Filters only reduce caller-visible Jobs and are applied before limit. Never returns stdout/stderr bodies.",
-                    "ListJobsRequest",
-                    "ToolResult",
-                    json!({
-                        "all": {
-                            "summary": "List recent jobs",
-                            "value": {}
-                        },
-                        "running": {
-                            "summary": "List running jobs",
-                            "value": {
-                                "status": "running",
-                                "limit": 20
-                            }
-                        },
-                        "session": {
-                            "summary": "List Jobs for one coding Session",
-                            "value": {
-                                "project": "agent:special:webcodex",
-                                "session_id": "wc_sess_example"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/jobs/tail": {
-                "post": operation_with_examples(
-                    "getRuntimeJobTail",
-                    "Get job tail",
-                    "Read-only bounded stdout/stderr tails for a runtime job. Defaults to a bounded tail so the caller never reads full logs by default. Use the job_id returned by run_job.",
-                    "JobTailRequest",
-                    "ToolResult",
-                    json!({
-                        "byJobId": {
-                            "summary": "Read a bounded tail",
-                            "value": {
-                                "job_id": "11111111-2222-3333-4444-555555555555",
-                                "tail_lines": 50
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/read_file": {
-                "post": operation_with_examples(
-                    "readProjectFile",
-                    "Read a project file",
-                    "Read-only. Reads a UTF-8 project file through its owning Runner. Output is bounded; use start_line and limit for pagination. The response carries one text representation only: plain by default or 1-based numbered text when with_line_numbers=true.",
-                    "ReadProjectFileRequest",
-                    "ToolResult",
-                    json!({
-                        "readme": {
-                            "summary": "Read a project README",
-                            "value": {
-                                "project": "webcodex",
-                                "path": "README.md"
-                            }
-                        },
-                        "paginated": {
-                            "summary": "Read a slice of a source file",
-                            "value": {
-                                "project": "webcodex",
-                                "path": "src/main.rs",
-                                "start_line": 1,
-                                "limit": 100,
-                                "with_line_numbers": true
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/git_status": {
-                "post": operation_with_examples(
-                    "getProjectGitStatus",
-                    "Get project git status",
-                    "Runs `git status --porcelain` in a Runner-registered Project and returns stdout, stderr, and exit_code. Safe read-only project inspection; use before proposing changes or invoking mutation tools.",
-                    "ProjectIdRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Check git status of a project",
-                            "value": {
-                                "project": "webcodex"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/git_diff": {
-                "post": operation_with_examples(
-                    "getProjectGitDiff",
-                    "Get project git diff",
-                    "Runs `git diff` in a Runner-registered Project and returns stdout, stderr, and exit_code. Optional `args` scopes paths or adds flags (e.g. [\"--stat\"]). Read-only inspection; routes to the owning Runner.",
-                    "ProjectGitDiffRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Full diff of a project",
-                            "value": {
-                                "project": "webcodex"
-                            }
-                        },
-                        "withStat": {
-                            "summary": "Diffstat of a project",
-                            "value": {
-                                "project": "webcodex",
-                                "args": ["--stat"]
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/git_diff_summary": {
-                "post": operation_with_examples(
-                    "getProjectGitDiffSummary",
-                    "Get project git diff summary",
-                    "Read-only git diff summary for a Runner-registered Project: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Does not modify the worktree. Routes to the owning Runner.",
-                    "ProjectIdRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Diff summary of a project",
-                            "value": {
-                                "project": "webcodex"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/list_files": {
-                "post": operation_with_examples(
-                    "listProjectFiles",
-                    "List project files",
-                    "Read-only bounded file listing of a Runner-registered Project directory. Returns project-relative paths plus a file/dir kind. Optional `path` scopes a subdirectory; `limit` bounds the entry count. Routes to the owning Runner.",
-                    "ListProjectFilesRequest",
-                    "ToolResult",
-                    json!({
-                        "root": {
-                            "summary": "List project root",
-                            "value": {
-                                "project": "webcodex"
-                            }
-                        },
-                        "subdir": {
-                            "summary": "List a subdirectory",
-                            "value": {
-                                "project": "webcodex",
-                                "path": "src",
-                                "limit": 100
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/search_text": {
-                "post": operation_with_examples(
-                    "searchProjectText",
-                    "Search project text",
-                    "Read-only bounded project-text search. Regex is the default; prefer pattern_mode=literal for identifiers, snippets, paths, and other exact text. Results use project-relative paths and 1-based line numbers; optional context is bounded and sensitive/build directories are excluded.",
-                    "SearchProjectTextRequest",
-                    "ToolResult",
-                    json!({
-                        "byPattern": {
-                            "summary": "Search for a pattern",
-                            "value": {
-                                "project": "webcodex",
-                                "pattern": "fn main",
-                                "limit": 20,
-                                "context_before": 2,
-                                "context_after": 4
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/apply_unified_diff": {
-                "post": operation_with_examples(
-                    "applyUnifiedDiff",
-                    "Apply a unified diff to a project",
-                    "External/raw unified-diff mutation only, with side effects; requires Bearer auth and Runner shell capability. Use only when input is already a standard unified diff; ordinary model-generated edits should use callRuntimeTool with tool=apply_text_edits after reading the current file SHA, while contextual or large patch-shaped changes can use tool=apply_patch. Performs bounded preflight; failed preflight is zero-write and post-dispatch uncertainty requires workspace inspection.",
-                    "ApplyUnifiedDiffRequest",
-                    "ApplyUnifiedDiffToolResult",
-                    json!({
-                        "example": {
-                            "summary": "Apply a small unified diff",
-                            "value": {
-                                "project": "webcodex",
-                                "diff": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# WebCodex\n+edited\n"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/run_shell": {
-                "post": operation_with_examples(
-                    "runProjectShellCommand",
-                    "Run a shell command in a project",
-                    "Runs a shell command in a Runner-registered Project and returns stdout, stderr, exit_code plus command_started/command_ok/failure_kind/tool_failure. Executable with side effects; requires Bearer auth and Runner shell capability.",
-                    "RunShellRequest",
-                    "ToolResult",
-                    json!({
-                        "tests": {
-                            "summary": "Run the test suite",
-                            "value": {
-                                "project": "webcodex",
-                                "command": "cargo test"
-                            }
-                        },
-                        "withCwd": {
-                            "summary": "Run a command in a subdirectory",
-                            "value": {
-                                "project": "webcodex",
-                                "command": "ls",
-                                "cwd": "src"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/git_restore_paths": {
-                "post": operation_with_examples(
-                    "gitRestorePaths",
-                    "Restore tracked project paths",
-                    "Mutation with side effects. Runs `git restore -- <paths>` on selected tracked project-relative paths. Does not remove untracked files. Requires Bearer auth and the Runner `structured_process_argv` capability.",
-                    "GitRestorePathsRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Restore selected tracked paths",
-                            "value": {
-                                "project": "webcodex",
-                                "paths": ["tmp_probe.txt"]
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/discard_untracked": {
-                "post": operation_with_examples(
-                    "discardUntrackedFiles",
-                    "Discard untracked project files",
-                    "Mutation with side effects. Runs `git clean -f -- <paths>` only for selected project-relative untracked paths. Requires Bearer auth and the Runner `structured_process_argv` capability.",
-                    "DiscardUntrackedRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Discard selected untracked files",
-                            "value": {
-                                "project": "webcodex",
-                                "paths": ["tmp_probe.txt"]
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/artifacts/import": {
-                "post": operation_with_examples(
-                    "importConversationFilesToProject",
-                    "Import ChatGPT conversation files to a project",
-                    "Mutation with side effects. Downloads GPT Actions openaiFileIdRefs immediately and saves bounded binary files into a Runner-registered Project. Populate openaiFileIdRefs from current conversation files generated by image generation, user upload, or Code Interpreter; never call with an empty array.",
-                    "ImportConversationFilesRequest",
-                    "ImportConversationFilesResponse",
-                    json!({
-                        "generatedImage": {
-                            "summary": "Save a generated image into docs/assets",
-                            "value": {
-                                "project": "agent:oe:webcodex",
-                                "output_dir": "docs/assets",
-                                "overwrite": false,
-                                "openaiFileIdRefs": [{
-                                    "name": "generated.png",
-                                    "id": "file_abc123",
-                                    "mime_type": "image/png",
-                                    "download_link": "https://files.oaiusercontent.com/example"
-                                }]
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/run_job": {
-                "post": operation_with_examples(
-                    "startProjectShellJob",
-                    "Start an async project shell job",
-                    "Starts an async background shell job in a Runner-registered Project and returns a job_id. Execution with side effects; requires Bearer auth and the Runner async shell job capability. Poll with getRuntimeJobStatus; read output with getRuntimeJobTail or getRuntimeJobLog.",
-                    "StartProjectShellJobRequest",
-                    "ToolResult",
-                    json!({
-                        "testCommand": {
-                            "summary": "Run a lightweight test command asynchronously",
-                            "value": {
-                                "project": "webcodex",
-                                "command": "cargo test --no-run"
-                            }
-                        },
-                        "withTimeout": {
-                            "summary": "Run a check command with a timeout",
-                            "value": {
-                                "project": "webcodex",
-                                "command": "cargo clippy",
-                                "timeout_secs": 300,
-                                "cwd": "src"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/tools/call": {
-                "post": operation_with_examples(
-                    "callRuntimeTool",
-                    "Call runtime tool",
-                    "Generic/advanced route for model-visible runtime tools. Prefer dedicated actions when they match. For ordinary model-generated file edits after read_file/read_files, use tool=apply_text_edits with the current expected_sha256; use tool=apply_patch when a contextual or large patch-shaped change is clearer. Flatten tool args at top level; params is the canonical non-Action envelope; recording_session_id records wrapper calls.",
-                    "ToolCallRequest",
-                    "ToolResult",
-                    json!({
-                        "applyTextEdits": {
-                            "summary": "Apply a SHA-guarded edit after reading the current file",
-                            "value": {
-                                "tool": "apply_text_edits",
-                                "project": "webcodex",
-                                "changes": [{
-                                    "kind": "edit",
-                                    "path": "README.md",
-                                    "expected_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                                    "edits": [{
-                                        "kind": "replace_exact",
-                                        "old_text": "# WebCodex",
-                                        "new_text": "# WebCodex Runtime"
-                                    }]
-                                }]
-                            }
-                        },
-                        "applyPatch": {
-                            "summary": "Apply a model-generated Codex patch",
-                            "value": {
-                                "tool": "apply_patch",
-                                "project": "webcodex",
-                                "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n-# WebCodex\n+# WebCodex Runtime\n*** End Patch"
-                            }
-                        },
-                        "workOnAbsolutePath": {
-                            "summary": "Resolve or register a Runner path, then start coding",
-                            "value": {
-                                "tool": "work_on_project",
-                                "client_id": "special",
-                                "path": "/root/git/example-worktree",
-                                "instruction": "Complete the development task"
-                            }
-                        },
-                        "workOnManagedWorktree": {
-                            "summary": "Bootstrap an isolated Runner-managed worktree, register it, then start coding",
-                            "value": {
-                                "tool": "work_on_project",
-                                "client_id": "special",
-                                "path": "/root/git/source-checkout",
-                                "mode": "worktree",
-                                "base_ref": "origin/main",
-                                "instruction": "Complete the development task in an isolated worktree"
-                            }
-                        },
-                        "recordedGitStatus": {
-                            "summary": "Record this wrapper call while passing flattened tool args",
-                            "value": {
-                                "tool": "git_status",
-                                "project": "webcodex",
-                                TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_example"
-                            }
-                        },
-                        "sessionSummary": {
-                            "summary": "Read a session summary with top-level business session_id",
-                            "value": {
-                                "tool": "session_summary",
-                                "session_id": "wc_sess_example",
-                                "limit": 20
-                            }
-                        },
-                        "postSessionMessage": {
-                            "summary": "Post session-local guidance while recording the wrapper call separately",
-                            "value": {
-                                "tool": "post_session_message",
-                                "session_id": "wc_sess_business",
-                                TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_recorder",
-                                "kind": "guidance",
-                                "message": "Keep new capabilities behind callRuntimeTool; do not add dedicated OpenAPI operations.",
-                                "tags": ["openapi", "constraint"],
-                                "priority": "normal"
-                            }
-                        },
-                        "showChanges": {
-                            "summary": "Summarize current worktree changes with optional session activity",
-                            "value": {
-                                "tool": "show_changes",
-                                "project": "webcodex",
-                                "session_id": "wc_sess_example",
-                                "include_diff": false,
-                                "session_event_limit": 30
-                            }
-                        },
-                        "readFile": {
-                            "summary": "Call read_file via flattened GPT Action fields",
-                            "value": {
-                                "tool": "read_file",
-                                "project": "webcodex",
-                                "path": "README.md",
-                                "with_line_numbers": true
-                            }
-                        },
-                        "readFiles": {
-                            "summary": "Read several files with one bounded call",
-                            "value": {
-                                "tool": "read_files",
-                                "project": "webcodex",
-                                "items": [
-                                    {"path": "src/lib.rs", "start_line": 1, "limit": 120},
-                                    {"path": "src/main.rs", "limit": 80}
-                                ],
-                                "with_line_numbers": true
-                            }
-                        },
-                        "searchProjectTexts": {
-                            "summary": "Run several independent bounded text searches",
-                            "value": {
-                                "tool": "search_project_texts",
-                                "project": "webcodex",
-                                "queries": [
-                                    {
-                                        "pattern": "ResolvedProject",
-                                        "path": "src",
-                                        "result_mode": "matches",
-                                        "limit": 20,
-                                        "context_before": 2,
-                                        "context_after": 4
-                                    },
-                                    {
-                                        "pattern": "read_files",
-                                        "path": "src/tool_runtime/tests",
-                                        "result_mode": "files_with_matches",
-                                        "limit": 20
-                                    }
-                                ]
-                            }
-                        },
-                        "checkpointRestore": {
-                            "summary": "Restore a checkpoint via flattened GPT Action fields",
-                            "value": {
-                                "tool": "workspace_checkpoint_restore",
-                                "project": "webcodex",
-                                "checkpoint_id": "wc_ckpt_abc",
-                                "confirm": true,
-                                TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
-                            }
-                        },
-                        "applyTextEdits": {
-                            "summary": "Transactional file edit via flattened GPT Action fields",
-                            "value": {
-                                "tool": "apply_text_edits",
-                                "project": "webcodex",
-                                "dry_run": true,
-                                "changes": [{
-                                    "kind": "edit",
-                                    "path": "src/lib.rs",
-                                    "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                                    "edits": [
-                                        {"kind": "replace_exact", "old_text": "alpha", "new_text": "beta"}
-                                    ]
-                                }]
-                            }
-                        },
-                        "paramsEnvelope": {
-                            "summary": "Canonical direct/non-Action params envelope",
-                            "value": {
-                                "tool": "git_diff_summary",
-                                "params": {"project": "webcodex"}
-                            }
-                        },
-                        "noParams": {
-                            "summary": "Argument-less tool; omit params",
-                            "value": {
-                                "tool": "list_tools"
-                            }
-                        }
-                    })
-                )
-            }
-        },
+        "paths": public_action_paths(),
         "components": {
             "securitySchemes": {
                 "bearerAuth": {
@@ -824,61 +212,50 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "bearerAuth": []
             }
         ]
-    });
-    spec["paths"]
-        .as_object_mut()
-        .expect("OpenAPI paths object")
-        .retain(|path, _| {
-            crate::route_metadata::lookup("POST", path).is_some_and(|route| {
-                matches!(
-                    route.openapi_projection,
-                    crate::route_metadata::RouteOpenApiProjection::PublicAction(_)
+    })
+}
+
+fn public_action_paths() -> Value {
+    let mut paths = Map::new();
+    for route in crate::route_metadata::iter_routes() {
+        let RouteOpenApiProjection::PublicAction(operation) = route.openapi_projection else {
+            continue;
+        };
+        let path_item = paths
+            .entry(route.path.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let methods = path_item
+            .as_object_mut()
+            .expect("public OpenAPI path item must be an object");
+        assert!(
+            methods
+                .insert(
+                    route.method.openapi_key().to_string(),
+                    project_public_operation(operation),
                 )
-            })
-        });
-    spec
+                .is_none(),
+            "duplicate public OpenAPI projection for {:?} {}",
+            route.method,
+            route.path
+        );
+    }
+    Value::Object(paths)
 }
 
-fn operation(
-    operation_id: &str,
-    summary: &str,
-    description: &str,
-    request_schema: &str,
-    response_schema: &str,
-) -> Value {
-    operation_with_examples(
-        operation_id,
-        summary,
-        description,
-        request_schema,
-        response_schema,
-        Value::Null,
-    )
-}
-
-fn operation_with_examples(
-    operation_id: &str,
-    summary: &str,
-    description: &str,
-    request_schema: &str,
-    response_schema: &str,
-    examples: Value,
-) -> Value {
+fn project_public_operation(operation: OpenApiOperationSpec) -> Value {
     let mut media_type = json!({
         "schema": {
-            "$ref": format!("#/components/schemas/{}", request_schema)
+            "$ref": format!("#/components/schemas/{}", operation.request_schema)
         }
     });
-    if let Value::Object(examples_obj) = examples {
-        if !examples_obj.is_empty() {
-            media_type["examples"] = Value::Object(examples_obj);
-        }
+    if let Some(examples) = examples::request_examples(operation.examples) {
+        media_type["examples"] = examples;
     }
     json!({
-        "operationId": operation_id,
-        "x-openai-isConsequential": is_consequential_operation(operation_id),
-        "summary": summary,
-        "description": description,
+        "operationId": operation.operation_id,
+        "x-openai-isConsequential": operation.consequence.as_bool(),
+        "summary": operation.summary,
+        "description": operation.description,
         "requestBody": {
             "required": true,
             "content": {
@@ -891,7 +268,7 @@ fn operation_with_examples(
                 "content": {
                     "application/json": {
                         "schema": {
-                            "$ref": format!("#/components/schemas/{}", response_schema)
+                            "$ref": format!("#/components/schemas/{}", operation.response_schema)
                         }
                     }
                 }
@@ -911,39 +288,6 @@ fn operation_with_examples(
             }
         }
     })
-}
-
-fn is_consequential_operation(operation_id: &str) -> bool {
-    match operation_id {
-        "listRuntimeTools"
-        | "listProjects"
-        | "getRuntimeStatus"
-        | "readProjectFile"
-        | "listProjectFiles"
-        | "searchProjectText"
-        | "getProjectGitStatus"
-        | "getProjectGitDiff"
-        | "getProjectGitDiffSummary"
-        | "getProjectGitDiffHunks"
-        | "getRuntimeJobStatus"
-        | "getRuntimeJobLog"
-        | "getRuntimeJobTail"
-        | "listRuntimeJobs"
-        | "registerProject"
-        | "createProject" => false,
-
-        "applyUnifiedDiff"
-        | "importConversationFilesToProject"
-        | "runProjectShellCommand"
-        | "startProjectShellJob"
-        | "stopRuntimeJob"
-        | "gitRestorePaths"
-        | "discardUntracked"
-        | "discardUntrackedFiles"
-        | "callRuntimeTool" => true,
-
-        other => panic!("missing consequential classification for operationId {other}"),
-    }
 }
 
 fn schemas() -> Value {

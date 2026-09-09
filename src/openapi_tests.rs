@@ -166,6 +166,7 @@ fn openapi_consequential_flags_match_operation_risk() {
         "startProjectShellJob",
         "gitRestorePaths",
         "discardUntrackedFiles",
+        "importConversationFilesToProject",
         "callRuntimeTool",
     ];
     for id in readonly {
@@ -639,6 +640,7 @@ fn openapi_key_actions_have_examples() {
         ("/api/projects/run_shell", "runProjectShellCommand"),
         ("/api/projects/git_restore_paths", "gitRestorePaths"),
         ("/api/projects/discard_untracked", "discardUntrackedFiles"),
+        ("/api/artifacts/import", "importConversationFilesToProject"),
         ("/api/projects/run_job", "startProjectShellJob"),
         ("/api/projects/register", "registerProject"),
         ("/api/projects/create", "createProject"),

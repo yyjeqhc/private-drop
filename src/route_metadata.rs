@@ -30,6 +30,13 @@ impl RouteMethod {
             Self::Post => method.trim().eq_ignore_ascii_case("POST"),
         }
     }
+
+    pub(crate) const fn openapi_key(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Post => "post",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
