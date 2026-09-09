@@ -690,7 +690,8 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
-    async fn regular_tunnel_stop_closes_stdin_for_canonical_graceful_shutdown() {
+    #[ignore = "Desktop Windows real-process lane: waits on a real PowerShell stdin EOF"]
+    async fn desktop_real_process_windows_regular_tunnel_stop_closes_stdin_for_canonical_graceful_shutdown() {
         let marker = std::env::temp_dir().join(format!(
             "webcodex-desktop-regular-tunnel-eof-{}-{}",
             std::process::id(),

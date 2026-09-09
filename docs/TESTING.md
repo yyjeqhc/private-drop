@@ -16,6 +16,7 @@ tests with different cost profiles sharing the same default lane.
 | contract/schema | Keep metadata, registry, MCP `tools/list`, OpenAPI, and runtime tool names synchronized. | No external network; in-process services are preferred. | `cargo test -p webcodex --lib metadata`; `cargo test -p webcodex --lib mcp`; `cargo test -p webcodex --lib openapi` |
 | local integration | Exercise HTTP handlers, runtime dispatch, sessions, local agent registry, temp dirs, loopback listeners, and database fixtures. | Loopback only, isolated temp dirs, bounded waits, no shared mutable state without a lock. | `cargo test -p webcodex --lib runtime_http -- --nocapture`; `cargo test -p webcodex --lib session -- --nocapture` |
 | Runner real-process | Process-tree ownership, real shell timeout/stop, validation/Git `ManagedChild`, and JobManager descendant cleanup. These tests are ignored by the ordinary Runner suite and share the `runner_real_process_` name prefix. | Real local child processes only; no external network. Keep concurrency bounded because the assertions intentionally exercise OS scheduling and process teardown. | `cargo test --locked -p webcodex-runner runner_real_process -- --ignored --test-threads=2` |
+| Desktop Windows real-process | Windows Desktop stdin-EOF shutdown and bounded-command process-tree reclamation. These tests are ignored by the ordinary Desktop suite and share the `desktop_real_process_windows_` name prefix. | Real local child processes only; no external network. Run serially so PowerShell startup and process teardown do not compete with the ordinary Desktop libtest pool. | `cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml desktop_real_process_windows_ -- --ignored --test-threads=1` |
 | slow/manual ignored | Valuable coverage that is local but slow, serial, large-input, or global-state-sensitive. | Explicit operator opt-in; often `--ignored` and `--test-threads=1`. | Run the specific ignored test/filter documented by its subsystem. |
 | e2e/deployment smoke | Prove that binaries, local services, GPT Actions schema, MCP, artifact transfer, and an agent can work together. | Temporary local services and loopback ports; real deployment only when explicitly requested. | `bash scripts/e2e_zero_config_ws.sh`; `bash scripts/smoke_deployment.sh`; `bash scripts/smoke_artifact_transfer.sh` |
 | reconnect continuity | Runner disconnect/reconnect layer independence, stale-not-ready observations, reconciliation-aware recovering/lost transitions, server-restart durable Session plus explicit-session continuity, meaningful-activity scoping, and version-mismatch diagnostics. | In-process fixtures, no external network. | `cargo test -p webcodex --lib reconnect` |
@@ -87,8 +88,12 @@ The lanes above define test semantics; workflows decide when to run them.
   provider/check shutdown and process-tree fixtures, and LSP child shutdown/reap/
   idle-cleanup fixtures. Ordinary Plugin protocol/catalog and LSP navigation/restart
   coverage stays in the default Runner suite. The real-process jobs themselves use two
-  libtest threads. The local-`sshd`
-  SSH integration fixture remains Linux-only because it depends on Linux daemon
+  libtest threads. Desktop Windows keeps its PowerShell-backed stdin EOF/process-tree
+  fixtures out of the ordinary parallel Desktop suite and executes the
+  `desktop_real_process_windows_` ignored group serially in the native Desktop job.
+  This preserves blocking native lifecycle coverage without turning PowerShell startup
+  latency into a default-suite scheduler race. The local-`sshd` SSH integration fixture
+  remains Linux-only because it depends on Linux daemon
   account/auth configuration.
 - Exact-source release acceptance is a separate trust boundary from ordinary CI.
   Release readiness first binds the exact source to a successful `main`-push CI run;
@@ -134,8 +139,9 @@ The lanes above define test semantics; workflows decide when to run them.
 - Ignored tests are not dead tests. Each ignored test should have a reason and a
   documented lane for running it intentionally.
   The `runner_real_process_` ignored tests belong to ordinary CI through their explicit
-  real-process jobs; the separate real Codex/LSP ignored dogfood tests remain opt-in
-  and are intentionally excluded by the real-process name filter.
+  real-process jobs, while `desktop_real_process_windows_` is run serially by the
+  Windows Desktop native job. The separate real Codex/LSP ignored dogfood tests remain
+  opt-in and are intentionally excluded by these real-process name filters.
 
 ## `import_http` Coverage
 

@@ -645,6 +645,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Desktop cargo check failed" }
           cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw "Desktop cargo test failed" }
+      - name: Run Windows Desktop real-process lifecycle tests
+        shell: pwsh
+        run: |
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml desktop_real_process_windows_ -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "Desktop real-process tests failed" }
       - name: Build exact local WebCodex runtime
         id: runtime
         shell: pwsh

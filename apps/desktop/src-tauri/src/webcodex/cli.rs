@@ -1148,7 +1148,8 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[tokio::test]
-    async fn windows_blocked_stdin_reclaims_the_owned_process_tree() {
+    #[ignore = "Desktop Windows real-process lane: owns a real PowerShell process tree"]
+    async fn desktop_real_process_windows_blocked_stdin_reclaims_the_owned_process_tree() {
         let marker = std::env::temp_dir().join(format!(
             "webcodex-cli-blocked-stdin-{}-{}.txt",
             std::process::id(),
