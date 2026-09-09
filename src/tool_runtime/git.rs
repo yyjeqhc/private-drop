@@ -3994,21 +3994,22 @@ impl ToolRuntime {
         let cmd = if diff_args.is_empty() {
             "git diff".to_string()
         } else {
+            // `args` is the existing pathspec list contract. Keep the `--`
+            // fence and POSIX word quoting exactly as before, but execute the
+            // generated command through the typed internal POSIX path so the
+            // quoting can never be parsed by the user's configured shell.
             let escaped: Vec<String> = diff_args.iter().map(|a| shell_escape_simple(a)).collect();
             format!("git diff -- {}", escaped.join(" "))
         };
         let client_id = proj.client_id.clone();
         let (req_id, rx) = match self
             .runner_registry
-            .enqueue_run(
-                ShellRunRequest {
-                    client_id,
-                    cwd: Some(proj.path.clone()),
-                    command: cmd,
-                    stdin: None,
-                    timeout_secs: 30,
-                    wait_timeout_secs: 32,
-                },
+            .enqueue_internal_posix_script(
+                client_id,
+                Some(proj.path.clone()),
+                cmd,
+                30,
+                32,
                 "tool_runtime".to_string(),
             )
             .await

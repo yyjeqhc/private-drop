@@ -11,7 +11,7 @@ use webcodex_workspace::file_read_range::{self, EffectiveRange, FileReadRange, R
 #[cfg(test)]
 use super::helpers::run_command_sync;
 use super::helpers::{
-    looks_like_command_timeout, shell_escape_simple, validate_limited_cleanup_paths,
+    bounded_tail, looks_like_command_timeout, shell_escape_simple, validate_limited_cleanup_paths,
     validate_project_relative_path,
 };
 use super::project_resolution::ResolvedProject;
@@ -51,7 +51,7 @@ pub(crate) use artifacts::{
 #[cfg(test)]
 pub(crate) use artifacts::{MAX_PROJECT_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_UPLOAD_BYTES};
 #[cfg(test)]
-pub(crate) use inspection::parse_file_list_entries;
+pub(crate) use inspection::{parse_file_list_entries, LIST_TRACKED_STDERR_MAX_CHARS};
 #[cfg(test)]
 pub(crate) use mutations::{apply_text_edits_to_string, validate_edit_file_path};
 use search::search_head_resolution_shell;

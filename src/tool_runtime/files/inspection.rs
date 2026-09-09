@@ -425,17 +425,18 @@ fn list_tracked_error(code: &str, message: String) -> ToolResult {
     ToolResult::err_with_output(message.clone(), json!({ "code": code, "message": message }))
 }
 
-/// First non-empty line of command stderr, bounded — enough to diagnose,
-/// short enough not to spend model context on a stack of Git noise.
-fn first_line(stderr: &str) -> String {
-    stderr
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("")
-        .chars()
-        .take(200)
-        .collect()
+/// Bounded multi-line command stderr for tracked-file diagnostics. Keep the
+/// tail because shell parsers commonly put the actionable diagnostic after a
+/// location header. `bounded_tail` is UTF-8 safe and caps retained stderr even
+/// when a subprocess emits arbitrarily large diagnostics.
+pub(crate) const LIST_TRACKED_STDERR_MAX_CHARS: usize = 4 * 1024;
+
+fn list_tracked_stderr_excerpt(stderr: &str) -> String {
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        return "(no stderr)".to_string();
+    }
+    bounded_tail(stderr, LIST_TRACKED_STDERR_MAX_CHARS).0
 }
 
 /// Build the tracked-file listing command.
@@ -998,15 +999,12 @@ impl ToolRuntime {
         let (raw, exit_code, stderr) = {
             let (request_id, rx) = match self
                 .runner_registry
-                .enqueue_run(
-                    ShellRunRequest {
-                        client_id,
-                        cwd: Some(proj.path.clone()),
-                        command,
-                        stdin: None,
-                        timeout_secs: LIST_TRACKED_TIMEOUT_SECS,
-                        wait_timeout_secs: LIST_TRACKED_TIMEOUT_SECS + 5,
-                    },
+                .enqueue_internal_posix_script(
+                    client_id,
+                    Some(proj.path.clone()),
+                    command,
+                    LIST_TRACKED_TIMEOUT_SECS,
+                    LIST_TRACKED_TIMEOUT_SECS + 5,
                     "tool_runtime".to_string(),
                 )
                 .await
@@ -1059,8 +1057,8 @@ impl ToolRuntime {
                 return list_tracked_error(
                     "list_failed",
                     format!(
-                        "listing command failed with exit {code}: {}",
-                        first_line(&stderr)
+                        "listing command failed with exit {code}:\n{}",
+                        list_tracked_stderr_excerpt(&stderr)
                     ),
                 )
             }

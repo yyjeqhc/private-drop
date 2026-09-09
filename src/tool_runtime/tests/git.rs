@@ -77,6 +77,110 @@ async fn run_runner_git_commit_paths(
     task.await.unwrap()
 }
 
+#[cfg(windows)]
+async fn run_windows_git_diff(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    args: Option<Vec<String>>,
+) -> (ToolResult, String) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.git_diff(project, args).await }
+    });
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    let payload = request
+        .script
+        .as_ref()
+        .expect("git_diff must carry a typed internal POSIX program");
+    assert_eq!(
+        payload.language,
+        crate::runner_protocol::ShellScriptLanguage::Sh
+    );
+    let script = payload.script.clone();
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
+    complete_patch_agent_request(
+        runtime,
+        client_id,
+        &request.request_id,
+        exit_code,
+        &stdout,
+        &stderr,
+    )
+    .await;
+    (task.await.unwrap(), script)
+}
+
+#[cfg(windows)]
+fn git_diff_argv_stdout(repo: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("diff")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .expect("run direct git diff fixture command");
+    assert!(
+        output.status.success(),
+        "direct git diff failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_git_diff_posix_routing_preserves_literal_special_path_arguments() {
+    let repo = tempfile::tempdir().unwrap();
+    init_git_repo(repo.path());
+    for (path, content) in [
+        ("plain.txt", "plain base\n"),
+        ("space name.txt", "space base\n"),
+        ("quote'name.txt", "quote base\n"),
+    ] {
+        fs::write(repo.path().join(path), content).unwrap();
+    }
+    git_test_command_ok(repo.path(), "git add -- .");
+    git_test_command_ok(repo.path(), "git commit -m base");
+    fs::write(repo.path().join("plain.txt"), "plain changed\n").unwrap();
+    fs::write(repo.path().join("space name.txt"), "space changed\n").unwrap();
+    fs::write(repo.path().join("quote'name.txt"), "quote changed\n").unwrap();
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "git-diff-windows", "repo", repo.path())
+            .await;
+
+    let (all, all_script) =
+        run_windows_git_diff(&runtime, "git-diff-windows", project.clone(), None).await;
+    assert!(all.success, "{:?}", all.error);
+    assert_eq!(
+        all.output["stdout"].as_str().unwrap_or_default(),
+        git_diff_argv_stdout(repo.path(), &[])
+    );
+    assert_eq!(all_script, "git diff");
+
+    for path in ["plain.txt", "space name.txt", "quote'name.txt"] {
+        let (result, script) = run_windows_git_diff(
+            &runtime,
+            "git-diff-windows",
+            project.clone(),
+            Some(vec![path.to_string()]),
+        )
+        .await;
+        assert!(result.success, "path={path:?}: {:?}", result.error);
+        assert_eq!(result.output["exit_code"], 0);
+        assert_eq!(
+            result.output["stdout"].as_str().unwrap_or_default(),
+            git_diff_argv_stdout(repo.path(), &["--", path]),
+            "path={path:?}"
+        );
+        assert!(script.starts_with("git diff -- "));
+        assert!(!script.contains("powershell"));
+    }
+}
+
 #[tokio::test]
 async fn git_commit_paths_commits_only_requested_paths_and_preserves_other_worktree_changes() {
     let tmp = tempfile::tempdir().unwrap();

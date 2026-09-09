@@ -9,6 +9,161 @@ use serde_json::{json, Value};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(windows)]
+async fn run_windows_tracked_listing(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    path: Option<String>,
+) -> (ToolResult, String) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .list_project_tracked_files(project, path, None, None, Some(100), Some(0))
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    let payload = request
+        .script
+        .as_ref()
+        .expect("tracked listing must carry a typed internal POSIX program");
+    assert_eq!(
+        payload.language,
+        crate::runner_protocol::ShellScriptLanguage::Sh
+    );
+    let script = payload.script.clone();
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
+    complete_patch_agent_request(
+        runtime,
+        client_id,
+        &request.request_id,
+        exit_code,
+        &stdout,
+        &stderr,
+    )
+    .await;
+    (task.await.unwrap(), script)
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_list_project_tracked_files_uses_internal_posix_and_preserves_scope() {
+    let repo = tempfile::tempdir().unwrap();
+    init_git_repo(repo.path());
+    std::fs::create_dir_all(repo.path().join("src/nested")).unwrap();
+    commit_file(repo.path(), "root.txt", "root\n", "root file");
+    commit_file(repo.path(), "src/a.rs", "pub fn a() {}\n", "src file");
+    commit_file(
+        repo.path(),
+        "src/nested/b.rs",
+        "pub fn b() {}\n",
+        "nested file",
+    );
+
+    let runtime = test_runtime();
+    let project =
+        register_runner_project_at_path(&runtime, "tracked-windows", "demo", repo.path()).await;
+    let (root, script) =
+        run_windows_tracked_listing(&runtime, "tracked-windows", project.clone(), None).await;
+    assert!(root.success, "{:?}", root.error);
+    assert!(script.contains("git ls-files -z --cached"));
+    assert!(
+        script.contains("head_cmd") && script.contains("-c 1048576"),
+        "tracked listing lost its raw-output cap: {script}"
+    );
+    let root_paths = root.output["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["path"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(root_paths, vec!["root.txt", "src/a.rs", "src/nested/b.rs"]);
+    assert_eq!(root.output["source"], "git_index");
+    assert_eq!(root.output["list_truncated"], false);
+
+    let (scoped, _) = run_windows_tracked_listing(
+        &runtime,
+        "tracked-windows",
+        project,
+        Some("src".to_string()),
+    )
+    .await;
+    assert!(scoped.success, "{:?}", scoped.error);
+    assert_eq!(scoped.output["path"], "src");
+    let scoped_paths = scoped.output["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["path"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(scoped_paths, vec!["src/a.rs", "src/nested/b.rs"]);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_list_project_tracked_files_keeps_non_git_error_contract() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_runner_project_at_path(&runtime, "tracked-non-git", "demo", project_dir.path())
+            .await;
+    let (result, _) = run_windows_tracked_listing(&runtime, "tracked-non-git", project, None).await;
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "not_a_git_repository");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn tracked_listing_failure_keeps_bounded_multiline_stderr() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_runner_project_at_path(&runtime, "tracked-diagnostic", "demo", project_dir.path())
+            .await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .list_project_tracked_files(project, None, None, None, Some(100), Some(0))
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "tracked-diagnostic").await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    let stderr = format!(
+        "EARLY_DIAGNOSTIC_MUST_BE_TRUNCATED\n{}\nACTIONABLE_SECOND_LINE\nACTIONABLE_LAST_LINE",
+        "x".repeat(LIST_TRACKED_STDERR_MAX_CHARS + 1024)
+    );
+    complete_patch_agent_request(
+        &runtime,
+        "tracked-diagnostic",
+        &request.request_id,
+        1,
+        "",
+        &stderr,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("ACTIONABLE_SECOND_LINE"), "{error}");
+    assert!(error.contains("ACTIONABLE_LAST_LINE"), "{error}");
+    assert!(
+        error.contains('\n'),
+        "stderr excerpt must remain multi-line: {error}"
+    );
+    assert!(!error.contains("EARLY_DIAGNOSTIC_MUST_BE_TRUNCATED"));
+    assert!(
+        error.chars().count() <= LIST_TRACKED_STDERR_MAX_CHARS + 64,
+        "bounded stderr grew unexpectedly: {} chars",
+        error.chars().count()
+    );
+}
+
 #[tokio::test]
 async fn write_project_file_with_session_id_records_changed_path_without_content() {
     let runtime = runtime_with_agent_project("telemetry-write");
