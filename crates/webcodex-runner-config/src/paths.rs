@@ -337,20 +337,46 @@ fn windows_unsupported_project_path_error(path: &Path) -> String {
     )
 }
 
+fn raw_project_path_has_parent_traversal(path: &Path) -> bool {
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        // `Path::components` intentionally treats the Win32 verbatim namespace
+        // specially and can normalize an explicit `..` away before callers see
+        // it. Inspect the raw spelling too so authority is never granted to a
+        // different directory merely because canonicalization collapsed it.
+        return path
+            .to_string_lossy()
+            .split(['\\', '/'])
+            .any(|component| component == "..");
+    }
+
+    #[cfg(not(windows))]
+    false
+}
+
 /// Validate the raw project path before any canonicalization or filesystem I/O.
 ///
-/// On Windows explicit local disks and network shares (`UNC` / `VerbatimUNC`)
-/// may proceed. Device namespaces and generic verbatim namespaces fail closed.
-/// Paths with no prefix (including relative paths) continue to canonicalization,
-/// where the canonical project policy applies. Non-Windows behavior is unchanged.
+/// Explicit parent traversal is rejected on every platform before it can be
+/// normalized away. On Windows explicit local disks and network shares
+/// (`UNC` / `VerbatimUNC`) may proceed, while device namespaces and generic
+/// verbatim namespaces fail closed. Other relative/no-prefix inputs continue to
+/// canonicalization, where the canonical project policy applies.
 pub fn validate_project_path_ingress(path: &Path) -> Result<(), String> {
+    if raw_project_path_has_parent_traversal(path) {
+        return Err("project path must not contain parent traversal".to_string());
+    }
+
     #[cfg(windows)]
     if windows_project_path_kind(path) == Some(WindowsProjectPathKind::UnsupportedNamespace) {
         return Err(windows_unsupported_project_path_error(path));
     }
-
-    #[cfg(not(windows))]
-    let _ = path;
 
     Ok(())
 }
@@ -934,6 +960,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn raw_project_ingress_rejects_parent_traversal_before_canonicalization() {
+        for rejected in ["repo/../other", "../repo"] {
+            let error = validate_project_path_ingress(Path::new(rejected)).unwrap_err();
+            assert!(error.contains("parent traversal"), "{rejected}: {error}");
+        }
+        validate_project_path_ingress(Path::new("repo/.../child"))
+            .expect("three dots are an ordinary path component");
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_raw_project_ingress_allows_disk_and_network_share_prefixes() {
@@ -961,6 +997,23 @@ mod tests {
                 error.contains("unsupported Windows project namespace"),
                 "{error}"
             );
+        }
+
+        for rejected in [
+            r"C:\repo\..\other",
+            r"\\?\C:\repo\..\other",
+            r"\\server\share\repo\..\other",
+            r"\\?\UNC\server\share\repo\..\other",
+            r"repo\..\other",
+            "repo/../other",
+        ] {
+            let error = validate_project_path_ingress(Path::new(rejected)).unwrap_err();
+            assert!(error.contains("parent traversal"), "{rejected}: {error}");
+        }
+
+        for allowed in [r"C:\repo\..name", r"repo\...\child"] {
+            validate_project_path_ingress(Path::new(allowed))
+                .unwrap_or_else(|error| panic!("{allowed} is not traversal: {error}"));
         }
     }
 

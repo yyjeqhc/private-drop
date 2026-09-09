@@ -145,7 +145,7 @@ fn shell_config_path_prepend_discovers_fake_executable_and_keeps_windows_path() 
     )
     .unwrap();
     let shell = ShellConfig {
-        path_prepend: vec![bin_dir],
+        path_prepend: vec![bin_dir.clone()],
         ..ShellConfig::default()
     };
     let cwd = tmp.path().to_string_lossy().to_string();
@@ -162,8 +162,11 @@ fn shell_config_path_prepend_discovers_fake_executable_and_keeps_windows_path() 
     assert_eq!(result.stdout.as_deref(), Some("fake-tool-ok"), "{result:?}");
 
     // path_prepend must extend the inherited Windows PATH (spelled `Path` in
-    // the process block), not replace it: the prepended directory comes
-    // first and the System32 entries survive.
+    // the process block), not replace it. PowerShell itself may put its own
+    // installation directory before the supplied PATH when it starts, so the
+    // stable contract is that our directory remains ahead of inherited entries
+    // such as System32. The successful fake-tool lookup above independently
+    // proves that the configured prepend is effective.
     let result = run_shell(
         &cfg.policy,
         &shell,
@@ -175,14 +178,23 @@ fn shell_config_path_prepend_discovers_fake_executable_and_keeps_windows_path() 
     );
     assert_eq!(result.exit_code, Some(0), "{result:?}");
     let path = result.stdout.unwrap();
-    let dir_text = tmp.path().join("bin dir").to_string_lossy().to_string();
+    let entries = std::env::split_paths(&std::ffi::OsString::from(&path)).collect::<Vec<_>>();
+    let prepend_index = entries
+        .iter()
+        .position(|entry| webcodex_runner_config::paths::paths_equal(entry, &bin_dir))
+        .unwrap_or_else(|| panic!("configured path_prepend entry is missing from PATH: {path}"));
+    let system32_index = entries
+        .iter()
+        .position(|entry| {
+            entry
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("\\windows\\system32")
+        })
+        .unwrap_or_else(|| panic!("inherited Windows System32 PATH entry is missing: {path}"));
     assert!(
-        path.starts_with(&dir_text),
-        "prepended directory is not first in PATH: {path}"
-    );
-    assert!(
-        path.contains("System32"),
-        "inherited Windows PATH lost: {path}"
+        prepend_index < system32_index,
+        "configured path_prepend no longer precedes inherited System32: {path}"
     );
 }
 

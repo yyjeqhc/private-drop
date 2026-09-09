@@ -55,7 +55,9 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as WindowsCommandExt;
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::{FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows_sys::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
     MoveFileExW, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, MOVEFILE_REPLACE_EXISTING,
@@ -1903,30 +1905,46 @@ fn handoff_first_platform(
 ) -> Result<DetachedHandoffOutcome, String> {
     let job_dir = store.job_dir(&prepared.job_id);
     let supervisor_birth = format!("birth_{}", Uuid::new_v4().simple());
-    let mut command = match internal_mode_command(
-        DETACHED_INTERNAL_SUPERVISOR,
-        &[
-            job_dir.to_string_lossy().into_owned(),
-            prepared.execution_id.clone(),
-            supervisor_birth,
-        ],
-    ) {
+    let supervisor_args = [
+        job_dir.to_string_lossy().into_owned(),
+        prepared.execution_id.clone(),
+        supervisor_birth,
+    ];
+    let mut command = match detached_supervisor_command(&supervisor_args, true) {
         Ok(command) => command,
         Err(error) => {
             mark_pre_accept_failure(store, &prepared, &error)?;
             return Err(error);
         }
     };
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    make_new_session(&mut command);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_BREAKAWAY_FROM_JOB);
     let mut child = match command.spawn() {
         Ok(child) => child,
+        #[cfg(windows)]
+        Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
+            // Some host-owned Job Objects (including GitHub-hosted Windows
+            // runners) forbid CREATE_BREAKAWAY_FROM_JOB. Access denied is a
+            // pre-start CreateProcess failure, so no child exists to reconcile.
+            // Retry exactly once without breakaway; the supervisor remains in
+            // the host Job Object while retaining its own durable ownership and
+            // nested payload Job Object semantics.
+            let mut fallback = match detached_supervisor_command(&supervisor_args, false) {
+                Ok(command) => command,
+                Err(error) => {
+                    mark_pre_accept_failure(store, &prepared, &error)?;
+                    return Err(error);
+                }
+            };
+            match fallback.spawn() {
+                Ok(child) => child,
+                Err(fallback_error) => {
+                    let message = format!(
+                        "failed to spawn detached Job supervisor after Windows breakaway fallback: {fallback_error}"
+                    );
+                    mark_pre_accept_failure(store, &prepared, &message)?;
+                    return Err(message);
+                }
+            }
+        }
         Err(error) => {
             let message = format!("failed to spawn detached Job supervisor: {error}");
             mark_pre_accept_failure(store, &prepared, &message)?;
@@ -3095,6 +3113,25 @@ fn read_line_with_timeout(
             Err(error) => return Err(format!("failed to read detached child ack: {error}")),
         }
     }
+}
+
+#[cfg(any(unix, windows))]
+fn detached_supervisor_command(
+    args: &[String],
+    _windows_breakaway: bool,
+) -> Result<Command, String> {
+    let mut command = internal_mode_command(DETACHED_INTERNAL_SUPERVISOR, args)?;
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    make_new_session(&mut command);
+    #[cfg(windows)]
+    if _windows_breakaway {
+        command.creation_flags(CREATE_BREAKAWAY_FROM_JOB);
+    }
+    Ok(command)
 }
 
 #[cfg(any(unix, windows))]

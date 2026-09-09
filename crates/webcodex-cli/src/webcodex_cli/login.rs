@@ -3021,7 +3021,22 @@ mod tests {
                 serde_json::from_value(value["runner_install_argv"].clone()).unwrap();
             assert!(argv.contains(&"--allow-root-runner".to_string()));
             assert!(argv.contains(&"system".to_string()));
-            assert!(crate::parse_runner_install_service_with_identity(&argv[3..], true).is_ok());
+
+            // The workspace-crates CI shard intentionally excludes the Runner
+            // package, so no sibling `webcodex-runner` binary is guaranteed to
+            // exist beside this test executable. Give the install parser one
+            // deterministic PATH candidate instead of depending on stale target
+            // artifacts from another shard/build.
+            let parser_env = canonical_test_tempdir();
+            std::fs::write(parser_env.path().join("webcodex-runner"), "").unwrap();
+            let _guard = crate::webcodex_cli::test_support::env_test_guard();
+            let _env = crate::webcodex_cli::test_support::EnvGuard::new()
+                .set_os("PATH", parser_env.path().as_os_str().to_owned());
+            let parsed = crate::parse_runner_install_service_with_identity(&argv[3..], true);
+            assert!(
+                parsed.is_ok(),
+                "root recommendation was rejected by the install parser: {parsed:?}"
+            );
         }
         assert_eq!(value["foreground_available"], true);
         assert_eq!(value["foreground_argv"], serde_json::json!(foreground_argv));
