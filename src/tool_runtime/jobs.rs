@@ -15,10 +15,7 @@ use crate::runner_protocol::{
 };
 
 pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
-    status == "recovering"
-        || RunnerJobLifecycle::from_wire(status).is_ok_and(|lifecycle| {
-            lifecycle.is_active() && lifecycle != RunnerJobLifecycle::StopRequested
-        })
+    webcodex_runner_registry::job_status_is_active(status) && !is_stop_pending_job_status(status)
 }
 
 pub(crate) fn is_stop_pending_job_status(status: &str) -> bool {

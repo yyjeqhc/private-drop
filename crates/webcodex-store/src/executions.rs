@@ -540,7 +540,7 @@ impl Database {
             return commit_execution(tx, execution_id);
         }
         let lifecycle = RunnerJobLifecycle::from_wire(executor_status).ok();
-        let recognized = executor_status == "recovering" || lifecycle.is_some();
+        let recognized = ConnectorExecution::executor_status_recognized(executor_status);
         let state = if execution.state == "cancel_requested" {
             "cancel_requested"
         } else if matches!(
