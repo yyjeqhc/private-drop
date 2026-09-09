@@ -803,11 +803,17 @@ fn validate_model_network_project_ingress_authority(
         if !webcodex_runner_config::paths::is_windows_network_share_path(path) {
             return Ok(());
         }
-        if policy
-            .allowed_roots
-            .iter()
-            .any(|root| webcodex_runner_config::paths::path_is_within(path, root))
+        // Containment below is lexical: a parent component could escape an
+        // authorized directory before the canonical policy gets a chance to run.
+        if path
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
         {
+            return Err("path_outside_allowed_roots");
+        }
+        if policy.allowed_roots.iter().any(|root| {
+            root.is_absolute() && webcodex_runner_config::paths::path_is_within(path, root)
+        }) {
             return Ok(());
         }
         // A configured mapped drive may canonicalize to the same UNC share. It is

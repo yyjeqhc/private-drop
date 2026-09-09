@@ -73,6 +73,15 @@ evidence.
 | `webcodex pairing create` | Server/admin side: create a short-lived pairing code | Needs server bootstrap/admin auth. |
 | `webcodex logout <server-url> [--user USER|--all]` | Remove this device's credentials for a Server | With one saved user, the user is selected automatically. With multiple saved users, choose one with `--user USER` or explicitly choose all with `--all`; deletion still uses the existing confirmation/`--yes` flow. |
 
+On Windows, `login --project` and `project register` accept existing UNC network
+directories, including the `\\?\UNC\server\share\repo` form. Selecting a network
+project adds its exact canonical directory to the saved Runner `allowed_roots`
+when needed; it does not grant the parent directory or entire share. Restart an
+already-running Runner when the command reports that a reload is required.
+Model-facing registration requires preconfigured network authority even with
+`allow_cwd_anywhere = true`; use a direct path without `..` components.
+Creating new network projects with `create_project` remains unsupported.
+
 ### Runner lifecycle
 
 The Runner executable is `webcodex-runner`. Its canonical CLI lifecycle namespace

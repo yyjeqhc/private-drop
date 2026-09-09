@@ -65,9 +65,9 @@ fn authorize_canonical_project(
     configured_roots: &[PathBuf],
     allow_cwd_anywhere: bool,
 ) -> Result<(Vec<PathBuf>, bool), String> {
-    let mut effective_roots =
+    let effective_roots =
         webcodex_runner_config::effective_allowed_roots(configured_roots, allow_cwd_anywhere)?;
-    let mut canonical_roots =
+    let canonical_roots =
         webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective_roots);
 
     match webcodex_runner_config::paths::validate_project_path_policy(
@@ -81,6 +81,8 @@ fn authorize_canonical_project(
         Err(error) => {
             #[cfg(windows)]
             if webcodex_runner_config::paths::is_windows_network_share_path(canonical_project) {
+                let mut effective_roots = effective_roots;
+                let mut canonical_roots = canonical_roots;
                 // Local CLI/Desktop project selection is an explicit user grant. Add only the
                 // canonical project itself; never infer authority for its parent/share.
                 effective_roots.push(canonical_project.to_path_buf());
@@ -216,7 +218,7 @@ fn persist_registration_allowed_roots(path: &Path, roots: &[PathBuf]) -> Result<
     if document.get("policy").is_none() {
         document["policy"] = toml_edit::table();
     }
-    let policy = document["policy"].as_table_mut().ok_or_else(|| {
+    let policy = document["policy"].as_table_like_mut().ok_or_else(|| {
         format!(
             "Runner config {} has an invalid [policy] table",
             path.display()
@@ -226,7 +228,7 @@ fn persist_registration_allowed_roots(path: &Path, roots: &[PathBuf]) -> Result<
     for root in roots {
         allowed_roots.push(root.to_string_lossy().as_ref());
     }
-    policy["allowed_roots"] = toml_edit::value(allowed_roots);
+    policy.insert("allowed_roots", toml_edit::value(allowed_roots));
     atomic_write(path, document.to_string().as_bytes(), true)?;
     Ok(())
 }
@@ -351,6 +353,27 @@ mod tests {
 
     fn config(path: &Path, project_registry_dir: &Path, root: &Path) {
         config_with_policy(path, project_registry_dir, &[root.to_path_buf()], false);
+    }
+
+    #[test]
+    fn persist_allowed_roots_supports_inline_policy_and_preserves_other_settings() {
+        let tmp = canonical_test_tempdir();
+        let config_path = tmp.path().join("runner.toml");
+        std::fs::write(
+            &config_path,
+            "# operator configuration\nclient_id = 'test'\npolicy = { allow_cwd_anywhere = true, allowed_roots = [], max_timeout_secs = 42 }\n",
+        )
+        .unwrap();
+        let roots = vec![tmp.path().join("project")];
+        persist_registration_allowed_roots(&config_path, &roots).unwrap();
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        let parsed: toml::Value = toml::from_str(&content).unwrap();
+        assert!(content.contains("# operator configuration"));
+        assert_eq!(parsed["client_id"].as_str(), Some("test"));
+        assert_eq!(parsed["policy"]["allow_cwd_anywhere"].as_bool(), Some(true));
+        assert_eq!(parsed["policy"]["max_timeout_secs"].as_integer(), Some(42));
+        let config = read_registration_config(&config_path).unwrap();
+        assert_eq!(config.policy.allowed_roots, roots);
     }
 
     #[test]

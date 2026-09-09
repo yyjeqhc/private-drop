@@ -414,6 +414,40 @@ fn model_facing_network_ingress_requires_authority_before_filesystem_resolution(
 
 #[cfg(windows)]
 #[test]
+fn model_facing_network_ingress_rejects_parent_traversal_and_empty_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    let registry = tmp.path().join("project-registry");
+    for (root, path) in [
+        (r"\\server\share\repo", r"\\server\share\repo\..\private"),
+        (
+            r"\\server\share\repo",
+            r"\\?\UNC\server\share\repo\..\private",
+        ),
+        ("", r"\\untrusted-host\share\repo"),
+    ] {
+        let policy = RunnerPolicy {
+            allow_cwd_anywhere: true,
+            allowed_roots: vec![PathBuf::from(root)],
+            ..RunnerPolicy::default()
+        };
+        let error = project_error_value(handle_resolve_or_register_project(
+            &policy,
+            &registry,
+            &project_request(
+                "resolve_or_register_project",
+                serde_json::json!({"path": path}),
+            ),
+        ));
+        assert_eq!(
+            error["error_kind"], "path_outside_allowed_roots",
+            "raw network ingress must reject {path:?} under {root:?} before target I/O"
+        );
+    }
+    assert!(!registry.exists());
+}
+
+#[cfg(windows)]
+#[test]
 fn resolve_or_register_project_rejects_unsupported_windows_namespaces() {
     let tmp = tempfile::tempdir().unwrap();
     let project_registry_dir = tmp.path().join("project-registry");
