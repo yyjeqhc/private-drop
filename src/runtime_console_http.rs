@@ -487,6 +487,16 @@ struct RuntimeConsoleWindowActivity {
     started_at_ms: i64,
     ended_at_ms: i64,
     duration_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_call_gap_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cycle_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    window_transition_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_streaming: Option<bool>,
     method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_name: Option<String>,
@@ -499,6 +509,13 @@ struct RuntimeConsoleWindowActivity {
     #[serde(skip_serializing_if = "Option::is_none")]
     server_trace_id: Option<String>,
     workflow_sessions: Vec<RuntimeConsoleWindowActivitySession>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WindowActivityTimingProjection {
+    service_ms: Option<i64>,
+    next_call_gap_ms: Option<i64>,
+    cycle_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1600,24 +1617,76 @@ async fn active_window_request_visible_cached(
         .is_some_and(|tool| !crate::tool_runtime::observations::is_meaningful_activity_tool(tool))
 }
 
-async fn project_window_activity(
+fn project_window_loop_timings(
+    events: &[webcodex_store::models::WindowActivityEventRecord],
+    visible: &[bool],
+) -> Vec<WindowActivityTimingProjection> {
+    let mut projections = vec![WindowActivityTimingProjection::default(); events.len()];
+    let mut previous_meaningful = BTreeMap::<(String, String), usize>::new();
+
+    for index in (0..events.len()).rev() {
+        let event = &events[index];
+        if event.response_streaming == Some(false) {
+            if let (Some(started), Some(handed)) =
+                (event.request_observed_at_ms, event.response_handed_at_ms)
+            {
+                if handed >= started {
+                    projections[index].service_ms = Some(handed - started);
+                }
+            }
+        }
+        if !event.meaningful {
+            continue;
+        }
+        let Some(principal_kind) = event.principal_correlation_kind.as_ref() else {
+            continue;
+        };
+        let Some(principal_id) = event.principal_correlation_id.as_ref() else {
+            continue;
+        };
+        let key = (principal_kind.clone(), principal_id.clone());
+        if event.window_transition_kind.as_deref() == Some("serial") {
+            if let Some(previous_index) = previous_meaningful.get(&key).copied() {
+                let previous = &events[previous_index];
+                // Do not bridge over an event whose Project is hidden/revoked:
+                // exposing a derived timestamp across that boundary would turn
+                // Window timing into a Project-existence oracle.
+                if visible.get(previous_index) == Some(&true) && visible.get(index) == Some(&true) {
+                    if let (Some(current_started), Some(previous_handed), Some(previous_started)) = (
+                        event.request_observed_at_ms,
+                        previous.response_handed_at_ms,
+                        previous.request_observed_at_ms,
+                    ) {
+                        if current_started >= previous_handed {
+                            projections[previous_index].next_call_gap_ms =
+                                Some(current_started - previous_handed);
+                        }
+                        if current_started >= previous_started {
+                            projections[previous_index].cycle_ms =
+                                Some(current_started - previous_started);
+                        }
+                    }
+                }
+            }
+        }
+        if event.window_continuity_eligible == Some(true) {
+            previous_meaningful.insert(key, index);
+        }
+    }
+    projections
+}
+
+async fn project_visible_window_activity(
     runtime: &ToolRuntime,
     auth: &AuthContext,
+    visibility_cache: &mut HashMap<String, bool>,
     event: webcodex_store::models::WindowActivityEventRecord,
-) -> Option<RuntimeConsoleWindowActivity> {
-    let mut visibility_cache = HashMap::new();
-    if !window_event_visible_cached(runtime, auth, &mut visibility_cache, &event).await {
-        return None;
-    }
+    timing: WindowActivityTimingProjection,
+) -> RuntimeConsoleWindowActivity {
     let mut activity_sessions = Vec::new();
     for link in event.workflow_links {
-        if !window_project_visible_cached(
-            runtime,
-            auth,
-            &mut visibility_cache,
-            link.project.as_deref(),
-        )
-        .await
+        if !window_project_visible_cached(runtime, auth, visibility_cache, link.project.as_deref())
+            .await
         {
             continue;
         }
@@ -1627,10 +1696,15 @@ async fn project_window_activity(
             relation: link.relation,
         });
     }
-    Some(RuntimeConsoleWindowActivity {
+    RuntimeConsoleWindowActivity {
         started_at_ms: event.started_at_ms,
         ended_at_ms: event.ended_at_ms,
         duration_ms: event.duration_ms,
+        service_ms: timing.service_ms,
+        next_call_gap_ms: timing.next_call_gap_ms,
+        cycle_ms: timing.cycle_ms,
+        window_transition_kind: event.window_transition_kind,
+        response_streaming: event.response_streaming,
         method: match event.action_name.as_str() {
             "toolsCall" => "tools/call".to_string(),
             "toolsList" => "tools/list".to_string(),
@@ -1643,7 +1717,40 @@ async fn project_window_activity(
         recorder_gap_session_id: event.recorder_gap_session_id,
         server_trace_id: event.server_trace_id,
         workflow_sessions: activity_sessions,
-    })
+    }
+}
+
+async fn project_window_activity(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    event: webcodex_store::models::WindowActivityEventRecord,
+) -> Option<RuntimeConsoleWindowActivity> {
+    let mut visibility_cache = HashMap::new();
+    if !window_event_visible_cached(runtime, auth, &mut visibility_cache, &event).await {
+        return None;
+    }
+    let service_ms = if event.response_streaming == Some(false) {
+        event
+            .request_observed_at_ms
+            .zip(event.response_handed_at_ms)
+            .and_then(|(started, handed)| handed.checked_sub(started))
+            .filter(|elapsed| *elapsed >= 0)
+    } else {
+        None
+    };
+    Some(
+        project_visible_window_activity(
+            runtime,
+            auth,
+            &mut visibility_cache,
+            event,
+            WindowActivityTimingProjection {
+                service_ms,
+                ..WindowActivityTimingProjection::default()
+            },
+        )
+        .await,
+    )
 }
 
 async fn window_project_visible_cached(
@@ -1964,11 +2071,25 @@ async fn window_for_auth(
         .list_window_activity_events(&input.client_window_key, principal_ref, activity_scan_limit)
         .map_err(|_| RuntimeConsoleError::Internal)?;
     let raw_activity_at_cap = raw_activity.len() == activity_scan_limit;
+    let mut activity_visible = Vec::with_capacity(raw_activity.len());
+    for event in &raw_activity {
+        activity_visible
+            .push(window_event_visible_cached(runtime, auth, &mut visibility_cache, event).await);
+    }
+    let timing = project_window_loop_timings(&raw_activity, &activity_visible);
     let mut activity = Vec::new();
-    for event in raw_activity {
-        if let Some(event) = project_window_activity(runtime, auth, event).await {
-            activity.push(event);
+    for ((event, visible), timing) in raw_activity
+        .into_iter()
+        .zip(activity_visible.into_iter())
+        .zip(timing.into_iter())
+    {
+        if !visible {
+            continue;
         }
+        activity.push(
+            project_visible_window_activity(runtime, auth, &mut visibility_cache, event, timing)
+                .await,
+        );
     }
     let activity_truncated = activity.len() > activity_limit || raw_activity_at_cap;
     activity.truncate(activity_limit);
@@ -3247,6 +3368,11 @@ mod tests {
                 principal_correlation_id: Some(principal_id),
                 window_started_at_ms: Some(at_ms),
                 window_ended_at_ms: Some(at_ms + 1),
+                request_observed_at_ms: None,
+                response_handed_at_ms: None,
+                window_transition_kind: None,
+                response_streaming: None,
+                window_continuity_eligible: None,
                 window_meaningful: true,
                 recorder_gap_session_id: None,
                 workflow_links: workflow_link
@@ -3259,6 +3385,61 @@ mod tests {
                         }]
                     })
                     .unwrap_or_default(),
+            },
+        );
+    }
+
+    fn record_timed_window_event(
+        db: &Arc<crate::Database>,
+        auth: &AuthContext,
+        window_key: &str,
+        project: Option<&str>,
+        request_observed_at_ms: i64,
+        response_handed_at_ms: i64,
+        legacy_window_ended_at_ms: i64,
+        transition: &str,
+    ) {
+        let (principal_kind, principal_id) =
+            crate::tool_runtime::runtime_observation_principal(Some(auth)).unwrap();
+        crate::action_audit_sessions::record_action_event(
+            db,
+            crate::action_audit_sessions::ActionAuditEventInput {
+                explicit_session_id: None,
+                session_title: None,
+                endpoint: "/mcp".to_string(),
+                action_name: "toolsCall".to_string(),
+                operation: Some("read_files".to_string()),
+                project: project.map(str::to_string),
+                principal_kind: None,
+                principal_user_id: None,
+                oauth_client_id: None,
+                status: "success".to_string(),
+                http_status: Some(200),
+                started_at: request_observed_at_ms / 1000,
+                ended_at: legacy_window_ended_at_ms / 1000,
+                duration_ms: response_handed_at_ms - request_observed_at_ms,
+                error_summary: None,
+                warning_summary: None,
+                changed_files: Vec::new(),
+                ids: json!({}),
+                summary: json!({}),
+                request_bytes: None,
+                response_bytes: None,
+                client_window_key: Some(window_key.to_string()),
+                client_window_source: Some("openai-session".to_string()),
+                server_trace_id: Some(format!("timed-trace-{request_observed_at_ms}")),
+                principal_correlation_kind: Some(principal_kind),
+                principal_correlation_id: Some(principal_id),
+                window_started_at_ms: Some(request_observed_at_ms),
+                window_ended_at_ms: Some(legacy_window_ended_at_ms),
+                request_observed_at_ms: Some(request_observed_at_ms),
+                response_handed_at_ms: Some(response_handed_at_ms),
+                window_transition_kind: Some(transition.to_string()),
+                response_streaming: Some(false),
+                window_continuity_eligible: Some(true),
+                window_meaningful: true,
+                recorder_gap_session_id: None,
+                workflow_links: Vec::new(),
             },
         );
     }
@@ -4472,6 +4653,152 @@ mod tests {
                 pre_resolution_key.as_str(),
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn window_timing_uses_response_handoff_not_legacy_audit_end() {
+        let (_tmp, db, runtime) = test_runtime_with_window_db();
+        let auth = crate::auth::shared_key_context("window-timing");
+        let project = "agent:window-timing:visible";
+        register_project(
+            &runtime,
+            "window-timing",
+            "visible",
+            "/private/window-timing",
+            Some(&auth),
+        )
+        .await;
+        let window_key = "e".repeat(64);
+        record_timed_window_event(
+            &db,
+            &auth,
+            &window_key,
+            Some(project),
+            1_000,
+            1_100,
+            1_900,
+            "unavailable",
+        );
+        record_timed_window_event(
+            &db,
+            &auth,
+            &window_key,
+            Some(project),
+            1_500,
+            1_550,
+            1_600,
+            "serial",
+        );
+
+        let detail = window_for_auth(
+            &runtime,
+            &auth,
+            WindowInput {
+                client_window_key: window_key,
+                activity_limit: Some(20),
+                session_limit: Some(20),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(detail.activity.len(), 2);
+        let first = detail
+            .activity
+            .iter()
+            .find(|event| event.service_ms == Some(100))
+            .expect("first canonical-timing event");
+        assert_eq!(
+            first.ended_at_ms, 1_900,
+            "legacy audit boundary remains distinct"
+        );
+        assert_eq!(first.next_call_gap_ms, Some(400));
+        assert_eq!(first.cycle_ms, Some(500));
+        let second = detail
+            .activity
+            .iter()
+            .find(|event| event.service_ms == Some(50))
+            .expect("second canonical-timing event");
+        assert_eq!(second.window_transition_kind.as_deref(), Some("serial"));
+    }
+
+    #[tokio::test]
+    async fn revoked_project_event_cannot_be_bridged_by_window_gap_projection() {
+        let (_tmp, db, runtime) = test_runtime_with_window_db();
+        let auth_a = crate::auth::shared_key_context("timing-visible-a");
+        let auth_b = crate::auth::shared_key_context("timing-hidden-b");
+        let project_a = "agent:timing-a:visible";
+        let project_b = "agent:timing-b:hidden";
+        register_project(
+            &runtime,
+            "timing-a",
+            "visible",
+            "/private/timing-a",
+            Some(&auth_a),
+        )
+        .await;
+        register_project(
+            &runtime,
+            "timing-b",
+            "hidden",
+            "/private/timing-b",
+            Some(&auth_b),
+        )
+        .await;
+        let window_key = "f".repeat(64);
+        record_timed_window_event(
+            &db,
+            &auth_a,
+            &window_key,
+            Some(project_a),
+            1_000,
+            1_100,
+            1_101,
+            "unavailable",
+        );
+        // Historical same-principal event whose Project is no longer visible.
+        record_timed_window_event(
+            &db,
+            &auth_a,
+            &window_key,
+            Some(project_b),
+            1_500,
+            1_550,
+            1_551,
+            "serial",
+        );
+        record_timed_window_event(
+            &db,
+            &auth_a,
+            &window_key,
+            Some(project_a),
+            2_000,
+            2_050,
+            2_051,
+            "serial",
+        );
+
+        let detail = window_for_auth(
+            &runtime,
+            &auth_a,
+            WindowInput {
+                client_window_key: window_key,
+                activity_limit: Some(20),
+                session_limit: Some(20),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(detail.activity.len(), 2);
+        assert!(detail
+            .activity
+            .iter()
+            .all(|event| event.project.as_deref() == Some(project_a)));
+        assert!(detail
+            .activity
+            .iter()
+            .all(|event| event.next_call_gap_ms.is_none() && event.cycle_ms.is_none()));
+        let serialized = serde_json::to_string(&detail).unwrap();
+        assert!(!serialized.contains(project_b));
     }
 
     #[tokio::test]

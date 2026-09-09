@@ -132,6 +132,21 @@ pub struct ActionAuditEventInput {
     pub principal_correlation_id: Option<String>,
     pub window_started_at_ms: Option<i64>,
     pub window_ended_at_ms: Option<i64>,
+    /// Canonical adapter timing for ordinary completed responses. These are
+    /// distinct from the legacy ActionAudit record window above.
+    pub request_observed_at_ms: Option<i64>,
+    pub response_handed_at_ms: Option<i64>,
+    /// Process-local continuity classification captured at request arrival.
+    /// `None` means the event predates this projection or had no eligible
+    /// Window/principal continuity identity.
+    pub window_transition_kind: Option<String>,
+    /// `None` for legacy rows; true streams are excluded from ordinary response
+    /// completion/gap semantics.
+    pub response_streaming: Option<bool>,
+    /// Whether this completed adapter response may become the previous
+    /// meaningful call for a later Window transition. Hard timeouts and streams
+    /// are deliberately false.
+    pub window_continuity_eligible: Option<bool>,
     pub window_meaningful: bool,
     pub recorder_gap_session_id: Option<String>,
     pub workflow_links: Vec<ActionAuditWorkflowLinkInput>,
@@ -401,6 +416,13 @@ fn record_action_event_inner(db: &Database, input: ActionAuditEventInput) -> any
             .map(|value| trim_and_truncate(&value, 512)),
         window_started_at_ms: input.window_started_at_ms,
         window_ended_at_ms,
+        request_observed_at_ms: input.request_observed_at_ms,
+        response_handed_at_ms: input.response_handed_at_ms,
+        window_transition_kind: input
+            .window_transition_kind
+            .map(|value| trim_and_truncate(&value, 32)),
+        response_streaming: input.response_streaming,
+        window_continuity_eligible: input.window_continuity_eligible,
         window_meaningful: input.window_meaningful,
         recorder_gap_session_id: input
             .recorder_gap_session_id

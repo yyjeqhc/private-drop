@@ -70,6 +70,20 @@ pub struct ActionEventRecord {
     pub window_started_at_ms: Option<i64>,
     #[serde(default)]
     pub window_ended_at_ms: Option<i64>,
+    /// Canonical adapter request-observed and response-handoff timestamps.
+    /// They are nullable so legacy events remain explicitly unavailable.
+    #[serde(default)]
+    pub request_observed_at_ms: Option<i64>,
+    #[serde(default)]
+    pub response_handed_at_ms: Option<i64>,
+    /// `serial`, `overlap`, or `unavailable` when classified in-process.
+    #[serde(default)]
+    pub window_transition_kind: Option<String>,
+    /// Null for legacy events; streaming handoff is not response completion.
+    #[serde(default)]
+    pub response_streaming: Option<bool>,
+    #[serde(default)]
+    pub window_continuity_eligible: Option<bool>,
     #[serde(default)]
     pub window_meaningful: bool,
     /// Diagnostic candidate for an omitted outer Workflow Session recorder.
@@ -116,6 +130,18 @@ pub struct WindowActivityEventRecord {
     pub meaningful: bool,
     pub recorder_gap_session_id: Option<String>,
     pub workflow_links: Vec<WindowWorkflowLinkRecord>,
+    /// Internal principal correlation is intentionally not serialized by the
+    /// Runtime Console projection. It is used only to avoid cross-principal
+    /// adjacency when an administrator reads a Window.
+    #[serde(skip)]
+    pub principal_correlation_kind: Option<String>,
+    #[serde(skip)]
+    pub principal_correlation_id: Option<String>,
+    pub request_observed_at_ms: Option<i64>,
+    pub response_handed_at_ms: Option<i64>,
+    pub window_transition_kind: Option<String>,
+    pub response_streaming: Option<bool>,
+    pub window_continuity_eligible: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

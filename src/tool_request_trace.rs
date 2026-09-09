@@ -1540,6 +1540,17 @@ pub(crate) fn finalize_runner_job_correlation(request_id: Option<&str>, job_id: 
     remove_correlation(&correlation);
 }
 
+/// Canonical HTTP-adapter completion timing for one request. The absolute
+/// handoff timestamp is anchored at the request-observed wall clock and
+/// advanced by monotonic elapsed time, preserving sub-second precision without
+/// allowing a wall-clock adjustment to create a negative request duration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RequestCompletionTiming {
+    pub(crate) request_observed_at_ms: i64,
+    pub(crate) response_handed_at_ms: i64,
+    pub(crate) elapsed_ms: u64,
+}
+
 /// Lifecycle guard shared by MCP `/mcp` and API `/api/tools/call` handlers.
 pub struct ToolRequestLifecycle {
     prefix: &'static str,
@@ -1550,6 +1561,7 @@ pub struct ToolRequestLifecycle {
     tool_name: Option<String>,
     client_window: Option<ClientWindow>,
     suppress_payload_capture: bool,
+    request_observed_at_ms: i64,
     started: Instant,
     completed: AtomicBool,
 }
@@ -1563,6 +1575,7 @@ impl ToolRequestLifecycle {
         tool_name: Option<String>,
     ) -> Self {
         let suppress_payload_capture = tool_name.as_deref() == Some("read_tool_trace");
+        let request_observed_at_ms = chrono::Utc::now().timestamp_millis();
         Self {
             prefix,
             mode: crate::config::tool_request_trace_mode(),
@@ -1572,6 +1585,7 @@ impl ToolRequestLifecycle {
             tool_name,
             client_window: None,
             suppress_payload_capture,
+            request_observed_at_ms,
             started: Instant::now(),
             completed: AtomicBool::new(false),
         }
@@ -1626,6 +1640,20 @@ impl ToolRequestLifecycle {
         self.started.elapsed().as_millis() as u64
     }
 
+    pub(crate) fn request_observed_at_ms(&self) -> i64 {
+        self.request_observed_at_ms
+    }
+
+    fn completion_timing(&self) -> RequestCompletionTiming {
+        let elapsed_ms = self.duration_ms();
+        let elapsed_i64 = i64::try_from(elapsed_ms).unwrap_or(i64::MAX);
+        RequestCompletionTiming {
+            request_observed_at_ms: self.request_observed_at_ms,
+            response_handed_at_ms: self.request_observed_at_ms.saturating_add(elapsed_i64),
+            elapsed_ms,
+        }
+    }
+
     pub fn mark_completed(&self) {
         self.completed.store(true, Ordering::SeqCst);
     }
@@ -1642,6 +1670,27 @@ impl ToolRequestLifecycle {
         protocol_success: Option<bool>,
         tool_success: Option<bool>,
         category: &str,
+    ) {
+        self.log_with_duration(
+            suffix,
+            http_status,
+            estimated_json_bytes,
+            protocol_success,
+            tool_success,
+            category,
+            self.duration_ms(),
+        );
+    }
+
+    fn log_with_duration(
+        &self,
+        suffix: &str,
+        http_status: Option<u16>,
+        estimated_json_bytes: Option<usize>,
+        protocol_success: Option<bool>,
+        tool_success: Option<bool>,
+        category: &str,
+        duration_ms: u64,
     ) {
         if !self.enabled() {
             return;
@@ -1661,7 +1710,7 @@ impl ToolRequestLifecycle {
             tool_name = self.tool_name.as_deref().unwrap_or("-"),
             client_window_key = self.client_window.as_ref().map(ClientWindow::key).unwrap_or("-"),
             client_window_source = self.client_window.as_ref().map(ClientWindow::source).unwrap_or("-"),
-            duration_ms = self.duration_ms(),
+            duration_ms,
             estimated_json_bytes = estimated_json_bytes.map(|b| b as i64).unwrap_or(-1),
             http_status = http_status.map(|s| s as i32).unwrap_or(-1),
             protocol_success = protocol_success
@@ -1684,7 +1733,7 @@ impl ToolRequestLifecycle {
                     "tool_name": self.tool_name.as_deref(),
                     "client_window_key": self.client_window.as_ref().map(ClientWindow::key),
                     "client_window_source": self.client_window.as_ref().map(ClientWindow::source),
-                    "duration_ms": self.duration_ms(),
+                    "duration_ms": duration_ms,
                     "estimated_json_bytes": estimated_json_bytes,
                     "http_status": http_status,
                     "protocol_success": protocol_success,
@@ -1761,16 +1810,19 @@ impl ToolRequestLifecycle {
         protocol_success: Option<bool>,
         tool_success: Option<bool>,
         category: &str,
-    ) {
-        self.log(
+    ) -> RequestCompletionTiming {
+        let timing = self.completion_timing();
+        self.log_with_duration(
             "tool_handler_returned",
             Some(http_status),
             estimated_json_bytes,
             protocol_success,
             tool_success,
             category,
+            timing.elapsed_ms,
         );
         self.mark_completed();
+        timing
     }
 }
 
@@ -2709,5 +2761,34 @@ mod tests {
         guard.handler_returned(200, Some(12), Some(true), Some(true), "ok");
         drop(guard);
         env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
+    }
+
+    #[test]
+    fn completion_timing_preserves_subsecond_monotonic_precision() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.remove("WEBCODEX_TOOL_REQUEST_TRACE");
+        let guard = ToolRequestLifecycle::new(
+            "mcp",
+            "trace-precise".into(),
+            "-",
+            "tools/call",
+            Some("read_files".into()),
+        );
+        let observed_at_ms = guard.request_observed_at_ms();
+        std::thread::sleep(std::time::Duration::from_millis(12));
+        let timing = guard.handler_returned(200, None, Some(true), Some(true), "ok");
+        assert_eq!(timing.request_observed_at_ms, observed_at_ms);
+        assert!(
+            timing.elapsed_ms > 0,
+            "sub-second work must not quantize to zero"
+        );
+        assert!(
+            timing.elapsed_ms < 1_000,
+            "test request unexpectedly exceeded one second"
+        );
+        assert_eq!(
+            timing.response_handed_at_ms - timing.request_observed_at_ms,
+            i64::try_from(timing.elapsed_ms).unwrap()
+        );
     }
 }

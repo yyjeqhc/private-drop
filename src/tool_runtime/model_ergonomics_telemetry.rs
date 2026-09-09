@@ -74,6 +74,18 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) edit_conflict_kind: Option<String>,
 }
 
+impl ModelErgonomicsRecord {
+    pub(crate) fn outcome_class(&self) -> &'static str {
+        if self.execution_state.as_deref() == Some("outcome_unknown") {
+            "unknown"
+        } else if self.success {
+            "success"
+        } else {
+            "failure"
+        }
+    }
+}
+
 impl ModelErgonomicsTimer {
     pub(crate) fn start(tool_name: &str) -> Option<Self> {
         Self::start_with_protocol(

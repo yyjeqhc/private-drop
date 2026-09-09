@@ -184,6 +184,11 @@ impl Database {
                 principal_correlation_id TEXT,
                 window_started_at_ms INTEGER,
                 window_ended_at_ms INTEGER,
+                request_observed_at_ms INTEGER,
+                response_handed_at_ms INTEGER,
+                window_transition_kind TEXT,
+                response_streaming INTEGER CHECK(response_streaming IS NULL OR response_streaming IN (0, 1)),
+                window_continuity_eligible INTEGER CHECK(window_continuity_eligible IS NULL OR window_continuity_eligible IN (0, 1)),
                 window_meaningful INTEGER NOT NULL DEFAULT 0 CHECK(window_meaningful IN (0, 1)),
                 recorder_gap_session_id TEXT,
                 FOREIGN KEY(session_id) REFERENCES action_sessions(session_id)
@@ -657,6 +662,17 @@ impl Database {
             ("principal_correlation_id", "TEXT"),
             ("window_started_at_ms", "INTEGER"),
             ("window_ended_at_ms", "INTEGER"),
+            ("request_observed_at_ms", "INTEGER"),
+            ("response_handed_at_ms", "INTEGER"),
+            ("window_transition_kind", "TEXT"),
+            (
+                "response_streaming",
+                "INTEGER CHECK(response_streaming IS NULL OR response_streaming IN (0, 1))",
+            ),
+            (
+                "window_continuity_eligible",
+                "INTEGER CHECK(window_continuity_eligible IS NULL OR window_continuity_eligible IN (0, 1))",
+            ),
             (
                 "window_meaningful",
                 "INTEGER NOT NULL DEFAULT 0 CHECK(window_meaningful IN (0, 1))",

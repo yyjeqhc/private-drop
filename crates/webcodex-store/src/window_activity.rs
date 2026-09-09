@@ -162,13 +162,17 @@ impl Database {
             "SELECT e.event_id, e.client_window_key, e.client_window_source,
                     e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
                     e.duration_ms, e.action_name, e.operation, e.project, e.status,
-                    e.window_meaningful, e.recorder_gap_session_id
+                    e.window_meaningful, e.recorder_gap_session_id,
+                    e.principal_correlation_kind, e.principal_correlation_id,
+                    e.request_observed_at_ms, e.response_handed_at_ms,
+                    e.window_transition_kind, e.response_streaming,
+                    e.window_continuity_eligible
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
                AND e.window_ended_at_ms IS NOT NULL
                {principal_sql}
-             ORDER BY e.window_started_at_ms DESC, e.event_id DESC
+             ORDER BY COALESCE(e.request_observed_at_ms, e.window_started_at_ms) DESC, e.event_id DESC
              LIMIT ?4"
         );
         let limit = bounded_limit(limit, MAX_WINDOW_ACTIVITY_LIMIT);
@@ -393,6 +397,13 @@ fn collect_window_event_rows(
             meaningful: row.get(11)?,
             recorder_gap_session_id: row.get(12)?,
             workflow_links: workflow_links_for_event(conn, &event_id)?,
+            principal_correlation_kind: row.get(13)?,
+            principal_correlation_id: row.get(14)?,
+            request_observed_at_ms: row.get(15)?,
+            response_handed_at_ms: row.get(16)?,
+            window_transition_kind: row.get(17)?,
+            response_streaming: row.get(18)?,
+            window_continuity_eligible: row.get(19)?,
         });
     }
     Ok(out)
@@ -501,6 +512,11 @@ mod tests {
             principal_correlation_id: Some(principal.to_string()),
             window_started_at_ms: Some(at),
             window_ended_at_ms: Some(at + 1),
+            request_observed_at_ms: None,
+            response_handed_at_ms: None,
+            window_transition_kind: None,
+            response_streaming: None,
+            window_continuity_eligible: None,
             window_meaningful: true,
             recorder_gap_session_id: None,
         }

@@ -562,13 +562,59 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
 
     // End the connection guard structurally inside the block: the awaited
     // requests below must not overlap it.
-    let (endpoint, action, operation, status, summary) = {
+    let (
+        endpoint,
+        action,
+        operation,
+        status,
+        summary,
+        duration_ms,
+        request_observed_at_ms,
+        response_handed_at_ms,
+        response_streaming,
+        window_continuity_eligible,
+    ) = {
         let conn = db.conn_for_tests();
-        let (endpoint, action, operation, status): (String, String, String, String) = conn
+        let (
+            endpoint,
+            action,
+            operation,
+            status,
+            duration_ms,
+            request_observed_at_ms,
+            response_handed_at_ms,
+            response_streaming,
+            window_continuity_eligible,
+        ): (
+            String,
+            String,
+            String,
+            String,
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+        ) = conn
             .query_row(
-                "SELECT endpoint, action_name, operation, status FROM action_events",
+                "SELECT endpoint, action_name, operation, status, duration_ms,
+                        request_observed_at_ms, response_handed_at_ms,
+                        response_streaming, window_continuity_eligible
+                 FROM action_events",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                    ))
+                },
             )
             .unwrap();
         // Summary-level discipline: no tool output is persisted for MCP rows.
@@ -577,12 +623,37 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
                 row.get(0)
             })
             .unwrap();
-        (endpoint, action, operation, status, summary)
+        (
+            endpoint,
+            action,
+            operation,
+            status,
+            summary,
+            duration_ms,
+            request_observed_at_ms,
+            response_handed_at_ms,
+            response_streaming,
+            window_continuity_eligible,
+        )
     };
     assert_eq!(endpoint, "/mcp");
     assert_eq!(action, "toolsCall");
     assert_eq!(operation, "list_tools");
     assert_eq!(status, "success");
+    let request_observed_at_ms = request_observed_at_ms.expect("canonical MCP request start");
+    let response_handed_at_ms = response_handed_at_ms.expect("canonical MCP response handoff");
+    assert!(response_handed_at_ms >= request_observed_at_ms);
+    assert!(duration_ms >= 0);
+    assert!(
+        duration_ms <= response_handed_at_ms - request_observed_at_ms,
+        "legacy ActionAudit duration ends at its pre-render audit boundary, not response handoff"
+    );
+    assert_eq!(response_streaming, Some(0));
+    assert_eq!(
+        window_continuity_eligible,
+        Some(0),
+        "observability/discovery tools must not become meaningful continuity endpoints"
+    );
     let summary: Value = serde_json::from_str(&summary).unwrap();
     assert_eq!(summary["transport"], "mcp");
     assert!(

@@ -28,6 +28,20 @@ they do not create Sessions or send messages.
   select a Workflow Session, grant Project authority, or make a Window an
   execution/continuity owner.
 
+For ordinary non-streaming `tools/call`, Window activity can project three timing
+facts from canonical adapter timestamps: `service_ms` is request-observed to
+response-handoff time, `next_call_gap_ms` is response handoff to the next
+meaningful same-Window/same-principal request, and `cycle_ms` is request start to
+the next meaningful request start. The gap is explicitly outside-WebCodex time;
+it may include network, host scheduling, model inference, user interaction, or
+other unobservable work and is never presented as model think/reasoning time.
+Status/discovery calls do not break the meaningful sequence. Overlapping calls
+are classified as overlap rather than producing a negative serial gap. Streaming
+handoff is not stream completion, and a Server restart loses process-local prior
+completion state, so both cases leave ordinary next-call timing unavailable.
+Legacy ActionAudit `window_ended_at_ms` remains the audit-record boundary and is
+not used as the HTTP response-handoff performance timestamp.
+
 The context panel still adapts between a docked rail, popover, and mobile sheet.
 Closing it leaves a labeled Context entry in the header. Context navigation uses
 ordinary keyboard-focusable buttons, with the current choice announced as pressed.
@@ -40,7 +54,7 @@ contracts. Model-reported progress remains informational.
 The Windows list and detail routes require `runtime:read`. Non-admin callers are
 first principal-filtered and then re-projected through current canonical Project
 authority, so revoked Project access cannot leave a Window timestamp, Session
-count, gap count, or direct-key existence oracle. Session detail itself keeps its
+count, gap count, timing projection, or direct-key existence oracle. Session detail itself keeps its
 existing Project-read contract; without `runtime:read` it reports Window activity
 as unavailable instead of elevating the whole Session read to a runtime-wide
 permission requirement. Durable terminal history is backed by ActionAudit, while

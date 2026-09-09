@@ -253,9 +253,10 @@ fn insert_action_event_on_conn(conn: &Connection, event: &ActionEventRecord) -> 
             changed_files_json, ids_json, summary_json, request_bytes, response_bytes,
             client_window_key, client_window_source, server_trace_id,
             principal_correlation_kind, principal_correlation_id,
-            window_started_at_ms, window_ended_at_ms, window_meaningful,
-            recorder_gap_session_id
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+            window_started_at_ms, window_ended_at_ms, request_observed_at_ms,
+            response_handed_at_ms, window_transition_kind, response_streaming,
+            window_continuity_eligible, window_meaningful, recorder_gap_session_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35)",
         params![
             event.event_id,
             event.session_id,
@@ -285,6 +286,11 @@ fn insert_action_event_on_conn(conn: &Connection, event: &ActionEventRecord) -> 
             event.principal_correlation_id,
             event.window_started_at_ms,
             event.window_ended_at_ms,
+            event.request_observed_at_ms,
+            event.response_handed_at_ms,
+            event.window_transition_kind,
+            event.response_streaming,
+            event.window_continuity_eligible,
             event.window_meaningful,
             event.recorder_gap_session_id,
         ],
@@ -314,8 +320,9 @@ fn list_action_events_on_conn(
                 changed_files_json, ids_json, summary_json, request_bytes, response_bytes,
                 client_window_key, client_window_source, server_trace_id,
                 principal_correlation_kind, principal_correlation_id,
-                window_started_at_ms, window_ended_at_ms, window_meaningful,
-                recorder_gap_session_id
+                window_started_at_ms, window_ended_at_ms, request_observed_at_ms,
+                response_handed_at_ms, window_transition_kind, response_streaming,
+                window_continuity_eligible, window_meaningful, recorder_gap_session_id
          FROM action_events
          WHERE session_id = ?1
          ORDER BY started_at DESC
@@ -377,8 +384,13 @@ fn row_to_action_event(row: &rusqlite::Row) -> rusqlite::Result<ActionEventRecor
         principal_correlation_id: row.get(25)?,
         window_started_at_ms: row.get(26)?,
         window_ended_at_ms: row.get(27)?,
-        window_meaningful: row.get(28)?,
-        recorder_gap_session_id: row.get(29)?,
+        request_observed_at_ms: row.get(28)?,
+        response_handed_at_ms: row.get(29)?,
+        window_transition_kind: row.get(30)?,
+        response_streaming: row.get(31)?,
+        window_continuity_eligible: row.get(32)?,
+        window_meaningful: row.get(33)?,
+        recorder_gap_session_id: row.get(34)?,
     })
 }
 

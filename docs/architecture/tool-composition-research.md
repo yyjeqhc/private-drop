@@ -320,6 +320,27 @@ is outside WebCodex. It may be model inference, host scheduling, user delay, UI
 behavior, or something else and must not be labeled as model reasoning without
 host evidence.
 
+Agent Loop Observability P1 makes that outer timing boundary concrete for
+ordinary non-streaming MCP calls. Let `A_i` be request observation and `H_i` be
+response handoff. WebCodex-owned service time is `H_i - A_i`; the adjacent
+meaningful Window gap is `A_(i+1) - H_i`; and the call cycle is
+`A_(i+1) - A_i`. Serial calls should therefore approximately satisfy cycle =
+service + outside-WebCodex gap. Pairing uses hashed `ClientWindow` plus canonical
+authenticated principal, never Workflow Session or Project identity. Overlap is a
+separate relation, streaming handoff is excluded from completed-response gap
+semantics, and restart does not reconstruct process-local predecessor state.
+
+The P1 metrics boundary is fail-open and low-cardinality. It can emit
+`tool_runtime_duration_seconds`, `mcp_call_duration_seconds`,
+`window_inter_call_gap_seconds`, `window_meaningful_calls_total`,
+`tool_result_bytes`, `tool_outcomes_total`, and `window_overlapping_calls_total`
+without labeling by Window, Session, Job, request, trace, Project path, command,
+or payload. The current repository has no Prometheus/OpenMetrics endpoint, so the
+boundary and structured observations remain exporter-independent while the
+Runtime Console supplies a bounded dogfood projection. Baseline data comes before
+SLO targets: WebCodex-owned service/failure SLIs and interaction-efficiency gaps
+must remain separate because only the former are wholly service-owned.
+
 ## Staged implementation plan
 
 ### Phase 0 — Measurement and contract inventory

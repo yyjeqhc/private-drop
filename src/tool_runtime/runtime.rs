@@ -155,6 +155,9 @@ pub struct ToolRuntime {
     /// Process-local payload-free view of currently in-flight MCP Window
     /// requests. It is observability only and intentionally resets on restart.
     pub(crate) window_activity: Arc<super::window_activity::WindowActivityRegistry>,
+    /// Fail-open metrics projection. This consumes canonical runtime/transport
+    /// facts and has no authority over execution or persistence.
+    pub(crate) metrics: Arc<dyn super::runtime_metrics::RuntimeMetrics>,
     /// Durable ActionAudit-backed Window activity query handle. This shares the
     /// normal Server SQLite database and never becomes an authorization store.
     pub(crate) window_activity_db: Option<Arc<crate::Database>>,
@@ -209,6 +212,7 @@ impl ToolRuntime {
             activity: Arc::new(NoopActivityRecorder),
             observations: Arc::new(RuntimeObservations::default()),
             window_activity: Arc::new(super::window_activity::WindowActivityRegistry::default()),
+            metrics: Arc::new(super::runtime_metrics::TracingRuntimeMetrics),
             window_activity_db: None,
             memory_db: None,
             communication_db: None,

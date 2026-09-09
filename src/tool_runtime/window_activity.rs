@@ -1,9 +1,36 @@
 use crate::client_window::ClientWindow;
+use crate::tool_request_trace::RequestCompletionTiming;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 pub(crate) const MAX_ACTIVE_WINDOW_REQUESTS: usize = 64;
 pub(crate) const MAX_ACTIVE_REQUESTS_PER_WINDOW: usize = 8;
+pub(crate) const MAX_WINDOW_LOOP_CONTINUITIES: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowLoopTransition {
+    Unavailable,
+    Serial { gap_ms: u64 },
+    Overlap,
+}
+
+impl WindowLoopTransition {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Serial { .. } => "serial",
+            Self::Overlap => "overlap",
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn gap_ms(self) -> Option<u64> {
+        match self {
+            Self::Serial { gap_ms } => Some(gap_ms),
+            Self::Unavailable | Self::Overlap => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkflowSessionCorrelationRelation {
@@ -52,6 +79,10 @@ pub(crate) struct ActiveWindowRequest {
     principal_correlation_kind: Option<String>,
     #[serde(skip)]
     principal_correlation_id: Option<String>,
+    #[serde(skip)]
+    meaningful: bool,
+    #[serde(skip)]
+    overlapped: bool,
     pub(crate) started_at_ms: i64,
 }
 
@@ -66,6 +97,20 @@ pub(crate) struct ActiveWindowSummary {
 #[derive(Debug, Default)]
 struct WindowActivityRegistryInner {
     by_trace: BTreeMap<String, ActiveWindowRequest>,
+    previous_meaningful: BTreeMap<WindowContinuityKey, CompletedMeaningfulCall>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct WindowContinuityKey {
+    client_window_key: String,
+    principal_kind: String,
+    principal_id: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CompletedMeaningfulCall {
+    request_observed_at_ms: i64,
+    response_handed_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -74,6 +119,7 @@ pub(crate) struct WindowActivityRegistry {
 }
 
 impl WindowActivityRegistry {
+    #[cfg(test)]
     pub(crate) fn start(
         &self,
         window: &ClientWindow,
@@ -81,18 +127,56 @@ impl WindowActivityRegistry {
         method: &str,
         principal: Option<(&str, &str)>,
     ) -> WindowActivityGuard {
+        self.start_observed(
+            window,
+            server_trace_id,
+            method,
+            None,
+            principal,
+            chrono::Utc::now().timestamp_millis(),
+        )
+    }
+
+    pub(crate) fn start_observed(
+        &self,
+        window: &ClientWindow,
+        server_trace_id: &str,
+        method: &str,
+        tool_name: Option<&str>,
+        principal: Option<(&str, &str)>,
+        request_observed_at_ms: i64,
+    ) -> WindowActivityGuard {
+        let meaningful = method == "tools/call"
+            && tool_name.is_some_and(crate::tool_runtime::is_meaningful_activity_tool);
+        let mut inner = self.inner.lock().expect("Window activity mutex poisoned");
+        let continuity_key = principal.map(|(kind, id)| WindowContinuityKey {
+            client_window_key: window.key().to_string(),
+            principal_kind: kind.to_string(),
+            principal_id: id.to_string(),
+        });
+        let (transition, overlapped) = if meaningful {
+            continuity_key
+                .as_ref()
+                .map(|key| {
+                    classify_transition_and_mark_overlap(&mut inner, key, request_observed_at_ms)
+                })
+                .unwrap_or((WindowLoopTransition::Unavailable, false))
+        } else {
+            (WindowLoopTransition::Unavailable, false)
+        };
         let record = ActiveWindowRequest {
             client_window_key: window.key().to_string(),
             client_window_source: window.source().to_string(),
             server_trace_id: server_trace_id.to_string(),
             method: method.to_string(),
-            tool_name: None,
+            tool_name: tool_name.map(str::to_string),
             project: None,
             principal_correlation_kind: principal.map(|(kind, _)| kind.to_string()),
             principal_correlation_id: principal.map(|(_, id)| id.to_string()),
-            started_at_ms: chrono::Utc::now().timestamp_millis(),
+            meaningful,
+            overlapped,
+            started_at_ms: request_observed_at_ms,
         };
-        let mut inner = self.inner.lock().expect("Window activity mutex poisoned");
         if inner.by_trace.len() >= MAX_ACTIVE_WINDOW_REQUESTS {
             if let Some(oldest) = inner
                 .by_trace
@@ -107,6 +191,10 @@ impl WindowActivityRegistry {
         WindowActivityGuard {
             registry: self.clone(),
             server_trace_id: server_trace_id.to_string(),
+            continuity_key,
+            meaningful,
+            request_observed_at_ms,
+            transition,
             active: true,
         }
     }
@@ -202,13 +290,100 @@ impl WindowActivityRegistry {
         counts
     }
 
-    fn finish(&self, server_trace_id: &str) {
-        self.inner
-            .lock()
-            .expect("Window activity mutex poisoned")
-            .by_trace
-            .remove(server_trace_id);
+    fn finish(
+        &self,
+        server_trace_id: &str,
+        continuity_key: Option<&WindowContinuityKey>,
+        meaningful: bool,
+        request_observed_at_ms: i64,
+        completion: Option<RequestCompletionTiming>,
+        continuity_eligible: bool,
+    ) {
+        let Ok(mut inner) = self.inner.lock() else {
+            tracing::warn!(
+                event = "window_activity_lock_poisoned",
+                "window_activity_lock_poisoned"
+            );
+            return;
+        };
+        let finished_request = inner.by_trace.remove(server_trace_id);
+        let overlapped = finished_request
+            .as_ref()
+            .is_some_and(|request| request.overlapped);
+        if meaningful && continuity_eligible && finished_request.is_some() && !overlapped {
+            if let (Some(key), Some(completion)) = (continuity_key, completion) {
+                let should_replace = inner.previous_meaningful.get(key).is_none_or(|previous| {
+                    request_observed_at_ms >= previous.request_observed_at_ms
+                });
+                if should_replace {
+                    inner.previous_meaningful.insert(
+                        key.clone(),
+                        CompletedMeaningfulCall {
+                            request_observed_at_ms,
+                            response_handed_at_ms: completion.response_handed_at_ms,
+                        },
+                    );
+                }
+                while inner.previous_meaningful.len() > MAX_WINDOW_LOOP_CONTINUITIES {
+                    let Some(oldest) = inner
+                        .previous_meaningful
+                        .iter()
+                        .min_by_key(|(_, previous)| previous.response_handed_at_ms)
+                        .map(|(key, _)| key.clone())
+                    else {
+                        break;
+                    };
+                    inner.previous_meaningful.remove(&oldest);
+                }
+            }
+        }
     }
+}
+
+fn classify_transition_and_mark_overlap(
+    inner: &mut WindowActivityRegistryInner,
+    key: &WindowContinuityKey,
+    request_observed_at_ms: i64,
+) -> (WindowLoopTransition, bool) {
+    let active_overlap = inner.by_trace.values().any(|request| {
+        request.meaningful
+            && request.client_window_key == key.client_window_key
+            && request.principal_correlation_kind.as_deref() == Some(key.principal_kind.as_str())
+            && request.principal_correlation_id.as_deref() == Some(key.principal_id.as_str())
+    });
+    let previous_overlap = inner
+        .previous_meaningful
+        .get(key)
+        .is_some_and(|previous| request_observed_at_ms < previous.response_handed_at_ms);
+    if active_overlap || previous_overlap {
+        // Once a meaningful sequence overlaps, there is no unambiguous adjacent
+        // serial predecessor. Clear the prior anchor and mark every in-flight
+        // member of this Window+principal overlap group so none can later
+        // manufacture an outside-WebCodex gap. A later clean completion will
+        // establish a fresh anchor for the following call.
+        inner.previous_meaningful.remove(key);
+        for request in inner.by_trace.values_mut() {
+            if request.meaningful
+                && request.client_window_key == key.client_window_key
+                && request.principal_correlation_kind.as_deref()
+                    == Some(key.principal_kind.as_str())
+                && request.principal_correlation_id.as_deref() == Some(key.principal_id.as_str())
+            {
+                request.overlapped = true;
+            }
+        }
+        return (WindowLoopTransition::Overlap, true);
+    }
+    let Some(previous) = inner.previous_meaningful.get(key) else {
+        return (WindowLoopTransition::Unavailable, false);
+    };
+    (
+        WindowLoopTransition::Serial {
+            gap_ms: u64::try_from(request_observed_at_ms - previous.response_handed_at_ms)
+                .unwrap_or(u64::MAX),
+        },
+        false,
+    )
 }
 
 fn principal_visible(request: &ActiveWindowRequest, principal: Option<(&str, &str)>) -> bool {
@@ -224,6 +399,10 @@ fn principal_visible(request: &ActiveWindowRequest, principal: Option<(&str, &st
 pub(crate) struct WindowActivityGuard {
     registry: WindowActivityRegistry,
     server_trace_id: String,
+    continuity_key: Option<WindowContinuityKey>,
+    meaningful: bool,
+    request_observed_at_ms: i64,
+    transition: WindowLoopTransition,
     active: bool,
 }
 
@@ -232,12 +411,37 @@ impl WindowActivityGuard {
         self.registry
             .update(&self.server_trace_id, tool_name, project);
     }
+
+    pub(crate) fn transition(&self) -> WindowLoopTransition {
+        self.transition
+    }
+
+    pub(crate) fn complete(mut self, timing: RequestCompletionTiming, continuity_eligible: bool) {
+        if self.active {
+            self.registry.finish(
+                &self.server_trace_id,
+                self.continuity_key.as_ref(),
+                self.meaningful,
+                self.request_observed_at_ms,
+                Some(timing),
+                continuity_eligible,
+            );
+            self.active = false;
+        }
+    }
 }
 
 impl Drop for WindowActivityGuard {
     fn drop(&mut self) {
         if self.active {
-            self.registry.finish(&self.server_trace_id);
+            self.registry.finish(
+                &self.server_trace_id,
+                self.continuity_key.as_ref(),
+                self.meaningful,
+                self.request_observed_at_ms,
+                None,
+                false,
+            );
             self.active = false;
         }
     }
@@ -374,5 +578,211 @@ mod tests {
         assert!(registry
             .list_for_window(&window_key("w"), Some(("username", "alice")))
             .is_empty());
+    }
+
+    fn completion(started_at_ms: i64, response_handed_at_ms: i64) -> RequestCompletionTiming {
+        RequestCompletionTiming {
+            request_observed_at_ms: started_at_ms,
+            response_handed_at_ms,
+            elapsed_ms: u64::try_from(response_handed_at_ms - started_at_ms).unwrap(),
+        }
+    }
+
+    fn meaningful_start(
+        registry: &WindowActivityRegistry,
+        window: &ClientWindow,
+        trace: &str,
+        principal: (&str, &str),
+        at_ms: i64,
+    ) -> WindowActivityGuard {
+        registry.start_observed(
+            window,
+            trace,
+            "tools/call",
+            Some("read_files"),
+            Some(principal),
+            at_ms,
+        )
+    }
+
+    #[test]
+    fn meaningful_sequential_gap_uses_previous_response_handoff() {
+        let registry = WindowActivityRegistry::default();
+        let window = window("sequential");
+        let first = meaningful_start(
+            &registry,
+            &window,
+            "trace-first",
+            ("username", "alice"),
+            1_000,
+        );
+        assert_eq!(first.transition(), WindowLoopTransition::Unavailable);
+        first.complete(completion(1_000, 1_125), true);
+
+        let second = meaningful_start(
+            &registry,
+            &window,
+            "trace-second",
+            ("username", "alice"),
+            1_500,
+        );
+        assert_eq!(second.transition().gap_ms(), Some(375));
+    }
+
+    #[test]
+    fn meaningful_continuity_requires_same_window_and_principal() {
+        let registry = WindowActivityRegistry::default();
+        let first_window = window("identity-a");
+        let second_window = window("identity-b");
+        meaningful_start(
+            &registry,
+            &first_window,
+            "trace-first",
+            ("username", "alice"),
+            1_000,
+        )
+        .complete(completion(1_000, 1_050), true);
+
+        let different_principal = meaningful_start(
+            &registry,
+            &first_window,
+            "trace-bob",
+            ("username", "bob"),
+            1_200,
+        );
+        assert_eq!(
+            different_principal.transition(),
+            WindowLoopTransition::Unavailable
+        );
+        drop(different_principal);
+
+        let different_window = meaningful_start(
+            &registry,
+            &second_window,
+            "trace-other-window",
+            ("username", "alice"),
+            1_300,
+        );
+        assert_eq!(
+            different_window.transition(),
+            WindowLoopTransition::Unavailable
+        );
+    }
+
+    #[test]
+    fn discovery_call_does_not_break_meaningful_cadence() {
+        let registry = WindowActivityRegistry::default();
+        let window = window("meaningful-cadence");
+        meaningful_start(
+            &registry,
+            &window,
+            "trace-first",
+            ("username", "alice"),
+            1_000,
+        )
+        .complete(completion(1_000, 1_100), true);
+
+        let discovery = registry.start_observed(
+            &window,
+            "trace-status",
+            "tools/call",
+            Some("runtime_status"),
+            Some(("username", "alice")),
+            1_200,
+        );
+        assert_eq!(discovery.transition(), WindowLoopTransition::Unavailable);
+        discovery.complete(completion(1_200, 1_225), true);
+
+        let second = meaningful_start(
+            &registry,
+            &window,
+            "trace-second",
+            ("username", "alice"),
+            1_500,
+        );
+        assert_eq!(second.transition().gap_ms(), Some(400));
+    }
+
+    #[test]
+    fn overlapping_meaningful_calls_never_emit_negative_serial_gap() {
+        let registry = WindowActivityRegistry::default();
+        let window = window("overlap");
+        let first = meaningful_start(
+            &registry,
+            &window,
+            "trace-first",
+            ("username", "alice"),
+            1_000,
+        );
+        let second = meaningful_start(
+            &registry,
+            &window,
+            "trace-second",
+            ("username", "alice"),
+            1_050,
+        );
+        assert_eq!(second.transition(), WindowLoopTransition::Overlap);
+        assert_eq!(second.transition().gap_ms(), None);
+        first.complete(completion(1_000, 1_200), true);
+        second.complete(completion(1_050, 1_250), true);
+
+        let after_overlap = meaningful_start(
+            &registry,
+            &window,
+            "trace-after-overlap",
+            ("username", "alice"),
+            1_500,
+        );
+        assert_eq!(
+            after_overlap.transition(),
+            WindowLoopTransition::Unavailable,
+            "an overlap group must invalidate the serial anchor instead of leaking WebCodex overlap time into an outside gap"
+        );
+        after_overlap.complete(completion(1_500, 1_550), true);
+
+        let clean_followup = meaningful_start(
+            &registry,
+            &window,
+            "trace-clean-followup",
+            ("username", "alice"),
+            1_700,
+        );
+        assert_eq!(clean_followup.transition().gap_ms(), Some(150));
+    }
+
+    #[test]
+    fn restart_or_ineligible_completion_does_not_invent_continuity() {
+        let window = window("restart");
+        let registry = WindowActivityRegistry::default();
+        meaningful_start(
+            &registry,
+            &window,
+            "trace-stream",
+            ("username", "alice"),
+            1_000,
+        )
+        .complete(completion(1_000, 1_100), false);
+        let after_stream = meaningful_start(
+            &registry,
+            &window,
+            "trace-after-stream",
+            ("username", "alice"),
+            1_300,
+        );
+        assert_eq!(after_stream.transition(), WindowLoopTransition::Unavailable);
+        after_stream.complete(completion(1_300, 1_350), true);
+
+        let restarted_registry = WindowActivityRegistry::default();
+        let after_restart = meaningful_start(
+            &restarted_registry,
+            &window,
+            "trace-after-restart",
+            ("username", "alice"),
+            1_600,
+        );
+        assert_eq!(
+            after_restart.transition(),
+            WindowLoopTransition::Unavailable
+        );
     }
 }

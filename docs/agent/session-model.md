@@ -120,6 +120,16 @@ canonical `work_on_project` create/resume yields a `work_on_project` relation fr
 its typed projection. These relations are intentionally many-to-many and confer
 no lease, ownership, authority, or implicit recorder selection.
 
+Agent-loop timing uses the same observational boundary without adding a Session
+identity. Adjacent meaningful MCP calls are eligible to pair only when the hashed
+`ClientWindow` and canonical authenticated principal correlation both match.
+Project remains an event dimension and current-visibility boundary, not the
+continuity identity. A matching Window does not prove a matching model turn:
+WebCodex receives no reliable turn/generation/response id and never infers one
+from elapsed time. Missing or malformed host Window metadata therefore leaves
+loop continuity unavailable rather than falling back to Workflow Session,
+credential, Project, connection, trace, or MCP Session identity.
+
 For a later successful meaningful Project tool call with no explicit recorder,
 WebCodex may diagnose a **recorder continuity gap** when the same hashed Window,
 canonical principal, and exact Project have a recent explicit Session affinity.

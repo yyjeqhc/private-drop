@@ -64,6 +64,11 @@ fn record_window_activity_fixture(
             principal_correlation_id: Some(principal_id),
             window_started_at_ms: Some(at_ms),
             window_ended_at_ms: Some(at_ms + 1),
+            request_observed_at_ms: None,
+            response_handed_at_ms: None,
+            window_transition_kind: None,
+            response_streaming: None,
+            window_continuity_eligible: None,
             window_meaningful: true,
             recorder_gap_session_id: recorder_gap_session_id.map(str::to_string),
             workflow_links: linked_session
