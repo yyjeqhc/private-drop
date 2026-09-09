@@ -425,6 +425,47 @@ async fn failure_history_read_only_failure_is_non_actionable_in_handoff() {
 }
 
 #[tokio::test]
+async fn failure_history_checkpoint_create_proven_no_change_is_non_actionable_in_handoff() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("checkpoint create failure".to_string()));
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "workspace_checkpoint_create",
+        json!({"project": "agent:test:checkpoint"}),
+        false,
+        json!({
+            "failure_kind": "checkpoint_create_failed",
+            "state_changed": false
+        }),
+    );
+
+    let summary = runtime.sessions.summary(&sid, Some(20)).unwrap();
+    let event = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished")
+        .expect("checkpoint failure event");
+    assert!(event.git_like);
+
+    let handoff = handoff_summary(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        handoff.output["tool_failures"]["non_actionable_unexpected_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["actionable_unexpected_count"],
+        0
+    );
+}
+
+#[tokio::test]
 async fn failure_history_started_diagnostic_process_failure_remains_actionable_in_handoff() {
     let runtime = test_runtime();
     let session = runtime

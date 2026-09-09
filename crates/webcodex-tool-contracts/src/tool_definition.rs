@@ -614,6 +614,12 @@ pub enum ToolReviewEvidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolFailureEvidence {
+    Default,
+    ProvenNoStateChangeNonActionable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolSessionLifecycleEffect {
     None,
     Mutation,
@@ -629,6 +635,7 @@ pub struct ToolSessionEvidencePolicy {
     pub persistent_shell: Option<PersistentShellEvidenceAction>,
     pub diff_review: ToolDiffReviewEvidence,
     pub review: ToolReviewEvidence,
+    pub failure: ToolFailureEvidence,
     pub lifecycle: ToolSessionLifecycleEffect,
     pub validation_identity: ToolValidationIdentityKind,
 }
@@ -640,6 +647,7 @@ impl ToolSessionEvidencePolicy {
         persistent_shell: None,
         diff_review: ToolDiffReviewEvidence::None,
         review: ToolReviewEvidence::None,
+        failure: ToolFailureEvidence::Default,
         lifecycle: ToolSessionLifecycleEffect::None,
         validation_identity: ToolValidationIdentityKind::None,
     };
@@ -666,6 +674,11 @@ impl ToolSessionEvidencePolicy {
 
     pub const fn review(mut self, evidence: ToolReviewEvidence) -> Self {
         self.review = evidence;
+        self
+    }
+
+    pub const fn failure(mut self, evidence: ToolFailureEvidence) -> Self {
+        self.failure = evidence;
         self
     }
 

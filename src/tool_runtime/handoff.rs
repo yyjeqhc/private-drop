@@ -27,7 +27,9 @@ use super::ToolRuntime;
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use webcodex_tool_contracts::{runtime_tool_session_evidence_policy, ToolReviewEvidence};
+use webcodex_tool_contracts::{
+    runtime_tool_session_evidence_policy, ToolFailureEvidence, ToolReviewEvidence,
+};
 
 pub(crate) use webcodex_workflow_session::closeout_work_projection;
 
@@ -1259,9 +1261,10 @@ fn unexpected_failure_is_proven_non_actionable(event: &SessionEvent) -> bool {
     {
         return true;
     }
+    let failure_evidence = runtime_tool_session_evidence_policy(&event.tool_name).failure;
     if effect.and_then(|effect| effect.state_changed) == Some(false)
         && ((!event.shell_like && !event.git_like)
-            || event.tool_name == "workspace_checkpoint_create")
+            || failure_evidence == ToolFailureEvidence::ProvenNoStateChangeNonActionable)
     {
         return true;
     }

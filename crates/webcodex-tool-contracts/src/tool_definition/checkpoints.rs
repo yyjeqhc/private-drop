@@ -46,7 +46,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             NoPath,
             false,
             false,
-            super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
+            super::ToolSessionEvidencePolicy::NONE
+                .failure(super::ToolFailureEvidence::ProvenNoStateChangeNonActionable)
+                .lifecycle(super::ToolSessionLifecycleEffect::Mutation),
         ),
         "Create a bounded workspace checkpoint outside the project worktree. Captures HEAD, status, text diffs, and optional small untracked text files.",
         checkpoint_create_input_schema,

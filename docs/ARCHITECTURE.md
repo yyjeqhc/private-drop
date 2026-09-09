@@ -208,7 +208,8 @@ registry invariant tests reject incomplete declarations.
 `ToolDefinition` owns static Workflow Session/evidence semantics through a closed,
 structured policy: exploration class, trusted result-side changed-path fields,
 persistent-shell evidence action, review/diff classification, Session lifecycle
-effect, and structured validation identity kind. Workflow Session consumes those
+effect, proven-no-state-change failure classification, and structured validation
+identity kind. Workflow Session consumes those
 semantic declarations but retains the typed, bounded projectors that decode tool
 results, normalize paths, enforce privacy limits, and persist durable evidence.
 Dynamic request conditions such as `show_changes(include_diff=true)` remain in the
