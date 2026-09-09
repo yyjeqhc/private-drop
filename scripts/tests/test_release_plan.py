@@ -49,7 +49,8 @@ class ReleasePlanStateTests(unittest.TestCase):
             plan._write_state(state_path, _state(root, phase=plan.PHASE_PREFLIGHT))
             loaded = plan._load_state(state_path)
             self.assertEqual(loaded["phase"], plan.PHASE_PREFLIGHT)
-            self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
             state_path.unlink()
             target = root / "target.json"
             target.write_text("{}\n", encoding="utf-8")

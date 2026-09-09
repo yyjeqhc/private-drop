@@ -532,8 +532,8 @@ class NpmStagingTests(unittest.TestCase):
 
         self.assertEqual(result["npm_smoke"], "passed")
         self.assertEqual(len(calls), 2)
-        self.assertTrue(calls[0][1].endswith("scripts/stage_npm_release.sh"))
-        self.assertTrue(calls[1][1].endswith("scripts/npm_package_smoke.sh"))
+        self.assertEqual(Path(calls[0][1]).name, "stage_npm_release.sh")
+        self.assertEqual(Path(calls[1][1]).name, "npm_package_smoke.sh")
         self.assertIn("--binary-dir", calls[1])
         self.assertFalse(any("cargo" in argument for call in calls for argument in call))
         extract.assert_called_once()

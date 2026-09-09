@@ -71,7 +71,8 @@ def _write_state(path: Path, state: dict) -> None:
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=parent)
     temp_path = Path(temp_name)
     try:
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
             handle.flush()
