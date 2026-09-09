@@ -540,6 +540,7 @@ pub(crate) fn stage_connection(
     staging: &Path,
     published_project_registry_dir: &Path,
     opts: &LoginOptions,
+    allowed_roots: &[PathBuf],
     server_url: &str,
     identity: &EnrolledIdentity,
     device: &str,
@@ -574,7 +575,7 @@ pub(crate) fn stage_connection(
         // point at its final path after that staging directory is renamed.
         project_registry_dir: published_project_registry_dir.to_path_buf(),
         output: paths.runner_config.clone(),
-        allowed_roots: opts.allowed_roots.clone(),
+        allowed_roots: allowed_roots.to_vec(),
         allow_cwd_anywhere: false,
         overwrite: true,
     })?;
@@ -980,6 +981,10 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
     let device = resolve_device_name(base, &opts)?;
     let mut output_allowed_roots =
         webcodex_runner_config::effective_allowed_roots(&opts.allowed_roots, false)?;
+    // Preserve the historical generated-config behavior unless explicit project
+    // selection adds network authority. In that case this becomes the persisted
+    // Runner policy, including any effective HOME root that existed beforehand.
+    let mut runner_allowed_roots = opts.allowed_roots.clone();
 
     // When --project is present, even the project record is fully validated and
     // staged before redemption. The staging directory contains no credentials at
@@ -996,7 +1001,10 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
             false,
             None,
         ) {
-            Ok((registration, roots)) => {
+            Ok((registration, roots, authority_changed)) => {
+                if authority_changed {
+                    runner_allowed_roots = roots.clone();
+                }
                 output_allowed_roots = roots;
                 prestaged = Some((staging, registration));
             }
@@ -1042,6 +1050,7 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
         &staging,
         &paths.project_registry_dir,
         &opts,
+        &runner_allowed_roots,
         &server_url,
         &identity,
         &device,
@@ -1230,6 +1239,7 @@ mod tests {
             &staging,
             &paths.project_registry_dir,
             &opts,
+            &opts.allowed_roots,
             &canonical.url,
             &identity,
             &opts.device,
@@ -1395,6 +1405,7 @@ mod tests {
             &staging,
             &paths.project_registry_dir,
             &opts,
+            &opts.allowed_roots,
             &canonical.url,
             &identity,
             &opts.device,
@@ -1427,6 +1438,44 @@ mod tests {
             parsed["policy"]["allowed_roots"].as_array().unwrap()[0].as_str(),
             allowed_root.to_str()
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_login_persists_exact_network_project_authority_override() {
+        let temp = canonical_test_tempdir();
+        let base = temp.path().join("config");
+        let opts = login_opts(&base, "https://api.example.com", false);
+        let canonical = canonical_server_url(&opts.server_url).unwrap();
+        let identity = identity();
+        let parent = resolve_connection_parent(&base, &canonical).unwrap();
+        let paths = ConnectionPaths::new(parent.join(user_slug(&identity.username).unwrap()));
+        let staging = create_staging_dir(&parent).unwrap();
+        let network_project = PathBuf::from(r"\\?\UNC\NAS\work\repo");
+        stage_connection(
+            &staging,
+            &paths.project_registry_dir,
+            &opts,
+            std::slice::from_ref(&network_project),
+            &canonical.url,
+            &identity,
+            &opts.device,
+            "t",
+        )
+        .unwrap();
+        let runner_config = std::fs::read_to_string(staging.join("runner.toml")).unwrap();
+        let parsed: toml::Value = toml::from_str(&runner_config).unwrap();
+        let roots = parsed["policy"]["allowed_roots"].as_array().unwrap();
+        assert_eq!(roots.len(), 1);
+        assert!(webcodex_runner_config::paths::paths_equal(
+            Path::new(roots[0].as_str().unwrap()),
+            &network_project
+        ));
+        assert!(!webcodex_runner_config::paths::paths_equal(
+            Path::new(roots[0].as_str().unwrap()),
+            Path::new(r"\\nas\work")
+        ));
+        let _ = discard_internal_dir(&staging);
     }
 
     #[cfg(unix)]
@@ -1472,6 +1521,7 @@ mod tests {
             &staging,
             &paths.project_registry_dir,
             &opts,
+            &opts.allowed_roots,
             "https://api.example.com",
             &identity,
             &opts.device,
@@ -2099,6 +2149,7 @@ mod tests {
             &staging,
             &final_dir.join("project-registry"),
             &opts,
+            &opts.allowed_roots,
             &canonical.url,
             &identity(),
             &opts.device,
@@ -2429,7 +2480,7 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
-    async fn login_project_rejects_raw_unc_before_redemption_or_canonicalization() {
+    async fn login_project_allows_raw_unc_to_reach_canonicalization_before_redemption() {
         let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2454,14 +2505,17 @@ mod tests {
             print_mcp_config: false,
         };
         let error = run_login(opts).await.unwrap_err();
-        assert!(error.contains("not on a local disk drive"), "{error}");
         assert!(
-            !error.contains("does not exist or cannot be resolved"),
-            "raw UNC ingress must fail before project canonicalization: {error}"
+            error.contains("does not exist or cannot be resolved"),
+            "raw UNC ingress must reach project canonicalization: {error}"
+        );
+        assert!(
+            !error.contains("unsupported Windows project namespace"),
+            "{error}"
         );
         assert!(
             !error.contains("failed to send"),
-            "raw UNC ingress must fail before the one-shot pairing request: {error}"
+            "filesystem resolution must still happen before the one-shot pairing request: {error}"
         );
         let canonical = canonical_server_url(&format!("http://{address}")).unwrap();
         let parent = resolve_connection_parent(&base, &canonical).unwrap();
@@ -3067,6 +3121,7 @@ mod tests {
             &staging,
             &paths.project_registry_dir,
             &opts,
+            &opts.allowed_roots,
             &canonical.url,
             &identity,
             &opts.device,

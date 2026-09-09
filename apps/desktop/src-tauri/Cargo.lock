@@ -4374,6 +4374,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "webcodex-core"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "webcodex-desktop"
 version = "0.4.0"
 dependencies = [
@@ -4388,6 +4398,7 @@ dependencies = [
  "tokio",
  "url",
  "webcodex-process",
+ "webcodex-runner-config",
  "windows-sys 0.61.2",
  "winreg 0.55.0",
 ]
@@ -4398,6 +4409,15 @@ version = "0.4.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "webcodex-runner-config"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "toml 0.8.2",
+ "webcodex-core",
 ]
 
 [[package]]

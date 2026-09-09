@@ -26,6 +26,32 @@ fn create_project_basic_creates_readme_and_gitignore() {
         .contains("Basic template"));
 }
 
+#[cfg(windows)]
+#[test]
+fn create_project_does_not_expand_to_network_shares() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_registry_dir = tmp.path().join("project-registry");
+    let policy = RunnerPolicy {
+        allow_cwd_anywhere: true,
+        ..RunnerPolicy::default()
+    };
+    let error = project_error_value(handle_project_op(
+        &policy,
+        &project_registry_dir,
+        &project_request(
+            "create_project",
+            serde_json::json!({
+                "id": "network",
+                "name": "Network",
+                "path": r"\\server\share\new-project",
+                "template": "empty"
+            }),
+        ),
+    ));
+    assert_eq!(error["error_code"], "windows_project_path_unsupported");
+    assert!(!project_registry_dir.exists());
+}
+
 #[test]
 fn create_project_rejects_existing_non_empty_directory() {
     let tmp = tempfile::tempdir().unwrap();

@@ -358,16 +358,39 @@ fn resolve_or_register_project_rejects_invalid_non_directory_and_disallowed_path
 
 #[cfg(windows)]
 #[test]
-fn resolve_or_register_project_rejects_unc_and_non_local_disk_paths() {
+fn resolve_or_register_project_network_paths_reach_filesystem_resolution() {
     let tmp = tempfile::tempdir().unwrap();
     let project_registry_dir = tmp.path().join("project-registry");
     let policy = project_policy(tmp.path());
 
-    // The raw path check must fire before canonicalization: these shares do
-    // not exist, but the error is the platform rule, not "path not found".
-    for unc_path in [
-        r"\\server\share\repo",
-        r"\\?\UNC\server\share\repo",
+    for network_path in [
+        r"\\server\share\webcodex-unreachable-repo",
+        r"\\?\UNC\server\share\webcodex-unreachable-repo",
+    ] {
+        let error = project_error_value(handle_resolve_or_register_project(
+            &policy,
+            &project_registry_dir,
+            &project_request(
+                "resolve_or_register_project",
+                serde_json::json!({"path": network_path}),
+            ),
+        ));
+        assert_eq!(
+            error["error_kind"], "project_path_not_found",
+            "supported network path {network_path} must reach filesystem resolution"
+        );
+        assert_eq!(error["state_changed"], false);
+    }
+    assert!(!project_registry_dir.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn resolve_or_register_project_rejects_unsupported_windows_namespaces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_registry_dir = tmp.path().join("project-registry");
+    let policy = project_policy(tmp.path());
+    for unsupported in [
         r"\\.\device\repo",
         r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\repo",
     ] {
@@ -376,38 +399,26 @@ fn resolve_or_register_project_rejects_unc_and_non_local_disk_paths() {
             &project_registry_dir,
             &project_request(
                 "resolve_or_register_project",
-                serde_json::json!({"path": unc_path}),
+                serde_json::json!({"path": unsupported}),
             ),
         ));
-        assert_eq!(
-            error["error_kind"], "unc_project_path_unsupported",
-            "{unc_path} must fail closed as an unsupported non-local-disk path"
-        );
+        assert_eq!(error["error_kind"], "windows_project_path_unsupported");
         assert_eq!(error["state_changed"], false);
     }
-    assert!(
-        !project_registry_dir.exists(),
-        "no registration may be attempted"
-    );
+    assert!(!project_registry_dir.exists());
+}
 
-    // An allowed_roots entry naming a UNC share must not bypass the rule.
-    let unc_allowed = RunnerPolicy {
-        allow_cwd_anywhere: false,
-        allowed_roots: vec![PathBuf::from(r"\\server\share\repo")],
+#[cfg(windows)]
+#[test]
+fn model_facing_policy_does_not_auto_authorize_network_share_with_allow_anywhere() {
+    let policy = RunnerPolicy {
+        allow_cwd_anywhere: true,
+        allowed_roots: Vec::new(),
         ..RunnerPolicy::default()
     };
-    let error = project_error_value(handle_resolve_or_register_project(
-        &unc_allowed,
-        &project_registry_dir,
-        &project_request(
-            "resolve_or_register_project",
-            serde_json::json!({"path": r"\\server\share\repo"}),
-        ),
-    ));
-    assert_eq!(
-        error["error_kind"], "unc_project_path_unsupported",
-        "a UNC allowed_root must not make a UNC project root acceptable"
-    );
+    let error = validate_project_path_policy(&policy, Path::new(r"\\server\share\repo"))
+        .expect_err("model-facing RunnerPolicy must not auto-authorize a network share");
+    assert!(error.contains("outside allowed_roots"), "{error}");
 }
 
 #[cfg(windows)]
@@ -464,12 +475,12 @@ fn resolve_or_register_project_accepts_local_drive_and_verbatim_disk_identity() 
 
 #[cfg(windows)]
 #[test]
-fn register_project_rejects_unc_paths() {
+fn register_project_network_path_reaches_filesystem_resolution() {
     let tmp = tempfile::tempdir().unwrap();
     let project_registry_dir = tmp.path().join("project-registry");
     let policy = project_policy(tmp.path());
 
-    let error = project_error_value(handle_project_op(
+    let result = handle_project_op(
         &policy,
         &project_registry_dir,
         &project_request(
@@ -477,13 +488,21 @@ fn register_project_rejects_unc_paths() {
             serde_json::json!({
                 "id": "demo",
                 "name": "Demo",
-                "path": r"\\server\share\repo",
+                "path": r"\\server\share\webcodex-unreachable-repo",
                 "description": "UNC project",
                 "allow_patch": false
             }),
         ),
-    ));
-    assert_eq!(error["error_code"], "unc_project_path_unsupported");
+    );
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(
+        error.contains("does not exist or cannot be canonicalized"),
+        "supported UNC registration must reach filesystem resolution: {error}"
+    );
+    assert!(
+        !error.contains("windows_project_path_unsupported"),
+        "{error}"
+    );
     assert!(!project_registry_dir.exists());
 }
 

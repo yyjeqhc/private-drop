@@ -498,6 +498,16 @@ impl WebCodexAdapter {
     }
 }
 
+fn default_allowed_root(canonical: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if webcodex_runner_config::paths::is_windows_network_share_path(canonical) {
+        // The user selected this exact network project. Do not silently widen
+        // Desktop's grant to the parent directory or the containing share.
+        return canonical.to_path_buf();
+    }
+    canonical.parent().unwrap_or(canonical).to_path_buf()
+}
+
 pub async fn inspect_project_path(path: &str) -> DesktopResult<ProjectSelection> {
     let requested = PathBuf::from(path);
     let canonical = tokio::fs::canonicalize(&requested).await.map_err(|_| {
@@ -521,7 +531,7 @@ pub async fn inspect_project_path(path: &str) -> DesktopResult<ProjectSelection>
             "Choose a project directory.",
         ));
     }
-    let allowed_root = canonical.parent().unwrap_or(&canonical).to_path_buf();
+    let allowed_root = default_allowed_root(&canonical);
     let is_git_repository = tokio::fs::symlink_metadata(canonical.join(".git"))
         .await
         .is_ok();
@@ -832,6 +842,23 @@ mod tests {
             validate_login_output(&output, &project).unwrap_err().code,
             "webcodex_contract_invalid"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_network_project_uses_exact_root_while_local_disk_keeps_parent_root() {
+        let network = Path::new(r"\\?\UNC\server\share\repo");
+        assert!(webcodex_runner_config::paths::paths_equal(
+            &default_allowed_root(network),
+            network
+        ));
+        assert!(!webcodex_runner_config::paths::paths_equal(
+            &default_allowed_root(network),
+            Path::new(r"\\server\share")
+        ));
+
+        let local = Path::new(r"C:\work\repo");
+        assert_eq!(default_allowed_root(local), PathBuf::from(r"C:\work"));
     }
 
     #[test]

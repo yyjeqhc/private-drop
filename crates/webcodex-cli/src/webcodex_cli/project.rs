@@ -53,27 +53,85 @@ fn canonical_existing_directory(path: &Path, label: &str) -> Result<PathBuf, Str
     Ok(canonical)
 }
 
-fn effective_canonical_roots(
-    configured: &[PathBuf],
-    allow_cwd_anywhere: bool,
-) -> Result<Vec<PathBuf>, String> {
-    let effective =
-        webcodex_runner_config::effective_allowed_roots(configured, allow_cwd_anywhere)?;
-    Ok(webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective))
+#[derive(Debug)]
+struct PreparedProjectAuthority {
+    canonical_project: PathBuf,
+    allowed_roots: Vec<PathBuf>,
+    authority_changed: bool,
 }
 
-fn validate_project_authority(
+fn authorize_canonical_project(
+    canonical_project: &Path,
+    configured_roots: &[PathBuf],
+    allow_cwd_anywhere: bool,
+) -> Result<(Vec<PathBuf>, bool), String> {
+    let mut effective_roots =
+        webcodex_runner_config::effective_allowed_roots(configured_roots, allow_cwd_anywhere)?;
+    let mut canonical_roots =
+        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective_roots);
+
+    match webcodex_runner_config::paths::validate_project_path_policy(
+        canonical_project,
+        &canonical_roots,
+        allow_cwd_anywhere,
+    ) {
+        // Preserve the pre-existing local registration/output contract: callers
+        // see canonical usable roots when no authority extension was needed.
+        Ok(()) => Ok((canonical_roots, false)),
+        Err(error) => {
+            #[cfg(windows)]
+            if webcodex_runner_config::paths::is_windows_network_share_path(canonical_project) {
+                // Local CLI/Desktop project selection is an explicit user grant. Add only the
+                // canonical project itself; never infer authority for its parent/share.
+                effective_roots.push(canonical_project.to_path_buf());
+                canonical_roots.push(canonical_project.to_path_buf());
+                webcodex_runner_config::paths::validate_project_path_policy(
+                    canonical_project,
+                    &canonical_roots,
+                    allow_cwd_anywhere,
+                )?;
+                return Ok((effective_roots, true));
+            }
+
+            Err(error)
+        }
+    }
+}
+
+fn prepare_project_authority(
     project: &Path,
     configured_roots: &[PathBuf],
     allow_cwd_anywhere: bool,
-) -> Result<Vec<PathBuf>, String> {
-    let roots = effective_canonical_roots(configured_roots, allow_cwd_anywhere)?;
-    webcodex_runner_config::paths::validate_project_path_policy(
-        project,
-        &roots,
-        allow_cwd_anywhere,
-    )?;
-    Ok(roots)
+) -> Result<PreparedProjectAuthority, String> {
+    webcodex_runner_config::paths::validate_project_path_ingress(project)?;
+    let canonical_project = canonical_existing_directory(project, "project path")?;
+    let (allowed_roots, authority_changed) =
+        authorize_canonical_project(&canonical_project, configured_roots, allow_cwd_anywhere)?;
+    Ok(PreparedProjectAuthority {
+        canonical_project,
+        allowed_roots,
+        authority_changed,
+    })
+}
+
+fn register_canonical_project(
+    project_registry_dir: &Path,
+    canonical_project: PathBuf,
+    explicit_id: Option<&str>,
+) -> Result<ProjectRegistration, String> {
+    ensure_registry_directory(project_registry_dir)?;
+    let (record_path, project_file, already_registered) =
+        resolve_project(project_registry_dir, &canonical_project, explicit_id)?;
+    if !already_registered {
+        let content = render_project_file(&project_file)?;
+        atomic_write(&record_path, content.as_bytes(), false)?;
+    }
+    Ok(ProjectRegistration {
+        id: project_file.id,
+        path: canonical_project,
+        record_path,
+        already_registered,
+    })
 }
 
 fn ensure_registry_directory(path: &Path) -> Result<(), String> {
@@ -116,26 +174,17 @@ pub(crate) fn register_existing_project(
     configured_roots: &[PathBuf],
     allow_cwd_anywhere: bool,
     explicit_id: Option<&str>,
-) -> Result<(ProjectRegistration, Vec<PathBuf>), String> {
-    webcodex_runner_config::paths::validate_project_path_ingress(project)?;
-    let canonical_project = canonical_existing_directory(project, "project path")?;
-    let roots =
-        validate_project_authority(&canonical_project, configured_roots, allow_cwd_anywhere)?;
-    ensure_registry_directory(project_registry_dir)?;
-    let (record_path, project_file, already_registered) =
-        resolve_project(project_registry_dir, &canonical_project, explicit_id)?;
-    if !already_registered {
-        let content = render_project_file(&project_file)?;
-        atomic_write(&record_path, content.as_bytes(), false)?;
-    }
+) -> Result<(ProjectRegistration, Vec<PathBuf>, bool), String> {
+    let prepared = prepare_project_authority(project, configured_roots, allow_cwd_anywhere)?;
+    let registration = register_canonical_project(
+        project_registry_dir,
+        prepared.canonical_project,
+        explicit_id,
+    )?;
     Ok((
-        ProjectRegistration {
-            id: project_file.id,
-            path: canonical_project,
-            record_path,
-            already_registered,
-        },
-        roots,
+        registration,
+        prepared.allowed_roots,
+        prepared.authority_changed,
     ))
 }
 
@@ -156,6 +205,30 @@ fn read_registration_config(path: &Path) -> Result<RegistrationRunnerConfig, Str
         .map_err(|error| format!("failed to read Runner config {}: {error}", path.display()))?;
     toml::from_str(&content)
         .map_err(|error| format!("failed to parse Runner config {}: {error}", path.display()))
+}
+
+fn persist_registration_allowed_roots(path: &Path, roots: &[PathBuf]) -> Result<(), String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read Runner config {}: {error}", path.display()))?;
+    let mut document = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| format!("failed to parse Runner config {}: {error}", path.display()))?;
+    if document.get("policy").is_none() {
+        document["policy"] = toml_edit::table();
+    }
+    let policy = document["policy"].as_table_mut().ok_or_else(|| {
+        format!(
+            "Runner config {} has an invalid [policy] table",
+            path.display()
+        )
+    })?;
+    let mut allowed_roots = toml_edit::Array::new();
+    for root in roots {
+        allowed_roots.push(root.to_string_lossy().as_ref());
+    }
+    policy["allowed_roots"] = toml_edit::value(allowed_roots);
+    atomic_write(path, document.to_string().as_bytes(), true)?;
+    Ok(())
 }
 
 fn registration_project_registry_dir(config: &RegistrationRunnerConfig) -> Result<PathBuf, String> {
@@ -181,13 +254,21 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
     // to one registry path, and an omitted field uses the shared four-state
     // on-disk selection contract.
     let project_registry_dir = registration_project_registry_dir(&config)?;
-    let (registration, roots) = register_existing_project(
-        &project_registry_dir,
+    let prepared = prepare_project_authority(
         &opts.project,
         &config.policy.allowed_roots,
         config.policy.allow_cwd_anywhere,
-        None,
     )?;
+    if prepared.authority_changed {
+        // Persist the explicit user grant before publishing the project record so a
+        // newly registered network project cannot outlive the Runner authority it needs.
+        persist_registration_allowed_roots(&opts.config, &prepared.allowed_roots)?;
+    }
+    let authority_changed = prepared.authority_changed;
+    let roots = prepared.allowed_roots;
+    let registration =
+        register_canonical_project(&project_registry_dir, prepared.canonical_project, None)?;
+    let runner_reload_required = !registration.already_registered || authority_changed;
     if opts.json {
         return serde_json::to_string_pretty(&serde_json::json!({
             "runner_config": opts.config.to_string_lossy(),
@@ -205,7 +286,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
                 "allow_cwd_anywhere": config.policy.allow_cwd_anywhere,
                 "allowed_roots": roots.iter().map(|root| root.to_string_lossy().to_string()).collect::<Vec<_>>(),
             },
-            "runner_reload_required": !registration.already_registered,
+            "runner_reload_required": runner_reload_required,
         }))
         .map_err(|error| error.to_string());
     }
@@ -216,7 +297,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
         "--config".to_string(),
         opts.config.to_string_lossy().into_owned(),
     ]);
-    if registration.already_registered {
+    if !runner_reload_required {
         return Ok(format!(
             "Project already added:\n  {}\n\nNo Runner restart is required.\n",
             registration.path.display()
@@ -231,8 +312,13 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
             "Next:\n  Stop the foreground Runner with Ctrl-C, then run:\n    {runner_command}\n"
         )
     };
+    let action = if registration.already_registered {
+        "Project already added"
+    } else {
+        "Project added"
+    };
     Ok(format!(
-        "Project added:\n  {}\n\nRunner restart required.\n\n{restart_guidance}",
+        "{action}:\n  {}\n\nRunner restart required.\n\n{restart_guidance}",
         registration.path.display()
     ))
 }
@@ -533,19 +619,98 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn raw_unc_is_rejected_before_canonicalization_even_when_explicitly_allowed() {
+    fn raw_unc_and_verbatim_unc_proceed_to_project_canonicalization() {
         let tmp = canonical_test_tempdir();
         let registry = tmp.path().join("registry");
-        let unc = PathBuf::from(r"\\server\share\webcodex-unreachable-repo");
-
-        let error =
-            register_existing_project(&registry, &unc, &[unc.clone()], true, None).unwrap_err();
-        assert!(error.contains("not on a local disk drive"), "{error}");
-        assert!(
-            !error.contains("does not exist or cannot be resolved"),
-            "raw UNC ingress must fail before canonicalization: {error}"
-        );
+        for network in [
+            PathBuf::from(r"\\server\share\webcodex-unreachable-repo"),
+            PathBuf::from(r"\\?\UNC\server\share\webcodex-unreachable-repo"),
+        ] {
+            let error =
+                register_existing_project(&registry, &network, &[], true, None).unwrap_err();
+            assert!(
+                error.contains("does not exist or cannot be resolved"),
+                "supported network ingress must reach canonicalization: {error}"
+            );
+            assert!(
+                !error.contains("unsupported Windows project namespace"),
+                "{error}"
+            );
+        }
         assert!(!registry.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unsupported_windows_namespaces_still_fail_before_filesystem_resolution() {
+        let tmp = canonical_test_tempdir();
+        let registry = tmp.path().join("registry");
+        for unsupported in [
+            PathBuf::from(r"\\.\device\repo"),
+            PathBuf::from(r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\repo"),
+        ] {
+            let error =
+                register_existing_project(&registry, &unsupported, &[], true, None).unwrap_err();
+            assert!(
+                error.contains("unsupported Windows project namespace"),
+                "{error}"
+            );
+            assert!(
+                !error.contains("does not exist or cannot be resolved"),
+                "{error}"
+            );
+        }
+        assert!(!registry.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn user_selected_network_project_authorizes_only_the_exact_canonical_root() {
+        let network = PathBuf::from(r"\\?\UNC\NAS\work\repo");
+        let configured = vec![PathBuf::from(r"C:\stale-local-root")];
+        let (roots, changed) = authorize_canonical_project(&network, &configured, true).unwrap();
+        assert!(
+            changed,
+            "explicit network project selection must extend local authority"
+        );
+        assert_eq!(roots.len(), configured.len() + 1);
+        assert!(roots
+            .iter()
+            .any(|root| webcodex_runner_config::paths::paths_equal(root, &network)));
+        assert!(!roots.iter().any(|root| {
+            webcodex_runner_config::paths::paths_equal(root, Path::new(r"\\nas\work"))
+                || webcodex_runner_config::paths::paths_equal(root, Path::new(r"\\nas\share"))
+        }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn persisted_network_authority_keeps_the_exact_root_in_runner_config() {
+        let tmp = canonical_test_tempdir();
+        let registry = tmp.path().join("registry");
+        let config_path = tmp.path().join("runner.toml");
+        config_with_policy(
+            &config_path,
+            &registry,
+            &[PathBuf::from(r"C:\existing")],
+            false,
+        );
+        let network = PathBuf::from(r"\\?\UNC\NAS\work\repo");
+        persist_registration_allowed_roots(
+            &config_path,
+            &[PathBuf::from(r"C:\existing"), network.clone()],
+        )
+        .unwrap();
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("secret-not-printed"));
+        let parsed: toml::Value = toml::from_str(&content).unwrap();
+        let roots = parsed["policy"]["allowed_roots"].as_array().unwrap();
+        assert_eq!(roots.len(), 2);
+        assert!(roots.iter().any(|value| {
+            value.as_str().is_some_and(|root| {
+                webcodex_runner_config::paths::paths_equal(Path::new(root), &network)
+            })
+        }));
     }
 
     #[cfg(windows)]
