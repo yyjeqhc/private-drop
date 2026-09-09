@@ -203,3 +203,47 @@ fn runner_file_read_range_errors_never_include_absolute_path() {
         "error leaked absolute path: {err}"
     );
 }
+
+#[test]
+fn runner_file_read_allows_exact_generated_files_but_protects_secrets_and_git() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    for (path, allowed) in [
+        ("node_modules/foo/package.json", true),
+        ("target/result.txt", true),
+        (".env", false),
+        (".git/config", false),
+    ] {
+        let target = tmp.path().join(path);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "fixture").unwrap();
+        let out = handle_file_request(
+            &policy,
+            &file_read_request(tmp.path(), path, None, None, Some(1024)),
+        );
+        if allowed {
+            assert_eq!(out.stdout.as_deref(), Some("fixture"));
+        } else {
+            assert_eq!(
+                out.error.as_deref(),
+                Some("read_file failed: sensitive_path")
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn runner_file_read_rejects_alias_to_secret_inside_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join(".env"), "fixture").unwrap();
+    std::os::unix::fs::symlink(".env", tmp.path().join("alias.txt")).unwrap();
+    let out = handle_file_request(
+        &project_policy(tmp.path()),
+        &file_read_request(tmp.path(), "alias.txt", None, None, Some(1024)),
+    );
+    assert_eq!(
+        out.error.as_deref(),
+        Some("read_file failed: sensitive_path")
+    );
+}

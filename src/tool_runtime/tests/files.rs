@@ -4587,7 +4587,11 @@ async fn artifact_upload_finish_and_abort_reject_invalid_upload_id_before_resolv
 async fn read_file_routes_safe_and_bulk_skipped_explicit_paths_to_agent() {
     for (client_id, path, content) in [
         ("relative-read", "src/main.rs", "fn main() {}\n"),
-        ("bulk-explicit-read", ".git/HEAD", "ref: refs/heads/main\n"),
+        (
+            "bulk-explicit-read",
+            "node_modules/foo/package.json",
+            "{}\n",
+        ),
     ] {
         let runtime = runtime_with_agent_project(client_id);
         register_agent(
@@ -4630,6 +4634,8 @@ async fn read_file_refuses_secret_paths_before_reaching_agent() {
     let project = agent_test_project_id("secret-read");
 
     for path in [
+        ".git/config",
+        ".git/HEAD",
         ".env",
         ".env.production",
         "app/.env.local",

@@ -325,6 +325,14 @@ fn ensure_file_read_target_in_project(
     if !target.starts_with(&project_root) {
         return Err(ReadFileReason::InvalidPath);
     }
+    let relative = target
+        .strip_prefix(&project_root)
+        .map_err(|_| ReadFileReason::InvalidPath)?;
+    if webcodex_core::sensitive_paths::is_secret_path(&request.path)
+        || webcodex_core::sensitive_paths::is_secret_path(&relative.to_string_lossy())
+    {
+        return Err(ReadFileReason::SensitivePath);
+    }
     if !target.is_file() {
         return Err(ReadFileReason::NotFile);
     }

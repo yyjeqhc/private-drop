@@ -379,7 +379,8 @@ pub fn is_sensitive_edit_path(path: &str) -> bool {
     // Edits are denied for credentials *and* for the bulk trees: writing into
     // `.git`, `target`, or `node_modules` through the tool surface is never
     // intended. Reads use the narrower `is_secret_path`.
-    crate::sensitive_paths::is_bulk_skipped_path(path)
+    crate::sensitive_paths::is_secret_path(path)
+        || crate::sensitive_paths::is_bulk_excluded_path(path)
 }
 
 #[cfg(test)]
