@@ -2567,8 +2567,8 @@ impl ToolCall {
         name: &str,
         arguments: Value,
     ) -> Result<(Self, ToolCallRecorderMetadata), String> {
-        // `list_agents` was the pre-0.4 model-facing name for execution Runners.
-        // Keep one ingress-only compatibility alias without registering a second
+        // `list_agents` originated before 0.4 and remained accepted by v0.4.0.
+        // Keep the frozen alias ingress-only without registering a second
         // ToolDefinition or allowing new discovery surfaces to teach that name.
         let name = match name {
             "list_agents" => "list_runners",

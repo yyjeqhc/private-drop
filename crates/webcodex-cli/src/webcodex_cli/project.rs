@@ -274,7 +274,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
     if opts.json {
         return serde_json::to_string_pretty(&serde_json::json!({
             "runner_config": opts.config.to_string_lossy(),
-            // Machine-readable compatibility alias retained for pre-0.4 consumers.
+            // Published by v0.4.0; keep the machine-readable field frozen through 0.4.x.
             "agent_config": opts.config.to_string_lossy(),
             "project_registry_dir": project_registry_dir.to_string_lossy(),
             "projects_dir": project_registry_dir.to_string_lossy(),

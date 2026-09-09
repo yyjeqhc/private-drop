@@ -241,7 +241,7 @@ impl ToolRuntime {
                 .filter(|client| client.status == "stale")
                 .count();
             return ToolResult::ok(json!({
-                // `agents` is a stable pre-0.4 serialized compatibility key.
+                // Published v0.4 serialized key; retain the exact spelling through 0.4.x.
                 "agents": runners,
                 "summary": {
                     "count": clients.len(),
@@ -253,7 +253,7 @@ impl ToolRuntime {
             }));
         }
         ToolResult::ok(json!({
-            // `agents` is a stable pre-0.4 serialized compatibility key.
+            // Published v0.4 serialized key; retain the exact spelling through 0.4.x.
             "agents": runners,
             "clients": runner_health_clients(&clients, &runner_jobs, now),
             "summary": runner_health_summary(&clients, &runner_jobs, now),
@@ -417,7 +417,7 @@ impl ToolRuntime {
             })
             .count();
         let jobs = json!({
-            // `agent_known_count` is a stable pre-0.4 runtime_status compatibility key.
+            // Published v0.4 runtime_status key; retain the exact spelling through 0.4.x.
             "agent_known_count": runner_known_count,
             "active_count": active_count,
             "running_count": running_count,
@@ -631,7 +631,7 @@ impl ToolRuntime {
             "summary": runner_health_summary(&clients, &selected_jobs, now),
         });
         let jobs = json!({
-            // `agent_known_count` is a stable pre-0.4 runtime_status compatibility key.
+            // Published v0.4 runtime_status key; retain the exact spelling through 0.4.x.
             "agent_known_count": selected_jobs.len(),
             "active_count": runner_active,
             "running_count": running_count,

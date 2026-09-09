@@ -484,9 +484,11 @@ Public `list_projects.source` remains `agent_registered` / `auto_registered`.
 The pre-0.4 managed-temporary-project lifecycle is retired rather than carried
 into the `v0.4.0` product contract. Current project creation uses explicit
 `create_project`; existing directories use `work_on_project(path)` or
-`register_project`. For one pre-0.4 config compatibility window, the old
-`temporary_projects_root` key is parsed with its former absolute-path validation,
-then warned and ignored. Existing project-registry records whose generic
+`register_project`. The old `temporary_projects_root` key is a pre-0.4-origin compatibility input.
+Because `v0.4.0` accepted it, the 0.4.x compatibility floor preserves the exact
+bounded behavior: parse it with its former absolute-path validation, then warn
+and ignore it. This is input compatibility only, not an active
+managed-temporary-project feature. Existing project-registry records whose generic
 `kind = "managed_temporary"` value predates this cleanup remain readable as
 ordinary registrations; current Server projections do not treat that value as
 an active lifecycle. A legacy Server request containing the old

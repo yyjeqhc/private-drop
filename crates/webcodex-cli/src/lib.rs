@@ -1050,7 +1050,7 @@ fn parse_token_generate(args: &[String]) -> Result<TokenGenerateOptions, String>
         }
     }
     if kind == "agent" {
-        // Pre-0.4 compatibility alias; new help only teaches Runner terminology.
+        // v0.4-frozen alias originating before 0.4; new help only teaches Runner terminology.
         kind = "runner".to_string();
     }
     if kind != "api" && kind != "runner" {

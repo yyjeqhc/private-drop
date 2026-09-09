@@ -62,9 +62,10 @@ pub(crate) struct RunnerConfig {
     /// field so runtime comparisons operate on one effective registry path.
     #[serde(default, rename = "projects_dir")]
     pub(crate) legacy_projects_dir: Option<PathBuf>,
-    /// Pre-0.4 managed-temporary-project setting retained only so old configs
-    /// are parsed explicitly. The feature is retired; load_config validates the
-    /// former path shape, reports the deprecation, and clears this inert field.
+    /// Pre-0.4-origin managed-temporary-project setting whose parse/validate/
+    /// warn/ignore behavior was accepted by v0.4.0 and is therefore frozen for
+    /// 0.4.x compatibility. The feature itself remains retired; load_config
+    /// clears this inert field before runtime semantics.
     #[serde(default, rename = "temporary_projects_root")]
     pub(crate) deprecated_temporary_projects_root: Option<PathBuf>,
     /// Minimum delay after an empty polling response. Repeated idle polls back

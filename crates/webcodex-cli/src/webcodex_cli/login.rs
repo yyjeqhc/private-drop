@@ -692,7 +692,7 @@ pub(crate) fn render_login_result(
             "dir": paths.dir.to_string_lossy(),
             "user_token_file": paths.user_token.to_string_lossy(),
             "runner_config": paths.runner_config.to_string_lossy(),
-            // Machine-readable compatibility alias retained for pre-0.4 consumers.
+            // Published by v0.4.0; keep the machine-readable field frozen through 0.4.x.
             "agent_config": paths.runner_config.to_string_lossy(),
             "project_registry_dir": paths.project_registry_dir.to_string_lossy(),
             "projects_registry": paths.project_registry_dir.to_string_lossy(),
@@ -705,7 +705,7 @@ pub(crate) fn render_login_result(
             "credential_usage": {
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
                 "runner_config_token": "Runner transport only",
-                // Machine-readable compatibility alias retained for pre-0.4 consumers.
+                // Published by v0.4.0; keep the machine-readable field frozen through 0.4.x.
                 "agent_config_token": "Runner transport only",
             },
             "foreground_available": foreground_argv.is_some(),

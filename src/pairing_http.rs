@@ -69,6 +69,10 @@ pub(crate) struct PairingEnrollRequest {
     pub display_name: Option<String>,
     #[serde(default)]
     pub transport: Option<String>,
+    /// v0.4-frozen enrollment compatibility fields. v0.4.0 accepted these
+    /// config-shaped values but intentionally did not derive Runner filesystem
+    /// or configuration authority from them. Keep them parse-only in 0.4.x;
+    /// actual Runner configuration is established through its own boundary.
     #[serde(default)]
     pub project_registry_dir: Option<String>,
     #[serde(default, rename = "projects_dir")]
@@ -337,6 +341,9 @@ pub(crate) async fn pairing_enroll(req: &mut Request, depot: &mut Depot, res: &m
             return;
         }
     };
+    // Preserve the v0.4 accepted input shape without reinterpreting these
+    // historical no-op fields as authority. Current and legacy registry names
+    // may both be present here because neither configures a Runner.
     let _ = (
         body.project_registry_dir,
         body.legacy_projects_dir,
@@ -707,7 +714,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pairing_enroll_returns_expected_token_kinds_and_scopes() {
+    async fn pairing_enroll_v04_noop_config_fields_do_not_expand_token_authority() {
         let db = Arc::new(test_db());
         let now = chrono::Utc::now().timestamp();
         db.create_user(&UserRecord {
@@ -743,7 +750,11 @@ mod tests {
         let mut resp = TestClient::post("http://localhost/api/pairing/enroll")
             .json(&json!({
                 "pairing_code": code,
-                "client_id": "alice-laptop"
+                "client_id": "alice-laptop",
+                "project_registry_dir": "/must/not/become/authority/current",
+                "projects_dir": "/must/not/become/authority/legacy",
+                "allowed_roots": ["/must/not/become/authority"],
+                "allow_cwd_anywhere": true
             }))
             .send(&service)
             .await;
