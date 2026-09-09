@@ -80,9 +80,9 @@ fn tool_definitions_are_session_evidence_policy_ssot() {
     use crate::tool_definition::{
         exploration_tool_names, runtime_tool_session_evidence_policy,
         PersistentShellEvidenceAction, ToolChangedPathEvidence, ToolDiffReviewEvidence,
-        ToolExplorationEvidence, ToolNavigationEvidenceKind, ToolSessionEvidencePolicy,
-        ToolSessionLifecycleEffect, ToolValidationIdentityKind, TOOL_CATEGORY_FILE,
-        TOOL_CATEGORY_LSP,
+        ToolExplorationEvidence, ToolNavigationEvidenceKind, ToolReviewEvidence,
+        ToolSessionEvidencePolicy, ToolSessionLifecycleEffect, ToolValidationIdentityKind,
+        TOOL_CATEGORY_FILE, TOOL_CATEGORY_LSP,
     };
 
     let exploration_names = exploration_tool_names().collect::<Vec<_>>();
@@ -143,6 +143,9 @@ fn tool_definitions_are_session_evidence_policy_ssot() {
         if !matches!(policy.diff_review, ToolDiffReviewEvidence::None) {
             assert!(definition.is_git_like(), "{}", definition.name);
         }
+        if !matches!(policy.review, ToolReviewEvidence::None) {
+            assert!(definition.is_read_like(), "{}", definition.name);
+        }
         if !matches!(policy.validation_identity, ToolValidationIdentityKind::None) {
             assert!(
                 definition.captures_validation_output(),
@@ -196,6 +199,20 @@ fn tool_definitions_are_session_evidence_policy_ssot() {
             .session_evidence
             .diff_review,
         ToolDiffReviewEvidence::ArgumentBool("include_diff")
+    );
+    assert_eq!(
+        lookup_tool_definition("show_changes")
+            .unwrap()
+            .session_evidence
+            .review,
+        ToolReviewEvidence::WorkspaceReview
+    );
+    assert_eq!(
+        lookup_tool_definition("workspace_hygiene_check")
+            .unwrap()
+            .session_evidence
+            .review,
+        ToolReviewEvidence::HygieneReview
     );
     assert_eq!(
         lookup_tool_definition("cargo_test")

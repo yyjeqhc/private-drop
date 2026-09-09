@@ -34,7 +34,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
             NoPath,
             false,
             false,
-            super::ToolSessionEvidencePolicy::NONE,
+            super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::HygieneReview),
         ),
         "Default pre-final workspace hygiene review; read-only. Detects dirty worktree, untracked temp/smoke files, cache dirs, secret-like names, and large untracked files before validation or handoff. Never reads file contents.",
         workspace_hygiene_check_input_schema,

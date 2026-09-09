@@ -12,7 +12,7 @@ use webcodex_core::workflow_session_contract::is_tool_call_expectation_metadata_
 pub use webcodex_core::workflow_session_contract::is_valid_session_id;
 use webcodex_tool_contracts::{
     runtime_tool_session_evidence_policy, ToolChangedPathEvidence, ToolDiffReviewEvidence,
-    ToolExplorationEvidence,
+    ToolExplorationEvidence, ToolNavigationEvidenceKind,
 };
 
 use super::model::{
@@ -925,39 +925,43 @@ pub fn observed_paths_for_successful_result(
                 }
             }
         }
-        ToolExplorationEvidence::Navigation(_) => {
-            push_lsp_result_paths(tool_name, output, &mut paths);
+        ToolExplorationEvidence::Navigation(kind) => {
+            push_lsp_result_paths(kind, output, &mut paths);
         }
     }
     paths
 }
 
-fn push_lsp_result_paths(tool_name: &str, output: &Value, paths: &mut Vec<String>) {
-    match tool_name {
-        "document_symbols" => {
+fn push_lsp_result_paths(
+    kind: ToolNavigationEvidenceKind,
+    output: &Value,
+    paths: &mut Vec<String>,
+) {
+    match kind {
+        ToolNavigationEvidenceKind::DocumentSymbols => {
             if let Ok(result) = serde_json::from_value::<DocumentSymbolsResult>(output.clone()) {
                 push_observed_path(paths, &result.path);
             }
         }
-        "document_diagnostics" => {
+        ToolNavigationEvidenceKind::DocumentDiagnostics => {
             if let Ok(result) = serde_json::from_value::<DocumentDiagnosticsResult>(output.clone())
             {
                 push_observed_path(paths, &result.path);
             }
         }
-        "hover" => {
+        ToolNavigationEvidenceKind::Hover => {
             if let Ok(result) = serde_json::from_value::<HoverResult>(output.clone()) {
                 push_observed_path(paths, &result.path);
             }
         }
-        "workspace_symbols" => {
+        ToolNavigationEvidenceKind::WorkspaceSymbols => {
             if let Ok(result) = serde_json::from_value::<WorkspaceSymbolsResult>(output.clone()) {
                 for symbol in result.symbols {
                     push_observed_path(paths, &symbol.path);
                 }
             }
         }
-        "goto_definition" | "find_references" => {
+        ToolNavigationEvidenceKind::Locations => {
             if let Ok(result) = serde_json::from_value::<LocationsResult>(output.clone()) {
                 push_observed_path(paths, &result.path);
                 for location in result.locations {
@@ -965,7 +969,7 @@ fn push_lsp_result_paths(tool_name: &str, output: &Value, paths: &mut Vec<String
                 }
             }
         }
-        "call_hierarchy" => {
+        ToolNavigationEvidenceKind::CallHierarchy => {
             if let Ok(result) = serde_json::from_value::<CallHierarchyResult>(output.clone()) {
                 push_observed_path(paths, &result.path);
                 for root in result.roots {
@@ -977,7 +981,6 @@ fn push_lsp_result_paths(tool_name: &str, output: &Value, paths: &mut Vec<String
                 }
             }
         }
-        _ => {}
     }
 }
 

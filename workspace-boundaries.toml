@@ -189,6 +189,7 @@ layer = "domain"
 role = "Validation recipes, adapters, and evidence domain."
 normal = [
     "webcodex-core",
+    "webcodex-tool-contracts",
     "webcodex-workflow-session",
 ]
 dev = [

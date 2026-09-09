@@ -1025,8 +1025,10 @@ fn insert_structured_validation_target(
     arguments: &serde_json::Map<String, Value>,
     out: &mut serde_json::Map<String, Value>,
 ) {
+    let identity_kind = webcodex_tool_contracts::runtime_tool_session_evidence_policy(tool_name)
+        .validation_identity;
     if let Some(identity) =
-        structured_validation_target_identity(tool_name, &Value::Object(arguments.clone()))
+        structured_validation_target_identity(identity_kind, &Value::Object(arguments.clone()))
     {
         out.insert("validation_target_id".to_string(), Value::String(identity));
     }
@@ -1173,7 +1175,9 @@ fn canonical_cargo_validation_target(
         }
         _ => return None,
     };
-    let identity = structured_validation_target_identity(tool, &Value::Object(input))?;
+    let identity_kind =
+        webcodex_tool_contracts::runtime_tool_session_evidence_policy(tool).validation_identity;
+    let identity = structured_validation_target_identity(identity_kind, &Value::Object(input))?;
     Some((tool, identity))
 }
 

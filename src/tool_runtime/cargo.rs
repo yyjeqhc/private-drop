@@ -686,8 +686,11 @@ impl ToolRuntime {
         };
         let adapter = validation_adapter_for_tool(tool_name)
             .expect("structured validation profile must register the read-only tool");
+        let validation_identity_kind =
+            webcodex_tool_contracts::runtime_tool_session_evidence_policy(tool_name)
+                .validation_identity;
         let validation_target_id = super::tool_audit::structured_validation_target_identity(
-            tool_name,
+            validation_identity_kind,
             &json!({
                 "cwd": cwd.as_deref(),
                 "check": request.check,

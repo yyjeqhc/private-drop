@@ -604,6 +604,16 @@ pub enum ToolDiffReviewEvidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolReviewEvidence {
+    None,
+    ReadOnlyInspection,
+    Search,
+    DiffReview,
+    WorkspaceReview,
+    HygieneReview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolSessionLifecycleEffect {
     None,
     Mutation,
@@ -618,6 +628,7 @@ pub struct ToolSessionEvidencePolicy {
     pub changed_paths: ToolChangedPathEvidence,
     pub persistent_shell: Option<PersistentShellEvidenceAction>,
     pub diff_review: ToolDiffReviewEvidence,
+    pub review: ToolReviewEvidence,
     pub lifecycle: ToolSessionLifecycleEffect,
     pub validation_identity: ToolValidationIdentityKind,
 }
@@ -628,6 +639,7 @@ impl ToolSessionEvidencePolicy {
         changed_paths: ToolChangedPathEvidence::None,
         persistent_shell: None,
         diff_review: ToolDiffReviewEvidence::None,
+        review: ToolReviewEvidence::None,
         lifecycle: ToolSessionLifecycleEffect::None,
         validation_identity: ToolValidationIdentityKind::None,
     };
@@ -649,6 +661,11 @@ impl ToolSessionEvidencePolicy {
 
     pub const fn diff_review(mut self, evidence: ToolDiffReviewEvidence) -> Self {
         self.diff_review = evidence;
+        self
+    }
+
+    pub const fn review(mut self, evidence: ToolReviewEvidence) -> Self {
+        self.review = evidence;
         self
     }
 

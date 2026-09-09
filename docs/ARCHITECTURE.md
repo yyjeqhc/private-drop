@@ -203,6 +203,23 @@ Runner authority, retry identity, or protocol/model-facing results. Adding a
 runtime ToolDefinition requires an audit policy at construction time, and the
 registry invariant tests reject incomplete declarations.
 
+### Workflow Session evidence policy
+
+`ToolDefinition` owns static Workflow Session/evidence semantics through a closed,
+structured policy: exploration class, trusted result-side changed-path fields,
+persistent-shell evidence action, review/diff classification, Session lifecycle
+effect, and structured validation identity kind. Workflow Session consumes those
+semantic declarations but retains the typed, bounded projectors that decode tool
+results, normalize paths, enforce privacy limits, and persist durable evidence.
+Dynamic request conditions such as `show_changes(include_diff=true)` remain in the
+projector rather than becoming declaration-time request parsing.
+
+`ToolCall` remains the exhaustive typed authority for business requests and audit
+request sanitization. Validation target canonicalization and hashing remain in
+`webcodex-core`; ToolDefinition declares only the closed identity kind, so policy
+ownership does not move runtime decoders, Store types, callbacks, or request schema
+parsing into the contracts crate.
+
 ### Cargo workspace ownership layers
 
 The checked-in [`workspace-boundaries.toml`](../workspace-boundaries.toml) is the

@@ -27,6 +27,7 @@ use super::ToolRuntime;
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use webcodex_tool_contracts::{runtime_tool_session_evidence_policy, ToolReviewEvidence};
 
 pub(crate) use webcodex_workflow_session::closeout_work_projection;
 
@@ -733,14 +734,12 @@ fn review_evidence_summary_from_events(events: &[SessionEvent]) -> Value {
         if event.status.as_deref() != Some("succeeded") {
             continue;
         }
-        let Some(kind) = review_evidence_kind(event.tool_name.as_str()) else {
-            continue;
-        };
-        match kind {
-            ReviewEvidenceKind::ReadOnlyInspection => read_only_inspection_count += 1,
-            ReviewEvidenceKind::Search => search_count += 1,
-            ReviewEvidenceKind::DiffReview => diff_review_count += 1,
-            ReviewEvidenceKind::WorkspaceReview => {
+        match runtime_tool_session_evidence_policy(event.tool_name.as_str()).review {
+            ToolReviewEvidence::None => continue,
+            ToolReviewEvidence::ReadOnlyInspection => read_only_inspection_count += 1,
+            ToolReviewEvidence::Search => search_count += 1,
+            ToolReviewEvidence::DiffReview => diff_review_count += 1,
+            ToolReviewEvidence::WorkspaceReview => {
                 // `show_changes(include_diff=true)` is one successful call that
                 // contributes both workspace and diff dimensions, but total
                 // still increments only once below.
@@ -749,7 +748,7 @@ fn review_evidence_summary_from_events(events: &[SessionEvent]) -> Value {
                     diff_review_count += 1;
                 }
             }
-            ReviewEvidenceKind::HygieneReview => {
+            ToolReviewEvidence::HygieneReview => {
                 workspace_review_count += 1;
                 hygiene_review_count += 1;
             }
@@ -810,27 +809,6 @@ pub(crate) fn compact_review_evidence(review_evidence: &Value) -> Value {
             .unwrap_or(0),
         "tools": tools,
     })
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ReviewEvidenceKind {
-    ReadOnlyInspection,
-    Search,
-    DiffReview,
-    WorkspaceReview,
-    HygieneReview,
-}
-
-fn review_evidence_kind(tool_name: &str) -> Option<ReviewEvidenceKind> {
-    match tool_name {
-        "read_file" | "read_files" | "list_project_files" | "project_overview"
-        | "git_review_summary" => Some(ReviewEvidenceKind::ReadOnlyInspection),
-        "search_project_text" | "search_project_texts" => Some(ReviewEvidenceKind::Search),
-        "git_diff" | "git_diff_summary" | "git_diff_hunks" => Some(ReviewEvidenceKind::DiffReview),
-        "show_changes" | "git_status" => Some(ReviewEvidenceKind::WorkspaceReview),
-        "workspace_hygiene_check" => Some(ReviewEvidenceKind::HygieneReview),
-        _ => None,
-    }
 }
 
 fn push_unique_tool(tools: &mut Vec<String>, tool_name: &str) {

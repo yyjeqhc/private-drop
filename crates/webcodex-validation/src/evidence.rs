@@ -18,6 +18,7 @@ use webcodex_core::validation_identity::{
     assertion_validation_identity, is_structured_validation_target_identity,
     is_validation_execution_identity, structured_validation_target_identity,
 };
+use webcodex_tool_contracts::{runtime_tool_session_evidence_policy, ToolValidationIdentityKind};
 use webcodex_workflow_session::{
     canonical_tool_call_finished_events, current_attempt_event_view,
     safe_model_facing_assertion_name, tool_supports_model_facing_assertion_name, SessionEvent,
@@ -1313,7 +1314,9 @@ fn execution_identity(
     {
         return identity.to_string();
     }
-    if validation_adapter_for_tool(tool_name).is_some() {
+    let validation_identity_kind =
+        runtime_tool_session_evidence_policy(tool_name).validation_identity;
+    if validation_identity_kind != ToolValidationIdentityKind::None {
         if let Some(input) = started
             .and_then(|event| event.input_summary.as_ref())
             .or(finished.input_summary.as_ref())
@@ -1325,7 +1328,9 @@ fn execution_identity(
             {
                 return identity.to_string();
             }
-            if let Some(identity) = structured_validation_target_identity(tool_name, input) {
+            if let Some(identity) =
+                structured_validation_target_identity(validation_identity_kind, input)
+            {
                 return identity;
             }
         }
