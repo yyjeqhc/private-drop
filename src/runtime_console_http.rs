@@ -181,6 +181,8 @@ struct RunnerInput {
 struct WindowsInput {
     #[serde(default)]
     limit: Option<usize>,
+    #[serde(default)]
+    project: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1779,6 +1781,7 @@ async fn visible_window_summary_for_auth(
     principal: Option<(&str, &str)>,
     window_key: &str,
     visibility_cache: &mut HashMap<String, bool>,
+    project_filter: Option<&str>,
 ) -> Result<Option<RuntimeConsoleWindowSummary>, RuntimeConsoleError> {
     let db = runtime
         .window_activity_db
@@ -1793,7 +1796,9 @@ async fn visible_window_summary_for_auth(
     let mut last_meaningful_activity_at_ms = None;
     let mut recorder_gap_count = 0usize;
     for event in events {
-        if !window_event_visible_cached(runtime, auth, visibility_cache, &event).await {
+        if !window_event_visible_cached(runtime, auth, visibility_cache, &event).await
+            || project_filter.is_some_and(|project| event.project.as_deref() != Some(project))
+        {
             continue;
         }
         source = Some(event.client_window_source.clone());
@@ -1826,6 +1831,9 @@ async fn visible_window_summary_for_auth(
         .map_err(|_| RuntimeConsoleError::Internal)?;
     let mut linked_session_count = 0usize;
     for link in relation_rows {
+        if project_filter.is_some_and(|project| link.project.as_deref() != Some(project)) {
+            continue;
+        }
         if window_project_visible_cached(runtime, auth, visibility_cache, link.project.as_deref())
             .await
         {
@@ -1838,7 +1846,9 @@ async fn visible_window_summary_for_auth(
         .window_activity
         .list_for_window(window_key, principal)
     {
-        if !active_window_request_visible_cached(runtime, auth, visibility_cache, &request).await {
+        if !active_window_request_visible_cached(runtime, auth, visibility_cache, &request).await
+            || project_filter.is_some_and(|project| request.project.as_deref() != Some(project))
+        {
             continue;
         }
         source = Some(request.client_window_source.clone());
@@ -1869,8 +1879,12 @@ async fn windows_for_auth(
     runtime: &ToolRuntime,
     auth: &AuthContext,
     limit: Option<usize>,
+    project_filter: Option<&str>,
 ) -> Result<RuntimeConsoleWindows, RuntimeConsoleError> {
     require_runtime_read(auth)?;
+    if let Some(project) = project_filter {
+        authorize_exact_project(runtime, auth, project).await?;
+    }
     let db = runtime
         .window_activity_db
         .as_ref()
@@ -1887,7 +1901,7 @@ async fn windows_for_auth(
     let mut by_key = BTreeMap::<String, RuntimeConsoleWindowSummary>::new();
     let total;
     let source_truncated;
-    if auth.is_admin_caller() {
+    if auth.is_admin_caller() && project_filter.is_none() {
         let durable_total = db
             .count_window_activity_summaries(principal_ref)
             .map_err(|_| RuntimeConsoleError::Internal)?;
@@ -1973,6 +1987,7 @@ async fn windows_for_auth(
                 principal_ref,
                 &window_key,
                 &mut visibility_cache,
+                project_filter,
             )
             .await?
             {
@@ -2035,6 +2050,7 @@ async fn window_for_auth(
         principal_ref,
         &input.client_window_key,
         &mut visibility_cache,
+        None,
     )
     .await?;
     let mut active_requests = Vec::new();
@@ -2215,6 +2231,7 @@ async fn workflow_session_detail_with_windows(
             principal_ref,
             &link.client_window_key,
             &mut visibility_cache,
+            None,
         )
         .await?;
         linked_windows.push(RuntimeConsoleSessionWindow {
@@ -2746,7 +2763,7 @@ async fn windows(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         Ok(input) => input,
         Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
     };
-    match windows_for_auth(&runtime, &auth, input.limit).await {
+    match windows_for_auth(&runtime, &auth, input.limit, input.project.as_deref()).await {
         Ok(output) => res.render(Json(output)),
         Err(error) => render_error(res, error),
     }
@@ -4482,7 +4499,7 @@ mod tests {
             detail.active_requests.len(),
             crate::tool_runtime::MAX_ACTIVE_REQUESTS_PER_WINDOW
         );
-        let list = windows_for_auth(&runtime, &auth, None).await.unwrap();
+        let list = windows_for_auth(&runtime, &auth, None, None).await.unwrap();
         assert_eq!(list.windows[0].active_count, detail.active_count);
     }
 
@@ -4505,7 +4522,7 @@ mod tests {
         let _active = runtime
             .window_activity
             .start(&old, "old-active", "tools/call", None);
-        let list = windows_for_auth(&runtime, &auth, None).await.unwrap();
+        let list = windows_for_auth(&runtime, &auth, None, None).await.unwrap();
         assert_eq!(list.total, MAX_WINDOW_LIMIT + 1);
         assert!(list.truncated);
         let row = list
@@ -4516,6 +4533,50 @@ mod tests {
         assert_eq!(row.active_count, 1);
         assert_eq!(row.last_tool_call_at_ms, Some(1_001));
         assert_eq!(row.last_meaningful_activity_at_ms, Some(1_001));
+    }
+
+    #[tokio::test]
+    async fn window_activity_project_filter_returns_only_exact_project_evidence() {
+        let (_tmp, db, runtime) = test_runtime_with_window_db();
+        let auth = crate::auth::shared_key_context("window-filter");
+        let project_a = "agent:window-filter-a:proj-a";
+        let project_b = "agent:window-filter-b:proj-b";
+        register_project(
+            &runtime,
+            "window-filter-a",
+            "proj-a",
+            "/private/window-filter-a",
+            Some(&auth),
+        )
+        .await;
+        register_project(
+            &runtime,
+            "window-filter-b",
+            "proj-b",
+            "/private/window-filter-b",
+            Some(&auth),
+        )
+        .await;
+        let window_a = "a".repeat(64);
+        let window_b = "b".repeat(64);
+        record_window_event(&db, &auth, &window_a, Some(project_a), None, 1_000);
+        record_window_event(&db, &auth, &window_b, Some(project_b), None, 2_000);
+
+        let all = windows_for_auth(&runtime, &auth, Some(20), None)
+            .await
+            .unwrap();
+        assert_eq!(all.total, 2);
+
+        let filtered = windows_for_auth(&runtime, &auth, Some(20), Some(project_a))
+            .await
+            .unwrap();
+        assert_eq!(filtered.total, 1);
+        assert_eq!(filtered.returned, 1);
+        assert_eq!(filtered.windows[0].client_window_key, window_a);
+        assert_eq!(
+            filtered.windows[0].last_meaningful_activity_at_ms,
+            Some(1_001)
+        );
     }
 
     #[tokio::test]
@@ -4590,7 +4651,9 @@ mod tests {
             None,
         );
 
-        let visible = windows_for_auth(&runtime, &auth_a, Some(20)).await.unwrap();
+        let visible = windows_for_auth(&runtime, &auth_a, Some(20), None)
+            .await
+            .unwrap();
         assert_eq!(visible.total, 1);
         assert_eq!(visible.returned, 1);
         assert_eq!(visible.windows[0].client_window_key, window_a);
@@ -4638,7 +4701,9 @@ mod tests {
         }
 
         let admin = test_bootstrap_auth();
-        let global = windows_for_auth(&runtime, &admin, Some(20)).await.unwrap();
+        let global = windows_for_auth(&runtime, &admin, Some(20), None)
+            .await
+            .unwrap();
         let keys = global
             .windows
             .iter()

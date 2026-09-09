@@ -19,6 +19,7 @@ import { desktopErrorPresentation, normalizeDesktopError } from "./i18n/presenta
 type Navigation = "home" | "projects" | "connection" | "activity" | "settings";
 
 const REGULAR_TUNNEL_OBSERVATION_INTERVAL_MS = 1_500;
+const CHATGPT_ACTIVITY_OBSERVATION_INTERVAL_MS = 30_000;
 const ACTIVE_OPERATION_OBSERVATION_INTERVAL_MS = 1_000;
 
 export default function App() {
@@ -31,11 +32,30 @@ export default function App() {
   const [cancelSubmittingId, setCancelSubmittingId] = useState<string | null>(null);
   const [showSetup, setShowSetup] = useState(false);
   const [startupAttempt, setStartupAttempt] = useState(0);
+  const [windowFocused, setWindowFocused] = useState(true);
   const stateVersionRef = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
   const hasRegularTunnel = Boolean(state?.regular_tunnel);
   const hasCurrentOperation = Boolean(state?.current_operation);
   const hasLoadedState = Boolean(state);
+  const shouldObserveChatgptActivity = Boolean(
+    state?.readiness.runtime_ready
+      && !state.chatgpt_activity?.observed
+      && !hasCurrentOperation
+      && !refreshing
+      && windowFocused,
+  );
+
+  useEffect(() => {
+    const onFocus = () => setWindowFocused(true);
+    const onBlur = () => setWindowFocused(false);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   useEffect(() => {
     mainRef.current?.focus({ preventScroll: true });
@@ -70,6 +90,15 @@ export default function App() {
   const commitState = useCallback((next: DesktopState) => {
     stateVersionRef.current += 1;
     setState(next);
+  }, []);
+
+  const commitChatgptActivity = useCallback((next: DesktopState) => {
+    stateVersionRef.current += 1;
+    setState((current) => {
+      if (!current) return next;
+      if (current.chatgpt_activity?.observed && !next.chatgpt_activity?.observed) return current;
+      return { ...current, chatgpt_activity: next.chatgpt_activity };
+    });
   }, []);
 
   useEffect(() => {
@@ -151,6 +180,35 @@ export default function App() {
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
   }, [commitState, hasCurrentOperation, hasLoadedState, hasRegularTunnel, refreshing]);
+
+  useEffect(() => {
+    if (!shouldObserveChatgptActivity) return;
+
+    let cancelled = false;
+    let timeoutId: number | undefined;
+    const observe = async () => {
+      try {
+        const next = await desktopApi.observeChatgptActivity();
+        if (!cancelled) commitChatgptActivity(next);
+      } catch {
+        // Observation is best-effort. Keep the runtime usable and retry only
+        // while the Desktop window remains focused.
+      } finally {
+        if (!cancelled) {
+          timeoutId = window.setTimeout(
+            () => void observe(),
+            CHATGPT_ACTIVITY_OBSERVATION_INTERVAL_MS,
+          );
+        }
+      }
+    };
+
+    void observe();
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, [commitChatgptActivity, shouldObserveChatgptActivity]);
 
   useEffect(() => {
     if (navigation === "activity") {
@@ -346,6 +404,9 @@ export default function App() {
 }
 
 function sidebarConnectionLabel(state: DesktopState, t: ReturnType<typeof useLocale>["t"]) {
+  if (state.regular_tunnel?.status !== "error" && state.readiness.runtime_ready && state.chatgpt_activity?.observed) {
+    return t("sidebar.chatgptObserved");
+  }
   if (state.readiness.ready_for_chatgpt) return t("sidebar.chatgptReady");
   if (state.regular_tunnel?.status === "ready" && state.regular_tunnel.ready_for_chatgpt) return t("sidebar.tunnelWaiting");
   return t("sidebar.connectionIncomplete");

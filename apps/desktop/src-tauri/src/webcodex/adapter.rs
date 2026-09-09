@@ -1,7 +1,7 @@
 use super::cli::{run_json, run_json_until, run_project_activation_json, ResolvedBinaries};
 use super::models::{
-    LegacyProjectRegisterOutput, LoginOutput, OpsProjectsOutput, PairingCreateOutput,
-    ProjectActivationOutput, RunnerStatusOutput, ServerStatusOutput,
+    LegacyProjectRegisterOutput, LoginOutput, OpsProjectsOutput, OpsWindowsOutput,
+    PairingCreateOutput, ProjectActivationOutput, RunnerStatusOutput, ServerStatusOutput,
 };
 use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
@@ -556,6 +556,43 @@ impl WebCodexAdapter {
             user_token_file: identity.user_token_file.clone(),
             server_url: identity.server_url.clone(),
         })
+    }
+
+    pub async fn chatgpt_activity(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<Option<i64>> {
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
+        Self::chatgpt_activity_with_binary(&webcodex, identity, cancellation).await
+    }
+
+    pub async fn chatgpt_activity_with_binary(
+        webcodex: &Path,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<Option<i64>> {
+        let args = [
+            "ops".into(),
+            "windows".into(),
+            "--server-url".into(),
+            identity.server_url.clone(),
+            "--token-file".into(),
+            identity.user_token_file.to_string_lossy().to_string(),
+            "--project".into(),
+            identity.runtime_project_id.clone(),
+            "--limit".into(),
+            "64".into(),
+            "--json".into(),
+        ];
+        let output: OpsWindowsOutput =
+            run_json(webcodex, &args, None, false, cancellation).await?;
+        Ok(output
+            .summary
+            .windows
+            .iter()
+            .filter_map(|window| window.last_meaningful_activity_at_ms)
+            .max())
     }
 
     pub async fn project_ready(

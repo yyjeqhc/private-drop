@@ -39,7 +39,7 @@ use webcodex_cli::{
     client_profile_user_token_file_for_scope, connect_usage, current_user_home,
     default_device_name, default_server_paths, disconnect_usage, discover_internal_binary,
     is_effective_root, login_usage, logout_usage, ops_projects_usage, ops_runner_usage,
-    ops_runners_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
+    ops_runners_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage, ops_windows_usage,
     pairing_create_usage, pairing_usage, project_activate_usage, project_register_usage,
     read_env_file_value, render_token_generate, run_connect, run_disconnect, run_hosted_log_writer,
     run_internal_binary, run_login, run_logout, run_ops_command, run_pairing_create,
@@ -52,9 +52,9 @@ use webcodex_cli::{
     service_unit_name, status_usage, system_user_home, system_user_is_root, usage,
     validate_client_profile, validate_service_file_scope, write_connect_result, ConnectAuth,
     ConnectOptions, DisconnectOptions, LoginOptions, LogoutOptions, OpsCommand, OpsCommonOptions,
-    OpsRunnerOptions, OpsSmokePreflightOptions, ProjectActivateOptions, ProjectRegisterOptions,
-    ServerStatusOptions, ServiceControl, StatusOptions, DEFAULT_LOG_LINES, RUNNER_SERVICE_UNIT,
-    SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
+    OpsRunnerOptions, OpsSmokePreflightOptions, OpsWindowsOptions, ProjectActivateOptions,
+    ProjectRegisterOptions, ServerStatusOptions, ServiceControl, StatusOptions, DEFAULT_LOG_LINES,
+    RUNNER_SERVICE_UNIT, SERVER_SERVICE_FILE, SERVER_SERVICE_UNIT,
 };
 const SETUP_GPT_SCOPES: &[&str] = &[
     "runtime:read",
@@ -1445,6 +1445,23 @@ fn parse_ops_subcommand(args: &[String]) -> CliAction {
                 },
             }
         }
+        "windows" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: ops_windows_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_ops_windows(&args[1..]) {
+                Ok(opts) => CliAction::Ops(OpsCommand::Windows(opts)),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
         "smoke-preflight" => {
             if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
                 return CliAction::Exit {
@@ -1555,6 +1572,45 @@ fn parse_ops_runner(args: &[String]) -> Result<OpsRunnerOptions, String> {
         common,
         client_id,
         request_timeout_ms,
+    })
+}
+
+fn parse_ops_windows(args: &[String]) -> Result<OpsWindowsOptions, String> {
+    let mut common = default_ops_common_options();
+    let mut project = String::new();
+    let mut limit = 64usize;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--project" => project = next_value(&mut iter, arg)?,
+            "--limit" => {
+                limit = next_value(&mut iter, arg)?
+                    .parse::<usize>()
+                    .map_err(|_| "--limit must be an integer".to_string())?;
+            }
+            "--server-url" => common.server_url = next_value(&mut iter, arg)?,
+            "--proxy" => common.server_http.proxy = Some(next_value(&mut iter, arg)?),
+            "--no-system-proxy" => common.server_http.no_system_proxy = true,
+            "--env-file" => common.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token-file" => common.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token" => common.token = Some(next_value(&mut iter, arg)?),
+            "--json" => common.json = true,
+            "--strict" => common.strict = true,
+            other => return Err(format!("unknown ops windows flag: {}", other)),
+        }
+    }
+    common = validate_ops_common(&common)?;
+    let project = project.trim().to_string();
+    if project.is_empty() {
+        return Err("--project is required".to_string());
+    }
+    if !(1..=64).contains(&limit) {
+        return Err("--limit must be within 1..=64".to_string());
+    }
+    Ok(OpsWindowsOptions {
+        common,
+        project,
+        limit,
     })
 }
 

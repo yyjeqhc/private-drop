@@ -2,8 +2,9 @@ use crate::activity::{ActivityEventKind, ActivityLevel, ActivityLog};
 use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{
-    aggregate_readiness, DesktopOperationKind, DesktopStateSnapshot, Enrollment, Experience,
-    Exposure, ExposureReadiness, OpenAiTunnelConfigSnapshot, ProjectReadiness, ProjectSelection,
+    aggregate_readiness, ChatGptActivitySnapshot, DesktopOperationKind, DesktopStateSnapshot,
+    Enrollment, Experience, Exposure, ExposureReadiness, OpenAiTunnelConfigSnapshot,
+    ProjectReadiness, ProjectSelection,
     QuickShareState, ReadinessNextActionKind, ReadinessSummaryKind, RegularConnectionPreference,
     RegularTunnelState, RegularTunnelStatus, RunnerReadiness, RunnerTopology, RuntimeTopology,
     ServerReadiness, ServerTopology, StoredDesktopConfig, StoredRuntime, TunnelProxyConfig,
@@ -46,6 +47,12 @@ const DESKTOP_MCP_COMPACT_SCHEMAS: &str = "true";
 static NEXT_STATE_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 type SharedSupervisor = Arc<Mutex<ProcessSupervisor>>;
+
+#[derive(Debug, Clone)]
+struct ChatGptActivityProbe {
+    identity: ProjectRuntimeIdentity,
+    webcodex: PathBuf,
+}
 
 pub struct AppState {
     core: Mutex<Option<DesktopCore>>,
@@ -127,6 +134,47 @@ impl AppState {
         let result = core.refresh_runtime_status(&cancellation).await;
         self.finish_operation(operation, cancellation, core, baseline, result)
             .await
+    }
+
+    pub async fn observe_chatgpt_activity(&self) -> DesktopResult<DesktopStateSnapshot> {
+        if self.shutdown_signal.is_cancelled() {
+            return Err(cancelled_error());
+        }
+        if self.operations.current().is_some() {
+            return Ok(self.get_state());
+        }
+        let cancellation = CancellationContext::new(
+            CancellationSignal::new(),
+            self.shutdown_signal.clone(),
+        );
+        let probe = {
+            let slot = self.core.lock().await;
+            let Some(core) = slot.as_ref() else {
+                return Ok(self.get_state());
+            };
+            let Some(probe) = core.chatgpt_activity_probe() else {
+                return Ok(self.get_state());
+            };
+            probe
+        };
+        let observation = WebCodexAdapter::chatgpt_activity_with_binary(
+            &probe.webcodex,
+            &probe.identity,
+            &cancellation,
+        )
+        .await;
+        cancellation.check()?;
+        let Ok(last_meaningful_activity_at_ms) = observation else {
+            return Ok(self.get_state());
+        };
+        if self.operations.current().is_some() {
+            return Ok(self.get_state());
+        }
+        let mut slot = self.core.lock().await;
+        let Some(core) = slot.as_mut() else {
+            return Ok(self.get_state());
+        };
+        core.apply_chatgpt_activity_observation(&probe.identity, last_meaningful_activity_at_ms)
     }
 
     pub async fn resume_saved_runtime(&self) -> DesktopResult<DesktopStateSnapshot> {
@@ -520,12 +568,50 @@ impl DesktopCore {
         Ok(self.publish_snapshot())
     }
 
+    fn chatgpt_activity_probe(&self) -> Option<ChatGptActivityProbe> {
+        if !self.snapshot.readiness.runtime_ready
+            || self
+                .snapshot
+                .chatgpt_activity
+                .as_ref()
+                .is_some_and(|activity| activity.observed)
+        {
+            return None;
+        }
+        let identity = identity_from_config(&self.config)?;
+        let webcodex = self.adapter.binaries().ok()?.webcodex.clone();
+        Some(ChatGptActivityProbe { identity, webcodex })
+    }
+
+    fn apply_chatgpt_activity_observation(
+        &mut self,
+        expected_identity: &ProjectRuntimeIdentity,
+        last_meaningful_activity_at_ms: Option<i64>,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        if !self.snapshot.readiness.runtime_ready
+            || identity_from_config(&self.config).as_ref() != Some(expected_identity)
+            || self
+                .snapshot
+                .chatgpt_activity
+                .as_ref()
+                .is_some_and(|activity| activity.observed)
+        {
+            return Ok(self.publish_snapshot());
+        }
+        self.snapshot.chatgpt_activity = Some(ChatGptActivitySnapshot {
+            observed: last_meaningful_activity_at_ms.is_some(),
+            last_meaningful_activity_at_ms,
+        });
+        Ok(self.publish_snapshot())
+    }
+
     pub async fn refresh_runtime_status(
         &mut self,
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
         if self.snapshot.quick_share.is_some() {
+            self.snapshot.chatgpt_activity = None;
             let active = self
                 .process_snapshot(ProcessKind::QuickShare)
                 .await
@@ -552,6 +638,7 @@ impl DesktopCore {
         }
 
         let Some(identity) = identity_from_config(&self.config) else {
+            self.snapshot.chatgpt_activity = None;
             self.snapshot.topology = self.config.topology.clone();
             self.snapshot.project = project_snapshot(&self.config);
             return self.get_state().await;
@@ -589,6 +676,20 @@ impl DesktopCore {
             Ok(true) => ProjectReadiness::Ready,
             Ok(false) => ProjectReadiness::ReloadRequired,
             Err(_) => ProjectReadiness::Unknown,
+        };
+        cancellation.check()?;
+        self.snapshot.chatgpt_activity = if server == ServerReadiness::Ready
+            && project == ProjectReadiness::Ready
+        {
+            match self.adapter.chatgpt_activity(&identity, cancellation).await {
+                Ok(last_meaningful_activity_at_ms) => Some(ChatGptActivitySnapshot {
+                    observed: last_meaningful_activity_at_ms.is_some(),
+                    last_meaningful_activity_at_ms,
+                }),
+                Err(_) => None,
+            }
+        } else {
+            None
         };
         cancellation.check()?;
         let tunnel_active = self
@@ -1843,10 +1944,9 @@ impl DesktopCore {
         });
         self.config.preferred_connection = Some(RegularConnectionPreference::OpenAiTunnel);
         self.save_config().await?;
-        // The daemon and clipboard handoff prove that the Tunnel is ready FOR
-        // ChatGPT. They do not prove that ChatGPT has actually connected or
-        // invoked the authenticated MCP endpoint, so keep aggregate external
-        // readiness conservative until a canonical external-observation signal exists.
+        // The daemon and clipboard handoff prove only Desktop-managed Tunnel
+        // readiness. Actual ChatGPT use is observed independently from canonical
+        // Window activity and projected through `chatgpt_activity` on refresh.
         let exposure = if handoff_available {
             ExposureReadiness::LocalReady
         } else {
@@ -2949,6 +3049,61 @@ mod tests {
             tunnel_proxy: TunnelProxyConfig::default(),
             runtime: None,
         }
+    }
+
+    #[test]
+    fn chatgpt_activity_observation_is_fenced_to_the_captured_project_identity() {
+        let data_dir = unique_state_dir("chatgpt-activity-fence");
+        let resource_dir = data_dir.join("resources");
+        std::fs::create_dir_all(&resource_dir).unwrap();
+        let runner_config = data_dir.join("runner.toml");
+        let user_token_file = data_dir.join("user-token");
+        std::fs::write(&runner_config, "fixture").unwrap();
+        std::fs::write(&user_token_file, "fixture").unwrap();
+
+        let mut core = DesktopCore::new(data_dir.clone(), resource_dir).unwrap();
+        core.snapshot.readiness.runtime_ready = true;
+        core.config.project = Some(ProjectSelection {
+            path: data_dir.join("project-b").to_string_lossy().to_string(),
+            allowed_root: data_dir.to_string_lossy().to_string(),
+            is_git_repository: false,
+            runtime_project_id: Some("agent:desktop:project-b".to_string()),
+        });
+        core.config.runtime = Some(StoredRuntime {
+            server_url: "http://127.0.0.1:8080".to_string(),
+            server_env_file: None,
+            runner_config: Some(runner_config),
+            user_token_file: Some(user_token_file),
+            runner_client_id: Some("desktop".to_string()),
+            project_id: Some("project-b".to_string()),
+            runtime_project_id: Some("agent:desktop:project-b".to_string()),
+        });
+
+        let current_identity = identity_from_config(&core.config).expect("current project identity");
+        let mut stale_identity = current_identity.clone();
+        stale_identity.project_id = "project-a".to_string();
+        stale_identity.runtime_project_id = "agent:desktop:project-a".to_string();
+
+        let stale = core
+            .apply_chatgpt_activity_observation(&stale_identity, Some(1234))
+            .unwrap();
+        assert!(
+            stale.chatgpt_activity.is_none(),
+            "an observation captured for the old Project must not cross a Project switch"
+        );
+
+        let current = core
+            .apply_chatgpt_activity_observation(&current_identity, Some(5678))
+            .unwrap();
+        assert_eq!(
+            current
+                .chatgpt_activity
+                .as_ref()
+                .and_then(|activity| activity.last_meaningful_activity_at_ms),
+            Some(5678)
+        );
+        assert!(current.chatgpt_activity.unwrap().observed);
+        std::fs::remove_dir_all(data_dir).unwrap();
     }
 
     #[test]

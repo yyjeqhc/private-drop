@@ -92,6 +92,23 @@ pub struct OpsProject {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct OpsWindowsOutput {
+    pub summary: OpsWindowsSummary,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpsWindowsSummary {
+    #[serde(default)]
+    pub windows: Vec<OpsWindow>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpsWindow {
+    #[serde(default)]
+    pub last_meaningful_activity_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct QuickShareReadyEvent {
     pub event: String,
     pub schema_version: u64,

@@ -121,6 +121,14 @@ pub async fn refresh_runtime_status(
 }
 
 #[tauri::command]
+pub async fn observe_chatgpt_activity(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.observe_chatgpt_activity().await)
+}
+
+#[tauri::command]
 pub async fn resume_saved_runtime(
     app: AppHandle,
     state: State<'_, AppState>,

@@ -80,6 +80,9 @@ export function ConnectionPanel({
   const tunnelEstablished = state.regular_tunnel?.status === "ready";
   const tunnelLocallyReady = tunnelEstablished && Boolean(state.regular_tunnel?.ready_for_chatgpt);
   const tunnelError = state.regular_tunnel?.status === "error";
+  const chatgptObserved = state.readiness.runtime_ready &&
+    Boolean(state.chatgpt_activity?.observed) &&
+    !tunnelError;
   const canStart = state.readiness.runtime_ready && state.openai_tunnel_configured && provider === "openai";
 
   return (
@@ -96,10 +99,10 @@ export function ConnectionPanel({
       <article className="connection-current detail-card" aria-labelledby="connection-current-title">
         <h2 id="connection-current-title" className="section-title">{t("connection.current")}</h2>
         <div className="status-value">
-          <i className={`status-dot ${tunnelLocallyReady ? "ready" : tunnelError ? "error" : state.regular_tunnel ? "pending" : "unknown"}`} aria-hidden="true" />
-          <strong>{tunnelLocallyReady ? t("connection.tunnelReady") : currentConnection(state, t)}</strong>
+          <i className={`status-dot ${chatgptObserved ? "ready" : tunnelLocallyReady ? "ready" : tunnelError ? "error" : state.regular_tunnel ? "pending" : "unknown"}`} aria-hidden="true" />
+          <strong>{chatgptObserved ? t("connection.observed") : tunnelLocallyReady ? t("connection.tunnelReady") : currentConnection(state, t)}</strong>
         </div>
-        <p>{tunnelLocallyReady ? t("connection.waitingForChatGpt") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
+        <p>{chatgptObserved ? t("connection.observedDescription") : tunnelLocallyReady ? t("connection.waitingForChatGpt") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
       </article>
 
       {tunnelEstablished ? (
@@ -129,7 +132,7 @@ export function ConnectionPanel({
               value="local"
               checked={provider === "local"}
               onChange={chooseProvider}
-              title={t("common.noChatGpt")}
+              title={t("connection.noDesktopTunnel")}
               description={t("connection.localDescription")}
               disabled={mutationBusy}
             />
@@ -233,7 +236,7 @@ function LocalizedError({ error }: { error: DesktopError }) {
 function currentConnection(state: DesktopState, t: ReturnType<typeof useLocale>["t"]) {
   if (state.regular_tunnel) return "OpenAI Secure Tunnel";
   const exposure = state.topology?.exposure;
-  if (!exposure || exposure.kind === "none") return t("common.noChatGpt");
+  if (!exposure || exposure.kind === "none") return t("connection.noDesktopTunnel");
   if (exposure.kind === "existing_https") return `Existing HTTPS · ${exposure.url}`;
   if (exposure.kind === "cloudflare") return "Cloudflare Quick Share";
   return "OpenAI Secure Tunnel";

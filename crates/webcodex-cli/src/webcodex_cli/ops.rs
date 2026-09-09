@@ -28,6 +28,13 @@ pub(crate) struct OpsSmokePreflightOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpsWindowsOptions {
+    pub(crate) common: OpsCommonOptions,
+    pub(crate) project: String,
+    pub(crate) limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OpsRunnerOptions {
     pub(crate) common: OpsCommonOptions,
     pub(crate) client_id: String,
@@ -40,6 +47,7 @@ pub(crate) enum OpsCommand {
     Runners(OpsCommonOptions),
     Runner(OpsRunnerOptions),
     Projects(OpsCommonOptions),
+    Windows(OpsWindowsOptions),
     SmokePreflight(OpsSmokePreflightOptions),
 }
 
@@ -50,6 +58,7 @@ impl OpsCommand {
                 opts.strict
             }
             OpsCommand::Runner(opts) => opts.common.strict,
+            OpsCommand::Windows(opts) => opts.common.strict,
             OpsCommand::SmokePreflight(opts) => opts.common.strict,
         }
     }
@@ -193,6 +202,27 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                     ),
                 };
             render_ops_command_output(report, opts.json, render_ops_projects)
+        }
+        OpsCommand::Windows(opts) => {
+            let token = resolve_ops_token(&opts.common)?;
+            let report = match fetch_ops_json_output(
+                &opts.common.server_url,
+                &opts.common.server_http,
+                "/api/runtime-console/windows",
+                token.as_deref(),
+                json!({"project": opts.project, "limit": opts.limit}),
+            )
+            .await
+            {
+                Ok(windows) => ops_windows_report(&opts.common.server_url, windows),
+                Err(failure) => ops_http_failure_report(
+                    &opts.common.server_url,
+                    "runtime_console_windows",
+                    failure,
+                    token.is_some(),
+                ),
+            };
+            render_ops_command_output(report, opts.common.json, render_ops_windows)
         }
         OpsCommand::SmokePreflight(opts) => {
             let token = resolve_ops_token(&opts.common)?;
@@ -823,6 +853,14 @@ pub(crate) fn ops_runner_report(
     }
 }
 
+pub(crate) fn ops_windows_report(server_url: &str, windows: Value) -> OpsReport {
+    OpsReport {
+        verdict: OpsVerdict::pass().finish(),
+        summary: output_payload(windows),
+        source: source_json(server_url, None, "runtime_console_windows"),
+    }
+}
+
 pub(crate) fn ops_projects_report(server_url: &str, projects: Option<&Value>) -> OpsReport {
     let mut verdict = OpsVerdict::pass();
     let projects_list = project_entries(projects);
@@ -1179,6 +1217,31 @@ pub(crate) fn render_ops_projects(report: &OpsReport, json_output: bool) -> Resu
             display_value(&project["safe_smoke_project"]),
             display_value(&project["allow_patch"]),
             display_value(&project["path"])
+        ));
+    }
+    out.push_str(&render_reasons(report));
+    Ok(out)
+}
+
+pub(crate) fn render_ops_windows(report: &OpsReport, json_output: bool) -> Result<String, String> {
+    if json_output {
+        return render_ops_json(report);
+    }
+    let mut out = render_overall_header(report);
+    out.push_str(&render_http_failure(report));
+    out.push_str("Windows:\n");
+    out.push_str(&format!(
+        "  returned: {}\n  total: {}\n  truncated: {}\n",
+        display_value(&report.summary["returned"]),
+        display_value(&report.summary["total"]),
+        display_value(&report.summary["truncated"]),
+    ));
+    for window in report.summary["windows"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            "  - last_seen_at_ms={} last_meaningful_activity_at_ms={} active_count={}\n",
+            display_value(&window["last_seen_at_ms"]),
+            display_value(&window["last_meaningful_activity_at_ms"]),
+            display_value(&window["active_count"]),
         ));
     }
     out.push_str(&render_reasons(report));

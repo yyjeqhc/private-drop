@@ -153,6 +153,7 @@ pub(crate) fn ops_usage() -> &'static str {
        runners                 Show compact Runner fleet status\n\
        runner                  Show one exact Runner registration/build identity\n\
        projects                Show compact project inventory and smoke suitability\n\
+       windows                 Show observed ChatGPT Window activity for one project\n\
        smoke-preflight         Check a project before deploy smoke validation\n\n\
      Common flags:\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
@@ -219,6 +220,23 @@ pub(crate) fn ops_projects_usage() -> &'static str {
     "Usage: webcodex ops projects [OPTIONS]\n\n\
      Show compact read-only project inventory and smoke suitability.\n\n\
      Options:\n\
+       --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
+       --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
+       --no-system-proxy       Ignore proxy environment and connect directly\n\
+       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH       Read bearer token from file\n\
+       --token TOKEN           Bearer token input; never printed\n\
+       --json                  Print machine-readable output\n\
+       --strict                Exit 2 when the ops report status is FAIL\n\
+       -h, --help              Print help and exit\n"
+}
+
+pub(crate) fn ops_windows_usage() -> &'static str {
+    "Usage: webcodex ops windows --project PROJECT_ID [OPTIONS]\n\n\
+     Show caller-visible ChatGPT Window activity for one exact project.\n\n\
+     Options:\n\
+       --project PROJECT_ID    Runtime project id to observe (required)\n\
+       --limit COUNT           Maximum Window rows [default: 64; max: 64]\n\
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\

@@ -162,12 +162,18 @@ export interface PowerShellRuntimeSnapshot {
   windows_powershell_available: boolean;
 }
 
+export interface ChatGptActivitySnapshot {
+  observed: boolean;
+  last_meaningful_activity_at_ms?: number | null;
+}
+
 export interface DesktopState {
   topology?: RuntimeTopology | null;
   readiness: ReadinessSnapshot;
   project?: ProjectSelection | null;
   binaries?: BinaryInfo | null;
   powershell_runtime?: PowerShellRuntimeSnapshot | null;
+  chatgpt_activity?: ChatGptActivitySnapshot | null;
   quick_share?: QuickShareState | null;
   regular_tunnel?: RegularTunnelState | null;
   current_operation?: DesktopOperation | null;

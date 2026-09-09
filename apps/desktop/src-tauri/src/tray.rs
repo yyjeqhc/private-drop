@@ -34,6 +34,7 @@ enum RuntimeStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionStatus {
     Ready,
+    ObservedUse,
     WaitingForChatGpt,
     NotConnected,
     NeedsAttention,
@@ -85,8 +86,20 @@ impl TrayProjection {
         } else {
             RuntimeStatus::NeedsAttention
         };
+        let tunnel_error = snapshot.regular_tunnel.as_ref().is_some_and(|tunnel| {
+            tunnel.status == crate::models::RegularTunnelStatus::Error
+        });
+        let observed_use = snapshot.readiness.runtime_ready
+            && snapshot
+                .chatgpt_activity
+                .as_ref()
+                .is_some_and(|activity| activity.observed);
         let connection_status = if snapshot.readiness.ready_for_chatgpt {
             ConnectionStatus::Ready
+        } else if tunnel_error {
+            ConnectionStatus::NeedsAttention
+        } else if observed_use {
+            ConnectionStatus::ObservedUse
         } else if snapshot.regular_tunnel.as_ref().is_some_and(|tunnel| {
             tunnel.status == crate::models::RegularTunnelStatus::Ready && tunnel.ready_for_chatgpt
         }) {
@@ -253,8 +266,9 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
         app,
         match projection.connection_status {
             ConnectionStatus::Ready => "Connection: Verified",
+            ConnectionStatus::ObservedUse => "ChatGPT: Project use observed",
             ConnectionStatus::WaitingForChatGpt => "Tunnel: Ready; waiting for ChatGPT",
-            ConnectionStatus::NotConnected => "Connection: Not connected",
+            ConnectionStatus::NotConnected => "ChatGPT: Project use not observed",
             ConnectionStatus::NeedsAttention => "Connection: Needs attention",
         },
         false,
@@ -430,8 +444,8 @@ fn spawn_state_action(app: &AppHandle, action: TrayStateAction) {
 mod tests {
     use super::*;
     use crate::models::{
-        DesktopOperationKind, DesktopOperationSnapshot, Exposure, RegularTunnelState,
-        RegularTunnelStatus, RunnerTopology, RuntimeTopology,
+        ChatGptActivitySnapshot, DesktopOperationKind, DesktopOperationSnapshot, Exposure,
+        RegularTunnelState, RegularTunnelStatus, RunnerTopology, RuntimeTopology,
     };
 
     fn local_snapshot() -> DesktopStateSnapshot {
@@ -472,6 +486,47 @@ mod tests {
             projection.connection_action,
             Some(ConnectionAction::Connect)
         );
+    }
+
+    #[test]
+    fn observed_chatgpt_project_use_is_distinct_from_desktop_tunnel_state() {
+        let mut snapshot = local_snapshot();
+        snapshot.readiness.server = ServerReadiness::Ready;
+        snapshot.readiness.runner = RunnerReadiness::Ready;
+        snapshot.readiness.runtime_ready = true;
+        snapshot.chatgpt_activity = Some(ChatGptActivitySnapshot {
+            observed: true,
+            last_meaningful_activity_at_ms: Some(1234),
+        });
+        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        assert_eq!(projection.connection_status, ConnectionStatus::ObservedUse);
+        assert_eq!(
+            projection.connection_action,
+            Some(ConnectionAction::Connect),
+            "observed use must not pretend Desktop owns a tunnel"
+        );
+    }
+
+    #[test]
+    fn observed_chatgpt_use_wins_over_waiting_tunnel_without_claiming_tunnel_ownership() {
+        let mut snapshot = local_snapshot();
+        snapshot.readiness.server = ServerReadiness::Ready;
+        snapshot.readiness.runner = RunnerReadiness::Ready;
+        snapshot.readiness.runtime_ready = true;
+        snapshot.regular_tunnel = Some(RegularTunnelState {
+            provider: "openai".to_string(),
+            status: RegularTunnelStatus::Ready,
+            clipboard_state: "copied".to_string(),
+            clipboard_contains: "tunnel_id".to_string(),
+            ready_for_chatgpt: true,
+        });
+        snapshot.chatgpt_activity = Some(ChatGptActivitySnapshot {
+            observed: true,
+            last_meaningful_activity_at_ms: Some(1234),
+        });
+        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        assert_eq!(projection.connection_status, ConnectionStatus::ObservedUse);
+        assert_eq!(projection.connection_action, Some(ConnectionAction::Disconnect));
     }
 
     #[test]

@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   getState: vi.fn(),
   openPowerShellInstallGuide: vi.fn(),
   refresh: vi.fn(),
+  observeChatgptActivity: vi.fn(),
   resumeSavedRuntime: vi.fn(),
   updateTunnelProxy: vi.fn(),
   activity: vi.fn(),
@@ -198,6 +199,7 @@ describe("semantic Desktop UI", () => {
     api.openPowerShellInstallGuide.mockResolvedValue(undefined);
     api.setLaunchAtLogin.mockImplementation(async (enabled: boolean) => enabled);
     api.resumeSavedRuntime.mockResolvedValue(readyState);
+    api.observeChatgptActivity.mockResolvedValue(readyState);
     api.updateTunnelProxy.mockResolvedValue(readyState);
     api.startRegularTunnel.mockResolvedValue(readyState);
     api.stopRegularTunnel.mockResolvedValue(readyState);
@@ -253,6 +255,94 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("radiogroup", { name: "连接方式" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
     expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeDisabled();
+  });
+
+  it("separates observed ChatGPT use from Desktop-managed tunnel state", async () => {
+    const observed: DesktopState = {
+      ...readyState,
+      chatgpt_activity: {
+        observed: true,
+        last_meaningful_activity_at_ms: 1_234,
+      },
+    };
+    api.getState.mockResolvedValue(observed);
+    api.refresh.mockResolvedValue(observed);
+    renderApp();
+
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    const connectionCard = screen.getByText("ChatGPT 连接").closest("article");
+    expect(connectionCard).not.toBeNull();
+    expect(connectionCard!.querySelector(".status-dot")).toHaveClass("ready");
+    expect(within(connectionCard!).getByText("已验证 ChatGPT 使用")).toBeInTheDocument();
+    expect(connectionCard).toHaveTextContent("已观察到 ChatGPT 对当前项目的真实 WebCodex 调用。");
+    expect(screen.queryByText("暂不连接 ChatGPT")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "连接" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "ChatGPT 连接" })).toBeInTheDocument();
+    expect(screen.getByText("已验证 ChatGPT 使用")).toBeInTheDocument();
+    expect(screen.getByText(/连接方式与 Desktop 管理的 Tunnel 状态分开显示/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /不由 Desktop 管理连接/ })).toBeChecked();
+  });
+
+  it("does not equate an unmanaged Desktop tunnel with ChatGPT being disconnected", async () => {
+    api.getState.mockResolvedValue(readyState);
+    api.refresh.mockResolvedValue(readyState);
+    renderApp();
+
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    const connectionCard = screen.getByText("ChatGPT 连接").closest("article");
+    expect(connectionCard).not.toBeNull();
+    expect(connectionCard).toHaveTextContent("不由 Desktop 管理连接");
+    expect(connectionCard).toHaveTextContent("这不代表 ChatGPT 一定不可用");
+    expect(connectionCard).not.toHaveTextContent("暂不连接 ChatGPT");
+  });
+
+  it("rechecks ChatGPT use when the user returns to an already-open Desktop", async () => {
+    vi.useFakeTimers();
+    try {
+      const observed: DesktopState = {
+        ...readyState,
+        chatgpt_activity: {
+          observed: true,
+          last_meaningful_activity_at_ms: 5_000,
+        },
+      };
+      let serverObserved = false;
+      api.getState.mockImplementation(async () => serverObserved ? observed : readyState);
+      api.observeChatgptActivity.mockImplementation(async () => serverObserved ? observed : readyState);
+      const view = renderApp();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(api.observeChatgptActivity).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText("已验证 ChatGPT 使用")).not.toBeInTheDocument();
+
+      await act(async () => {
+        window.dispatchEvent(new Event("blur"));
+        await Promise.resolve();
+      });
+      serverObserved = true;
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(api.observeChatgptActivity).toHaveBeenCalledTimes(2);
+      const connectionCard = screen.getByText("ChatGPT 连接").closest("article");
+      expect(connectionCard).not.toBeNull();
+      expect(within(connectionCard!).getByText("已验证 ChatGPT 使用")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(api.observeChatgptActivity).toHaveBeenCalledTimes(2);
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces Tunnel configuration as presence-only current-process diagnostics", async () => {
@@ -834,7 +924,7 @@ describe("semantic Desktop UI", () => {
       expect(failedStatus).toHaveTextContent("ChatGPT 连接尚未验证");
       expect(failedStatus).toHaveTextContent("重新启动安全隧道。");
       expect(screen.queryByText("外部连接已验证")).not.toBeInTheDocument();
-      expect(screen.getAllByText("ChatGPT 连接尚未验证").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("ChatGPT 使用尚未验证").length).toBeGreaterThan(0);
 
       view.unmount();
       const callsAfterUnmount = api.getState.mock.calls.length;

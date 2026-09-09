@@ -16,6 +16,7 @@ fn ops_help_entrypoints_print_usage() {
                 "status",
                 "runners",
                 "projects",
+                "windows",
                 "smoke-preflight",
                 "--server-url URL",
                 "--token TOKEN",
@@ -65,6 +66,18 @@ fn ops_help_entrypoints_print_usage() {
                 "--env-file PATH",
                 "--token-file PATH",
                 "--token TOKEN",
+                "--json",
+                "--strict",
+            ],
+        ),
+        (
+            &["ops", "windows", "--help"],
+            &[
+                "Usage: webcodex ops windows",
+                "--project PROJECT_ID",
+                "--limit COUNT",
+                "--server-url URL",
+                "--token-file PATH",
                 "--json",
                 "--strict",
             ],
@@ -180,6 +193,47 @@ fn ops_rejects_removed_server_url_alias() {
             );
         }
         other => panic!("removed --url alias still dispatched: {other:?}"),
+    }
+}
+
+#[test]
+fn ops_windows_requires_project_and_bounds_limit() {
+    match cli_action(["ops", "windows", "--json"]) {
+        CliAction::Exit { code, stderr, .. } => {
+            assert_eq!(code, 2);
+            assert!(stderr.contains("--project is required"), "{stderr}");
+        }
+        other => panic!("missing ops windows project should fail: {other:?}"),
+    }
+    match cli_action([
+        "ops",
+        "windows",
+        "--project",
+        "agent:msi:site",
+        "--limit",
+        "65",
+    ]) {
+        CliAction::Exit { code, stderr, .. } => {
+            assert_eq!(code, 2);
+            assert!(stderr.contains("--limit must be within 1..=64"), "{stderr}");
+        }
+        other => panic!("oversized ops windows limit should fail: {other:?}"),
+    }
+    match cli_action([
+        "ops",
+        "windows",
+        "--project",
+        "agent:msi:site",
+        "--limit",
+        "7",
+        "--json",
+    ]) {
+        CliAction::Ops(OpsCommand::Windows(opts)) => {
+            assert_eq!(opts.project, "agent:msi:site");
+            assert_eq!(opts.limit, 7);
+            assert!(opts.common.json);
+        }
+        other => panic!("ops windows did not parse: {other:?}"),
     }
 }
 
@@ -640,6 +694,10 @@ async fn run_ops_with_routes(
             opts.server_url = server_url;
             OpsCommand::Projects(opts)
         }
+        OpsCommand::Windows(mut opts) => {
+            opts.common.server_url = server_url;
+            OpsCommand::Windows(opts)
+        }
         OpsCommand::SmokePreflight(mut opts) => {
             opts.common.server_url = server_url;
             OpsCommand::SmokePreflight(opts)
@@ -649,6 +707,48 @@ async fn run_ops_with_routes(
     stop_tx.send(()).unwrap();
     handle.join().unwrap();
     output
+}
+
+#[tokio::test]
+async fn ops_windows_reports_project_scoped_chatgpt_observation() {
+    let output = run_ops_with_routes(
+        OpsCommand::Windows(OpsWindowsOptions {
+            common: ops_common_opts(String::new()),
+            project: "agent:msi:site".to_string(),
+            limit: 8,
+        }),
+        vec![(
+            "/api/runtime-console/windows",
+            json_http_response(
+                200,
+                json!({
+                    "success": true,
+                    "output": {
+                        "returned": 1,
+                        "total": 1,
+                        "truncated": false,
+                        "windows": [{
+                            "client_window_key": "a".repeat(64),
+                            "source": "openai-session",
+                            "last_seen_at_ms": 1234,
+                            "last_tool_call_at_ms": 1234,
+                            "last_meaningful_activity_at_ms": 1234,
+                            "active_count": 0,
+                            "linked_session_count": 1,
+                            "recorder_gap_count": 0
+                        }]
+                    }
+                }),
+            ),
+        )],
+    )
+    .await;
+    assert!(output.contains("Overall: PASS"), "{output}");
+    assert!(output.contains("returned: 1"), "{output}");
+    assert!(
+        output.contains("last_meaningful_activity_at_ms=1234"),
+        "{output}"
+    );
 }
 
 fn smoke_preflight_opts(server_url: String, project: &str) -> OpsSmokePreflightOptions {

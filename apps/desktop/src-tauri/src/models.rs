@@ -351,6 +351,13 @@ pub struct PowerShellRuntimeSnapshot {
     pub windows_powershell_available: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ChatGptActivitySnapshot {
+    pub observed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_meaningful_activity_at_ms: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
     pub topology: Option<RuntimeTopology>,
@@ -359,6 +366,8 @@ pub struct DesktopStateSnapshot {
     pub binaries: Option<BinaryInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub powershell_runtime: Option<PowerShellRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_activity: Option<ChatGptActivitySnapshot>,
     pub quick_share: Option<QuickShareState>,
     pub regular_tunnel: Option<RegularTunnelState>,
     pub current_operation: Option<DesktopOperationSnapshot>,
@@ -379,6 +388,7 @@ impl Default for DesktopStateSnapshot {
             project: None,
             binaries: None,
             powershell_runtime: None,
+            chatgpt_activity: None,
             quick_share: None,
             regular_tunnel: None,
             current_operation: None,

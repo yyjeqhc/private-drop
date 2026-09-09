@@ -116,7 +116,7 @@ export function Dashboard({
         <StatusCard
           title={t("home.connection")}
           value={connectionLabel(state, t)}
-          state={state.readiness.exposure}
+          state={connectionCardState(state)}
           explanation={connectionExplanation(state, t)}
         />
       </div>
@@ -205,15 +205,31 @@ function quickShareClipboardLabel(state: string, contains: string, t: Translate)
   return t("clipboard.copied");
 }
 
+function chatgptActivityObserved(state: DesktopState) {
+  return state.readiness.runtime_ready && Boolean(state.chatgpt_activity?.observed);
+}
+
+function connectionCardState(state: DesktopState) {
+  if (state.regular_tunnel?.status === "error") return "error";
+  if (chatgptActivityObserved(state)) return "ready";
+  return state.readiness.exposure;
+}
+
 function connectionLabel(state: DesktopState, t: Translate) {
+  if (chatgptActivityObserved(state) && state.regular_tunnel?.status !== "error") {
+    return t("home.connectionObservedLabel");
+  }
   const exposure = state.topology?.exposure;
-  if (!exposure || exposure.kind === "none") return t("common.noChatGpt");
+  if (!exposure || exposure.kind === "none") return t("connection.noDesktopTunnel");
   if (exposure.kind === "cloudflare") return "Cloudflare";
   if (exposure.kind === "open_ai_tunnel") return "OpenAI Secure Tunnel";
   return "Existing HTTPS";
 }
 
 function connectionExplanation(state: DesktopState, t: Translate) {
+  if (state.regular_tunnel?.status !== "error" && chatgptActivityObserved(state)) {
+    return t("home.connectionObserved");
+  }
   if (state.regular_tunnel?.status === "ready" && state.regular_tunnel.ready_for_chatgpt) return t("home.connectionTunnelReady");
   if (state.readiness.exposure === "remote_ready") return t("home.connectionRemoteReady");
   if (state.readiness.exposure === "local_ready") return t("home.connectionLocalReady");
