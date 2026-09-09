@@ -605,6 +605,14 @@ impl DesktopCore {
         Ok(self.publish_snapshot())
     }
 
+    fn stage_project_scope(&mut self, project: ProjectSelection) {
+        self.snapshot.project = Some(project);
+        // ChatGPT activity is evidence for one exact runtime Project. Never carry
+        // an observation from the previously displayed Project into a new setup
+        // or Quick Share scope; the new Project must earn its own observation.
+        self.snapshot.chatgpt_activity = None;
+    }
+
     pub async fn refresh_runtime_status(
         &mut self,
         cancellation: &CancellationContext,
@@ -933,7 +941,7 @@ impl DesktopCore {
             exposure: Exposure::None,
             enrollment: Enrollment::ManagedPairing,
         });
-        self.snapshot.project = Some(project.clone());
+        self.stage_project_scope(project.clone());
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Starting,
             RunnerReadiness::Stopped,
@@ -1298,7 +1306,7 @@ impl DesktopCore {
             enrollment: Enrollment::ManagedPairing,
         };
         self.snapshot.topology = Some(topology.clone());
-        self.snapshot.project = Some(project.clone());
+        self.stage_project_scope(project.clone());
         self.config.topology = Some(topology.clone());
         self.config.runtime_autostart = Some(true);
         self.config.preferred_connection = Some(RegularConnectionPreference::NoChatGpt);
@@ -1577,7 +1585,7 @@ impl DesktopCore {
                 profile: "temporary_share".to_string(),
             },
         });
-        self.snapshot.project = Some(project.clone());
+        self.stage_project_scope(project.clone());
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Starting,
             RunnerReadiness::Connecting,
@@ -3103,6 +3111,30 @@ mod tests {
             Some(5678)
         );
         assert!(current.chatgpt_activity.unwrap().observed);
+        std::fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn staging_a_project_scope_clears_prior_chatgpt_evidence() {
+        let data_dir = unique_state_dir("chatgpt-project-scope-reset");
+        let resource_dir = data_dir.join("resources");
+        std::fs::create_dir_all(&resource_dir).unwrap();
+        let mut core = DesktopCore::new(data_dir.clone(), resource_dir).unwrap();
+        core.snapshot.chatgpt_activity = Some(ChatGptActivitySnapshot {
+            observed: true,
+            last_meaningful_activity_at_ms: Some(1234),
+        });
+
+        let project = ProjectSelection {
+            path: data_dir.join("project-b").to_string_lossy().to_string(),
+            allowed_root: data_dir.to_string_lossy().to_string(),
+            is_git_repository: false,
+            runtime_project_id: None,
+        };
+        core.stage_project_scope(project.clone());
+
+        assert_eq!(core.snapshot.project, Some(project));
+        assert!(core.snapshot.chatgpt_activity.is_none());
         std::fs::remove_dir_all(data_dir).unwrap();
     }
 

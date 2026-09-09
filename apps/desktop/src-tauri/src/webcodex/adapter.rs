@@ -587,12 +587,7 @@ impl WebCodexAdapter {
         ];
         let output: OpsWindowsOutput =
             run_json(webcodex, &args, None, false, cancellation).await?;
-        Ok(output
-            .summary
-            .windows
-            .iter()
-            .filter_map(|window| window.last_meaningful_activity_at_ms)
-            .max())
+        Ok(latest_chatgpt_activity(&output))
     }
 
     pub async fn project_ready(
@@ -850,6 +845,21 @@ fn invalid_contract(operation: &str) -> DesktopError {
     )
 }
 
+fn latest_chatgpt_activity(output: &OpsWindowsOutput) -> Option<i64> {
+    output
+        .summary
+        .windows
+        .iter()
+        .filter(|window| {
+            matches!(
+                window.source.as_str(),
+                "openai-session" | "openai-conversation"
+            )
+        })
+        .filter_map(|window| window.last_meaningful_activity_at_ms)
+        .max()
+}
+
 fn invalid_runtime_path(path: &Path) -> DesktopError {
     DesktopError::new(
         "desktop_state_unavailable",
@@ -1000,6 +1010,24 @@ mod tests {
             ..ready
         };
         assert!(!ops_project_is_ready(&short_id, &identity));
+    }
+
+    #[test]
+    fn chatgpt_activity_requires_an_explicit_openai_window_source() {
+        let output: OpsWindowsOutput = serde_json::from_value(serde_json::json!({
+            "summary": {
+                "windows": [
+                    {"source": "http-cookie", "last_meaningful_activity_at_ms": 9000},
+                    {"source": "mcp", "last_meaningful_activity_at_ms": 8000},
+                    {"source": "openai-session", "last_meaningful_activity_at_ms": 2000},
+                    {"source": "openai-conversation", "last_meaningful_activity_at_ms": 3000},
+                    {"last_meaningful_activity_at_ms": 10000}
+                ]
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(latest_chatgpt_activity(&output), Some(3000));
     }
 
     #[test]

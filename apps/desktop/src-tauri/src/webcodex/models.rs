@@ -105,6 +105,8 @@ pub struct OpsWindowsSummary {
 #[derive(Debug, Clone, Deserialize)]
 pub struct OpsWindow {
     #[serde(default)]
+    pub source: String,
+    #[serde(default)]
     pub last_meaningful_activity_at_ms: Option<i64>,
 }
 
