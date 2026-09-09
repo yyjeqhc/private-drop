@@ -173,7 +173,7 @@ schema instead of repeating them in every top-level description.
 
 For ordinary tools, keep the top-level description as short as its selection and
 lifecycle semantics allow. There is no secondary numeric density limit below the
-repository hard ceiling (`MODEL_TOOL_DESCRIPTION_MAX_CHARS`, currently 600);
+repository hard ceiling (`MODEL_TOOL_DESCRIPTION_MAX_CHARS`, currently 900);
 using more of that budget is appropriate when it preserves selection, authority,
 retry, continuation, uncertainty, safety, or recovery semantics. Avoid naming
 sibling tools merely to restate implementation or fallback details, because

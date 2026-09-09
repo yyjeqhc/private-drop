@@ -667,9 +667,9 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
     fi
 elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
     adaptive_present=1
-    for tname in work_on_project list_projects runtime_status tool_manifest project_overview \
-        search_project_texts read_files apply_text_edits run_process run_script observe_jobs \
-        cargo_check cargo_test go_test validation_summary git_status git_review_summary \
+    for tname in work_on_project runtime_status tool_manifest \
+        search_project_texts read_files apply_text_edits apply_patch run_process run_shell observe_jobs list_jobs \
+        cargo_check cargo_test git_review_summary git_diff_hunks \
         show_changes workspace_hygiene_check finish_coding_task call_runtime_tool; do
         if mcp_tool_present "$tname"; then
             :
@@ -678,8 +678,9 @@ elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
             fail "MCP tools/list missing adaptive_runtime tool $tname"
         fi
     done
-    for tname in list_tools read_file run_shell apply_unified_diff goto_definition \
-        computer_list_windows post_session_message coding_agent_start artifact_upload_begin; do
+    for tname in list_tools list_projects project_overview read_file run_script apply_unified_diff \
+        go_test validation_summary git_status goto_definition computer_list_windows \
+        post_session_message coding_agent_start artifact_upload_begin; do
         if mcp_tool_present "$tname"; then
             adaptive_present=0
             fail "MCP tools/list must keep long-tail tool $tname behind call_runtime_tool"
@@ -1015,7 +1016,7 @@ for runtime_tool in ["work_on_project", "finish_coding_task"]:
         errors.append(f"ToolCallRequest.tool description missing {runtime_tool}")
 
 # Keep this cross-language check aligned with MODEL_TOOL_DESCRIPTION_MAX_CHARS.
-MODEL_TOOL_DESCRIPTION_MAX_CHARS = 600
+MODEL_TOOL_DESCRIPTION_MAX_CHARS = 900
 # Phase 2: each operation description must fit the repository model budget.
 for path, methods in schema.get("paths", {}).items():
     for method, op in methods.items():

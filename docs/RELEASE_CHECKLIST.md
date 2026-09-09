@@ -38,7 +38,7 @@ Confirm the user-facing docs tell one story:
 
 - README states the product position in the first screen and clearly separates full daily use from temporary `share`.
 - Full Setup has one recommended regular Server + Runner path for ordinary daily use; Quick Trial stays focused on temporary single-project `share`.
-- Concepts explains server, Runner, Runner-registered projects, runtime project ids, ToolRuntime, MCP, GPT Actions, session, handoff, validation, review/hygiene, and `run_shell` as an escape hatch.
+- Concepts explains server, Runner, Runner-registered projects, runtime project ids, ToolRuntime, MCP, GPT Actions, session, handoff, validation, review/hygiene, and `run_shell` as a bounded shell primitive for real shell semantics or short related command chains.
 - Architecture starts with client/server/Runner/codebase, security-boundary, and runtime-module diagrams before Rust module notes.
 - MCP and GPT Actions both say they call the same WebCodex ToolRuntime.
 - Security explains what the model can and cannot do, project access, Runner trust boundary, shell/job risk, token handling, session/audit evidence, and revocation.
@@ -82,7 +82,7 @@ Confirm:
 
 - No secrets, `.env`, credentials, token files, generated deployment env files, or Authorization headers were touched or printed.
 - `finish_coding_task` and `session_handoff_summary` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
-- `run_shell` is documented as a bounded escape hatch, not the default validation source.
+- `run_shell` is documented as a bounded shell primitive, while structured validators remain the default validation source.
 - Model-facing runtime docs keep admin, account, pairing, token-management, and Runner-token management outside MCP and GPT Actions.
 
 ## 8. Packaging And Artifact Checks

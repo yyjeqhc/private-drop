@@ -92,8 +92,10 @@ The Runner is the trust boundary closest to the repository:
 
 - Projects execute only inside registered project roots and the configured
   `allowed_roots` policy.
-- Shell and Job tools are bounded escape hatches, not the default coding loop.
-  Structured read, edit, and validation tools are preferred.
+- Shell and Job tools are bounded execution primitives, not replacements for
+  structured tools. Prefer structured read, edit, validation, and native argv
+  operations when they fit; use `run_shell` for real shell semantics or short,
+  tightly related command chains.
 - Shell profiles prepare a one-time environment snapshot per project/profile;
   `~/.bashrc` / `~/.profile` are not sourced by default.
 - The Runner connects out to the Server over QUIC, WebSocket, or polling, and
