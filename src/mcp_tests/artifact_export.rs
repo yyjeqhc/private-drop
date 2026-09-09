@@ -4,6 +4,14 @@ async fn mcp_export_runtime(
     root: &std::path::Path,
     owner: Option<&str>,
 ) -> (Arc<ToolRuntime>, Arc<crate::runner_http::RunnerRegistry>) {
+    mcp_export_runtime_with_surface(root, owner, ModelSurface::FullOperatorRuntime).await
+}
+
+async fn mcp_export_runtime_with_surface(
+    root: &std::path::Path,
+    owner: Option<&str>,
+    model_surface: ModelSurface,
+) -> (Arc<ToolRuntime>, Arc<crate::runner_http::RunnerRegistry>) {
     use crate::runner_protocol::{RunnerCapabilities, RunnerProjectSummary, RunnerRegisterRequest};
     let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
     registry
@@ -53,7 +61,7 @@ async fn mcp_export_runtime(
     .await;
     let runtime = Arc::new(
         ToolRuntime::new_for_tests_with_runner_registry(registry.clone())
-            .with_model_surface(ModelSurface::FullOperatorRuntime),
+            .with_model_surface(model_surface),
     );
     (runtime, registry)
 }
@@ -487,6 +495,101 @@ async fn adaptive_artifact_export_direct_and_gateway_preserve_protocol_and_calle
             );
         }
     }
+}
+
+#[tokio::test]
+async fn adaptive_artifact_export_gateway_returns_resource_link_and_round_trips_binary() {
+    use base64::Engine as _;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) =
+        mcp_export_runtime_with_surface(tmp.path(), Some("alice"), ModelSurface::AdaptiveRuntime)
+            .await;
+    let auth = mcp_export_api_auth("key-adaptive-gateway-export", "alice");
+    let path = "paper/adaptive-gateway.pdf";
+    let bytes = b"%PDF-1.7\nadaptive gateway export\n%%EOF\n".to_vec();
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+
+    let export_call = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move {
+            handle_mcp_request(
+                &runtime,
+                rpc(
+                    "tools/call",
+                    Some(json!(3102)),
+                    mcp_2026_params(json!({
+                        "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                        "arguments": {
+                            "tool": "export_project_artifact",
+                            "arguments": {
+                                "project": "agent:exporter:demo",
+                                "path": path
+                            }
+                        }
+                    })),
+                ),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+    complete_mcp_export_metadata(
+        registry.clone(),
+        path,
+        bytes.len(),
+        &sha256,
+        "application/pdf",
+    )
+    .await;
+    let outcome = export_call.await.unwrap();
+    let McpOutcome::Ok(export) = outcome else {
+        panic!("adaptive gateway artifact export must succeed, got {outcome:?}");
+    };
+    let uri = export["result"]["content"][0]["uri"]
+        .as_str()
+        .expect("gateway export must return a ResourceLink")
+        .to_string();
+    assert!(uri.starts_with(MCP_ARTIFACT_EXPORT_URI_PREFIX));
+    let serialized_export = serde_json::to_string(&export).unwrap();
+    assert!(!serialized_export.contains("content_base64"));
+    assert!(!serialized_export.contains("\"blob\""));
+
+    let read_call = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let uri = uri.clone();
+        async move {
+            handle_mcp_request(
+                &runtime,
+                rpc(
+                    "resources/read",
+                    Some(json!(3103)),
+                    mcp_2026_params(json!({"uri": uri})),
+                ),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+    complete_mcp_export_resource_read(
+        registry,
+        path,
+        bytes.clone(),
+        "application/pdf",
+        &sha256,
+        McpExportChunkFault::None,
+    )
+    .await;
+    let outcome = read_call.await.unwrap();
+    let McpOutcome::Ok(resource) = outcome else {
+        panic!("adaptive gateway ResourceLink read must succeed, got {outcome:?}");
+    };
+    let decoded = general_purpose::STANDARD
+        .decode(resource["result"]["contents"][0]["blob"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(decoded, bytes);
 }
 
 #[test]
