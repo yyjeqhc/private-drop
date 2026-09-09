@@ -220,6 +220,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     }
     for cat in [
         TOOL_DISCOVERY_GROUP_INSPECT,
+        TOOL_DISCOVERY_GROUP_FILE_TRANSFER,
         TOOL_DISCOVERY_GROUP_GIT,
         TOOL_DISCOVERY_GROUP_REVIEW,
         TOOL_DISCOVERY_GROUP_VALIDATION,
@@ -250,8 +251,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     let inspect = categories[TOOL_DISCOVERY_GROUP_INSPECT].as_array().unwrap();
     for name in [
         "read_file",
+        "read_files",
         "run_shell",
         "search_project_text",
+        "search_project_texts",
         "show_changes",
     ] {
         assert!(
@@ -275,6 +278,28 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             "save_project_artifact"
         ]
     );
+    let file_transfer = categories[TOOL_DISCOVERY_GROUP_FILE_TRANSFER]
+        .as_array()
+        .expect("file_transfer category present");
+    for name in [
+        "import_conversation_files_to_project",
+        "export_project_artifact",
+        "save_project_artifact",
+        "read_project_artifact",
+        "artifact_upload_begin",
+        "artifact_upload_chunk",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+    ] {
+        assert!(
+            file_transfer.iter().any(|value| value == name),
+            "file_transfer: {name}"
+        );
+    }
+    assert!(edit
+        .iter()
+        .any(|value| value == "import_conversation_files_to_project"));
+    assert!(edit.iter().any(|value| value == "export_project_artifact"));
     let flows = recommended_flows();
     assert!(!flows.is_empty());
     for flow in &flows {
@@ -293,15 +318,20 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "outlive the current runner process",
         "discover run_detached_process",
         "supervisor-owned job",
-        "inspect: use search_project_text and read_file before editing",
-        "run_shell with rg or git grep is the diagnostic escape hatch",
+        "inspect: on adaptive runtime prefer search_project_texts/read_files even for one query/range",
+        "run_shell for a short tightly related shell chain",
+        "run_script for program-like shell content",
         "edit: after read_file/read_files, apply_text_edits with current sha is the default",
         "even when many lines change",
         "use apply_patch only when contextual/large multi-hunk patch form is materially clearer",
         "external diffs use apply_unified_diff",
         "validate: use cargo_check / cargo_test / go_test",
-        "raw run_shell is a bounded escape hatch",
-        "not the primary validation path",
+        "run_shell only for shell-specific validation",
+        "keep independent validation/effect boundaries separate",
+        "file transfer: host/conversation attachment -> import_conversation_files_to_project",
+        "project artifact -> export_project_artifact",
+        "caller-held bounded binary -> save_project_artifact/artifact_upload_*",
+        "bounded inspection -> read_project_artifact",
         "copy show_changes.head.commit",
         "review: start with show_changes for the bounded worktree overview",
         "if hunks truncate, continue/focus with git_diff_hunks",
@@ -433,7 +463,14 @@ fn tool_categories_include_projects_with_management_tools() {
 
 #[test]
 fn tool_manifest_intents_reference_only_known_model_visible_tools() {
-    let expected = ["coding", "audit", "exploration", "release", "discovery"];
+    let expected = [
+        "coding",
+        "audit",
+        "exploration",
+        "file_transfer",
+        "release",
+        "discovery",
+    ];
     let names = TOOL_MANIFEST_INTENTS
         .iter()
         .map(|intent| intent.name)

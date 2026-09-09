@@ -8,6 +8,7 @@ pub const TOOL_DISCOVERY_GROUP_CODING_AGENT: &str = "coding_agent";
 pub const TOOL_DISCOVERY_GROUP_COMMUNICATION: &str = "communication";
 pub const TOOL_DISCOVERY_GROUP_AGENT_TASK: &str = "agent_task";
 pub const TOOL_DISCOVERY_GROUP_EDIT: &str = "edit";
+pub const TOOL_DISCOVERY_GROUP_FILE_TRANSFER: &str = "file_transfer";
 pub const TOOL_DISCOVERY_GROUP_GIT: &str = "git";
 pub const TOOL_DISCOVERY_GROUP_INSPECT: &str = "inspect";
 pub const TOOL_DISCOVERY_GROUP_JOBS: &str = "jobs";
@@ -184,6 +185,20 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
+        name: TOOL_DISCOVERY_GROUP_FILE_TRANSFER,
+        tools: &[
+            "import_conversation_files_to_project",
+            "export_project_artifact",
+            "save_project_artifact",
+            "read_project_artifact_metadata",
+            "read_project_artifact",
+            "artifact_upload_begin",
+            "artifact_upload_chunk",
+            "artifact_upload_finish",
+            "artifact_upload_abort",
+        ],
+    },
+    ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_SHELL,
         tools: &[
             "cargo_fmt",
@@ -280,7 +295,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
 pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "discovery",
-        summary: "Discovery: if the user gives an exact Runner client_id, query runtime_status/list_projects for that Runner before treating it as absent from a fleet snapshot. Otherwise use bounded runtime/project discovery, then structured search; run_shell remains the diagnostic escape hatch.",
+        summary: "Discovery: if the user gives an exact Runner client_id, use runtime_status/list_projects for that Runner before treating it as absent. Otherwise use bounded runtime/project discovery, then batch-capable structured search/read.",
         manifest_purpose:
             "Exact Runner targeting: with client_id use runtime_status(client_id=...) or list_projects(client_id=...); use list_runners only for broad fleet discovery, then inspect/search the resolved project.",
         tools: &[
@@ -327,9 +342,9 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "inspect",
-        summary: "Inspect: use search_project_text and read_file before editing. Prefer run_process for native argv and run_script for typed scripts; run_shell with rg or git grep is the diagnostic escape hatch; show_changes reviews.",
+        summary: "Inspect: on Adaptive Runtime prefer search_project_texts/read_files even for one query/range. Use run_process for native argv, run_shell for a short tightly related shell chain, run_script for program-like shell content, then show_changes to review.",
         manifest_purpose:
-            "Use bounded structured search and file reads for code inspection, then review the worktree.",
+            "Prefer batch-capable search_project_texts/read_files for Adaptive inspection even with one item; singular search_project_text/read_file remain valid simple primitives. Use run_process for one native argv call, run_shell only for shell semantics or one tightly related observation goal, and run_script for loops/conditionals/functions/traps/multi-stage logic before reviewing the worktree.",
         tools: &[
             "search_project_text",
             "search_project_texts",
@@ -356,11 +371,27 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         ],
     },
     ToolRecommendedFlow {
+        name: "file_transfer",
+        summary: "File transfer: host/conversation attachment -> import_conversation_files_to_project; project artifact -> export_project_artifact; caller-held bounded binary -> save_project_artifact/artifact_upload_*; bounded inspection -> read_project_artifact.",
+        manifest_purpose: "Use host-native transfer at the boundary: import_conversation_files_to_project moves current host attachments into a Project without model Base64; export_project_artifact returns an authenticated ResourceLink for complete project-to-host/user transfer. Use save_project_artifact or artifact_upload_* only when bounded binary data is already held by the caller, and read_project_artifact only for bounded inspection.",
+        tools: &[
+            "import_conversation_files_to_project",
+            "export_project_artifact",
+            "save_project_artifact",
+            "artifact_upload_begin",
+            "artifact_upload_chunk",
+            "artifact_upload_finish",
+            "artifact_upload_abort",
+            "read_project_artifact_metadata",
+            "read_project_artifact",
+        ],
+    },
+    ToolRecommendedFlow {
         name: "validate",
         summary:
-            "Validate: use cargo_check / cargo_test / go_test; long validation continues as a Job. Prefer structured validation tools when available; raw run_shell is a bounded escape hatch, not the primary validation path.",
+            "Validate: use cargo_check / cargo_test / go_test; long validation continues as a Job. Prefer structured validation tools. Use run_shell only for shell-specific validation and keep independent validation/effect boundaries separate.",
         manifest_purpose:
-            "Use structured Rust or Go validation; long checks become Jobs. Prefer structured validation tools when available; run_shell remains an explicit escape hatch, not the primary validation path.",
+            "Use structured Rust or Go validation; long checks become Jobs. run_shell remains available for shell-specific validation, but do not combine validation, commit, push, deploy, restart, or other independent failure/permission boundaries into one shell chain.",
         tools: &[
             "cargo_check",
             "cargo_test",
@@ -473,7 +504,7 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "apply_text_edits",
     "apply_patch",
     "apply_unified_diff",
-    // structured process, shell escape hatch, and jobs
+    // structured process, shell semantics/scripts, and jobs
     "run_process",
     "run_script",
     "run_shell",
@@ -552,6 +583,21 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "git_status",
             "git_log",
             "tool_manifest",
+        ],
+    },
+    ToolManifestIntent {
+        name: "file_transfer",
+        purpose: "Move files across the host/Project boundary without routing complete binary payloads through model text.",
+        tools: &[
+            "import_conversation_files_to_project",
+            "export_project_artifact",
+            "save_project_artifact",
+            "artifact_upload_begin",
+            "artifact_upload_chunk",
+            "artifact_upload_finish",
+            "artifact_upload_abort",
+            "read_project_artifact_metadata",
+            "read_project_artifact",
         ],
     },
     ToolManifestIntent {

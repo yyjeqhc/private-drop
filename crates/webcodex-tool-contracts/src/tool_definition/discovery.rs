@@ -194,7 +194,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Global runtime discovery; do not pass project. Filter by category/intent for sparse selection entries, or pass exact tool_name for one compact contract with description, route, input schema, and safety/authority hints but no output schema. If availability=direct, invoke that direct callable; if the host has not loaded it, rediscover/load it rather than routing it through call_runtime_tool. Unfiltered discovery retains the global category inventory. Discovery never changes behavior, authority, permissions, execution, or verdicts.",
+            "Global runtime discovery; do not pass project. Filter by category/intent for sparse selection entries, or pass exact tool_name for one compact contract with description, preferred route, input schema, and safety/authority hints but no output schema. availability=direct means the direct callable is the preferred model route; if that callable is unavailable or not loaded, call_runtime_tool may be used as a fallback for an otherwise admitted target. availability never changes behavior, authority, permissions, execution, or verdicts. Unfiltered discovery retains the global category inventory.",
             tool_manifest_input_schema,
         )),
         30,

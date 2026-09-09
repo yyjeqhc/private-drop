@@ -50,7 +50,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Run one one-shot executable with structured argv. Native executables use literal argv; Windows batch shims use the bounded Runner-owned quoting contract documented on executable. Ordinary local command sequences stay on structured tools/run_process; do not open a persistent shell merely to run several commands. Use local persistent shell only when the same local shell process must retain cwd/env/exports/functions/umask. For repeated commands on one named SSH resource with remote state, prefer persistent shell; a new persistent SSH target uses ssh_resource onboarding first. Explicit one-shot/no-persistence SSH remains valid here. Long work continues as the same execution and stays Runner-owned; discover run_detached_process only when accepted native work must outlive the Runner.",
+            "Run one one-shot executable with structured argv. This remains the preferred route for one native executable with literal argv; Windows batch shims use the bounded Runner-owned quoting contract documented on executable. Use run_shell only when shell semantics or a short tightly related command chain materially reduces model/tool round trips. Do not open a persistent shell merely to run several commands: local persistent shell is only for same-process cwd/env/exports/functions/umask state, while repeated commands on one named SSH resource with remote state are its primary route. A new persistent SSH target uses ssh_resource onboarding first. Explicit one-shot/no-persistence SSH remains valid here. Long work continues as the same execution and stays Runner-owned; discover run_detached_process only when accepted native work must outlive the Runner.",
             run_process_input_schema,
         ),
         70,
@@ -118,37 +118,40 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             true,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Run bounded sh, bash, or PowerShell content as typed script data from a Runner-owned file. Long work continues as the same execution, owned by the current Runner; the script body never becomes shell command text. If work must outlive the current Runner process, use a native executable and discover run_detached_process instead.",
+        "Run bounded sh, bash, or PowerShell content as typed script data from a Runner-owned file. Prefer this for program-like shell content such as loops, if/else branches, functions, traps, or multi-stage scripts rather than a short command chain. Long work continues as the same execution, owned by the current Runner; the script body never becomes shell command text. If work must outlive the current Runner process, use a native executable and discover run_detached_process instead.",
         run_script_input_schema,
     ),
-    model_spec(
-        def(
-            "run_shell",
-            super::ToolAuditPolicy::TYPED_CANONICAL
-                .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
-                    "command",
-                    "command_summary",
-                ]))
-                .execution(super::ToolAuditExecutionPolicy::TEST_COUNTS),
-            ModelVisible,
-            TOOL_CATEGORY_JOB,
-            Some(Shell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Execute,
-                risk: JobRun,
-                approval: super::ToolApprovalPolicy::Standard,
-                idempotency: super::ToolIdempotency::NonIdempotent,
-            },
-            Some(JOB_RUN),
-            true,
-            NoPath,
-            true,
-            true,
-            super::ToolSessionEvidencePolicy::NONE,
+    adaptive_runtime_direct(
+        model_spec(
+            def(
+                "run_shell",
+                super::ToolAuditPolicy::TYPED_CANONICAL
+                    .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
+                        "command",
+                        "command_summary",
+                    ]))
+                    .execution(super::ToolAuditExecutionPolicy::TEST_COUNTS),
+                ModelVisible,
+                TOOL_CATEGORY_JOB,
+                Some(Shell),
+                TOOL_PROVIDER_RUNNER,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Execute,
+                    risk: JobRun,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                Some(JOB_RUN),
+                true,
+                NoPath,
+                true,
+                true,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Run one bounded shell command or short tightly related shell command chain. Use it for shell semantics such as &&, pipes, redirects, globbing, or substitution, or several observation commands with one goal to reduce model/tool round trips. Keep run_process preferred for one native executable with literal argv. Do not chain independent effects or failure/permission boundaries such as validation, commit, push, deploy, or restart. Use run_script for program-like loops, conditionals, functions, traps, or multi-stage logic. Persistent shell remains for true same-process cwd/env/export/function/umask state or repeated commands on one named SSH resource. Longer shell work stays Runner-owned; use run_detached_process only for native argv work that must outlive the current Runner process.",
+            run_shell_input_schema,
         ),
-        "Run one bounded shell command as an escape hatch for real shell syntax. Ordinary local command sequences should not move to persistent shell merely because several commands are needed; prefer structured validation/process/edit tools, then run_shell when shell syntax is required. Local persistent shell is only for true same-process cwd/env/export/function/umask state. Repeated commands on one named SSH resource are the primary persistent-shell route; new persistent SSH targets use ssh_resource onboarding and Runner restart. Longer shell work stays Runner-owned; use run_detached_process only for native argv work that must outlive the current Runner process.",
-        run_shell_input_schema,
+        75,
     ),
     requires_explicit_business_session(model_spec(
             def(
@@ -200,7 +203,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Exec),
             ),
-            "Execute one framed command in an existing Session persistent shell. Primary route is repeated commands on the same named SSH resource while retaining remote cwd/env/exports/functions/umask. Local persistent execution remains supported only when the same local shell process must retain state; ordinary local command sequences should use structured tools/run_process/run_script, with the shell escape hatch only for real shell syntax. Commands are serialized in the same shell process.",
+            "Execute one framed command in an existing Session persistent shell. Primary route is repeated commands on the same named SSH resource while retaining remote cwd/env/exports/functions/umask. Local persistent execution remains supported only when the same local shell process must retain state; ordinary one-shot work should use run_process, run_shell for shell semantics or short tightly related chains, and run_script for program-like shell content. Several commands alone are not a reason to open persistent shell. Commands are serialized in the same shell process.",
             session_shell_exec_input_schema,
     )),
     requires_explicit_business_session(model_spec(

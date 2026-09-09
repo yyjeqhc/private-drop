@@ -801,6 +801,7 @@ async fn tool_manifest_without_intent_keeps_compat_shape_and_lists_available_int
             "coding".to_string(),
             "audit".to_string(),
             "exploration".to_string(),
+            "file_transfer".to_string(),
             "release".to_string(),
             "discovery".to_string(),
         ]
@@ -815,7 +816,14 @@ async fn tool_manifest_without_intent_keeps_compat_shape_and_lists_available_int
 #[tokio::test]
 async fn tool_manifest_all_available_intents_parse_and_filter_through_tool_call() {
     let runtime = test_runtime();
-    for intent in ["coding", "audit", "exploration", "release", "discovery"] {
+    for intent in [
+        "coding",
+        "audit",
+        "exploration",
+        "file_transfer",
+        "release",
+        "discovery",
+    ] {
         let call = ToolCall::from_tool_name(
             "tool_manifest",
             json!({
@@ -1496,6 +1504,19 @@ async fn tool_manifest_surface_routing_metadata_tracks_current_model_surface() {
             None,
         ),
         (ModelSurface::AdaptiveRuntime, "run_process", "direct", None),
+        (ModelSurface::AdaptiveRuntime, "run_shell", "direct", None),
+        (
+            ModelSurface::AdaptiveRuntime,
+            "import_conversation_files_to_project",
+            "direct",
+            None,
+        ),
+        (
+            ModelSurface::AdaptiveRuntime,
+            "export_project_artifact",
+            "direct",
+            None,
+        ),
         (
             ModelSurface::AdaptiveRuntime,
             "session_discussion_summary",
@@ -1512,6 +1533,24 @@ async fn tool_manifest_surface_routing_metadata_tracks_current_model_surface() {
         (
             ModelSurface::AdaptiveRuntime,
             "run_script",
+            "gateway",
+            Some("call_runtime_tool"),
+        ),
+        (
+            ModelSurface::AdaptiveRuntime,
+            "save_project_artifact",
+            "gateway",
+            Some("call_runtime_tool"),
+        ),
+        (
+            ModelSurface::AdaptiveRuntime,
+            "read_project_artifact",
+            "gateway",
+            Some("call_runtime_tool"),
+        ),
+        (
+            ModelSurface::AdaptiveRuntime,
+            "artifact_upload_begin",
             "gateway",
             Some("call_runtime_tool"),
         ),
@@ -1711,8 +1750,8 @@ async fn unfiltered_tool_manifest_keeps_full_recommended_flows() {
         .to_lowercase();
     assert!(
         serialized.contains("run_shell")
-            && serialized.contains("escape hatch")
-            && serialized.contains("not the primary validation path"),
-        "unfiltered flows must keep run_shell escape-hatch guidance: {serialized}"
+            && serialized.contains("shell semantics or one tightly related observation goal")
+            && serialized.contains("do not combine validation, commit, push, deploy, restart"),
+        "unfiltered flows must keep run_shell selection and effect-boundary guidance: {serialized}"
     );
 }

@@ -339,7 +339,6 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "project_overview",
         "read_file",
         "run_script",
-        "run_shell",
         "ssh_resource",
         "open_session_shell",
         "session_shell_exec",
@@ -357,11 +356,34 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
             "{long_tail} must stay behind the adaptive gateway"
         );
     }
+    for promoted in [
+        "run_shell",
+        "import_conversation_files_to_project",
+        "export_project_artifact",
+    ] {
+        assert!(
+            names.contains(&promoted),
+            "{promoted} must be adaptive-direct"
+        );
+    }
+    for low_level_artifact in [
+        "save_project_artifact",
+        "read_project_artifact",
+        "artifact_upload_begin",
+    ] {
+        assert!(
+            !names.contains(&low_level_artifact),
+            "{low_level_artifact} must remain behind the adaptive gateway"
+        );
+    }
 
     let gateway = tools
         .iter()
         .find(|tool| tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
         .expect("adaptive gateway");
+    let gateway_description = gateway["description"].as_str().unwrap();
+    assert!(gateway_description.contains("allowed fallback"));
+    assert!(gateway_description.contains("preferred model exposure"));
     let properties = gateway["inputSchema"]["properties"].as_object().unwrap();
     for field in [
         "tool",
@@ -377,6 +399,10 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
             "adaptive gateway missing stateless wrapper field {field}"
         );
     }
+    assert!(properties["tool"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("preferred route"));
 }
 
 #[tokio::test]
@@ -552,14 +578,43 @@ async fn adaptive_runtime_gateway_uses_long_tail_target_checkpoint_policy_once()
 }
 
 #[tokio::test]
-async fn adaptive_runtime_gateway_returns_exact_route_recovery_without_dispatching_direct_tools() {
+async fn adaptive_runtime_gateway_allows_direct_fallback_and_rejects_unadmitted_targets() {
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
-    for target in ["runtime_status", "read_files", "work_on_project"] {
-        let outcome = handle_mcp_request(
+    let fallback = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(723)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": "runtime_status",
+                    "arguments": {"summary_only": true}
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = fallback else {
+        panic!("adaptive direct runtime_status must allow gateway fallback");
+    };
+    let structured = &value["result"]["structuredContent"];
+    assert_eq!(structured["success"], true, "{value}");
+    assert!(structured["output"].is_object());
+    assert!(
+        crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
+            "runtime_status",
+            true
+        )
+    );
+
+    for target in ["not_a_real_webcodex_tool", "job_tail"] {
+        let unknown = handle_mcp_request(
             &runtime,
             rpc(
                 "tools/call",
-                Some(json!(723)),
+                Some(json!(7231)),
                 mcp_2026_params(json!({
                     "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
                     "arguments": {"tool": target, "arguments": {}}
@@ -568,46 +623,19 @@ async fn adaptive_runtime_gateway_returns_exact_route_recovery_without_dispatchi
             None,
         )
         .await;
-        let McpOutcome::Ok(value) = outcome else {
-            panic!("known direct target {target} should return structured recovery");
+        let McpOutcome::Ok(value) = unknown else {
+            panic!("unadmitted gateway target {target} should return structured unknown-tool");
         };
-        let structured = &value["result"]["structuredContent"];
-        assert_eq!(structured["success"], false);
-        let output = &structured["output"];
-        assert_eq!(output["error_kind"], "wrong_invocation_route");
+        let output = &value["result"]["structuredContent"]["output"];
+        assert_eq!(output["error_kind"], "unknown_tool", "{target}: {value}");
         assert_eq!(output["execution_state"], "not_started");
         assert_eq!(output["state_changed"], false);
-        assert_eq!(output["target_tool"], target);
-        assert_eq!(output["correct_route"]["mode"], "direct");
-        assert_eq!(output["correct_route"]["availability"], "direct");
-        assert_eq!(output["recovery"]["tool"], target);
-        assert_eq!(output["recovery"]["route"]["mode"], "direct");
-        assert_eq!(output["recovery"]["rediscover_if_unloaded"], true);
-        assert_eq!(output["recovery"]["retry_via_gateway"], false);
-        assert_eq!(output["recovery_kind"], "fix_input");
+        assert!(output.get("correct_route").is_none());
+        assert!(
+            !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(target, true),
+            "{target} must not become gateway-admitted"
+        );
     }
-
-    let unknown = handle_mcp_request(
-        &runtime,
-        rpc(
-            "tools/call",
-            Some(json!(7231)),
-            mcp_2026_params(json!({
-                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
-                "arguments": {"tool": "not_a_real_webcodex_tool", "arguments": {}}
-            })),
-        ),
-        None,
-    )
-    .await;
-    let McpOutcome::Ok(value) = unknown else {
-        panic!("unknown gateway target should return a structured unknown-tool result");
-    };
-    let output = &value["result"]["structuredContent"]["output"];
-    assert_eq!(output["error_kind"], "unknown_tool");
-    assert_eq!(output["execution_state"], "not_started");
-    assert_eq!(output["state_changed"], false);
-    assert!(output.get("correct_route").is_none());
 
     let recursive = handle_mcp_request(
         &runtime,
@@ -658,7 +686,7 @@ async fn adaptive_runtime_gateway_route_classification_does_not_mask_target_scop
         body,
     } = direct_target
     else {
-        panic!("wrong-route read_files must not mask its canonical scope denial");
+        panic!("direct-fallback read_files must retain its canonical scope denial");
     };
     assert_eq!(required_scope, Some(crate::auth::SCOPE_PROJECT_READ));
     assert!(body.to_string().contains(crate::auth::SCOPE_PROJECT_READ));

@@ -8,8 +8,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let read_file_desc = desc("read_file");
     for phrase in [
-        "default inspect tool",
-        "targeted source reading",
+        "simple single-range utf-8 read primitive",
+        "local-coding contract",
+        "adaptive runtime prefer batch-capable read_files even for one known range",
         "line numbers",
         "read_range",
         "not snapshot-stable",
@@ -25,8 +26,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let read_files_desc = desc("read_files");
     for phrase in [
-        "batch inspect tool",
-        "use read_file for one targeted range",
+        "adaptive runtime preferred batch-capable inspect tool",
+        "only one known range",
         "read_range",
         "batch_items",
         "next_index",
@@ -46,7 +47,9 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let search_desc = desc("search_project_text");
     for phrase in [
-        "default inspect/search tool",
+        "simple single-query project-text search primitive",
+        "local-coding contract",
+        "adaptive runtime prefer batch-capable search_project_texts even for one query",
         "rg-first",
         "grep fallback",
         "pattern_mode=literal",
@@ -74,6 +77,72 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         assert!(
             batch_search_desc.contains(phrase),
             "search_project_texts description should mention {phrase}: {batch_search_desc}"
+        );
+    }
+    for phrase in [
+        "adaptive runtime preferred batch-capable project-text search",
+        "only one query",
+    ] {
+        assert!(
+            batch_search_desc.contains(phrase),
+            "search_project_texts description should mention {phrase}: {batch_search_desc}"
+        );
+    }
+
+    let save_artifact_desc = desc("save_project_artifact");
+    for phrase in [
+        "already holds the bounded binary/base64 content",
+        "do not read a current chatgpt/host attachment",
+        "import_conversation_files_to_project",
+    ] {
+        assert!(
+            save_artifact_desc.contains(phrase),
+            "save_project_artifact: {phrase}"
+        );
+    }
+    let import_artifact_desc = desc("import_conversation_files_to_project");
+    for phrase in [
+        "preferred host-native attachment-to-project transfer path",
+        "do not base64-transfer files",
+        "trusted mcp host/oauth client",
+    ] {
+        assert!(
+            import_artifact_desc.contains(phrase),
+            "import_conversation_files_to_project: {phrase}"
+        );
+    }
+    let export_artifact_desc = desc("export_project_artifact");
+    for phrase in [
+        "resourcelink",
+        "without routing base64 through model output",
+        "preferred project-to-host/user transfer path",
+        "stateless/operator-capable mcp surfaces",
+    ] {
+        assert!(
+            export_artifact_desc.contains(phrase),
+            "export_project_artifact: {phrase}"
+        );
+    }
+    let read_artifact_desc = desc("read_project_artifact");
+    for phrase in [
+        "bounded chunk inspection api",
+        "do not loop over base64 chunks",
+        "export_project_artifact",
+    ] {
+        assert!(
+            read_artifact_desc.contains(phrase),
+            "read_project_artifact: {phrase}"
+        );
+    }
+    let upload_begin_desc = desc("artifact_upload_begin");
+    for phrase in [
+        "low-level chunked binary artifact upload",
+        "not the preferred path for a current chatgpt/host attachment",
+        "import_conversation_files_to_project",
+    ] {
+        assert!(
+            upload_begin_desc.contains(phrase),
+            "artifact_upload_begin: {phrase}"
         );
     }
 
@@ -266,17 +335,15 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let run_shell_desc = desc("run_shell");
     for phrase in [
-        "bounded shell command",
-        "escape hatch",
-        "real shell syntax",
-        "ordinary local command sequences should not move to persistent shell",
-        "merely because several commands are needed",
-        "structured validation/process/edit tools",
+        "bounded shell command or short tightly related shell command chain",
+        "shell semantics",
+        "model/tool round trips",
+        "run_process preferred for one native executable with literal argv",
+        "independent effects or failure/permission boundaries",
+        "validation, commit, push, deploy, or restart",
+        "run_script for program-like loops",
         "same-process cwd/env/export/function/umask state",
         "one named ssh resource",
-        "primary persistent-shell route",
-        "ssh_resource onboarding",
-        "runner restart",
         "runner-owned",
         "outlive the current runner process",
         "run_detached_process",
@@ -290,12 +357,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let run_process_desc = desc("run_process");
     for phrase in [
         "one-shot executable with structured argv",
+        "preferred route for one native executable with literal argv",
         "windows batch shims",
         "bounded runner-owned quoting contract",
-        "literal argv",
-        "ordinary local command sequences",
+        "run_shell only when shell semantics or a short tightly related command chain",
         "do not open a persistent shell merely to run several commands",
-        "same local shell process",
+        "same-process cwd/env/exports/functions/umask state",
         "one named ssh resource",
         "ssh_resource onboarding",
         "one-shot/no-persistence ssh",
@@ -311,6 +378,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let run_script_desc = desc("run_script");
     for phrase in [
+        "program-like shell content",
+        "loops",
+        "if/else branches",
+        "functions",
+        "traps",
+        "multi-stage scripts",
         "owned by the current runner",
         "outlive the current runner process",
         "run_detached_process",
@@ -394,9 +467,10 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "remote cwd/env/exports/functions/umask",
         "local persistent execution remains supported",
         "same local shell process must retain state",
-        "ordinary local command sequences",
-        "structured tools/run_process/run_script",
-        "shell escape hatch only for real shell syntax",
+        "ordinary one-shot work",
+        "run_shell for shell semantics or short tightly related chains",
+        "run_script for program-like shell content",
+        "several commands alone are not a reason to open persistent shell",
     ] {
         assert!(
             session_shell_exec_desc.contains(phrase),

@@ -2120,6 +2120,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         "discovery",
         "inspect",
         "edit",
+        "file_transfer",
         "validate",
         "review",
         "handoff",
@@ -2137,6 +2138,10 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
     for tool in [
         "read_file",
         "search_project_text",
+        "search_project_texts",
+        "read_files",
+        "import_conversation_files_to_project",
+        "export_project_artifact",
         "show_changes",
         "apply_text_edits",
         "apply_unified_diff",
@@ -2179,9 +2184,9 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
     }
     assert!(
         serialized.contains("run_shell")
-            && serialized.contains("escape hatch")
-            && serialized.contains("not the primary validation path"),
-        "run_shell should be a bounded escape hatch in recommended_flows: {serialized}"
+            && serialized.contains("shell semantics or one tightly related observation goal")
+            && serialized.contains("do not combine validation, commit, push, deploy, restart"),
+        "recommended_flows should keep run_shell selection and effect-boundary guidance: {serialized}"
     );
 }
 

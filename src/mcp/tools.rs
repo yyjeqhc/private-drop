@@ -84,7 +84,7 @@ fn full_operator_runtime_specs_for_auth(
 fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     ToolSpec {
         name: ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string(),
-        description: "Call one gateway-admitted long-tail runtime tool through the adaptive surface. Tools discovered with availability=direct must be invoked directly; if the host has not loaded that callable, rediscover/load it instead of retrying through this gateway. Runtime argument validation, OAuth scope checks, project authority, permission gates, and tool effects remain unchanged.".to_string(),
+        description: "Call one runtime tool admitted on the adaptive surface through the generic gateway. A tool with availability=direct should still be invoked through its direct callable when available, but call_runtime_tool is an allowed fallback when that callable is unavailable or not loaded. Directness changes preferred model exposure only: canonical runtime argument validation, OAuth scope, Project authority, permission gates, Runner capability, Session/context policy, host-file-import trust, protocol capability admission, and tool effects remain unchanged.".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -92,7 +92,7 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 128,
-                    "description": "Exact gateway-admitted runtime tool name obtained from bounded runtime discovery. Do not pass tools whose discovery availability is direct."
+                    "description": "Exact runtime tool name admitted on the adaptive surface. availability=direct is the preferred route, but the same admitted target may use this gateway as a fallback when the direct callable is unavailable or not loaded."
                 },
                 "arguments": {
                     "type": "object",
@@ -169,7 +169,7 @@ pub(crate) fn adaptive_runtime_gateway_target_admitted_for_test(
 ) -> bool {
     matches!(
         adaptive_runtime_gateway_target_route(target, stateless_2026),
-        AdaptiveRuntimeGatewayTargetRoute::Gateway
+        AdaptiveRuntimeGatewayTargetRoute::Gateway | AdaptiveRuntimeGatewayTargetRoute::Direct
     )
 }
 
@@ -219,29 +219,6 @@ fn unwrap_adaptive_runtime_gateway_arguments(
         }
     }
     Ok((target, target_arguments))
-}
-
-fn adaptive_runtime_gateway_route_failure(target: &str) -> ToolResult {
-    ToolResult::err_with_output(
-        format!("tool '{target}' is direct on the adaptive runtime surface; invoke its direct callable. If the host has not loaded it, rediscover/load that direct tool instead of retrying through call_runtime_tool"),
-        json!({
-            "error_kind": "wrong_invocation_route",
-            "execution_state": "not_started",
-            "state_changed": false,
-            "target_tool": target,
-            "correct_route": {
-                "mode": "direct",
-                "availability": "direct"
-            },
-            "recovery": {
-                "tool": target,
-                "route": {"mode": "direct"},
-                "rediscover_if_unloaded": true,
-                "retry_via_gateway": false
-            },
-            "recovery_kind": "fix_input"
-        }),
-    )
 }
 
 fn adaptive_runtime_gateway_unknown_target(target: &str) -> ToolResult {
@@ -1259,45 +1236,10 @@ pub(super) async fn handle_call(
                 }
             };
         match adaptive_runtime_gateway_target_route(&target, stateless_2026) {
-            AdaptiveRuntimeGatewayTargetRoute::Gateway => {
+            AdaptiveRuntimeGatewayTargetRoute::Gateway
+            | AdaptiveRuntimeGatewayTargetRoute::Direct => {
                 params.name = target;
                 params.arguments = arguments;
-            }
-            AdaptiveRuntimeGatewayTargetRoute::Direct => {
-                if let Err(ToolCallErrorStatus::InsufficientScope {
-                    required_scope,
-                    description,
-                }) = check_runtime_tool_scope(auth, &target)
-                {
-                    if let Some(lc) = lifecycle.as_deref() {
-                        lc.dispatch_failed("forbidden");
-                        lc.dispatch_finished(false, Some(false), "forbidden");
-                    }
-                    return scope_forbidden(auth, required_scope, description);
-                }
-                if let Some(lc) = lifecycle.as_deref() {
-                    lc.dispatch_failed("wrong_invocation_route");
-                    lc.dispatch_finished(false, Some(false), "wrong_invocation_route");
-                }
-                let completion = ModelErgonomicsTimer::start(&target).map(|timer| timer.finish());
-                let rendered = mcp_runtime_tool_result_fallback(
-                    adaptive_runtime_gateway_route_failure(&target),
-                );
-                if let (Some(slot), Some(completion)) =
-                    (model_ergonomics_out.as_deref_mut(), completion.as_ref())
-                {
-                    *slot = rendered.get("structuredContent").and_then(|structured| {
-                        completion.record_for_structured_content(structured)
-                    });
-                }
-                return McpOutcome::Ok(rpc_result(
-                    id,
-                    if stateless_2026 {
-                        mcp_stateless_result(rendered, false)
-                    } else {
-                        rendered
-                    },
-                ));
             }
             AdaptiveRuntimeGatewayTargetRoute::Unknown => {
                 if let Some(lc) = lifecycle.as_deref() {
@@ -1601,8 +1543,9 @@ pub(super) async fn handle_call(
         ));
     }
     // Focused model surfaces reject direct tools they do not advertise at the
-    // MCP boundary. Adaptive gateway calls are already reduced to an allowed
-    // full-operator target and continue through the normal runtime checks.
+    // MCP boundary. Adaptive gateway calls are already reduced to an admitted
+    // target and continue through the same normal runtime checks, whether that
+    // target's preferred exposure is gateway or direct.
     let surface_denied = match model_surface {
         ModelSurface::LocalCoding => !LOCAL_CODING_TOOL_NAMES.contains(&params.name.as_str()),
         ModelSurface::AdaptiveRuntime => {

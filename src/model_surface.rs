@@ -268,9 +268,12 @@ mod tests {
         "tool_manifest",
         "search_project_texts",
         "read_files",
+        "import_conversation_files_to_project",
+        "export_project_artifact",
         "apply_text_edits",
         "apply_patch",
         "run_process",
+        "run_shell",
         "observe_jobs",
         "list_jobs",
         "cargo_check",
@@ -355,6 +358,31 @@ mod tests {
                 Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
             )
         );
+    }
+
+    #[test]
+    fn ergonomics_promotions_do_not_expand_local_coding_or_project_connector() {
+        for tool_name in [
+            "import_conversation_files_to_project",
+            "export_project_artifact",
+        ] {
+            assert!(is_adaptive_runtime_direct_tool(tool_name), "{tool_name}");
+            assert!(
+                !LOCAL_CODING_TOOL_NAMES.contains(&tool_name),
+                "{tool_name} must not expand local_coding"
+            );
+            assert!(
+                !crate::connector_runtime::surface::CAPABILITY_NAMES.contains(&tool_name),
+                "{tool_name} must not expand project_connector"
+            );
+            assert_eq!(
+                ModelSurface::FullOperatorRuntime.runtime_tool_invocation_route(tool_name),
+                (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+                "Full Operator must remain direct for {tool_name}"
+            );
+        }
+        assert!(is_adaptive_runtime_direct_tool("run_shell"));
+        assert!(!is_adaptive_runtime_direct_tool("run_script"));
     }
 
     #[test]
