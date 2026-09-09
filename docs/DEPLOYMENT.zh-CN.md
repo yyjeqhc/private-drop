@@ -424,7 +424,8 @@ MCP 与 GPT Actions 见 [MCP.md](MCP.zh-CN.md) 与客户端特定设置
 | `restricted` | 有后果的工具在人工批准前被拒绝（`webcodex task approve/deny`）。 |
 
 `trusted_agent` 永不放松硬安全边界（项目根、只读会话、路径策略、凭据脱敏、
-job 取消语义）。`WEBCODEX_PERMISSION_MODE` 已移除；若设置，配置视为无效。
+job 取消语义）。`WEBCODEX_PERMISSION_MODE` 支持明确映射：`dev_auto_approve` → `trusted_agent`，
+`require_approval` → `restricted`；未知值及新旧配置冲突仍拒绝。
 
 ### 运维检查
 

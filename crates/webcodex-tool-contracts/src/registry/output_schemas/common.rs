@@ -149,7 +149,7 @@ pub fn authority_profile_schema(description: &str) -> Value {
             },
             "source": {
                 "type": "string",
-                "description": "Where the resolved mode came from (default, env:WEBCODEX_AUTHORITY_MODE, rejected_legacy_env:WEBCODEX_PERMISSION_MODE)."
+                "description": "Where the resolved mode came from (default, env:WEBCODEX_AUTHORITY_MODE, migrated_env:WEBCODEX_PERMISSION_MODE, rejected_legacy_env:WEBCODEX_PERMISSION_MODE)."
             },
             "project_write": {
                 "type": "boolean",

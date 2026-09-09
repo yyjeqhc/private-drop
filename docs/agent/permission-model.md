@@ -36,7 +36,7 @@ WEBCODEX_AUTHORITY_MODE = trusted_agent | restricted
 | Unset / empty / whitespace | **`trusted_agent`** (self-hosted single-operator product default), source reported as `default` |
 | Explicit known value | `trusted_agent` or `restricted`, source `env:WEBCODEX_AUTHORITY_MODE` |
 | Unknown non-empty value | Invalid configuration → consequential tools **fail closed** with reason `invalid_authority_mode:{value}` |
-| `WEBCODEX_PERMISSION_MODE` set (any value) | **Invalid configuration.** The legacy permission-mode env is removed. Consequential tools fail closed with reason `invalid_authority_mode:...` and source `rejected_legacy_env:WEBCODEX_PERMISSION_MODE`. There is no alias and no migration. |
+| Legacy values | `dev_auto_approve` aliases `trusted_agent`; `require_approval` aliases `restricted`, in either environment variable. Legacy-only configuration reports `migrated_env:WEBCODEX_PERMISSION_MODE`. Both variables may agree; conflicting values and unknown legacy values (including `audit_only`) remain invalid. |
 
 The resolved mode and source are projected on `runtime_status` and on internal
 full startup diagnostics as the `authority` object. The canonical external
@@ -94,8 +94,7 @@ decision for consequential tools.
 
 ### Invalid configuration
 
-- Unknown `WEBCODEX_AUTHORITY_MODE` values and any set
-  `WEBCODEX_PERMISSION_MODE` are rejected: consequential tools fail closed
+- Unknown authority/legacy values and conflicting current/legacy settings are rejected: consequential tools fail closed
   (`policy=invalid`, `status=denied`, `reason=invalid_authority_mode:...`).
   Invalid configuration never falls back to allow.
 
@@ -118,7 +117,7 @@ any authority mode:
 | Hard rule | Enforcement home (examples) |
 |---|---|
 | OAuth scopes / token classes | Scope check, agent authorization |
-| Project boundary / allowed roots | Path policy, project resolution |
+| Project boundary / allowed roots | Model requests cannot extend roots. Explicit local operator project selection can persist the exact canonical root; path/namespace/escape checks remain. |
 | Explicitly read-only sessions deny writes and shell/jobs | Session guard **before** mutation |
 | Unknown explicit `session_id` → `unknown_session_id` | Session resolution |
 | Path and sensitive-path policy | File tools + `policy_rejected` / hard-deny detection |
@@ -177,8 +176,8 @@ approval records. They remain subject to hard safety.
 1. **One authority decision per request** that reaches the gate for a
    permission-bearing tool; one `wc_perm_*` id per decision; the kernel reuses
    the attached decision and never re-evaluates.
-2. **Invalid configuration fails closed** — including any set
-   `WEBCODEX_PERMISSION_MODE`. Never fall back to allow.
+2. **Invalid configuration fails closed** — unknown or conflicting legacy settings
+   never fall back to allow.
 3. **Hard safety is never bypassed by authority mode.**
 4. **`restricted` never silently auto-approves** runtime tools.
 5. **Read-only / not-required tools never invent approval records.**

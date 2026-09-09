@@ -10,8 +10,7 @@ pub(crate) const DEFAULT_PERMISSION_RECENT_LIMIT: usize = 20;
 /// Environment variable for the canonical authority mode.
 pub(crate) const AUTHORITY_MODE_ENV: &str = "WEBCODEX_AUTHORITY_MODE";
 
-/// Removed legacy switch. There is exactly one authority field; a set legacy
-/// env is a hard configuration error, never a silent alias.
+/// Legacy operator configuration; unambiguous values migrate to authority modes.
 pub(crate) const LEGACY_PERMISSION_MODE_ENV: &str = "WEBCODEX_PERMISSION_MODE";
 
 /// Canonical authority mode (soft policy; never overrides hard safety).
@@ -39,8 +38,8 @@ impl AuthorityMode {
     /// Parse a mode name (case-sensitive, trimmed by caller).
     pub(crate) fn parse(raw: &str) -> Result<Self, AuthorityModeParseError> {
         match raw {
-            "trusted_agent" => Ok(Self::TrustedAgent),
-            "restricted" => Ok(Self::Restricted),
+            "trusted_agent" | "dev_auto_approve" => Ok(Self::TrustedAgent),
+            "restricted" | "require_approval" => Ok(Self::Restricted),
             other => Err(AuthorityModeParseError {
                 value: other.to_string(),
             }),

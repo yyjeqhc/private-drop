@@ -476,8 +476,9 @@ auto-execute or require human approval:
 
 Hard safety boundaries (project roots, read-only sessions, path policy,
 credential redaction, job cancel semantics) are never relaxed by
-`trusted_agent`. `WEBCODEX_PERMISSION_MODE` is removed; if set, configuration
-is invalid.
+`trusted_agent`. Legacy `WEBCODEX_PERMISSION_MODE` supports the unambiguous
+`dev_auto_approve` → `trusted_agent` and `require_approval` → `restricted` mappings.
+Unknown or conflicting old/new settings remain invalid.
 
 ### Operator checks
 
