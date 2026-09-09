@@ -472,6 +472,12 @@ mod tests {
                 PublicAction(operation) => {
                     assert_eq!(route_spec.method, RouteMethod::Post, "{:?}", route_spec.id);
                     assert_eq!(route_spec.surface, RuntimeApi, "{:?}", route_spec.id);
+                    assert_eq!(
+                        route_spec.auth,
+                        RouteAuth::AuthMiddleware,
+                        "{:?} Public Action OpenAPI declares bearer security and must stay behind AuthMiddleware",
+                        route_spec.id
+                    );
                     assert!(!operation.operation_id.is_empty(), "{:?}", route_spec.id);
                     assert!(!operation.request_schema.is_empty(), "{:?}", route_spec.id);
                     assert!(!operation.response_schema.is_empty(), "{:?}", route_spec.id);
@@ -484,6 +490,12 @@ mod tests {
                 ConnectorCapability(name) => {
                     assert_eq!(route_spec.method, RouteMethod::Post, "{:?}", route_spec.id);
                     assert_eq!(route_spec.surface, Connector, "{:?}", route_spec.id);
+                    assert_eq!(
+                        route_spec.auth,
+                        RouteAuth::AuthMiddleware,
+                        "{:?} Connector OpenAPI declares bearer security and must stay behind AuthMiddleware",
+                        route_spec.id
+                    );
                     assert!(!name.is_empty(), "{:?}", route_spec.id);
                     assert!(
                         connector_capabilities.insert(name),
