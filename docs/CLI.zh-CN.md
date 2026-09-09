@@ -68,6 +68,15 @@ structured unregister，再删除本地 registration；Runner 已停止时，只
 | `webcodex pairing create` | Server/admin 侧：创建短期 pairing code | 需要 server bootstrap/admin 认证。 |
 | `webcodex logout <server-url> [--user USER|--all]` | 移除本机对某 Server 的凭据 | 只有一个 saved user 时自动选择；多个 saved user 时必须用 `--user USER` 选择一个，或显式用 `--all` 选择全部；真正删除仍遵守现有 confirmation/`--yes` 流程。 |
 
+本地 `login --project`、`project register` 与 Desktop picker 显式选择现有项目时，
+会自动持久化 exact canonical root 授权，不扩大到父目录或整个共享目录。
+需要新授权的 symlink 路径须显式选择 canonical 目标；危险 Windows namespace 与
+`..` traversal 仍拒绝。模型注册入口仍受既有 Runner policy 约束，UNC 仍先检查网络授权。
+已运行 Runner 若需要 reload，按命令输出处理。
+
+root login 会给出可直接运行的 foreground 命令，并提示项目命令拥有 root 权限；
+Linux system service 安装命令明确包含 `--allow-root-runner`，无需重新 login。
+
 ### Runner 生命周期
 
 Runner 可执行文件是 `webcodex-runner`。其规范 CLI 生命周期命名空间是 `runner`：

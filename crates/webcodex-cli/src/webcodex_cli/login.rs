@@ -584,8 +584,7 @@ pub(crate) fn stage_connection(
     write_descriptor(&paths, server_url, &identity.username, device, now)
 }
 
-const ROOT_RUNNER_INSTALL_REASON: &str = "login ran as root; no safe systemd installation argv can be generated without explicitly selecting a non-root Runner user and validating access to the Runner config, working directory, project registry directory, and allowed roots";
-const ROOT_FOREGROUND_REASON: &str = "login ran as root; no foreground Runner argv is emitted because it would execute project commands as root";
+const ROOT_RUNNER_WARNING: &str = "Warning: this Runner will execute project commands as root.";
 const WINDOWS_RUNNER_INSTALL_REASON: &str = "automatic Windows Runner service installation is not supported in this release; start the foreground Runner shown above instead";
 const NON_LINUX_RUNNER_INSTALL_REASON: &str = "managed Runner service installation is supported only on Linux; start the foreground Runner shown above instead";
 
@@ -600,44 +599,42 @@ pub(crate) fn render_login_result(
     json: bool,
     print_mcp_config: bool,
 ) -> Result<String, String> {
-    let foreground_argv = (!effective_root).then(|| {
-        vec![
-            "webcodex-runner".to_string(),
-            "--config".to_string(),
-            paths.runner_config.to_string_lossy().into_owned(),
-        ]
-    });
-    let runner_install_argv = (!effective_root && cfg!(target_os = "linux")).then(|| {
-        vec![
+    let foreground_argv = vec![
+        "webcodex-runner".to_string(),
+        "--config".to_string(),
+        paths.runner_config.to_string_lossy().into_owned(),
+    ];
+    let runner_install_argv = cfg!(target_os = "linux").then(|| {
+        let mut argv = vec![
             "webcodex".to_string(),
             "runner".to_string(),
             "install".to_string(),
             "--scope".to_string(),
-            "user".to_string(),
+            if effective_root { "system" } else { "user" }.to_string(),
             "--config".to_string(),
             paths.runner_config.to_string_lossy().into_owned(),
-        ]
+        ];
+        if effective_root {
+            argv.push("--allow-root-runner".to_string());
+        }
+        argv
     });
-    let runner_install_reason = if effective_root {
-        Some(ROOT_RUNNER_INSTALL_REASON)
-    } else if cfg!(windows) {
+    let runner_install_reason = if cfg!(windows) {
         Some(WINDOWS_RUNNER_INSTALL_REASON)
     } else if !cfg!(target_os = "linux") {
         Some(NON_LINUX_RUNNER_INSTALL_REASON)
     } else {
         None
     };
-    let foreground_command = foreground_argv.as_ref().map(|argv| shell_command(argv));
+    let foreground_command = shell_command(&foreground_argv);
     let runner_install_command = runner_install_argv.as_ref().map(|argv| shell_command(argv));
-    let human_foreground_command = (!effective_root).then(|| {
-        shell_command(&[
-            "webcodex".to_string(),
-            "runner".to_string(),
-            "run".to_string(),
-            "--config".to_string(),
-            paths.runner_config.to_string_lossy().into_owned(),
-        ])
-    });
+    let human_foreground_command = shell_command(&[
+        "webcodex".to_string(),
+        "runner".to_string(),
+        "run".to_string(),
+        "--config".to_string(),
+        paths.runner_config.to_string_lossy().into_owned(),
+    ]);
     let register_command = format!(
         "{} <existing-workspace>",
         shell_command(&[
@@ -667,9 +664,7 @@ pub(crate) fn render_login_result(
         if registration.is_none() {
             next_steps.push(register_command.clone());
         }
-        if let Some(command) = &foreground_command {
-            next_steps.push(command.clone());
-        }
+        next_steps.push(foreground_command.clone());
         if let Some(command) = &runner_install_command {
             next_steps.push(command.clone());
         }
@@ -703,9 +698,10 @@ pub(crate) fn render_login_result(
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
                 "runner_config_token": "Runner transport only",
             },
-            "foreground_available": foreground_argv.is_some(),
+            "foreground_available": true,
             "foreground_argv": &foreground_argv,
-            "foreground_reason": effective_root.then_some(ROOT_FOREGROUND_REASON),
+            "foreground_reason": serde_json::Value::Null,
+            "runner_warning": effective_root.then_some(ROOT_RUNNER_WARNING),
             "runner_install_available": runner_install_argv.is_some(),
             "runner_install_argv": &runner_install_argv,
             "runner_install_reason": runner_install_reason,
@@ -734,6 +730,10 @@ pub(crate) fn render_login_result(
 
     let mut out = String::new();
     out.push_str("Login complete\n\n");
+    if effective_root {
+        out.push_str(ROOT_RUNNER_WARNING);
+        out.push_str("\n\n");
+    }
     if let Some(project) = registration {
         out.push_str("Project:\n");
         out.push_str(&format!("  {}\n", project.path.display()));
@@ -751,16 +751,14 @@ pub(crate) fn render_login_result(
     out.push_str("\nNext:\n");
     if registration.is_none() {
         out.push_str(&format!("  {human_register_command}\n"));
-    } else if let Some(command) = &human_foreground_command {
-        out.push_str(&format!("  {command}\n"));
+    }
+    if registration.is_some() || effective_root {
+        out.push_str(&format!("  {human_foreground_command}\n"));
         out.push_str("\nKeep this terminal open. Ctrl-C stops this Runner.\n");
         if let Some(install) = &runner_install_command {
             out.push_str("\nFor daily background use on Linux instead:\n");
             out.push_str(&format!("  {install}\n"));
         }
-    } else {
-        out.push_str("  Use a fresh one-time login code as the ordinary local user who will run project commands.\n");
-        out.push_str("  No root Runner command is recommended by this login.\n");
     }
     out.push_str("\nDetails:\n");
     out.push_str(&format!("  Server: {server_url}\n"));
@@ -966,10 +964,14 @@ pub(crate) async fn run_login(opts: LoginOptions) -> Result<String, String> {
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", parent.display()))?;
     let device = resolve_device_name(base, &opts)?;
-    let mut output_allowed_roots =
-        webcodex_runner_config::effective_allowed_roots(&opts.allowed_roots, false)?;
+    // Explicit project selection can supply an exact root even without HOME.
+    // This only resolves defaults; the saved Runner policy remains restricted.
+    let mut output_allowed_roots = webcodex_runner_config::effective_allowed_roots(
+        &opts.allowed_roots,
+        opts.project.is_some(),
+    )?;
     // Preserve the historical generated-config behavior unless explicit project
-    // selection adds network authority. In that case this becomes the persisted
+    // selection adds exact project authority. In that case this becomes the persisted
     // Runner policy, including any effective HOME root that existed beforehand.
     let mut runner_allowed_roots = opts.allowed_roots.clone();
 
@@ -2335,7 +2337,8 @@ mod tests {
         let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let allowed_root = temp.path().join("workspaces");
-        let project = allowed_root.join("my-repo");
+        let project = temp.path().join("selected/my-repo");
+        std::fs::create_dir_all(&allowed_root).unwrap();
         std::fs::create_dir_all(&project).unwrap();
         let opts = LoginOptions {
             server_url: format!("http://{address}"),
@@ -2396,7 +2399,11 @@ mod tests {
             paths.project_registry_dir.canonicalize().unwrap()
         );
         let local_allowed_roots = parsed["policy"]["allowed_roots"].as_array().unwrap();
-        assert_eq!(local_allowed_roots.len(), 1);
+        assert_eq!(local_allowed_roots.len(), 2);
+        assert!(webcodex_runner_config::paths::paths_equal(
+            Path::new(local_allowed_roots[1].as_str().unwrap()),
+            &project.canonicalize().unwrap()
+        ));
         assert!(webcodex_runner_config::paths::paths_equal(
             Path::new(local_allowed_roots[0].as_str().unwrap()),
             &allowed_root
@@ -2405,7 +2412,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_project_outside_allowed_roots_fails_before_redemption() {
+    async fn login_project_outside_allowed_roots_reaches_redemption() {
         let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let allowed_root = temp.path().join("allowed");
@@ -2433,14 +2440,14 @@ mod tests {
             print_mcp_config: false,
         };
         let error = run_login(opts).await.unwrap_err();
-        assert!(error.contains("outside allowed_roots"), "{error}");
+        assert!(error.contains("request failed"), "{error}");
         let canonical = canonical_server_url(&format!("http://{address}")).unwrap();
         let parent = resolve_connection_parent(&base, &canonical).unwrap();
         assert_no_internal_residue(&parent);
     }
 
     #[tokio::test]
-    async fn login_project_rejects_unauthorized_dangerous_root_before_redemption() {
+    async fn login_project_explicit_system_root_reaches_redemption() {
         let temp = canonical_test_tempdir();
         let base = temp.path().join("config");
         let allowed_root = temp.path().join("allowed");
@@ -2451,7 +2458,7 @@ mod tests {
         #[cfg(windows)]
         let dangerous_project = PathBuf::from(r"C:\");
         #[cfg(not(windows))]
-        let dangerous_project = PathBuf::from("/etc");
+        let dangerous_project = PathBuf::from("/etc").canonicalize().unwrap();
         let opts = LoginOptions {
             server_url: format!("http://{address}"),
             server_http: ServerHttpOptions {
@@ -2470,11 +2477,7 @@ mod tests {
             print_mcp_config: false,
         };
         let error = run_login(opts).await.unwrap_err();
-        assert!(error.contains("outside allowed_roots"), "{error}");
-        assert!(
-            !error.contains("failed to send"),
-            "path policy must fail before the one-shot pairing request: {error}"
-        );
+        assert!(error.contains("request failed"), "{error}");
         let canonical = canonical_server_url(&format!("http://{address}")).unwrap();
         let parent = resolve_connection_parent(&base, &canonical).unwrap();
         assert_no_internal_residue(&parent);
@@ -2963,7 +2966,7 @@ mod tests {
     }
 
     #[test]
-    fn render_login_result_omits_invalid_root_service_guidance() {
+    fn render_login_result_root_has_usable_commands_and_warning() {
         let paths = ConnectionPaths::new(PathBuf::from("/tmp/root-login"));
         let foreground_argv = vec![
             "webcodex-runner".to_string(),
@@ -2989,21 +2992,12 @@ mod tests {
             false,
         )
         .unwrap();
-        assert!(
-            !text.contains("webcodex runner install --scope user"),
-            "{text}"
-        );
-        assert!(!text.contains("--allow-root-runner"), "{text}");
-        assert!(
-            !text.contains("Start the Runner in the foreground"),
-            "{text}"
-        );
-        assert!(!text.contains(&shell_command(&foreground_argv)), "{text}");
-        assert!(text.contains("ordinary local user"), "{text}");
-        assert!(text.contains("fresh one-time login code"), "{text}");
-        assert!(
-            text.contains("No root Runner command is recommended"),
-            "{text}"
+        assert!(text.contains(ROOT_RUNNER_WARNING));
+        assert!(text.contains("webcodex runner run"));
+        assert!(!text.contains("fresh one-time login code"));
+        assert_eq!(
+            text.contains("--allow-root-runner"),
+            cfg!(target_os = "linux")
         );
         assert!(!text.contains(USER_TOKEN), "root text leaked a token");
         assert!(!text.contains(AGENT_TOKEN), "root text leaked a token");
@@ -3021,24 +3015,18 @@ mod tests {
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
-        assert_eq!(value["runner_install_available"], serde_json::json!(false));
-        assert!(value["runner_install_argv"].is_null());
-        let reason = value["runner_install_reason"].as_str().unwrap();
-        assert!(reason.contains("login ran as root"), "{reason}");
-        assert!(reason.contains("non-root Runner user"), "{reason}");
-        assert!(!reason.contains("--allow-root-runner"), "{reason}");
-        assert_eq!(value["foreground_available"], serde_json::json!(false));
-        assert!(value["foreground_argv"].is_null());
-        let foreground_reason = value["foreground_reason"].as_str().unwrap();
-        assert!(foreground_reason.contains("login ran as root"));
-        assert!(foreground_reason.contains("project commands as root"));
-        assert_eq!(value["next_steps"].as_array().unwrap().len(), 1);
-        assert!(value["next_steps"][0]
-            .as_str()
-            .unwrap()
-            .contains("webcodex project register"));
-        assert!(!json_text.contains("--allow-root-runner"));
-        assert!(!json_text.contains("webcodex runner install --scope user"));
+        assert_eq!(value["runner_install_available"], cfg!(target_os = "linux"));
+        if cfg!(target_os = "linux") {
+            let argv: Vec<String> =
+                serde_json::from_value(value["runner_install_argv"].clone()).unwrap();
+            assert!(argv.contains(&"--allow-root-runner".to_string()));
+            assert!(argv.contains(&"system".to_string()));
+            assert!(crate::parse_runner_install_service_with_identity(&argv[3..], true).is_ok());
+        }
+        assert_eq!(value["foreground_available"], true);
+        assert_eq!(value["foreground_argv"], serde_json::json!(foreground_argv));
+        assert!(value["foreground_reason"].is_null());
+        assert_eq!(value["runner_warning"], ROOT_RUNNER_WARNING);
         assert!(!json_text.contains(USER_TOKEN), "root json leaked a token");
         assert!(!json_text.contains(AGENT_TOKEN), "root json leaked a token");
     }

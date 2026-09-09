@@ -65,8 +65,9 @@ fn authorize_canonical_project(
     configured_roots: &[PathBuf],
     allow_cwd_anywhere: bool,
 ) -> Result<(Vec<PathBuf>, bool), String> {
-    let effective_roots =
-        webcodex_runner_config::effective_allowed_roots(configured_roots, allow_cwd_anywhere)?;
+    // Root discovery may return empty when HOME is absent: this local explicit
+    // selection supplies its own root below. The actual policy flag is unchanged.
+    let effective_roots = webcodex_runner_config::effective_allowed_roots(configured_roots, true)?;
     let canonical_roots =
         webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective_roots);
 
@@ -78,24 +79,19 @@ fn authorize_canonical_project(
         // Preserve the pre-existing local registration/output contract: callers
         // see canonical usable roots when no authority extension was needed.
         Ok(()) => Ok((canonical_roots, false)),
-        Err(error) => {
-            #[cfg(windows)]
-            if webcodex_runner_config::paths::is_windows_network_share_path(canonical_project) {
-                let mut effective_roots = effective_roots;
-                let mut canonical_roots = canonical_roots;
-                // Local CLI/Desktop project selection is an explicit user grant. Add only the
-                // canonical project itself; never infer authority for its parent/share.
-                effective_roots.push(canonical_project.to_path_buf());
-                canonical_roots.push(canonical_project.to_path_buf());
-                webcodex_runner_config::paths::validate_project_path_policy(
-                    canonical_project,
-                    &canonical_roots,
-                    allow_cwd_anywhere,
-                )?;
-                return Ok((effective_roots, true));
-            }
-
-            Err(error)
+        Err(_) => {
+            // Only local CLI/Desktop callers reach this helper. The explicit
+            // selection grants the exact canonical root, never its parent.
+            let mut effective_roots = effective_roots;
+            let mut canonical_roots = canonical_roots;
+            effective_roots.push(canonical_project.to_path_buf());
+            canonical_roots.push(canonical_project.to_path_buf());
+            webcodex_runner_config::paths::validate_project_path_policy(
+                canonical_project,
+                &canonical_roots,
+                allow_cwd_anywhere,
+            )?;
+            Ok((effective_roots, true))
         }
     }
 }
@@ -106,9 +102,22 @@ fn prepare_project_authority(
     allow_cwd_anywhere: bool,
 ) -> Result<PreparedProjectAuthority, String> {
     webcodex_runner_config::paths::validate_project_path_ingress(project)?;
+    if project
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("project path must not contain parent traversal".to_string());
+    }
     let canonical_project = canonical_existing_directory(project, "project path")?;
     let (allowed_roots, authority_changed) =
         authorize_canonical_project(&canonical_project, configured_roots, allow_cwd_anywhere)?;
+    if authority_changed
+        && project
+            .ancestors()
+            .any(|path| std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()))
+    {
+        return Err("project symlink resolves outside allowed_roots; select the canonical directory explicitly".to_string());
+    }
     Ok(PreparedProjectAuthority {
         canonical_project,
         allowed_roots,
@@ -263,7 +272,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
     )?;
     if prepared.authority_changed {
         // Persist the explicit user grant before publishing the project record so a
-        // newly registered network project cannot outlive the Runner authority it needs.
+        // newly registered project cannot outlive the Runner authority it needs.
         persist_registration_allowed_roots(&opts.config, &prepared.allowed_roots)?;
     }
     let authority_changed = prepared.authority_changed;
@@ -502,23 +511,29 @@ mod tests {
     }
 
     #[test]
-    fn outside_allowed_roots_is_rejected_without_registry_mutation() {
+    fn explicit_local_selection_persists_only_exact_root_and_is_idempotent() {
         let tmp = canonical_test_tempdir();
         let root = tmp.path().join("root");
-        let outside = tmp.path().join("outside");
+        let outside = tmp.path().join("outside/repo");
         let registry = tmp.path().join("registry");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         let config_path = tmp.path().join("runner.toml");
         config(&config_path, &registry, &root);
-        let error = run_project_register(ProjectRegisterOptions {
-            config: config_path,
-            project: outside,
-            json: false,
-        })
-        .unwrap_err();
-        assert!(error.contains("outside allowed_roots"), "{error}");
-        assert!(!registry.exists());
+        let opts = ProjectRegisterOptions {
+            config: config_path.clone(),
+            project: outside.clone(),
+            json: true,
+        };
+        run_project_register(opts.clone()).unwrap();
+        let before = std::fs::read(&config_path).unwrap();
+        let parsed = read_registration_config(&config_path).unwrap();
+        assert_eq!(
+            parsed.policy.allowed_roots,
+            vec![root, outside.canonicalize().unwrap()]
+        );
+        run_project_register(opts).unwrap();
+        assert_eq!(std::fs::read(&config_path).unwrap(), before);
     }
 
     #[test]
@@ -548,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_root_and_valid_nonmatching_root_remain_denied() {
+    fn stale_root_and_valid_nonmatching_root_allow_explicit_selection() {
         let tmp = canonical_test_tempdir();
         let stale = tmp.path().join("deleted-project");
         let allowed = tmp.path().join("allowed");
@@ -559,18 +574,18 @@ mod tests {
         let config_path = tmp.path().join("runner.toml");
         config_with_policy(&config_path, &registry, &[stale, allowed], false);
 
-        let error = run_project_register(ProjectRegisterOptions {
+        let output = run_project_register(ProjectRegisterOptions {
             config: config_path,
             project,
             json: false,
         })
-        .unwrap_err();
-        assert!(error.contains("outside allowed_roots"), "{error}");
-        assert!(!registry.exists());
+        .unwrap();
+        assert!(output.contains("Project"));
+        assert!(registry.is_dir());
     }
 
     #[test]
-    fn all_stale_roots_remain_denied() {
+    fn all_stale_roots_allow_explicit_selection() {
         let tmp = canonical_test_tempdir();
         let project = tmp.path().join("project");
         let registry = tmp.path().join("registry");
@@ -586,15 +601,14 @@ mod tests {
             false,
         );
 
-        let error = run_project_register(ProjectRegisterOptions {
+        let output = run_project_register(ProjectRegisterOptions {
             config: config_path,
             project,
             json: false,
         })
-        .unwrap_err();
-        assert!(error.contains("outside allowed_roots"), "{error}");
-        assert!(error.contains("allow_cwd_anywhere is false"), "{error}");
-        assert!(!registry.exists());
+        .unwrap();
+        assert!(output.contains("Project"));
+        assert!(registry.is_dir());
     }
 
     #[cfg(unix)]
@@ -622,28 +636,35 @@ mod tests {
     }
 
     #[test]
-    fn stale_roots_do_not_relax_allow_cwd_anywhere_false() {
+    fn explicit_selection_supplies_authority_without_home() {
         let tmp = canonical_test_tempdir();
-        let project = tmp.path().join("ordinary-project");
-        std::fs::create_dir_all(&project).unwrap();
-        let stale = tmp.path().join("deleted-project");
+        let _lock = crate::webcodex_cli::test_support::env_test_guard();
+        let _env = crate::webcodex_cli::test_support::EnvGuard::new()
+            .remove("HOME")
+            .remove("USERPROFILE")
+            .remove("HOMEDRIVE")
+            .remove("HOMEPATH");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir(&project).unwrap();
+        let (_, roots, changed) =
+            register_existing_project(&tmp.path().join("registry"), &project, &[], false, None)
+                .unwrap();
+        assert!(changed);
+        assert_eq!(roots, vec![project.canonicalize().unwrap()]);
+    }
 
-        let denied_registry = tmp.path().join("denied-registry");
-        let denied = register_existing_project(
-            &denied_registry,
-            &project,
-            std::slice::from_ref(&stale),
+    #[test]
+    fn local_selection_rejects_parent_traversal() {
+        let tmp = canonical_test_tempdir();
+        let error = register_existing_project(
+            &tmp.path().join("registry"),
+            &tmp.path().join("../"),
+            &[],
             false,
             None,
         )
         .unwrap_err();
-        assert!(denied.contains("allow_cwd_anywhere is false"), "{denied}");
-        assert!(!denied_registry.exists());
-
-        let allowed_registry = tmp.path().join("allowed-registry");
-        register_existing_project(&allowed_registry, &project, &[stale], true, None)
-            .expect("the existing allow_cwd_anywhere relaxation must remain unchanged");
-        assert!(allowed_registry.join("ordinary-project.toml").is_file());
+        assert!(error.contains("parent traversal"));
     }
 
     #[cfg(windows)]
@@ -760,7 +781,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn cwd_anywhere_rejects_dangerous_root_without_mutating_registry() {
+    fn explicit_system_root_selection_grants_exact_authority() {
         let tmp = canonical_test_tempdir();
         let home = tmp.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
@@ -771,17 +792,19 @@ mod tests {
         let config_path = tmp.path().join("runner.toml");
         config_with_policy(&config_path, &registry, &[], true);
 
-        let error = run_project_register(ProjectRegisterOptions {
-            config: config_path,
-            project: PathBuf::from("/etc"),
+        let output = run_project_register(ProjectRegisterOptions {
+            config: config_path.clone(),
+            project: PathBuf::from("/etc").canonicalize().unwrap(),
             json: true,
         })
-        .unwrap_err();
-        assert!(error.contains("dangerous system root"), "{error}");
-        assert!(
-            !registry.exists(),
-            "policy failure must not mutate registry"
-        );
+        .unwrap();
+        assert!(output.contains("runner_reload_required"));
+        let parsed = read_registration_config(&config_path).unwrap();
+        assert!(parsed
+            .policy
+            .allowed_roots
+            .contains(&PathBuf::from("/etc").canonicalize().unwrap()));
+        assert!(!parsed.policy.allowed_roots.contains(&PathBuf::from("/")));
     }
 
     #[test]

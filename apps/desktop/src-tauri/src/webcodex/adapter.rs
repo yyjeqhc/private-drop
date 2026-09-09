@@ -499,17 +499,29 @@ impl WebCodexAdapter {
 }
 
 fn default_allowed_root(canonical: &Path) -> PathBuf {
-    #[cfg(windows)]
-    if webcodex_runner_config::paths::is_windows_network_share_path(canonical) {
-        // The user selected this exact network project. Do not silently widen
-        // Desktop's grant to the parent directory or the containing share.
-        return canonical.to_path_buf();
-    }
-    canonical.parent().unwrap_or(canonical).to_path_buf()
+    // An explicit local selection grants only this project on every platform.
+    canonical.to_path_buf()
 }
 
 pub async fn inspect_project_path(path: &str) -> DesktopResult<ProjectSelection> {
     let requested = PathBuf::from(path);
+    webcodex_runner_config::paths::validate_project_path_ingress(&requested).map_err(|_| {
+        DesktopError::new(
+            "project_invalid_path",
+            "Unsupported project path",
+            "Choose a local directory or supported network share.",
+        )
+    })?;
+    if requested
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(DesktopError::new(
+            "project_invalid_path",
+            "Project path contains parent traversal",
+            "Choose the project directory directly.",
+        ));
+    }
     let canonical = tokio::fs::canonicalize(&requested).await.map_err(|_| {
         DesktopError::new(
             "project_unavailable",
@@ -844,9 +856,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn local_project_selection_does_not_grant_parent_tree() {
+        let project = Path::new("/home/operator/projects/repo");
+        assert_eq!(default_allowed_root(project), project);
+        assert_ne!(default_allowed_root(project), project.parent().unwrap());
+    }
+
     #[cfg(windows)]
     #[test]
-    fn windows_network_project_uses_exact_root_while_local_disk_keeps_parent_root() {
+    fn windows_network_and_local_projects_use_exact_roots() {
         let network = Path::new(r"\\?\UNC\server\share\repo");
         assert!(webcodex_runner_config::paths::paths_equal(
             &default_allowed_root(network),
@@ -858,7 +877,7 @@ mod tests {
         ));
 
         let local = Path::new(r"C:\work\repo");
-        assert_eq!(default_allowed_root(local), PathBuf::from(r"C:\work"));
+        assert_eq!(default_allowed_root(local), local);
     }
 
     #[test]
