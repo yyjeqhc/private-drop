@@ -524,7 +524,7 @@ fn process_alive(pid: u32) -> bool {
     rc == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -536,7 +536,7 @@ fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool) -> bool {
     predicate()
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn wait_for_terminal(store: &DetachedJobStore, job_id: &str) -> DetachedJobRecord {
     assert!(wait_until(Duration::from_secs(15), || {
         store
@@ -1288,4 +1288,21 @@ fn runner_real_process_supervisor_death_terminates_payload_process_tree() {
         lifetime_lock_is_held(&job_dir.join(TREE_LOCK_FILE), &tree_identity.creation_id)
             == Ok(false)
     }));
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "runner real-process lane: detached batch shim with an empty supervisor environment"]
+fn runner_real_process_windows_detached_batch_works_without_inherited_environment() {
+    let temp = tempfile::tempdir().unwrap();
+    let batch = temp.path().join("package shim.cmd");
+    fs::write(&batch, "@echo off\r\necho batch-ok\r\nexit /b 0\r\n").unwrap();
+    let store = DetachedJobStore::new(temp.path().join("state"));
+    let mut request = test_request(batch.to_string_lossy().into_owned(), Vec::new());
+    request.launch.cwd = Some(temp.path().to_string_lossy().into_owned());
+    assert!(request.launch.env.is_empty());
+    handoff_detached_job(&store, request.clone()).unwrap();
+    let terminal = wait_for_terminal(&store, &request.job_id);
+    assert_eq!(terminal.terminal.as_ref().unwrap().exit_code, Some(0));
+    assert!(terminal.stdout.tail.contains("batch-ok"));
 }

@@ -32,10 +32,9 @@ pub(crate) fn structured_process_command(
             .to_str()
             .ok_or("invalid_arguments: batch path must be Unicode")?;
         let command_line = windows_batch_command_line(program, args)?;
-        // Never resolve the command processor through the Project PATH or COMSPEC.
-        let system_root =
-            std::env::var_os("SystemRoot").ok_or("Windows SystemRoot is unavailable")?;
-        let mut command = Command::new(Path::new(&system_root).join("System32/cmd.exe"));
+        // Detached supervisors intentionally have an empty environment. Locate
+        // cmd.exe through Windows itself, never through PATH/COMSPEC/SystemRoot.
+        let mut command = Command::new(windows_command_processor()?);
         command.args(["/d", "/s", "/v:off", "/c"]);
         command.raw_arg(command_line);
         return Ok(command);
@@ -43,6 +42,22 @@ pub(crate) fn structured_process_command(
     let mut command = Command::new(program);
     command.args(args);
     Ok(command)
+}
+
+#[cfg(windows)]
+fn windows_command_processor() -> Result<std::path::PathBuf, String> {
+    use std::os::windows::ffi::OsStringExt;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetSystemDirectoryW(buffer: *mut u16, size: u32) -> u32;
+    }
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: the buffer is writable for exactly the advertised number of u16s.
+    let count = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+    if count == 0 || count >= buffer.len() {
+        return Err("Windows system directory is unavailable".to_string());
+    }
+    Ok(std::path::PathBuf::from(std::ffi::OsString::from_wide(&buffer[..count])).join("cmd.exe"))
 }
 
 /// Bounded cmd.exe contract, also tested on non-Windows hosts. Each value is
