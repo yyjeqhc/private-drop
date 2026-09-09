@@ -13,6 +13,13 @@ This guide is for **production and advanced self-hosting**: long-lived Servers, 
 - `webcodex-runner` — the long-lived worker on the machine that owns the
   repositories.
 
+Execution configuration belongs to the Runner that performs the work. The
+retired Server `CODEX_*` settings do not select a coding-agent executable,
+approval mode, timeout, or argument allowlist. Configure coding-agent providers
+in the Runner's `[acp]` / `[[acp.agents]]` settings instead; see the
+[ACP coding-agent guide](agent/acp-coding-agent-run.md). The Server needs its
+writable data directory, not a separate legacy `uploads` directory.
+
 ## Build and install
 
 The documented distribution path is the npm thin installer/wrapper:

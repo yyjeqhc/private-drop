@@ -6,8 +6,6 @@ pub(super) fn test_config(oauth2: OAuth2Config) -> Arc<crate::Config> {
         data_dir: PathBuf::from("./data"),
         token: Some("bootstrap-token".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2,
     })
 }

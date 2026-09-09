@@ -4,9 +4,7 @@ use super::sessions::{
     ToolCallRecorderMetadata, ToolCallSessionMessageResolution,
 };
 use super::tool_audit::{session_log_arguments_for_tool_request, session_log_result_for_tool};
-use super::{
-    session_context, tool_disabled_result_from_definition, ToolCall, ToolResult, ToolRuntime,
-};
+use super::{session_context, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
 use serde_json::Value;
@@ -613,58 +611,6 @@ impl ToolRuntime {
                     .expect("authorized outer recorder must have ACK observation"),
                 recorder_ack_requested,
             );
-            return ToolCallOutcome {
-                success: false,
-                result: Some(result),
-                error_status: None,
-                project: None,
-                model_ergonomics: None,
-                correlation: Default::default(),
-            };
-        }
-        if let Some(mut result) = tool_disabled_result_from_definition(&request.tool_name) {
-            super::dispatch::decorate_structured_execution_prestart_denial(
-                &request.tool_name,
-                &mut result,
-                "capability_unavailable",
-            );
-            if let Some(session_id) = context.session_id {
-                let session_event = self.sessions.record_tool_call_started_with_metadata(
-                    Some(session_id),
-                    context.transport.into(),
-                    &request.tool_name,
-                    &session_log_arguments_for_tool_request(
-                        &request.tool_name,
-                        &concrete_arguments,
-                    ),
-                    None,
-                    recorder_metadata.clone(),
-                    session_contract,
-                );
-                let recording = self.sessions.record_model_facing_tool_call_finished(
-                    session_event,
-                    false,
-                    &result.output,
-                    result.error.as_deref(),
-                    Some("tool_disabled"),
-                );
-                super::add_session_hint(&mut result, &self.sessions, session_id);
-                if let Some(recorded) = recording.as_ref() {
-                    if session_context::add_session_context_continuity(&mut result, recorded) {
-                        self.add_session_history_recovery(&mut result, recorded, context.auth)
-                            .await;
-                    }
-                }
-                session_context::add_session_attention_projection(
-                    &mut result,
-                    &self.sessions,
-                    session_id,
-                    outer_ack_observation
-                        .as_ref()
-                        .expect("authorized outer recorder must have ACK observation"),
-                    recorder_ack_requested,
-                );
-            }
             return ToolCallOutcome {
                 success: false,
                 result: Some(result),

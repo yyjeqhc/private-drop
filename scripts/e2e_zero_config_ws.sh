@@ -375,8 +375,6 @@ if [ -n "$SERVER_BIN" ]; then
     WEBCODEX_ADDR="127.0.0.1:${PORT}" \
     WEBCODEX_DATA="$DATA_DIR" \
     WEBCODEX_TOKEN="$TOKEN" \
-    CODEX_DEFAULT_TIMEOUT_SECS="30" \
-    CODEX_APPROVAL_MODE="full-auto" \
     RUST_LOG="info" \
     "$SERVER_BIN" >"$SERVER_LOG" 2>&1 &
 else
@@ -384,8 +382,6 @@ else
     WEBCODEX_ADDR="127.0.0.1:${PORT}" \
     WEBCODEX_DATA="$DATA_DIR" \
     WEBCODEX_TOKEN="$TOKEN" \
-    CODEX_DEFAULT_TIMEOUT_SECS="30" \
-    CODEX_APPROVAL_MODE="full-auto" \
     RUST_LOG="info" \
     "$CARGO_BIN" run --quiet -p webcodex --bin webcodex-server >"$SERVER_LOG" 2>&1 &
 fi

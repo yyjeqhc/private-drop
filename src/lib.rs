@@ -72,7 +72,6 @@ pub(crate) use auth::{get_db, json_error, AuthMiddleware};
 pub(crate) use config::load_startup_env_files;
 #[cfg(test)]
 pub(crate) use config::parse_env_file_line;
-pub use config::CodexConfig;
 pub use config::Config;
 pub use config::OAuth2Config;
 pub use db::{Database, RotateResult};
@@ -239,7 +238,7 @@ only for local/trusted-network demos."
     if let Some(directory) = console_asset_source.directory() {
         tracing::info!("Console assets directory: {}", directory.display());
     }
-    std::fs::create_dir_all(config.uploads_dir())?;
+    std::fs::create_dir_all(&config.data_dir)?;
     let db = Database::open(&config.db_path())?;
     let server_instance_guard = server_instance::ServerInstanceGuard::acquire(&db)?;
     db.recover_agent_wakes_for_server_takeover(
@@ -897,11 +896,6 @@ mod tests {
         env.remove("WEBCODEX_ADDR");
         env.remove("WEBCODEX_DATA");
         env.remove("WEBCODEX_TOKEN");
-        env.remove("CODEX_BIN");
-        env.remove("CODEX_APPROVAL_MODE");
-        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
-        env.remove("CODEX_MAX_PROMPT_BYTES");
-        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
 
         let config = Config::from_env();
         assert_eq!(config.addr, "0.0.0.0:8080");
@@ -909,12 +903,6 @@ mod tests {
         assert_eq!(config.token, None);
         assert!(!config.is_auth_enabled());
         assert_eq!(config.max_text_size, 2 * 1024 * 1024);
-        assert_eq!(config.max_file_size, 100 * 1024 * 1024);
-        assert_eq!(config.codex.bin, "codex");
-        assert_eq!(config.codex.approval_mode, "");
-        assert_eq!(config.codex.default_timeout_secs, 3600);
-        assert_eq!(config.codex.max_prompt_bytes, 100_000);
-        assert!(config.codex.allowed_extra_args.is_empty());
     }
 
     #[test]
@@ -924,8 +912,6 @@ mod tests {
             data_dir: PathBuf::from("./data"),
             token: Some("secret123".to_string()),
             max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: CodexConfig::default(),
             oauth2: crate::OAuth2Config::default(),
         };
         assert!(config.is_auth_enabled());
@@ -941,8 +927,6 @@ mod tests {
             data_dir: PathBuf::from("./data"),
             token: None,
             max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: CodexConfig::default(),
             oauth2: crate::OAuth2Config::default(),
         };
         assert!(!config.is_auth_enabled());

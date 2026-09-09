@@ -11,6 +11,8 @@
   Runner endpoint。
 - `webcodex-runner` —— 运行在持有仓库机器上的长驻 worker。
 
+执行配置属于实际工作的 Runner。旧 Server 的 `CODEX_*` 设置不再用于选择编码代理的可执行文件、审批模式、超时或参数白名单；编码代理应通过 Runner 的 `[acp]` / `[[acp.agents]]` 配置，参见 [ACP 编码代理指南](agent/acp-coding-agent-run.md)。Server 需要可写的数据目录，不需要单独的旧 `uploads` 目录。
+
 ## 构建与安装
 
 官方分发路径是 npm 薄安装器/包装器：

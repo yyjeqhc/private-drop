@@ -241,7 +241,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
     };
     use crate::tool_definition::{
         runtime_tool_approval_policy, runtime_tool_captures_validation_output,
-        runtime_tool_disabled_message, runtime_tool_extra_accepted_flattened_args,
         runtime_tool_is_change_summary_like, runtime_tool_is_git_like, runtime_tool_is_read_like,
         runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_permission_risk,
         runtime_tool_requires_explicit_business_session, runtime_tool_requires_permission,
@@ -471,18 +470,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             definition.name
         );
         assert_eq!(
-            runtime_tool_disabled_message(definition.name),
-            definition.disabled_message(),
-            "{} disabled facade must use ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
-            runtime_tool_extra_accepted_flattened_args(definition.name),
-            definition.extra_accepted_flattened_args(),
-            "{} extra accepted flattened args facade must use ToolDefinition",
-            definition.name
-        );
-        assert_eq!(
             runtime_tool_requires_permission(definition.name),
             definition.requires_permission(),
             "{} permission facade must use ToolDefinition",
@@ -544,26 +531,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "session_shell_status",
             "close_session_shell"
         ]
-    );
-
-    let disabled_tools = tool_definitions()
-        .filter(|definition| definition.disabled_message().is_some())
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>();
-    assert_eq!(disabled_tools, Vec::<&'static str>::new());
-
-    let extra_accepted_flattened_arg_tools = tool_definitions()
-        .filter(|definition| !definition.extra_accepted_flattened_args().is_empty())
-        .map(|definition| {
-            (
-                definition.name,
-                definition.extra_accepted_flattened_args().to_vec(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        extra_accepted_flattened_arg_tools,
-        Vec::<(&str, Vec<&str>)>::new()
     );
 
     let unit_argument_tools = tool_definitions()

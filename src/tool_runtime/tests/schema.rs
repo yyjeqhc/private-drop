@@ -43,5 +43,5 @@ mod spot_checks;
 
 use super::super::*;
 use super::support::*;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeSet;

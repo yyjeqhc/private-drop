@@ -340,8 +340,6 @@ async fn authenticated_project_fixture_for(recipe: &str) -> AuthenticatedProject
         data_dir: state.join("data"),
         token: Some(bootstrap_key.clone()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     });
     let router = Router::new()

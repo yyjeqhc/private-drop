@@ -596,8 +596,6 @@ async fn pat_verifier_bootstrap_when_auth_disabled() {
         data_dir: PathBuf::from("./data"),
         token: None, // auth disabled
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     };
     let verifier = PatVerifier;
@@ -614,8 +612,6 @@ async fn pat_verifier_bootstrap_token() {
         data_dir: PathBuf::from("./data"),
         token: Some("secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     };
     let verifier = PatVerifier;
@@ -631,8 +627,6 @@ async fn pat_verifier_rejects_unknown_token_without_db() {
         data_dir: PathBuf::from("./data"),
         token: Some("secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     };
     let verifier = PatVerifier;
@@ -653,8 +647,6 @@ async fn oauth2_verifier_ignores_non_wc_oat_tokens() {
         data_dir: PathBuf::from("./data"),
         token: Some("secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config {
             enabled: true,
             ..crate::OAuth2Config::default()
@@ -688,8 +680,6 @@ async fn oauth2_verifier_returns_none_when_oauth2_disabled() {
         data_dir: PathBuf::from("./data"),
         token: Some("secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(), // enabled: false
     };
     let verifier = OAuth2Verifier;
@@ -1465,8 +1455,6 @@ async fn shared_key_fallback_gated_by_env_and_prefix() {
         data_dir: PathBuf::from("./data"),
         token: Some("secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     };
 
@@ -1513,8 +1501,6 @@ async fn shared_key_fallback_and_oauth_bridge_flags_are_independent() {
         data_dir: PathBuf::from("./data"),
         token: Some("secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::from_env(),
     };
 
@@ -1552,8 +1538,6 @@ async fn authenticate_returns_none_for_unknown_token_with_db() {
         data_dir: PathBuf::from("./data"),
         token: Some("secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     };
     let (_tmp, db) = gate_test_db();
@@ -1672,8 +1656,6 @@ async fn authenticate_bearer_bootstrap_and_no_token() {
         data_dir: PathBuf::from("./data"),
         token: None,
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     };
     let ctx = authenticate_bearer(&config, None, Some("anything"))
@@ -1801,8 +1783,6 @@ async fn unknown_token_rejection_survives_concurrent_guarded_mode_toggles() {
         data_dir: PathBuf::from("./data"),
         token: Some("canary-secret".to_string()),
         max_text_size: 2 * 1024 * 1024,
-        max_file_size: 100 * 1024 * 1024,
-        codex: crate::CodexConfig::default(),
         oauth2: crate::OAuth2Config::default(),
     };
 

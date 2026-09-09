@@ -3,8 +3,11 @@
 Canonical contract for the WebCodex **authority mode**: how consequential tool
 invocations are authorized, recorded, and bounded on a self-hosted deployment.
 
-This document is the single place for the standing contract and the current
-runtime facts. **When design text and code disagree, code wins.**
+This document describes the authority contract and current runtime behavior.
+Neither existing code nor historical design text proves that a policy is still
+needed. Resolve disagreements using current callers, deployment requirements,
+and Git history; update implementation, tests, and documentation together while
+preserving the explicit authority boundaries below.
 
 **Audience:** agents and maintainers working on self-hosted WebCodex.
 

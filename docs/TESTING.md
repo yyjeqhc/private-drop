@@ -1,12 +1,17 @@
 # Testing Strategy
 
-WebCodex has a large test surface because the product has several independent
-contracts that must stay aligned: runtime tools, session guards, project and
-file operations, Git and shell dispatch, agent transports, MCP, OpenAPI, OAuth
-scope policy, and GPT Action exposure. The count is therefore mostly reasonable
-complexity, not accidental expansion. The risk is not the number of tests by
-itself; the risk is unclear layering, global state leakage, unbounded waits, and
-tests with different cost profiles sharing the same default lane.
+Tests should protect current behavior: runtime tools, session guards, project
+and file operations, Git and shell dispatch, Runner transports, MCP, OpenAPI,
+and OAuth scope policy. Test count alone proves neither useful coverage nor
+unnecessary complexity. Trace a test to a current entry point, consumer, or real
+boundary; a passing test of an unused configuration parser or always-empty
+policy does not justify keeping that mechanism.
+
+When retiring a concept, remove its dedicated tests and fixtures with it. Keep
+coverage of the surviving public behavior and safety boundaries, rather than
+replacing removed assertions with source-text checks that freeze another
+implementation detail. Also review layering, global state leakage, bounded
+waits, and the cost of each test lane.
 
 ## Test Lanes
 

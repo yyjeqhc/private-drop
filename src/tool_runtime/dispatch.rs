@@ -5,10 +5,7 @@ use super::session_context::{
     add_session_hint, session_guard_denied_result, session_lifecycle_denied_result,
     session_project_mismatch_result, SessionProjectMismatch,
 };
-use super::{
-    permissions, session_context, sessions, tool_disabled_result_from_definition, ToolCall,
-    ToolResult, ToolRuntime,
-};
+use super::{permissions, session_context, sessions, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::tool_runtime::project_resolution::{ProjectResolverError, ResolvedProject};
 use serde_json::{json, Value};
@@ -1266,37 +1263,6 @@ impl ToolRuntime {
                     call = call.with_session_execution_context(&execution_context);
                 }
             }
-        }
-        if let Some(mut result) = tool_disabled_result_from_definition(call.tool_name()) {
-            decorate_structured_execution_prestart_denial(
-                call.tool_name(),
-                &mut result,
-                "capability_unavailable",
-            );
-            if let Some(session_id) = session_id.as_deref() {
-                let session_start = self.sessions.record_tool_call_started_with_metadata(
-                    Some(session_id),
-                    transport,
-                    call.tool_name(),
-                    &call.session_log_arguments(),
-                    None,
-                    recorder_metadata.clone(),
-                    session_contract,
-                );
-                self.record_dispatch_session_result(
-                    &mut result,
-                    session_id,
-                    session_start,
-                    call.tool_name(),
-                    Some("tool_disabled"),
-                    auth,
-                    inner_model_facing_recording,
-                    inner_ack_observation.as_ref(),
-                    inner_ack_requested,
-                )
-                .await;
-            }
-            return result;
         }
         if let Some(session_id) = session_id.as_deref() {
             // Lifecycle denial is orthogonal to mode/guards and wins first.

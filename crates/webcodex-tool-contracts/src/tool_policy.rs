@@ -80,14 +80,6 @@ impl ToolDefinition {
         self.policy.requires_explicit_business_session
     }
 
-    pub fn disabled_message(self) -> Option<&'static str> {
-        self.policy.disabled_message
-    }
-
-    pub fn extra_accepted_flattened_args(self) -> &'static [&'static str] {
-        self.policy.extra_accepted_flattened_args
-    }
-
     pub fn uses_unit_arguments(self) -> bool {
         self.policy.unit_arguments
     }
@@ -292,15 +284,6 @@ pub fn runtime_tool_captures_validation_output(name: &str) -> bool {
 pub fn runtime_tool_requires_explicit_business_session(name: &str) -> bool {
     lookup_tool_definition(name)
         .is_some_and(|definition| definition.requires_explicit_business_session())
-}
-
-pub fn runtime_tool_disabled_message(name: &str) -> Option<&'static str> {
-    lookup_tool_definition(name).and_then(|definition| definition.disabled_message())
-}
-
-pub fn runtime_tool_extra_accepted_flattened_args(name: &str) -> &'static [&'static str] {
-    lookup_tool_definition(name)
-        .map_or(&[], |definition| definition.extra_accepted_flattened_args())
 }
 
 pub fn runtime_tool_approval_policy(name: &str) -> ToolApprovalPolicy {

@@ -15,6 +15,7 @@ WebCodex is actively developed. Requested features, fixes, and reliability impro
 ## 2. Design for the current need
 
 - Make workflows simple and obvious. Choose the smallest coherent solution with the fewest concepts, states, and maintenance costs. Add abstractions, configuration, or compatibility only for a concrete need; do not build for hypothetical consumers or scale.
+- Treat existing code, comments, and tests as evidence of current or historical behavior, not permanent product requirements. Trace current entry points, consumers, and Git history before retaining or removing a concept; retire obsolete configuration, adapters, and dedicated tests together while preserving real boundaries.
 - Protect real boundaries: credentials, public entry points, destructive actions, execution targets, history, and published artifacts. Model new authority, credential audiences, and replaceable targets explicitly when sharing scopes, identities, or leases would broaden access or allow stale requests to retarget.
 - Prefer structured process/argv and durable Job/observation primitives for model-facing execution. Shell remains an escape hatch; structured lifecycle state owns retry safety.
 - Keep ToolSpec/OpenAPI descriptions self-contained and accurate about selection, authority, effects, retries, continuation, uncertainty, and recovery. Use up to `MODEL_TOOL_DESCRIPTION_MAX_CHARS` when needed; arbitrary brevity must not remove semantics.

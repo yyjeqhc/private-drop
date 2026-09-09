@@ -7,8 +7,6 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub token: Option<String>,
     pub max_text_size: usize,
-    pub max_file_size: usize,
-    pub codex: CodexConfig,
     pub oauth2: OAuth2Config,
 }
 
@@ -173,86 +171,6 @@ impl Default for QuicServerConfig {
             key: PathBuf::new(),
             alpn: crate::runner_protocol::RUNNER_QUIC_ALPN_V1.to_string(),
         }
-    }
-}
-
-/// Codex CLI execution configuration, sourced from `CODEX_*` env vars.
-///
-/// Codex is an optional advanced local dependency for external workflows. The
-/// WebCodex runtime itself serves `read_file`, `git_status`, `git_diff`,
-/// `apply_unified_diff`, and `run_shell` through the agent registry.
-#[derive(Debug, Clone)]
-pub struct CodexConfig {
-    /// Path/name of the Codex CLI binary. Default `codex`.
-    pub bin: String,
-    /// Approval mode passed via `--approval-mode`. Default is **empty**
-    /// (disabled): no `--approval-mode` flag is emitted. This keeps the runtime
-    /// compatible with Codex CLI builds that do not understand the flag. Set
-    /// `CODEX_APPROVAL_MODE` (e.g. `full-auto`, `suggest`) to enable it.
-    pub approval_mode: String,
-    /// Default job timeout in seconds. Default `3600`.
-    pub default_timeout_secs: i64,
-    /// Maximum prompt size in bytes. Default `100000`.
-    pub max_prompt_bytes: usize,
-    /// Allowlist of accepted `extra_args`. Empty means no extra args allowed.
-    pub allowed_extra_args: Vec<String>,
-}
-
-impl Default for CodexConfig {
-    fn default() -> Self {
-        Self {
-            bin: "codex".to_string(),
-            approval_mode: String::new(),
-            default_timeout_secs: 3600,
-            max_prompt_bytes: 100_000,
-            allowed_extra_args: Vec::new(),
-        }
-    }
-}
-
-impl CodexConfig {
-    pub fn from_env() -> Self {
-        let bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
-        // CODEX_APPROVAL_MODE defaults to empty (disabled). An empty/blank
-        // value, or the sentinels none/off/disabled, mean "do not pass
-        // --approval-mode" so the runtime works with Codex CLI builds that do
-        // not support the flag.
-        let approval_mode = std::env::var("CODEX_APPROVAL_MODE")
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        let default_timeout_secs = std::env::var("CODEX_DEFAULT_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.trim().parse::<i64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(3600);
-        let max_prompt_bytes = std::env::var("CODEX_MAX_PROMPT_BYTES")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(100_000);
-        let allowed_extra_args = std::env::var("CODEX_ALLOWED_EXTRA_ARGS")
-            .ok()
-            .map(|v| {
-                v.split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
-        Self {
-            bin,
-            approval_mode,
-            default_timeout_secs,
-            max_prompt_bytes,
-            allowed_extra_args,
-        }
-    }
-
-    /// Returns true if `arg` is in the configured allowlist.
-    pub fn is_extra_arg_allowed(&self, arg: &str) -> bool {
-        self.allowed_extra_args.iter().any(|allowed| allowed == arg)
     }
 }
 
@@ -570,8 +488,6 @@ impl Config {
                 .unwrap_or_else(|_| PathBuf::from("./data")),
             token: std::env::var("WEBCODEX_TOKEN").ok(),
             max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: CodexConfig::from_env(),
             oauth2: OAuth2Config::from_env(),
         }
     }
@@ -592,10 +508,6 @@ impl Config {
             return self.data_dir.clone();
         }
         runtime_state_dir()
-    }
-
-    pub fn uploads_dir(&self) -> PathBuf {
-        self.data_dir.join("uploads")
     }
 
     pub fn is_auth_enabled(&self) -> bool {
@@ -716,102 +628,11 @@ mod tests {
     }
 
     #[test]
-    fn codex_config_defaults() {
-        let cfg = CodexConfig::default();
-        assert_eq!(cfg.bin, "codex");
-        // Default approval mode is empty (disabled): no --approval-mode flag.
-        assert_eq!(cfg.approval_mode, "");
-        assert_eq!(cfg.default_timeout_secs, 3600);
-        assert_eq!(cfg.max_prompt_bytes, 100_000);
-        assert!(cfg.allowed_extra_args.is_empty());
-    }
-
-    #[test]
     fn constant_time_eq_matches_byte_equality() {
         assert!(constant_time_eq(b"secret123", b"secret123"));
         assert!(!constant_time_eq(b"secret123", b"secret124"));
         assert!(!constant_time_eq(b"secret123", b"secret1234"));
         assert!(!constant_time_eq(b"secret123", b""));
-    }
-
-    #[test]
-    fn codex_config_from_env_uses_defaults_when_unset() {
-        let mut env = crate::test_support::TestEnvGuard::new();
-        // Clear CODEX_* env vars so we get deterministic defaults.
-        env.remove("CODEX_BIN");
-        env.remove("CODEX_APPROVAL_MODE");
-        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
-        env.remove("CODEX_MAX_PROMPT_BYTES");
-        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
-
-        let cfg = CodexConfig::from_env();
-        assert_eq!(cfg.bin, "codex");
-        // Unset CODEX_APPROVAL_MODE means disabled (empty), not full-auto.
-        assert_eq!(cfg.approval_mode, "");
-        assert_eq!(cfg.default_timeout_secs, 3600);
-        assert_eq!(cfg.max_prompt_bytes, 100_000);
-        assert!(cfg.allowed_extra_args.is_empty());
-    }
-
-    #[test]
-    fn codex_config_from_env_parses_overrides() {
-        let mut env = crate::test_support::TestEnvGuard::new();
-        env.set("CODEX_BIN", "/usr/local/bin/codex");
-        env.set("CODEX_APPROVAL_MODE", "suggest");
-        env.set("CODEX_DEFAULT_TIMEOUT_SECS", "600");
-        env.set("CODEX_MAX_PROMPT_BYTES", "2048");
-        env.set("CODEX_ALLOWED_EXTRA_ARGS", "--verbose, --json, --no-color");
-
-        let cfg = CodexConfig::from_env();
-        assert_eq!(cfg.bin, "/usr/local/bin/codex");
-        assert_eq!(cfg.approval_mode, "suggest");
-        assert_eq!(cfg.default_timeout_secs, 600);
-        assert_eq!(cfg.max_prompt_bytes, 2048);
-        assert_eq!(
-            cfg.allowed_extra_args,
-            vec!["--verbose", "--json", "--no-color"]
-        );
-        assert!(cfg.is_extra_arg_allowed("--verbose"));
-        assert!(cfg.is_extra_arg_allowed("--json"));
-        assert!(!cfg.is_extra_arg_allowed("--danger"));
-
-        // Restore defaults.
-        env.remove("CODEX_BIN");
-        env.remove("CODEX_APPROVAL_MODE");
-        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
-        env.remove("CODEX_MAX_PROMPT_BYTES");
-        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
-    }
-
-    #[test]
-    fn codex_config_from_env_trims_approval_mode_whitespace() {
-        let mut env = crate::test_support::TestEnvGuard::new();
-        env.set("CODEX_APPROVAL_MODE", "  suggest  ");
-        let cfg = CodexConfig::from_env();
-        assert_eq!(cfg.approval_mode, "suggest");
-
-        // An unset/blank value normalizes to empty (disabled). The disabled
-        // sentinels (none/off/disabled) are recognized later by
-        // build_codex_command, so the config keeps the trimmed token.
-        env.set("CODEX_APPROVAL_MODE", "   ");
-        let cfg = CodexConfig::from_env();
-        assert_eq!(cfg.approval_mode, "");
-
-        env.remove("CODEX_APPROVAL_MODE");
-    }
-
-    #[test]
-    fn codex_config_from_env_ignores_invalid_numeric_values() {
-        let mut env = crate::test_support::TestEnvGuard::new();
-        env.set("CODEX_DEFAULT_TIMEOUT_SECS", "not-a-number");
-        env.set("CODEX_MAX_PROMPT_BYTES", "-5");
-
-        let cfg = CodexConfig::from_env();
-        assert_eq!(cfg.default_timeout_secs, 3600);
-        assert_eq!(cfg.max_prompt_bytes, 100_000);
-
-        env.remove("CODEX_DEFAULT_TIMEOUT_SECS");
-        env.remove("CODEX_MAX_PROMPT_BYTES");
     }
 
     #[test]
@@ -895,17 +716,6 @@ mod tests {
         assert_eq!(cfg.issuer.as_deref(), Some("https://pub.example.com"));
 
         env.remove("WEBCODEX_PUBLIC_URL");
-    }
-
-    #[test]
-    fn codex_config_allowed_extra_args_ignores_empty_entries() {
-        let mut env = crate::test_support::TestEnvGuard::new();
-        env.set("CODEX_ALLOWED_EXTRA_ARGS", " --verbose , , --json ");
-
-        let cfg = CodexConfig::from_env();
-        assert_eq!(cfg.allowed_extra_args, vec!["--verbose", "--json"]);
-
-        env.remove("CODEX_ALLOWED_EXTRA_ARGS");
     }
 
     #[test]

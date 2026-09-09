@@ -1,7 +1,6 @@
 use serde_json::{json, Value};
 
 use super::common::object_schema;
-use crate::tool_definition::runtime_tool_extra_accepted_flattened_args;
 use crate::tool_spec::ToolSpec;
 use webcodex_core::workflow_session_contract::{
     is_tool_call_expectation_metadata_field, TOOL_CALL_RECORDING_SESSION_ID_FIELD,
@@ -250,9 +249,6 @@ pub fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         .collect();
     remaining.sort_unstable();
     names.extend(remaining.into_iter().map(str::to_string));
-    for field in runtime_tool_extra_accepted_flattened_args(&spec.name) {
-        push_unique_flattened_arg(&mut names, field);
-    }
     // These names belong to the generic callRuntimeTool envelope. Concrete
     // tools may legitimately use the same words inside canonical `params`
     // (plugin_tool uses provider-local `tool` and `arguments`), but they cannot
