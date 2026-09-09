@@ -90,7 +90,6 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
         ..Default::default()
     });
     changed.project_registry_dir = Some(PathBuf::from("projects-b"));
-    changed.deprecated_temporary_projects_root = Some(PathBuf::from("/tmp/webcodex-temporary"));
     changed.poll_interval_ms += 1;
     changed.capabilities = Some(RunnerCapabilities::default());
     changed.max_concurrent_jobs = Some(4);

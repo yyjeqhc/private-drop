@@ -260,7 +260,7 @@ impl ToolRuntime {
                     "enabled": !project.disabled,
                     "active_jobs": active_jobs,
                     "source": project_source(&project),
-                    // Published v0.4 serialized key; retain the exact spelling through 0.4.x.
+                    // Runtime Console and CLI ops consume this established list_projects key.
                     "agent_status": runner_status,
                     "connected": connected,
                     "resolved_shell_profile": resolved_shell_profile,
@@ -285,7 +285,7 @@ impl ToolRuntime {
                     "revision": project.revision,
                     "active_jobs": active_jobs,
                     "source": project_source(&project),
-                    // Published v0.4 serialized key; retain the exact spelling through 0.4.x.
+                    // Runtime Console and CLI ops consume this established list_projects key.
                     "agent_status": runner_status,
                     "connected": connected,
                     "last_seen": last_seen,

@@ -25,7 +25,6 @@ fn test_runner_config(server_url: String) -> RunnerConfig {
         host_context: None,
         project_registry_dir: None,
         legacy_projects_dir: None,
-        deprecated_temporary_projects_root: None,
         poll_interval_ms: 10,
         capabilities: Some(RunnerCapabilities {
             git: true,

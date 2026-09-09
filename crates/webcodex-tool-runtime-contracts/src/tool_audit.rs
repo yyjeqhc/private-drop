@@ -11,13 +11,6 @@ use webcodex_core::runner_protocol::{normalize_cargo_value, normalize_rust_test_
 use webcodex_workflow_session::SessionExecutionContext;
 
 pub fn session_log_arguments_for_tool_request(tool_name: &str, arguments: &Value) -> Value {
-    // This retired wire name is deliberately not a ToolDefinition. The kernel
-    // records a bounded rejection summary before concrete ToolCall parsing, so
-    // keep one compatibility-only sanitizer without reviving it as tool identity.
-    if tool_name == "start_coding_task" {
-        return retired_start_coding_task_audit(arguments);
-    }
-
     let Some(definition) = webcodex_tool_contracts::lookup_tool_definition(tool_name) else {
         return empty_audit_projection();
     };
@@ -73,40 +66,6 @@ fn audit_tool_call_from_request(
         return None;
     }
     ToolCall::from_tool_name(tool_name, Value::Object(filtered)).ok()
-}
-
-fn retired_start_coding_task_audit(arguments: &Value) -> Value {
-    let Some(obj) = arguments.as_object() else {
-        return empty_audit_projection();
-    };
-    let mut out = serde_json::Map::new();
-    copy_keys(
-        obj,
-        &mut out,
-        &[
-            "project",
-            "client_id",
-            "title",
-            "mode",
-            "deny_write_tools",
-            "deny_shell_tools",
-            "detail",
-            "resume_session_id",
-            "session_id",
-        ],
-    );
-    out.insert(
-        "path_source_requested".to_string(),
-        Value::Bool(obj.contains_key("path")),
-    );
-    let context = obj
-        .get("execution_context")
-        .cloned()
-        .and_then(|value| serde_json::from_value::<SessionExecutionContext>(value).ok())
-        .map(|context| context.audit_summary())
-        .unwrap_or(Value::Null);
-    out.insert("execution_context".to_string(), context);
-    Value::Object(out)
 }
 
 #[derive(Debug, Clone, Copy)]

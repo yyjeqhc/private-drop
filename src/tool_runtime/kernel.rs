@@ -137,17 +137,7 @@ pub(crate) fn check_runtime_tool_scope(
     auth: Option<&AuthContext>,
     tool_name: &str,
 ) -> Result<(), ToolCallErrorStatus> {
-    // `start_coding_task` is a retired wire/API name that is rejected by
-    // `ToolCall::from_tool_name` after this scope gate. Preserve its former
-    // runtime:read admission for one compatibility window so authorized legacy
-    // callers still reach the actionable retirement error without reviving a
-    // ToolDefinition or dispatch identity. All other unknown names remain
-    // fail-closed through the canonical metadata lookup below.
-    let policy = if tool_name == "start_coding_task" {
-        OAuthToolScopePolicy::Require(crate::auth::SCOPE_RUNTIME_READ)
-    } else {
-        crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name)
-    };
+    let policy = crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name);
     let Some(auth) = auth else {
         // Preserve historical unauthenticated compatibility for unrelated
         // internal tools, but explicit Memory and administrator authority is
@@ -1258,58 +1248,12 @@ mod tests {
         assert_eq!(finished.error_kind.as_deref(), Some("invalid_arguments"));
     }
 
-    #[tokio::test]
-    async fn retired_start_coding_task_keeps_preparse_runtime_read_admission() {
-        let runtime = test_runtime();
+    #[test]
+    fn start_coding_task_uses_generic_unknown_scope_policy() {
         let runtime_read = oauth(&[crate::auth::SCOPE_RUNTIME_READ]);
-        let outcome = runtime
-            .call_tool_with_context(
-                ToolCallRequest {
-                    tool_name: "start_coding_task".to_string(),
-                    arguments: json!({"project": "demo"}),
-                },
-                ToolCallContext {
-                    transport: ToolTransport::Mcp,
-                    session_id: None,
-                    auth: Some(&runtime_read),
-                    window: None,
-                    record_oauth_scope_denials: false,
-                    host_file_import_trust: HostFileImportTrust::Untrusted,
-                },
-            )
-            .await;
-        assert!(matches!(
-            outcome.error_status,
-            Some(ToolCallErrorStatus::InvalidArguments { ref message })
-                if message.contains("no longer supported") && message.contains("work_on_project")
-        ));
-
-        let no_runtime_read = oauth(&[]);
-        let denied = runtime
-            .call_tool_with_context(
-                ToolCallRequest {
-                    tool_name: "start_coding_task".to_string(),
-                    arguments: json!({"project": "demo"}),
-                },
-                ToolCallContext {
-                    transport: ToolTransport::Mcp,
-                    session_id: None,
-                    auth: Some(&no_runtime_read),
-                    window: None,
-                    record_oauth_scope_denials: false,
-                    host_file_import_trust: HostFileImportTrust::Untrusted,
-                },
-            )
-            .await;
         assert_eq!(
-            denied.error_status,
-            Some(ToolCallErrorStatus::InsufficientScope {
-                required_scope: Some(crate::auth::SCOPE_RUNTIME_READ),
-                description: format!(
-                    "missing required scope: {}",
-                    crate::auth::SCOPE_RUNTIME_READ
-                ),
-            })
+            check_runtime_tool_scope(Some(&runtime_read), "start_coding_task"),
+            check_runtime_tool_scope(Some(&runtime_read), "definitely_unknown_tool")
         );
     }
 

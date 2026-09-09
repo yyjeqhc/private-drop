@@ -151,9 +151,9 @@ fn runner_config_bounds_polling_idle_floor_but_not_unused_websocket_value() {
 }
 
 #[test]
-fn runner_config_rejects_relative_temporary_projects_root() {
+fn runner_config_ignores_obsolete_temporary_projects_root_without_runtime_semantics() {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("agent.toml");
+    let path = tmp.path().join("runner.toml");
     std::fs::write(
         &path,
         r#"
@@ -161,34 +161,16 @@ server_url = "http://127.0.0.1:8000"
 token = "t"
 client_id = "oe"
 project_registry_dir = "project-registry"
-temporary_projects_root = "temporary"
+temporary_projects_root = "obsolete-and-relative"
+[policy]
+allow_cwd_anywhere = false
 "#,
     )
     .unwrap();
 
-    let err = load_config(&path).unwrap_err();
-    assert!(
-        err.contains("temporary_projects_root must be a non-empty absolute path"),
-        "{err}"
-    );
-}
-
-#[test]
-fn runner_config_accepts_absolute_legacy_temporary_projects_root_as_inert() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("runner.toml");
-    let legacy_root = tmp.path().join("legacy-temporary-projects");
-    let legacy_root = toml::Value::String(legacy_root.to_string_lossy().into_owned()).to_string();
-    std::fs::write(
-        &path,
-        format!(
-            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\nproject_registry_dir = \"project-registry\"\ntemporary_projects_root = {legacy_root}\n[policy]\nallow_cwd_anywhere = true\n"
-        ),
-    )
-    .unwrap();
-
     let cfg = load_config(&path).unwrap();
-    assert_eq!(cfg.deprecated_temporary_projects_root, None);
+    assert_eq!(cfg.client_id, "oe");
+    assert!(!cfg.policy.allow_cwd_anywhere);
 }
 
 #[test]

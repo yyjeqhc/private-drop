@@ -552,7 +552,6 @@ pub(crate) async fn run_runner_status(opts: RunnerStatusOptions) -> Result<Strin
                 "display_name": metadata.display_name,
                 "transport": metadata.transport,
                 "project_registry_dir": metadata.project_registry_dir.to_string_lossy().to_string(),
-                "projects_dir": metadata.project_registry_dir.to_string_lossy().to_string(),
                 "allowed_roots": {
                     "count": metadata.allowed_roots.len(),
                     "summary": allowed_roots_summary(&metadata.allowed_roots),

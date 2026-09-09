@@ -1453,11 +1453,13 @@ async fn full_operator_explicit_surface_lists_full_runtime_and_dispatches() {
     )
     .await;
     let McpOutcome::BadRequest(value) = called else {
-        panic!("retired start_coding_task must fail closed");
+        panic!("unknown start_coding_task must fail closed");
     };
     let message = value["error"]["message"].as_str().unwrap();
-    assert!(message.contains("no longer supported"), "{message}");
-    assert!(message.contains("work_on_project"), "{message}");
+    assert!(
+        message.contains("unknown tool 'start_coding_task'"),
+        "{message}"
+    );
 }
 
 #[tokio::test]

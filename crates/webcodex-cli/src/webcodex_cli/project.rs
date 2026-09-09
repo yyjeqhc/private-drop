@@ -274,10 +274,7 @@ pub(crate) fn run_project_register(opts: ProjectRegisterOptions) -> Result<Strin
     if opts.json {
         return serde_json::to_string_pretty(&serde_json::json!({
             "runner_config": opts.config.to_string_lossy(),
-            // Published by v0.4.0; keep the machine-readable field frozen through 0.4.x.
-            "agent_config": opts.config.to_string_lossy(),
             "project_registry_dir": project_registry_dir.to_string_lossy(),
-            "projects_dir": project_registry_dir.to_string_lossy(),
             "project": {
                 "id": registration.id,
                 "path": registration.path.to_string_lossy(),
@@ -396,7 +393,16 @@ mod tests {
         assert_eq!(first["project"]["id"], "demo");
         assert_eq!(first["project"]["already_registered"], false);
         assert_eq!(first["runner_reload_required"], true);
-        assert_eq!(first["runner_config"], first["agent_config"]);
+        assert_eq!(
+            first["runner_config"],
+            config_path.to_string_lossy().as_ref()
+        );
+        assert!(first.get("agent_config").is_none());
+        assert_eq!(
+            first["project_registry_dir"],
+            registry.to_string_lossy().as_ref()
+        );
+        assert!(first.get("projects_dir").is_none());
         assert!(registry.join("demo.toml").is_file());
         assert!(!first.to_string().contains("secret-not-printed"));
 

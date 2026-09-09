@@ -692,10 +692,7 @@ pub(crate) fn render_login_result(
             "dir": paths.dir.to_string_lossy(),
             "user_token_file": paths.user_token.to_string_lossy(),
             "runner_config": paths.runner_config.to_string_lossy(),
-            // Published by v0.4.0; keep the machine-readable field frozen through 0.4.x.
-            "agent_config": paths.runner_config.to_string_lossy(),
             "project_registry_dir": paths.project_registry_dir.to_string_lossy(),
-            "projects_registry": paths.project_registry_dir.to_string_lossy(),
             "allowed_roots": allowed_roots.iter().map(|root| root.to_string_lossy().to_string()).collect::<Vec<_>>(),
             "project_registration": {
                 "registered": registration.is_some(),
@@ -705,8 +702,6 @@ pub(crate) fn render_login_result(
             "credential_usage": {
                 "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
                 "runner_config_token": "Runner transport only",
-                // Published by v0.4.0; keep the machine-readable field frozen through 0.4.x.
-                "agent_config_token": "Runner transport only",
             },
             "foreground_available": foreground_argv.is_some(),
             "foreground_argv": &foreground_argv,
@@ -928,19 +923,11 @@ pub(crate) async fn redeem_pairing_code(
     opts: &LoginOptions,
     device: &str,
 ) -> Result<EnrolledIdentity, String> {
-    let mut body = serde_json::json!({
+    let body = serde_json::json!({
         "pairing_code": opts.code,
         "client_id": device,
         "transport": opts.transport,
-        "allow_cwd_anywhere": false,
     });
-    if !opts.allowed_roots.is_empty() {
-        body["allowed_roots"] = serde_json::json!(opts
-            .allowed_roots
-            .iter()
-            .map(|path| path.to_string_lossy().to_string())
-            .collect::<Vec<_>>());
-    }
 
     let value =
         super::http::post_json_unauthed(server_url, &opts.server_http, "/api/pairing/enroll", body)
@@ -2319,8 +2306,17 @@ mod tests {
             let body = request.split("\r\n\r\n").nth(1).unwrap();
             let value: serde_json::Value = serde_json::from_str(body).unwrap();
             assert_eq!(value["pairing_code"], CODE);
-            assert_eq!(value["allow_cwd_anywhere"], false);
-            assert_eq!(value["allowed_roots"].as_array().unwrap().len(), 1);
+            for absent in [
+                "project_registry_dir",
+                "projects_dir",
+                "allowed_roots",
+                "allow_cwd_anywhere",
+            ] {
+                assert!(
+                    value.get(absent).is_none(),
+                    "pairing request leaked {absent}: {value}"
+                );
+            }
             let body = serde_json::json!({
                 "username": "alice",
                 "user_token": USER_TOKEN,
@@ -2399,6 +2395,12 @@ mod tests {
                 .unwrap(),
             paths.project_registry_dir.canonicalize().unwrap()
         );
+        let local_allowed_roots = parsed["policy"]["allowed_roots"].as_array().unwrap();
+        assert_eq!(local_allowed_roots.len(), 1);
+        assert!(webcodex_runner_config::paths::paths_equal(
+            Path::new(local_allowed_roots[0].as_str().unwrap()),
+            &allowed_root
+        ));
         assert_no_internal_residue(paths.dir.parent().unwrap());
     }
 
@@ -2741,11 +2743,18 @@ mod tests {
             Some("https://api.example.com/mcp")
         );
         assert!(json_value.get("credential_usage").is_some(), "{json}");
-        assert_eq!(json_value["runner_config"], json_value["agent_config"]);
+        assert_eq!(
+            json_value["runner_config"],
+            paths.runner_config.to_string_lossy().as_ref()
+        );
+        assert!(json_value.get("agent_config").is_none());
         assert_eq!(
             json_value["credential_usage"]["runner_config_token"],
-            json_value["credential_usage"]["agent_config_token"]
+            "Runner transport only"
         );
+        assert!(json_value["credential_usage"]
+            .get("agent_config_token")
+            .is_none());
         assert_eq!(json_value["project_registration"]["registered"], false);
         assert_eq!(json_value["project_registration"]["count"], 0);
         assert_eq!(json_value["registered_projects"], serde_json::json!([]));
@@ -2753,10 +2762,8 @@ mod tests {
             json_value["project_registry_dir"],
             paths.project_registry_dir.to_string_lossy().as_ref()
         );
-        assert_eq!(
-            json_value["projects_registry"],
-            paths.project_registry_dir.to_string_lossy().as_ref()
-        );
+        assert!(json_value.get("projects_registry").is_none());
+        assert!(json_value.get("projects_dir").is_none());
         assert_eq!(
             json_value
                 .get("user_token_file")

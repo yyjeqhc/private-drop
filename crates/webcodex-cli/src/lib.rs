@@ -1049,10 +1049,6 @@ fn parse_token_generate(args: &[String]) -> Result<TokenGenerateOptions, String>
             _ => return Err(format!("unknown tokens generate flag: {}", flag)),
         }
     }
-    if kind == "agent" {
-        // v0.4-frozen alias originating before 0.4; new help only teaches Runner terminology.
-        kind = "runner".to_string();
-    }
     if kind != "api" && kind != "runner" {
         return Err("--kind must be 'api' or 'runner'".to_string());
     }
@@ -1336,7 +1332,7 @@ fn parse_ops_subcommand(args: &[String]) -> CliAction {
                 },
             }
         }
-        "runners" | "agents" => {
+        "runners" => {
             if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
                 return CliAction::Exit {
                     code: 0,

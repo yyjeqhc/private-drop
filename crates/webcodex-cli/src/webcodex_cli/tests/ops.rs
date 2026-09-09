@@ -97,14 +97,21 @@ fn ops_help_entrypoints_print_usage() {
 }
 
 #[test]
-fn legacy_ops_agents_alias_uses_canonical_runners_path() {
-    match cli_action(["ops", "agents", "--json"]) {
+fn ops_runners_is_canonical_and_agents_is_rejected() {
+    match cli_action(["ops", "runners", "--json"]) {
         CliAction::Ops(OpsCommand::Runners(opts)) => assert!(opts.json),
-        other => panic!("legacy ops agents alias did not use canonical Runners command: {other:?}"),
+        other => panic!("canonical ops runners path did not parse: {other:?}"),
     }
-    let help = cli_exit(["ops", "agents", "--help"]).unwrap();
-    assert!(help.contains("Usage: webcodex ops runners"));
-    assert!(!help.contains("Usage: webcodex ops agents"));
+    match cli_action(["ops", "agents", "--json"]) {
+        CliAction::Exit { code, stderr, .. } => {
+            assert_eq!(code, 2);
+            assert!(
+                stderr.contains("unknown ops subcommand: agents"),
+                "{stderr}"
+            );
+        }
+        other => panic!("legacy ops agents alias must be rejected: {other:?}"),
+    }
 }
 
 #[test]

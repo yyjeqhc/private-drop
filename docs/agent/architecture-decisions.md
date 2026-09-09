@@ -329,12 +329,12 @@ seams; those controls are not a public tool argument or ToolCall identity.
 
 | Decision | Choice |
 |---|---|
-| Retired wire entry | `start_coding_task` and its direct/API compatibility schema fail closed; callers migrate to `work_on_project` |
+| Removed wire entry | `start_coding_task` has no current ToolDefinition or compatibility schema and follows ordinary unknown-tool rejection; `work_on_project` is canonical |
 | External projection | `work_on_project` returns one deterministic sparse startup projection and does not expose full runtime/connection/authority diagnostics |
 | Internal `standard` | Default bounded Coding brief used by shared startup plumbing: strict session/project/workspace, incremental repository instructions, bounded continuation evidence, semantic-navigation summary, blockers/warnings, and concrete next actions |
 | Internal `minimal` / `full` | Retained only as implementation-level projection modes for internal callers/tests; they are not generic HTTP/MCP tool inputs |
 | Rule snapshot lifecycle | Fresh sessions load bounded content; unchanged same-process continuations reuse the in-memory fingerprint snapshot without repeating content; source additions/deletions/content/truncation changes return new bounded content; explicit or restart-restored Sessions reload because durable storage never contains rule bodies |
-| Unknown/retired external fields | The retired tool name fails closed before legacy argument interpretation; `work_on_project` keeps its own strict schema |
+| Unknown/removed external fields | Unknown or removed tool names fail closed before legacy argument interpretation; `work_on_project` keeps its own strict schema |
 
 No alias or dual shape is kept for the removed flags (consistent with §2).
 
@@ -403,44 +403,24 @@ pre-0.4 persisted-state cleanup, Tool/runtime surface cleanup, and authority or
 configuration cleanup. That pre-0.4 freedom does not continue through the
 `0.4.x` patch series.
 
-Once `v0.4.0` is published, its users are concrete external consumers. The
-standing rule for `0.4.x` is compatibility-first:
+The `v0.4.0` tag is a compatibility reference point, not a blanket promise to
+retain every spelling that appeared in that release. During active development,
+compatibility code is retained when it has a concrete consumer: accepted
+persisted state, mixed-version Server/Runner operation, a current external
+workflow or installer, or a required fail-closed security/privacy migration
+boundary. An implementation plus tests that only assert that implementation
+exists is not by itself a consumer. Published-but-unused CLI/API aliases and
+duplicate machine-readable fields may therefore be removed after an exact
+consumer search.
 
-1. **CLI.** Canonical commands and flags published in `v0.4.0` are not deleted
-   or renamed in a `0.4.x` patch release. Additive options are allowed, and
-   human-oriented prose may improve. Documented machine-readable JSON or schema
-   shapes require an additive or explicit migration/version strategy rather
-   than an unannounced breaking reinterpretation.
-2. **Runner configuration.** A canonical `runner.toml` accepted by `v0.4.0`
-   remains parseable throughout `0.4.x`. New fields should be optional or have
-   safe defaults. Patch releases do not force a filename or field rename merely
-   to make Runner terminology more uniform.
-3. **Server/Runner protocol.** Protocol generation 2 is the `0.4` baseline.
-   `0.4.x` does not introduce another required generation or expand the
-   generation-2 baseline-required capability set. New requirements use additive
-   `RegistrationRequired` capabilities; when an otherwise-valid `0.4` Runner lacks
-   such a capability, that feature is unavailable/fails closed instead of
-   invalidating the entire Runner registration. First-party Server and Runner releases in
-   `0.4.x` should preserve rolling interoperability as far as security and
-   correctness allow.
-4. **Persisted state.** The durable DB, Workflow Session state, and other
-   relevant state accepted by `v0.4.0` form the migration floor for later
-   `0.4.x` releases. Shape evolution needs an explicit migration, default, or
-   version strategy. Migrations must be deterministic, idempotent, and
-   fail-closed; ambiguous old state must not be silently reinterpreted. This
-   decision does not require a generic migration framework before a concrete
-   state evolution needs one.
-5. **Model, HTTP, and MCP contracts.** Canonical model-visible tool names,
-   documented REST routes, MCP capability names, and documented serialized
-   field names released in `v0.4.0` evolve additively or migration-first during
-   `0.4.x`. A true removal or rename should normally wait for `v0.5.0`. The
-   `v0.4.0` MCP result-framing floor makes `structuredContent` the canonical
-   machine-readable `tools/call` result. `content.text` is a concise human
-   fallback, not a duplicate serialization of that result. This applies to all
-   MCP protocol eras WebCodex advertises; protocol-version support does not
-   preserve the pre-0.4 JSON-in-text duplication. `0.4.x` must keep this
-   structured-result ownership stable, including any transport-specific
-   post-framing output schema.
+Where a concrete consumer does exist, compatibility remains narrow and
+fail-closed. Protocol generation 2 remains the 0.4 Server/Runner rolling
+baseline; additive capabilities do not expand its required set, and absence is
+handled as unavailable rather than inferred authority. Durable DB, Workflow
+Session, and registry state is migrated or quarantined deterministically rather
+than silently reinterpreted. MCP `structuredContent` remains the canonical
+machine-readable `tools/call` result; `content.text` is only the concise human
+fallback.
 
 The product concept and public lifecycle namespace are **Runner**. Before the
 `v0.4.0` compatibility floor, the local primary config filename is normalized
@@ -484,11 +464,11 @@ Public `list_projects.source` remains `agent_registered` / `auto_registered`.
 The pre-0.4 managed-temporary-project lifecycle is retired rather than carried
 into the `v0.4.0` product contract. Current project creation uses explicit
 `create_project`; existing directories use `work_on_project(path)` or
-`register_project`. The old `temporary_projects_root` key is a pre-0.4-origin compatibility input.
-Because `v0.4.0` accepted it, the 0.4.x compatibility floor preserves the exact
-bounded behavior: parse it with its former absolute-path validation, then warn
-and ignore it. This is input compatibility only, not an active
-managed-temporary-project feature. Existing project-registry records whose generic
+`register_project`. The retired `temporary_projects_root` key no longer has a
+typed Runner configuration meaning. Runner configuration intentionally ignores
+obsolete unknown top-level keys, so an old file containing this key remains
+loadable without preserving its former validation, warning, or runtime field.
+Existing project-registry records whose generic
 `kind = "managed_temporary"` value predates this cleanup remain readable as
 ordinary registrations; current Server projections do not treat that value as
 an active lifecycle. A legacy Server request containing the old
@@ -496,11 +476,11 @@ an active lifecycle. A legacy Server request containing the old
 filesystem mutation. This retirement does not change protocol generation,
 baseline capabilities, `client_id`, `agent_project_id`, or runtime project ids.
 
-Other older `agent_*` names are compatibility vocabulary and remain frozen
-rather than being cosmetically duplicated. In particular,
-`WEBCODEX_AGENT_TOKEN`, `wc_agent_*`, `agent_instance_id`, runtime project ids
-of the form `agent:<client_id>:<project_id>`, and established DB/wire `agent_*`
-fields keep their existing names. This local filename migration does not imply
+Other older `agent_*` names below have concrete token, persisted-state, or wire
+consumers and are therefore retained rather than cosmetically duplicated. In
+particular, `WEBCODEX_AGENT_TOKEN`, `wc_agent_*`, `agent_instance_id`, runtime
+project ids of the form `agent:<client_id>:<project_id>`, and established
+DB/wire `agent_*` fields keep their existing names. This local filename migration does not imply
 a Server/Runner protocol-generation or wire-identity rename.
 
 Compatibility never requires retaining a known authentication bypass, unsafe

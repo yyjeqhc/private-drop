@@ -32,10 +32,23 @@ pub fn session_input_summary_for_tool(tool_name: &str, arguments: &Value) -> Val
     let policy = match audit_policy_for_tool(canonical_name) {
         Some(policy) => policy.session_input,
         None if tool_name == "start_coding_task" => {
-            // Retired wire rejection compatibility only. The runtime rejection
-            // projector already emits a bounded body-free summary; keep the same
-            // final generic redaction while unknown open-world names fail closed.
-            return redact_and_bound_value(arguments);
+            // Historical Session ledgers may contain this retired identity. Current
+            // runtime ingress treats it as an ordinary unknown tool and persists no
+            // request arguments; restore/direct-Session compatibility keeps only a
+            // bounded historical projection and never restores a raw path.
+            let mut summary = redact_and_bound_value(arguments);
+            let Some(object) = summary.as_object_mut() else {
+                return json!({});
+            };
+            let path_source_requested = object.remove("path").is_some();
+            for field in ["prompt", "instruction", "reasoning"] {
+                object.remove(field);
+            }
+            object.insert(
+                "path_source_requested".to_string(),
+                Value::Bool(path_source_requested),
+            );
+            return summary;
         }
         None => return json!({}),
     };
@@ -241,6 +254,28 @@ mod tests {
         assert!(!session_input_summary_for_tool("list_agents", &raw)
             .to_string()
             .contains("PRIVATE_"));
+
+        let retired = session_input_summary_for_tool(
+            "start_coding_task",
+            &json!({
+                "project": "agent:legacy:demo",
+                "path": "/private/legacy/path",
+                "prompt": "PRIVATE_PROMPT",
+                "reasoning": "PRIVATE_REASONING",
+                "secret": "wc_agent_private_secret"
+            }),
+        );
+        assert_eq!(retired["project"], "agent:legacy:demo");
+        assert_eq!(retired["path_source_requested"], true);
+        assert!(retired.get("path").is_none());
+        assert!(retired.get("prompt").is_none());
+        assert!(retired.get("reasoning").is_none());
+        assert_eq!(retired["secret"], "[redacted]");
+        let serialized = retired.to_string();
+        assert!(!serialized.contains("/private/legacy/path"));
+        assert!(!serialized.contains("PRIVATE_PROMPT"));
+        assert!(!serialized.contains("PRIVATE_REASONING"));
+        assert!(!serialized.contains("wc_agent_private_secret"));
     }
 
     #[test]

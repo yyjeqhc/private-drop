@@ -99,9 +99,8 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     assert!(names.contains(&"finish_coding_task"));
 
     let retired = ToolCall::from_tool_name("start_coding_task", json!({"project": "demo"}))
-        .expect_err("retired start_coding_task wire entry must fail closed");
-    assert!(retired.contains("no longer supported"));
-    assert!(retired.contains("work_on_project"));
+        .expect_err("retired start_coding_task must be an ordinary unknown tool");
+    assert!(retired.contains("unknown tool 'start_coding_task'"));
     let finish = specs
         .iter()
         .find(|spec| spec.name == "finish_coding_task")
@@ -298,8 +297,8 @@ async fn coding_workflow_test_seam_keeps_internal_diagnostic_modes_without_tool_
     });
 
     let wire_error = ToolCall::from_tool_name("start_coding_task", params.clone())
-        .expect_err("retired wire entry must reject the internal advanced primitive");
-    assert!(wire_error.contains("work_on_project"));
+        .expect_err("retired wire entry must remain unknown despite internal test-seam arguments");
+    assert!(wire_error.contains("unknown tool 'start_coding_task'"));
     let result = coding_workflow_serviced(&runtime, client_id, params, &auth).await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["detail"], "minimal");
@@ -1129,14 +1128,16 @@ async fn coding_workflow_runner_offline_is_still_blocking() {
 }
 
 #[test]
-fn retired_start_coding_task_rejection_precedes_legacy_argument_validation() {
+fn start_coding_task_legacy_arguments_do_not_restore_live_identity() {
     let error = ToolCall::from_tool_name(
         "start_coding_task",
         json!({"project": "agent:demo:demo", "include_runtime_status": false}),
     )
-    .expect_err("retired entry must reject before legacy argument handling");
-    assert!(error.contains("no longer supported"), "{error}");
-    assert!(error.contains("work_on_project"), "{error}");
+    .expect_err("legacy arguments must not restore a retired tool identity");
+    assert!(
+        error.contains("unknown tool 'start_coding_task'"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

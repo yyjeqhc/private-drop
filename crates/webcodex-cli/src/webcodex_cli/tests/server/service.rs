@@ -1021,6 +1021,20 @@ fn hosted_profile_status_uses_xdg_config_and_never_invokes_systemctl() {
 
     let output = output.unwrap();
     assert!(output.contains("runner mode:          hosted local process"));
+    let json_opts =
+        parse_runner_status_with_identity(&args(&["--profile", "hosted", "--json"]), true).unwrap();
+    let json_output = runtime.block_on(run_runner_status(json_opts)).unwrap();
+    let json_output: serde_json::Value = serde_json::from_str(&json_output).unwrap();
+    assert_eq!(
+        json_output["config"]["project_registry_dir"],
+        profile_config
+            .parent()
+            .unwrap()
+            .join("project-registry")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert!(json_output["config"].get("projects_dir").is_none());
     assert!(!systemctl_called.exists());
 }
 

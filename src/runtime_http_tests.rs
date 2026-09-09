@@ -777,7 +777,7 @@ async fn flattened_tool_manifest_exact_name_survives_null_params_wrapper() {
 }
 
 #[tokio::test]
-async fn http_start_coding_task_retirement_precedes_flattened_legacy_params() {
+async fn http_start_coding_task_flattened_legacy_params_do_not_revive_unknown_tool() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
@@ -804,16 +804,15 @@ async fn http_start_coding_task_retirement_precedes_flattened_legacy_params() {
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["status"], 400);
     let error = body["error"].as_str().unwrap_or_default();
-    assert!(error.contains("no longer supported"), "{body}");
-    assert!(error.contains("work_on_project"), "{body}");
+    assert!(error.contains("unknown tool 'start_coding_task'"), "{body}");
 }
 
 // =========================================================================
-// Retired compatibility tool entry
+// Removed tool identity
 // =========================================================================
 
 #[tokio::test]
-async fn http_start_coding_task_is_retired() {
+async fn http_start_coding_task_uses_ordinary_unknown_tool_path() {
     let (_tmp, service) = phase2_service();
     let mut resp = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
@@ -826,8 +825,10 @@ async fn http_start_coding_task_is_retired() {
     assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
     let body: Value = resp.take_json().await.unwrap();
     let error = body["error"].as_str().unwrap();
-    assert!(error.contains("no longer supported"), "{error}");
-    assert!(error.contains("work_on_project"), "{error}");
+    assert!(
+        error.contains("unknown tool 'start_coding_task'"),
+        "{error}"
+    );
 }
 
 #[test]

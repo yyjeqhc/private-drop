@@ -86,10 +86,16 @@ fn token_generate_runner_prints_legacy_compatible_token_prefix() {
 }
 
 #[test]
-fn token_generate_agent_kind_is_a_legacy_runner_alias() {
+fn token_generate_agent_kind_is_rejected() {
     match cli_action(args(&["tokens", "generate", "--kind", "agent"])) {
-        CliAction::TokenGenerate(opts) => assert_eq!(opts.kind, "runner"),
-        other => panic!("expected Runner token generation alias, got {other:?}"),
+        CliAction::Exit { code, stderr, .. } => {
+            assert_eq!(code, 2);
+            assert!(
+                stderr.contains("--kind must be 'api' or 'runner'"),
+                "{stderr}"
+            );
+        }
+        other => panic!("expected rejected legacy token kind, got {other:?}"),
     }
 }
 
