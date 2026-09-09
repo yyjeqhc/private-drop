@@ -1167,6 +1167,10 @@ fn extension_mime(path: &str) -> Option<&'static str> {
         Some("image/jpeg")
     } else if lower.ends_with(".webp") {
         Some("image/webp")
+    } else if lower.ends_with(".mp3") {
+        Some("audio/mpeg")
+    } else if lower.ends_with(".mp4") {
+        Some("video/mp4")
     } else if lower.ends_with(".pdf") {
         Some("application/pdf")
     } else if lower.ends_with(".zip") {
@@ -3359,26 +3363,36 @@ mod tests {
 
     #[test]
     fn artifact_upload_begin_octet_stream_safe_extension_succeeds() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = "artifacts/smoke/raw.artifact";
+        for path in [
+            "artifacts/smoke/raw.artifact",
+            "artifacts/smoke/audio.mp3",
+            "artifacts/smoke/video.mp4",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let output = run_artifact_request(
+                tmp.path(),
+                "file_artifact_upload_begin",
+                path,
+                json!({
+                    "path": path,
+                    "mime_type": "application/octet-stream",
+                    "max_bytes": DEFAULT_MAX_ARTIFACT_BYTES,
+                }),
+            );
 
-        let output = run_artifact_request(
-            tmp.path(),
-            "file_artifact_upload_begin",
-            path,
-            json!({
-                "path": path,
-                "mime_type": "application/octet-stream",
-                "max_bytes": DEFAULT_MAX_ARTIFACT_BYTES,
-            }),
-        );
+            assert!(output["error"].is_null() || output.get("error").is_none());
+            assert_eq!(output["path"], path);
+            assert_eq!(output["committed"], false);
+            assert!(output["upload_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("wc_upload_"));
+        }
+    }
 
-        assert!(output["error"].is_null() || output.get("error").is_none());
-        assert_eq!(output["path"], path);
-        assert_eq!(output["committed"], false);
-        assert!(output["upload_id"]
-            .as_str()
-            .unwrap()
-            .starts_with("wc_upload_"));
+    #[test]
+    fn common_media_extensions_have_export_mime_types() {
+        assert_eq!(extension_mime("artifacts/audio.mp3"), Some("audio/mpeg"));
+        assert_eq!(extension_mime("artifacts/video.mp4"), Some("video/mp4"));
     }
 }

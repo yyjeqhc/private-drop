@@ -152,13 +152,15 @@ fn validate_artifact_mime(mime_type: Option<&str>) -> Result<Option<String>, Str
         "image/png"
         | "image/jpeg"
         | "image/webp"
+        | "audio/mpeg"
+        | "video/mp4"
         | "application/pdf"
         | "application/zip"
         | "text/plain"
         | "text/csv"
         | "application/json" => Ok(Some(mime.to_string())),
         "application/octet-stream" => Ok(Some(mime.to_string())),
-        _ => Err(format!("unsupported mime_type '{}'; allowed artifact MIME types are image/png, image/jpeg, image/webp, application/pdf, application/zip, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.presentationml.presentation, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/plain, text/csv, application/json", mime)),
+        _ => Err(format!("unsupported mime_type '{}'; allowed artifact MIME types are image/png, image/jpeg, image/webp, audio/mpeg, video/mp4, application/pdf, application/zip, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.presentationml.presentation, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/plain, text/csv, application/json", mime)),
     }
 }
 

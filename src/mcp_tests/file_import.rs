@@ -250,6 +250,14 @@ async fn mcp_import_runtime(
     root: &std::path::Path,
     owner: Option<&str>,
 ) -> (Arc<ToolRuntime>, Arc<crate::runner_http::RunnerRegistry>) {
+    mcp_import_runtime_with_surface(root, owner, ModelSurface::FullOperatorRuntime).await
+}
+
+async fn mcp_import_runtime_with_surface(
+    root: &std::path::Path,
+    owner: Option<&str>,
+    model_surface: ModelSurface,
+) -> (Arc<ToolRuntime>, Arc<crate::runner_http::RunnerRegistry>) {
     use crate::runner_protocol::{RunnerCapabilities, RunnerProjectSummary, RunnerRegisterRequest};
     let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
     registry
@@ -302,7 +310,7 @@ async fn mcp_import_runtime(
     .await;
     let runtime = Arc::new(
         ToolRuntime::new_for_tests_with_runner_registry(registry.clone())
-            .with_model_surface(ModelSurface::FullOperatorRuntime),
+            .with_model_surface(model_surface),
     );
     (runtime, registry)
 }
@@ -718,6 +726,62 @@ fn mcp_file_import_trust_decision_reports_exact_failure_stage() {
     assert_eq!(trusted.trust, HostFileImportTrust::TrustedOAuthClient);
     assert_eq!(trusted.client_id_configured, Some(true));
     assert_eq!(trusted.active_client_registration_found, Some(true));
+}
+
+#[test]
+fn adaptive_gateway_file_import_preserves_target_aware_host_trust() {
+    run_mcp_import_in_large_stack_test_thread(
+        adaptive_gateway_file_import_preserves_target_aware_host_trust_impl,
+    );
+}
+
+async fn adaptive_gateway_file_import_preserves_target_aware_host_trust_impl() {
+    let _lock = lock_mcp_import_test().await;
+    let (_db_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let client =
+        seed_mcp_import_client(&db, &user, "ChatGPT WebCodex", MCP_IMPORT_TRUSTED_REDIRECT);
+    let token = seed_oauth_access_token(&db, &client, &user, "project:write");
+    let project_tmp = tempfile::tempdir().unwrap();
+    let (runtime, _registry) = mcp_import_runtime_with_surface(
+        project_tmp.path(),
+        Some("alice"),
+        ModelSurface::AdaptiveRuntime,
+    )
+    .await;
+    let service = Service::new(build_test_router(
+        mcp_import_config(&[client.client_id.as_str()]),
+        db,
+        runtime,
+    ));
+
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        &token,
+        "tools/call",
+        mcp_2026_params(json!({
+            "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            "arguments": {
+                "tool": "import_conversation_files_to_project",
+                "arguments": {
+                    "project": "agent:importer:demo",
+                    "openaiFileIdRefs": []
+                }
+            }
+        })),
+    )
+    .await;
+
+    let decision = take_last_mcp_host_file_import_trust_decision()
+        .expect("gateway target must be recognized before host-file trust selection");
+    assert_eq!(decision.reason, HostFileImportTrustReason::Trusted);
+    assert_eq!(decision.trust, HostFileImportTrust::TrustedOAuthClient);
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["result"]["structuredContent"]["success"], false);
+    assert!(body["result"]["structuredContent"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("1..=10 files"));
 }
 
 #[test]

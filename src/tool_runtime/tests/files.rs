@@ -4448,6 +4448,78 @@ async fn office_artifact_mime_policy_accepts_matching_save_and_upload_paths() {
 }
 
 #[tokio::test]
+async fn common_media_artifact_mime_policy_accepts_save_upload_and_octet_paths() {
+    let runtime = test_runtime();
+    let missing_project = "agent:missing:missing".to_string();
+    for (path, mime) in [
+        ("media/sample.mp3", "audio/mpeg"),
+        ("media/sample.mp4", "video/mp4"),
+    ] {
+        let save = runtime
+            .save_project_artifact(
+                missing_project.clone(),
+                path.to_string(),
+                "YQ==".to_string(),
+                Some(mime.to_string()),
+                Some(false),
+            )
+            .await;
+        assert!(!save.success, "{path}");
+        assert!(
+            !save
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unsupported mime_type"),
+            "media MIME should pass policy before project resolution: {:?}",
+            save.error
+        );
+
+        let upload = runtime
+            .artifact_upload_begin(
+                missing_project.clone(),
+                path.to_string(),
+                Some(1),
+                None,
+                Some(mime.to_string()),
+                Some(false),
+            )
+            .await;
+        assert!(!upload.success, "{path}");
+        assert!(
+            !upload
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unsupported mime_type"),
+            "media upload MIME should pass policy before project resolution: {:?}",
+            upload.error
+        );
+
+        let octet = runtime
+            .artifact_upload_begin(
+                missing_project.clone(),
+                path.to_string(),
+                Some(1),
+                None,
+                Some("application/octet-stream".to_string()),
+                Some(false),
+            )
+            .await;
+        assert!(!octet.success, "{path}");
+        assert!(
+            !octet
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("only allowed for safe artifact extensions"),
+            "media extension should be safe for host octet-stream fallback: {:?}",
+            octet.error
+        );
+    }
+}
+
+#[tokio::test]
 async fn artifact_upload_begin_rejects_invalid_inputs_before_resolving_project() {
     let runtime = test_runtime();
     let missing_project = "agent:missing:missing".to_string();

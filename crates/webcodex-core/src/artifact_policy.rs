@@ -14,6 +14,8 @@ pub const SAFE_OCTET_STREAM_ARTIFACT_EXTENSIONS: &[&str] = &[
     ".jpg",
     ".jpeg",
     ".webp",
+    ".mp3",
+    ".mp4",
     ".pdf",
     ".zip",
     ".docx",

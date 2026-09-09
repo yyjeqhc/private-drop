@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 pub(crate) const MAX_IMPORT_FILES: usize = 10;
 pub(crate) const MAX_IMPORT_FILE_BYTES: usize = 10 * 1024 * 1024;
 const IMPORT_OCTET_STREAM_EXTENSIONS: &[&str] = &[
-    ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".docx", ".pptx", ".xlsx", ".txt", ".csv",
-    ".json",
+    ".png", ".jpg", ".jpeg", ".webp", ".mp3", ".mp4", ".pdf", ".zip", ".docx", ".pptx", ".xlsx",
+    ".txt", ".csv", ".json",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,11 +89,30 @@ fn sanitize_import_name(name: &str, fallback: &str) -> String {
     }
 }
 
+fn default_extension_for_import_mime(mime: &str) -> Option<&'static str> {
+    if let Some(extension) = ooxml_extension_for_mime(mime) {
+        return Some(extension);
+    }
+    match mime {
+        "image/png" => Some(".png"),
+        "image/jpeg" => Some(".jpg"),
+        "image/webp" => Some(".webp"),
+        "audio/mpeg" => Some(".mp3"),
+        "video/mp4" => Some(".mp4"),
+        "application/pdf" => Some(".pdf"),
+        "application/zip" => Some(".zip"),
+        "text/plain" => Some(".txt"),
+        "text/csv" => Some(".csv"),
+        "application/json" => Some(".json"),
+        _ => None,
+    }
+}
+
 fn default_import_leaf(file_ref: &OpenAiFileIdRef, index: usize, mime: &str) -> String {
     let fallback = format!("artifact-{}", index + 1);
     match file_ref.name.as_deref().or(file_ref.id.as_deref()) {
         Some(source_name) => sanitize_import_name(source_name, &fallback),
-        None => match ooxml_extension_for_mime(mime) {
+        None => match default_extension_for_import_mime(mime) {
             Some(extension) => format!("{fallback}{extension}"),
             None => fallback,
         },
@@ -124,6 +143,8 @@ fn mime_allowed_for_import(mime: &str, path: &str) -> bool {
         "image/png"
             | "image/jpeg"
             | "image/webp"
+            | "audio/mpeg"
+            | "video/mp4"
             | "application/pdf"
             | "application/zip"
             | "text/plain"
@@ -809,6 +830,27 @@ mod tests {
             default_import_leaf(&file_ref, 0, crate::artifact_policy::PPTX_MIME),
             "artifact-1.pptx"
         );
+    }
+
+    #[test]
+    fn default_import_leaf_preserves_common_media_extension_when_host_omits_filename() {
+        for (mime, expected) in [
+            ("audio/mpeg", "artifact-1.mp3"),
+            ("video/mp4", "artifact-1.mp4"),
+        ] {
+            let file_ref = OpenAiFileIdRef {
+                name: None,
+                id: None,
+                mime_type: Some(mime.to_string()),
+                download_link: "https://files.oaiusercontent.com/file".to_string(),
+            };
+            assert_eq!(default_import_leaf(&file_ref, 0, mime), expected);
+            assert!(mime_allowed_for_import(mime, expected));
+        }
+        assert!(mime_allowed_for_import(
+            "application/octet-stream",
+            "artifact-1.mp4"
+        ));
     }
 
     #[test]
