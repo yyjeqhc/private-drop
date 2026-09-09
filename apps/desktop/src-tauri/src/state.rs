@@ -423,8 +423,8 @@ impl ProcessCleanup {
 fn project_not_loaded_error() -> DesktopError {
     readiness_timeout_error(
         "project_not_loaded",
-        "The selected project did not become ready in the Desktop-owned Runner",
-        "Retry project setup to restart Desktop's Runner and load this project again.",
+        "The selected project did not become ready on the current Runner",
+        "Retry project activation after checking Runner and project diagnostics.",
     )
 }
 
@@ -437,25 +437,14 @@ fn process_is_active(snapshot: Option<crate::process::ProcessSnapshot>) -> bool 
     })
 }
 
-fn project_recovery_owns_runner(started_this_operation: bool, owned_runner_active: bool) -> bool {
-    started_this_operation || owned_runner_active
-}
-
-fn project_recovery_readiness(
-    current: &crate::models::ReadinessSnapshot,
-    project_selected: bool,
-    runner: RunnerReadiness,
-) -> crate::models::ReadinessSnapshot {
-    aggregate_readiness(
-        current.server.clone(),
-        runner,
-        current.exposure.clone(),
-        if project_selected {
-            ProjectReadiness::Configured
-        } else {
-            ProjectReadiness::None
-        },
-    )
+fn can_refresh_legacy_runner(snapshot: Option<crate::process::ProcessSnapshot>) -> bool {
+    snapshot.is_some_and(|process| {
+        process.owned_by_desktop
+            && matches!(
+                process.phase,
+                ProcessPhase::Starting | ProcessPhase::Running | ProcessPhase::Stopping
+            )
+    })
 }
 
 pub struct DesktopCore {
@@ -879,10 +868,9 @@ impl DesktopCore {
             ensure_desktop_server_defaults(&env_file)?;
             status.probe_url
         };
-        let reusable_identity = identity_from_config(&self.config).filter(|identity| {
-            same_server(&identity.server_url, &server_url)
-                && same_project(&identity.project_path, &project.path)
-        });
+        let reusable_identity = identity_from_config(&self.config)
+            .filter(|identity| same_server(&identity.server_url, &server_url));
+        let saved_runner_client_id = stored_runner_client_id(&self.config);
         cancellation.check()?;
 
         let server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
@@ -925,31 +913,48 @@ impl DesktopCore {
         self.snapshot.readiness.server = ServerReadiness::Ready;
         self.publish_snapshot();
 
-        let (identity, identity_replaced) = match reusable_identity {
-            Some(identity) => (identity, false),
-            None => {
-                // Login publishes with --overwrite. Keep the saved connection's
-                // files intact until activation and config persistence succeed.
-                let connections_dir = local_enrollment_directory(&self.data_dir, &self.config);
-                let pairing_code = self
-                    .adapter
-                    .create_local_pairing(&server_url, &env_file, cancellation)
-                    .await?;
-                let identity = self
-                    .adapter
-                    .login_with_pairing(
-                        &server_url,
-                        &pairing_code,
-                        &connections_dir,
-                        &project,
-                        cancellation,
-                    )
-                    .await?;
-                drop(pairing_code);
-                cancellation.check()?;
-                (identity, true)
-            }
+        let reusable_observation = match reusable_identity.as_ref() {
+            Some(identity) => self
+                .adapter
+                .observe_runner_connection(
+                    identity,
+                    saved_runner_client_id.as_deref(),
+                    cancellation,
+                )
+                .await
+                .ok(),
+            None => None,
         };
+        let (mut identity, identity_replaced, runner_client_id) =
+            match (reusable_identity, reusable_observation) {
+                (Some(identity), Some(observation)) => (identity, false, observation.client_id),
+                _ => {
+                    // Login publishes with --overwrite. Keep the saved connection's
+                    // files intact until activation and config persistence succeed.
+                    let connections_dir = local_enrollment_directory(&self.data_dir, &self.config);
+                    let pairing_code = self
+                        .adapter
+                        .create_local_pairing(&server_url, &env_file, cancellation)
+                        .await?;
+                    let identity = self
+                        .adapter
+                        .login_with_pairing(
+                            &server_url,
+                            &pairing_code,
+                            &connections_dir,
+                            &project,
+                            cancellation,
+                        )
+                        .await?;
+                    drop(pairing_code);
+                    cancellation.check()?;
+                    let observation = self
+                        .adapter
+                        .observe_runner_connection(&identity, None, cancellation)
+                        .await?;
+                    (identity, true, observation.client_id)
+                }
+            };
 
         let replacing_owned_runner = identity_replaced
             && process_is_active(self.process_snapshot(ProcessKind::LocalRunner).await);
@@ -983,7 +988,7 @@ impl DesktopCore {
                     .unwrap_or(false)
             };
             cancellation.check()?;
-            let runner_started = if !runner_ready {
+            let mut runner_started = if !runner_ready {
                 if runner_deadline.is_elapsed() {
                     return Err(readiness_timeout_error(
                         "runner_offline",
@@ -1004,12 +1009,60 @@ impl DesktopCore {
                 .await?;
             self.snapshot.readiness.runner = RunnerReadiness::Ready;
             self.publish_snapshot();
-            let project_recovery_owns_runner = project_recovery_owns_runner(
-                runner_started,
-                process_is_active(self.process_snapshot(ProcessKind::LocalRunner).await),
-            );
-            self.wait_for_project(&identity, cancellation, project_recovery_owns_runner)
-                .await?;
+            identity = match self
+                .adapter
+                .activate_project(&identity, &runner_client_id, &project, cancellation)
+                .await
+            {
+                Ok(identity) => identity,
+                Err(error)
+                    if matches!(
+                        error.code.as_str(),
+                        "project_activation_capability_unavailable"
+                            | "project_activation_restart_required"
+                    ) =>
+                {
+                    if !can_refresh_legacy_runner(
+                        self.process_snapshot(ProcessKind::LocalRunner).await,
+                    ) {
+                        return Err(DesktopError::new(
+                            "project_activation_legacy_runner",
+                            "This Runner needs to be refreshed before the new project can be activated",
+                            "Refresh the Runner, then select this project again.",
+                        ));
+                    }
+                    let legacy_identity = self
+                        .adapter
+                        .legacy_register_project(
+                            &identity,
+                            &runner_client_id,
+                            &project,
+                            cancellation,
+                        )
+                        .await?;
+                    let legacy_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
+                    self.stop_process_until(ProcessKind::LocalRunner, legacy_deadline)
+                        .await;
+                    if legacy_deadline.is_elapsed() {
+                        return Err(readiness_timeout_error(
+                            "runner_offline",
+                            "Desktop could not refresh its legacy Runner",
+                            "Retry project setup after checking Runner diagnostics.",
+                        ));
+                    }
+                    let command = self
+                        .adapter
+                        .local_runner_command(&legacy_identity.runner_config)?;
+                    self.spawn_owned(ProcessKind::LocalRunner, command, false, cancellation)
+                        .await?;
+                    self.wait_for_runner(&legacy_identity, cancellation, legacy_deadline, true)
+                        .await?;
+                    runner_started = true;
+                    legacy_identity
+                }
+                Err(error) => return Err(error),
+            };
+            self.wait_for_project(&identity, cancellation).await?;
             cancellation.check()?;
             Ok(runner_started)
         }
@@ -1055,6 +1108,7 @@ impl DesktopCore {
             server_env_file: Some(env_file.clone()),
             runner_config: Some(identity.runner_config.clone()),
             user_token_file: Some(identity.user_token_file.clone()),
+            runner_client_id: Some(runner_client_id.clone()),
             project_id: Some(identity.project_id.clone()),
             runtime_project_id: Some(identity.runtime_project_id.clone()),
         });
@@ -1165,36 +1219,64 @@ impl DesktopCore {
         );
         self.publish_snapshot();
 
-        let (identity, identity_replaced) =
-            match identity_from_config(&self.config).filter(|identity| {
-                same_server(&identity.server_url, &server_url)
-                    && same_project(&identity.project_path, &project.path)
-            }) {
-                Some(identity) => (identity, false),
-                None => {
-                    if !pairing_code.starts_with("wc_pair_") {
-                        return Err(DesktopError::new(
+        let reusable_identity = identity_from_config(&self.config)
+            .filter(|identity| same_server(&identity.server_url, &server_url));
+        let saved_runner_client_id = stored_runner_client_id(&self.config);
+        let reusable_observation = match reusable_identity.as_ref() {
+            Some(identity) => self
+                .adapter
+                .observe_runner_connection(
+                    identity,
+                    saved_runner_client_id.as_deref(),
+                    cancellation,
+                )
+                .await
+                .ok(),
+            None => None,
+        };
+        let (mut identity, identity_replaced, runner_client_id) = match (
+            reusable_identity,
+            reusable_observation,
+        ) {
+            (Some(identity), Some(observation)) => (identity, false, observation.client_id),
+            _ => {
+                if !pairing_code.starts_with("wc_pair_") {
+                    return Err(DesktopError::new(
                             "pairing_code_invalid",
-                            "The one-time login code is not a WebCodex pairing code",
-                            "Enter the wc_pair_… code issued by the existing Server.",
+                            "The saved Runner identity is not reusable and no new WebCodex pairing code was provided",
+                            "Refresh this Runner connection with a new wc_pair_… code.",
                         ));
-                    }
-                    let identity = self
-                        .adapter
-                        .login_with_pairing(
-                            &server_url,
-                            pairing_code,
-                            &self.data_dir.join("connections"),
-                            &project,
-                            cancellation,
-                        )
-                        .await?;
-                    self.config.topology = Some(topology.clone());
-                    self.store_identity(&project, &identity, None).await?;
-                    cancellation.check()?;
-                    (identity, true)
                 }
-            };
+                let identity = self
+                    .adapter
+                    .login_with_pairing(
+                        &server_url,
+                        pairing_code,
+                        &self.data_dir.join("connections"),
+                        &project,
+                        cancellation,
+                    )
+                    .await?;
+                let observation = self
+                    .adapter
+                    .observe_runner_connection(&identity, None, cancellation)
+                    .await?;
+                // A remote pairing code is one-shot. Publish the newly
+                // validated connection identity before Runner/project
+                // activation so a later readiness failure can retry this
+                // same credential instead of forcing another pairing.
+                self.config.topology = Some(topology.clone());
+                self.store_identity(
+                    &project,
+                    &identity,
+                    None,
+                    Some(observation.client_id.clone()),
+                )
+                .await?;
+                cancellation.check()?;
+                (identity, true, observation.client_id)
+            }
+        };
 
         let server_deadline = Deadline::after(SERVER_READY_TIMEOUT);
         let server_status = match self
@@ -1230,6 +1312,13 @@ impl DesktopCore {
             ));
         }
         let runner_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
+        let replacing_owned_runner = identity_replaced
+            && process_is_active(self.process_snapshot(ProcessKind::LocalRunner).await);
+        if replacing_owned_runner {
+            self.stop_process_until(ProcessKind::LocalRunner, runner_deadline)
+                .await;
+            cancellation.check()?;
+        }
         let runner_ready = if identity_replaced {
             false
         } else {
@@ -1256,15 +1345,57 @@ impl DesktopCore {
         };
         self.wait_for_runner(&identity, cancellation, runner_deadline, runner_started)
             .await?;
-        let project_recovery_owns_runner = project_recovery_owns_runner(
-            runner_started,
-            process_is_active(self.process_snapshot(ProcessKind::LocalRunner).await),
-        );
-        self.wait_for_project(&identity, cancellation, project_recovery_owns_runner)
-            .await?;
+        identity = match self
+            .adapter
+            .activate_project(&identity, &runner_client_id, &project, cancellation)
+            .await
+        {
+            Ok(identity) => identity,
+            Err(error)
+                if matches!(
+                    error.code.as_str(),
+                    "project_activation_capability_unavailable"
+                        | "project_activation_restart_required"
+                ) =>
+            {
+                if !can_refresh_legacy_runner(self.process_snapshot(ProcessKind::LocalRunner).await)
+                {
+                    return Err(DesktopError::new(
+                        "project_activation_legacy_runner",
+                        "This Runner needs to be refreshed before the new project can be activated",
+                        "Refresh the Runner, then select this project again.",
+                    ));
+                }
+                let legacy_identity = self
+                    .adapter
+                    .legacy_register_project(&identity, &runner_client_id, &project, cancellation)
+                    .await?;
+                let legacy_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
+                self.stop_process_until(ProcessKind::LocalRunner, legacy_deadline)
+                    .await;
+                if legacy_deadline.is_elapsed() {
+                    return Err(readiness_timeout_error(
+                        "runner_offline",
+                        "Desktop could not refresh its legacy Runner",
+                        "Retry project setup after checking Runner diagnostics.",
+                    ));
+                }
+                let command = self
+                    .adapter
+                    .local_runner_command(&legacy_identity.runner_config)?;
+                self.spawn_owned(ProcessKind::LocalRunner, command, false, cancellation)
+                    .await?;
+                self.wait_for_runner(&legacy_identity, cancellation, legacy_deadline, true)
+                    .await?;
+                legacy_identity
+            }
+            Err(error) => return Err(error),
+        };
+        self.wait_for_project(&identity, cancellation).await?;
         cancellation.check()?;
         self.config.topology = Some(topology);
-        self.save_config().await?;
+        self.store_identity(&project, &identity, None, Some(runner_client_id))
+            .await?;
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Ready,
             RunnerReadiness::Ready,
@@ -1963,16 +2094,11 @@ impl DesktopCore {
         &mut self,
         identity: &ProjectRuntimeIdentity,
         cancellation: &CancellationContext,
-        cleanup_owned_runner: bool,
     ) -> DesktopResult<()> {
         let deadline = Deadline::after(PROJECT_READY_TIMEOUT);
-        let recovery_at = tokio::time::Instant::now() + PROJECT_READY_TIMEOUT / 2;
-        let mut recovery_attempted = false;
         loop {
             cancellation.check()?;
             if deadline.is_elapsed() {
-                self.cleanup_project_readiness_runner(deadline, cleanup_owned_runner)
-                    .await;
                 return Err(project_not_loaded_error());
             }
             if self
@@ -1984,60 +2110,10 @@ impl DesktopCore {
                 return Ok(());
             }
             cancellation.check()?;
-            if cleanup_owned_runner
-                && !recovery_attempted
-                && tokio::time::Instant::now() >= recovery_at
-            {
-                recovery_attempted = true;
-                let recovery: DesktopResult<()> = async {
-                    self.stop_process_until(ProcessKind::LocalRunner, deadline)
-                        .await;
-                    if deadline.is_elapsed() {
-                        return Err(project_not_loaded_error());
-                    }
-                    cancellation.check()?;
-                    self.publish_project_recovery_readiness(RunnerReadiness::Connecting);
-                    let command = self.adapter.local_runner_command(&identity.runner_config)?;
-                    self.spawn_owned(ProcessKind::LocalRunner, command, false, cancellation)
-                        .await?;
-                    self.wait_for_runner(identity, cancellation, deadline, true)
-                        .await
-                }
-                .await;
-                if let Err(error) = recovery {
-                    self.cleanup_project_readiness_runner(deadline, true).await;
-                    return Err(error);
-                }
-                self.publish_project_recovery_readiness(RunnerReadiness::Ready);
-                continue;
-            }
             if deadline.is_elapsed() {
-                self.cleanup_project_readiness_runner(deadline, cleanup_owned_runner)
-                    .await;
                 return Err(project_not_loaded_error());
             }
             sleep_or_cancel_until(POLL_INTERVAL, cancellation, deadline).await?;
-        }
-    }
-
-    fn publish_project_recovery_readiness(&mut self, runner: RunnerReadiness) {
-        self.snapshot.readiness = project_recovery_readiness(
-            &self.snapshot.readiness,
-            self.snapshot.project.is_some(),
-            runner,
-        );
-        self.publish_snapshot();
-    }
-
-    async fn cleanup_project_readiness_runner(
-        &mut self,
-        deadline: Deadline,
-        cleanup_owned_runner: bool,
-    ) {
-        self.cleanup_readiness_process(ProcessKind::LocalRunner, deadline, cleanup_owned_runner)
-            .await;
-        if cleanup_owned_runner {
-            self.publish_project_recovery_readiness(RunnerReadiness::Stopped);
         }
     }
 
@@ -2061,6 +2137,7 @@ impl DesktopCore {
         project: &ProjectSelection,
         identity: &ProjectRuntimeIdentity,
         server_env_file: Option<PathBuf>,
+        runner_client_id: Option<String>,
     ) -> DesktopResult<()> {
         let mut project = project.clone();
         project.runtime_project_id = Some(identity.runtime_project_id.clone());
@@ -2070,6 +2147,7 @@ impl DesktopCore {
             server_env_file,
             runner_config: Some(identity.runner_config.clone()),
             user_token_file: Some(identity.user_token_file.clone()),
+            runner_client_id,
             project_id: Some(identity.project_id.clone()),
             runtime_project_id: Some(identity.runtime_project_id.clone()),
         });
@@ -2239,6 +2317,33 @@ fn project_snapshot(config: &StoredDesktopConfig) -> Option<ProjectSelection> {
         project.runtime_project_id = None;
     }
     Some(project)
+}
+
+fn stored_runner_client_id(config: &StoredDesktopConfig) -> Option<String> {
+    let runtime = config.runtime.as_ref()?;
+    if let Some(client_id) = runtime
+        .runner_client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|client_id| !client_id.is_empty())
+    {
+        return Some(client_id.to_string());
+    }
+    // Pre-migration Desktop state did not persist client_id separately. Recover
+    // it from the exact runtime Project identity instead of accepting whatever
+    // client_id happens to be present in runner.toml during the first upgrade.
+    let project_id = runtime.project_id.as_deref()?.trim();
+    let runtime_project_id = runtime.runtime_project_id.as_deref()?.trim();
+    if project_id.is_empty() || runtime_project_id.is_empty() {
+        return None;
+    }
+    let suffix = format!(":{project_id}");
+    runtime_project_id
+        .strip_prefix("agent:")?
+        .strip_suffix(&suffix)
+        .map(str::trim)
+        .filter(|client_id| !client_id.is_empty())
+        .map(str::to_string)
 }
 
 fn identity_from_config(config: &StoredDesktopConfig) -> Option<ProjectRuntimeIdentity> {
@@ -2757,6 +2862,7 @@ fn same_server(left: &str, right: &str) -> bool {
         .eq_ignore_ascii_case(right.trim_end_matches('/'))
 }
 
+#[cfg(test)]
 fn same_project(left: &str, right: &str) -> bool {
     if cfg!(windows) {
         left.eq_ignore_ascii_case(right)
@@ -2846,36 +2952,57 @@ mod tests {
     }
 
     #[test]
-    fn project_recovery_accepts_existing_desktop_runner_ownership() {
-        assert!(project_recovery_owns_runner(true, false));
-        assert!(project_recovery_owns_runner(false, true));
-        assert!(project_recovery_owns_runner(true, true));
-        assert!(!project_recovery_owns_runner(false, false));
+    fn legacy_project_refresh_never_claims_external_or_inactive_runner_ownership() {
+        assert!(!can_refresh_legacy_runner(None));
+        assert!(!can_refresh_legacy_runner(Some(
+            crate::process::ProcessSnapshot {
+                kind: ProcessKind::LocalRunner,
+                phase: ProcessPhase::Running,
+                pid: Some(42),
+                exit_code: None,
+                owned_by_desktop: false,
+            }
+        )));
+        assert!(!can_refresh_legacy_runner(Some(
+            crate::process::ProcessSnapshot {
+                kind: ProcessKind::LocalRunner,
+                phase: ProcessPhase::Exited,
+                pid: Some(43),
+                exit_code: Some(0),
+                owned_by_desktop: true,
+            }
+        )));
+        assert!(can_refresh_legacy_runner(Some(
+            crate::process::ProcessSnapshot {
+                kind: ProcessKind::LocalRunner,
+                phase: ProcessPhase::Running,
+                pid: Some(44),
+                exit_code: None,
+                owned_by_desktop: true,
+            }
+        )));
     }
 
     #[test]
-    fn project_recovery_cleanup_invalidates_derived_ready_state() {
-        let ready = aggregate_readiness(
-            ServerReadiness::Ready,
-            RunnerReadiness::Ready,
-            ExposureReadiness::RemoteReady,
-            ProjectReadiness::Ready,
-        );
-        assert!(ready.runtime_ready);
-        assert!(ready.ready_for_chatgpt);
-
-        let stopped = project_recovery_readiness(&ready, true, RunnerReadiness::Stopped);
-        assert_eq!(stopped.runner, RunnerReadiness::Stopped);
-        assert_eq!(stopped.project, ProjectReadiness::Configured);
-        assert!(!stopped.runtime_ready);
-        assert!(!stopped.ready_for_chatgpt);
+    fn legacy_runtime_project_identity_recovers_runner_client_id_without_project_coupling() {
+        let mut config = test_stored_config("legacy");
+        config.runtime = Some(StoredRuntime {
+            server_url: "https://example.test".to_string(),
+            server_env_file: None,
+            runner_config: None,
+            user_token_file: None,
+            runner_client_id: None,
+            project_id: Some("repo".to_string()),
+            runtime_project_id: Some("agent:desktop:runner:repo".to_string()),
+        });
         assert_eq!(
-            stopped.summary_kind,
-            ReadinessSummaryKind::RunnerDisconnected
+            stored_runner_client_id(&config).as_deref(),
+            Some("desktop:runner")
         );
+        config.runtime.as_mut().unwrap().runner_client_id = Some("explicit-runner".to_string());
         assert_eq!(
-            stopped.next_action_kind,
-            Some(ReadinessNextActionKind::StartRunner)
+            stored_runner_client_id(&config).as_deref(),
+            Some("explicit-runner")
         );
     }
 
@@ -2893,6 +3020,7 @@ mod tests {
             server_env_file: None,
             runner_config: Some(saved_runner.clone()),
             user_token_file: None,
+            runner_client_id: None,
             project_id: None,
             runtime_project_id: None,
         });
@@ -3014,6 +3142,7 @@ mod tests {
             server_env_file: Some(PathBuf::from("webcodex.env")),
             runner_config: Some(PathBuf::from("runner.toml")),
             user_token_file: Some(PathBuf::from("user-token")),
+            runner_client_id: Some("desktop-runner".to_string()),
             project_id: Some("project".to_string()),
             runtime_project_id: Some("agent:desktop:project".to_string()),
         };
@@ -3038,6 +3167,7 @@ mod tests {
             server_env_file: None,
             runner_config: None,
             user_token_file: None,
+            runner_client_id: None,
             project_id: None,
             runtime_project_id: None,
         });
@@ -3145,6 +3275,7 @@ mod tests {
                 server_env_file: None,
                 runner_config: Some(PathBuf::from("missing-runner.toml")),
                 user_token_file: Some(PathBuf::from("missing-user-token")),
+                runner_client_id: Some("desktop".to_string()),
                 project_id: Some("repo".to_string()),
                 runtime_project_id: Some("agent:desktop:repo".to_string()),
             }),
@@ -3549,6 +3680,10 @@ mod tests {
             first_user_token == second_user_token,
             "local restart must reuse enrollment instead of rotating the managed user token"
         );
+        let project_a_identity =
+            identity_from_config(&core.config).expect("project A runtime identity after restart");
+        let first_runner_client_id =
+            stored_runner_client_id(&core.config).expect("stored Runner client identity");
         let server_before_switch = core
             .process_snapshot(ProcessKind::LocalServer)
             .await
@@ -3560,8 +3695,8 @@ mod tests {
         assert!(server_before_switch.owned_by_desktop);
         assert!(runner_before_switch.owned_by_desktop);
         // Switch projects while the Desktop-owned Server and Runner are still
-        // running. Production setup must replace only its owned Runner and keep
-        // the Server alive; callers must not need to stop the runtime first.
+        // running. A compatible connection hot-extends exact-root authority and
+        // activates the new Project without replacing either owned process.
         let second_project = data_dir.join("second-project");
         std::fs::create_dir_all(&second_project).expect("create second project fixture");
         let expected_project = core
@@ -3595,24 +3730,84 @@ mod tests {
         let runner_after_switch = core
             .process_snapshot(ProcessKind::LocalRunner)
             .await
-            .expect("Desktop owns exactly one replacement Runner after project switch");
+            .expect("Desktop still owns the same Runner after project switch");
         assert_eq!(
             server_after_switch.pid, server_before_switch.pid,
             "project switch must keep the existing Desktop-owned Server"
         );
-        assert_ne!(
+        assert_eq!(
             runner_after_switch.pid, runner_before_switch.pid,
-            "project switch must replace the Desktop-owned Runner generation"
+            "compatible project switch must preserve the Desktop-owned Runner PID"
         );
         assert!(server_after_switch.owned_by_desktop);
         assert!(runner_after_switch.owned_by_desktop);
-        assert!(
-            std::fs::read(&first_runner_config).unwrap() == first_runner_bytes,
-            "switching projects must preserve the previous Runner config for recovery"
+        let switched_identity =
+            identity_from_config(&core.config).expect("project B runtime identity after switch");
+        assert_eq!(
+            stored_runner_client_id(&core.config).as_deref(),
+            Some(first_runner_client_id.as_str()),
+            "project switch must preserve the Runner client identity"
+        );
+        assert_eq!(
+            switched_identity.runner_config, first_runner_config,
+            "project switch must hot-update the same Runner config"
+        );
+        assert_eq!(
+            switched_identity.user_token_file, first_user_token_file,
+            "project switch must preserve the managed user-token path"
+        );
+        assert_ne!(
+            switched_identity.runtime_project_id, project_a_identity.runtime_project_id,
+            "different canonical projects must keep distinct runtime Project identities"
+        );
+        let config_after_switch = std::fs::read(&first_runner_config).unwrap();
+        assert_ne!(
+            config_after_switch, first_runner_bytes,
+            "switching to a new exact root must persist the policy candidate in the existing Runner config"
+        );
+        assert_eq!(
+            std::fs::read(&first_user_token_file).unwrap(),
+            first_user_token,
+            "switching projects must not rotate the managed user token"
         );
         assert!(
-            std::fs::read(&first_user_token_file).unwrap() == first_user_token,
-            "switching projects must preserve the previous managed user token for recovery"
+            core.adapter
+                .project_ready(&project_a_identity, &cancellation)
+                .await
+                .expect("project A inventory remains observable"),
+            "activating Project B must not delete Project A registration"
+        );
+
+        let project_b_runtime_id = switched_identity.runtime_project_id.clone();
+        let repeated = core
+            .configure_local_setup(Some(&second_project.to_string_lossy()), &cancellation)
+            .await
+            .expect("reselecting Project B is idempotent");
+        assert_eq!(repeated.readiness.project, ProjectReadiness::Ready);
+        let runner_after_repeat = core
+            .process_snapshot(ProcessKind::LocalRunner)
+            .await
+            .expect("Desktop still owns Runner after idempotent activation");
+        assert_eq!(
+            runner_after_repeat.pid, runner_before_switch.pid,
+            "idempotent project activation must not restart the Runner"
+        );
+        let repeated_identity = identity_from_config(&core.config)
+            .expect("Project B identity after repeated activation");
+        assert_eq!(repeated_identity.runtime_project_id, project_b_runtime_id);
+        assert_eq!(
+            stored_runner_client_id(&core.config),
+            Some(first_runner_client_id)
+        );
+        assert_eq!(
+            std::fs::read(&first_runner_config).unwrap(),
+            config_after_switch,
+            "idempotent activation must not duplicate or rewrite allowed_roots"
+        );
+        assert_eq!(
+            std::fs::read(&first_user_token_file).unwrap(),
+            first_user_token,
+            "idempotent activation must keep the same managed user token"
         );
         core.stop_local_runtime(&cancellation)
             .await

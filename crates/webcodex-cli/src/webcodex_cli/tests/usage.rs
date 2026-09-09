@@ -86,6 +86,23 @@ fn project_doctor_and_hosted_connect_dispatch() {
                 && !opts.json
     ));
     assert!(matches!(
+        cli_action([
+            "project",
+            "activate",
+            "--config",
+            "/tmp/runner.toml",
+            "--user-token-file",
+            "/tmp/user-token",
+            "/tmp/repo-b",
+            "--json",
+        ]),
+        CliAction::ProjectActivate(opts)
+            if opts.config == std::path::PathBuf::from("/tmp/runner.toml")
+                && opts.user_token_file == std::path::PathBuf::from("/tmp/user-token")
+                && opts.project == std::path::PathBuf::from("/tmp/repo-b")
+                && opts.json
+    ));
+    assert!(matches!(
         cli_action(["doctor"]),
         CliAction::Project(args) if args == ["doctor"]
     ));
@@ -115,6 +132,7 @@ fn webcodex_cli_help_presents_primary_mental_model() {
     for command in [
         "pairing create",
         "project register",
+        "project activate",
         "auth status",
         "tokens",
         "runner-tokens",
@@ -130,12 +148,17 @@ fn webcodex_cli_help_presents_primary_mental_model() {
 }
 
 #[test]
-fn project_register_and_login_project_help_prioritize_user_language() {
+fn project_registration_activation_and_login_help_prioritize_user_language() {
     let project_help = cli_exit(["project", "register", "--help"]).unwrap();
     assert!(project_help.contains("Add one existing project to a Runner configuration"));
     assert!(project_help.contains("Advanced: project_registry_dir"));
     assert!(project_help.contains("not a workspace root"));
     assert!(project_help.contains("allowed_roots"));
+    let activate_help = cli_exit(["project", "activate", "--help"]).unwrap();
+    assert!(activate_help.contains("Activate one explicitly selected local project"));
+    assert!(activate_help.contains("canonical exact project root"));
+    assert!(activate_help.contains("generation CAS"));
+    assert!(activate_help.contains("--user-token-file PATH"));
     let login_help = cli_exit(["login", "--help"]).unwrap();
     assert!(login_help.contains("one-time login code"));
     assert!(login_help.contains("--project PATH"));

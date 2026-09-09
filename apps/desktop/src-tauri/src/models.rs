@@ -177,7 +177,7 @@ pub fn aggregate_readiness(
             ReadinessSummaryKind::ProjectNotReady,
             Some(ReadinessNextActionKind::AddOrReloadProject),
             "Project is not ready".to_string(),
-            Some("Add or reload the selected project.".to_string()),
+            Some("Prepare and activate the selected project.".to_string()),
         )
     } else if exposure == ExposureReadiness::Disabled || exposure == ExposureReadiness::LocalReady {
         (
@@ -418,6 +418,8 @@ pub struct StoredRuntime {
     pub server_env_file: Option<PathBuf>,
     pub runner_config: Option<PathBuf>,
     pub user_token_file: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_client_id: Option<String>,
     pub project_id: Option<String>,
     pub runtime_project_id: Option<String>,
 }

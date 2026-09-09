@@ -5,7 +5,7 @@ use super::{
 };
 use webcodex_core::authority::{
     OAuthBodyAwarePolicy, OAuthRouteScopePolicy::*, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+    SCOPE_PROJECT_WRITE, SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ,
 };
 
 pub(super) const ROUTES: &[RouteSpec] = &[
@@ -90,6 +90,26 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
+        RunnerConfigCheck,
+        Post,
+        "/api/runners/config/check",
+        Require(SCOPE_RUNTIME_READ),
+        RuntimeApi,
+        Hidden,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
+        RunnerConfigReload,
+        Post,
+        "/api/runners/config/reload",
+        Require(SCOPE_RUNNER_MANAGE),
+        RuntimeApi,
+        Hidden,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
         ProjectsList,
         Post,
         "/api/projects/list",
@@ -123,6 +143,16 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         ProjectsUnregister,
         Post,
         "/api/projects/unregister",
+        Require(SCOPE_PROJECT_WRITE),
+        RuntimeApi,
+        Hidden,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
+        ProjectsResolveOrRegister,
+        Post,
+        "/api/projects/resolve-or-register",
         Require(SCOPE_PROJECT_WRITE),
         RuntimeApi,
         Hidden,

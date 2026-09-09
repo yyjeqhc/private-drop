@@ -449,7 +449,7 @@ describe("semantic Desktop UI", () => {
         await vi.advanceTimersByTimeAsync(1_000);
       });
       expect(screen.getByRole("alert")).toHaveTextContent("project_not_loaded");
-      fireEvent.click(screen.getByRole("button", { name: "重新加载项目" }));
+      fireEvent.click(screen.getByRole("button", { name: "重新激活项目" }));
       await act(async () => {});
       expect(screen.getByRole("alert")).toHaveTextContent("tunnel_unavailable");
       expect(screen.getByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
@@ -563,7 +563,7 @@ describe("semantic Desktop UI", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("项目尚未就绪");
     expect(alert).not.toHaveTextContent("registry");
-    fireEvent.click(screen.getByRole("button", { name: "重新加载项目" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新激活项目" }));
     await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(2));
   });
 
@@ -907,6 +907,124 @@ describe("semantic Desktop UI", () => {
 
     await waitFor(() => expect(api.resumeSavedRuntime).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(api.startRegularTunnel).toHaveBeenCalledTimes(1));
+  });
+
+  it("reuses an existing remote enrollment when the user selects a different project", async () => {
+    const remoteState: DesktopState = {
+      ...readyState,
+      topology: {
+        experience: "full",
+        server: { kind: "remote", url: "https://server.example.test" },
+        runner: { kind: "local" },
+        exposure: { kind: "existing_https", url: "https://server.example.test" },
+        enrollment: { kind: "managed_pairing" },
+      },
+      project: {
+        path: "C:\\fixture\\project-a",
+        allowed_root: "C:\\fixture\\project-a",
+        is_git_repository: true,
+        runtime_project_id: "agent:desktop:project-a",
+      },
+    };
+    const projectB = {
+      path: "C:\\fixture\\project-b",
+      allowed_root: "C:\\fixture\\project-b",
+      is_git_repository: true,
+      runtime_project_id: null,
+    };
+    api.getState.mockResolvedValue(remoteState);
+    api.inspectProject.mockResolvedValue(projectB);
+    api.configureRemote.mockResolvedValue({
+      ...remoteState,
+      project: { ...projectB, runtime_project_id: "agent:desktop:project-b" },
+    });
+    vi.mocked(open).mockResolvedValue(projectB.path);
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+
+    fireEvent.click(screen.getByRole("button", { name: "更改运行方式" }));
+    fireEvent.click(screen.getByRole("button", { name: /连接现有 Server/ }));
+    expect(screen.getByText("将复用现有连接")).toBeInTheDocument();
+    expect(screen.queryByLabelText("一次性登录码")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "更改文件夹" }));
+    await waitFor(() => expect(api.inspectProject).toHaveBeenCalledWith(projectB.path));
+    expect(screen.getByText("将复用现有连接")).toBeInTheDocument();
+    expect(screen.queryByLabelText("一次性登录码")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新连接电脑" }));
+    await waitFor(() =>
+      expect(api.configureRemote).toHaveBeenCalledWith(
+        "https://server.example.test",
+        "",
+        projectB.path,
+      ),
+    );
+  });
+
+  it("exposes pairing recovery when a saved remote enrollment is no longer reusable", async () => {
+    const remoteState: DesktopState = {
+      ...readyState,
+      topology: {
+        experience: "full",
+        server: { kind: "remote", url: "https://server.example.test" },
+        runner: { kind: "local" },
+        exposure: { kind: "existing_https", url: "https://server.example.test" },
+        enrollment: { kind: "managed_pairing" },
+      },
+      project: {
+        path: "C:\\fixture\\project-a",
+        allowed_root: "C:\\fixture\\project-a",
+        is_git_repository: true,
+        runtime_project_id: "agent:desktop:project-a",
+      },
+    };
+    const projectB = {
+      path: "C:\\fixture\\project-b",
+      allowed_root: "C:\\fixture\\project-b",
+      is_git_repository: true,
+      runtime_project_id: null,
+    };
+    api.getState.mockResolvedValue(remoteState);
+    api.inspectProject.mockResolvedValue(projectB);
+    api.configureRemote
+      .mockRejectedValueOnce({
+        code: "pairing_code_invalid",
+        message: "The saved Runner identity is not reusable and no new WebCodex pairing code was provided",
+        next_action: "Refresh this Runner connection with a new code.",
+      })
+      .mockResolvedValueOnce({
+        ...remoteState,
+        project: { ...projectB, runtime_project_id: "agent:desktop:project-b" },
+      });
+    vi.mocked(open).mockResolvedValue(projectB.path);
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+
+    fireEvent.click(screen.getByRole("button", { name: "更改运行方式" }));
+    fireEvent.click(screen.getByRole("button", { name: /连接现有 Server/ }));
+    fireEvent.click(screen.getByRole("button", { name: "更改文件夹" }));
+    await waitFor(() => expect(api.inspectProject).toHaveBeenCalledWith(projectB.path));
+    expect(screen.queryByLabelText("一次性登录码")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新连接电脑" }));
+    expect(await screen.findByLabelText("一次性登录码")).toBeInTheDocument();
+    expect(screen.queryByText("将复用现有连接")).not.toBeInTheDocument();
+    const submit = screen.getByRole("button", { name: "连接电脑" });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("一次性登录码"), {
+      target: { value: "wc_pair_recovery" },
+    });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(api.configureRemote).toHaveBeenLastCalledWith(
+        "https://server.example.test",
+        "wc_pair_recovery",
+        projectB.path,
+      ),
+    );
   });
 
   it("keeps Remote Server as a first-class runtime choice after local setup", async () => {

@@ -20,6 +20,7 @@ mod import_http;
 mod jobs;
 mod project_files;
 mod projects;
+mod runner_config;
 
 pub use import_http::import_conversation_files_to_project;
 pub use jobs::{
@@ -30,7 +31,11 @@ pub use project_files::{
     projects_git_diff_summary, projects_git_restore_paths, projects_git_status,
     projects_list_files, projects_read_file, projects_search_text,
 };
-pub use projects::{projects_create, projects_list, projects_register, projects_unregister};
+pub use projects::{
+    projects_create, projects_list, projects_register, projects_resolve_or_register,
+    projects_unregister,
+};
+pub use runner_config::{runner_config_check, runner_config_reload};
 
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
     depot.obtain::<Arc<ToolRuntime>>().ok().cloned()

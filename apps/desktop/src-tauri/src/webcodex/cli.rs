@@ -15,6 +15,7 @@ use webcodex_process::{GracefulTermination, ManagedChild};
 const CLI_OUTPUT_BYTES: usize = 256 * 1024;
 const CLI_INPUT_BYTES: usize = 64 * 1024;
 const CLI_TIMEOUT: Duration = Duration::from_secs(30);
+const PROJECT_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(120);
 const CLI_CLEANUP_SLACK: Duration = Duration::from_secs(2);
 const CLI_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const CLI_GRACEFUL_CLEANUP: Duration = Duration::from_millis(250);
@@ -260,6 +261,60 @@ pub async fn run_json<T: DeserializeOwned>(
         Deadline::after(CLI_TIMEOUT),
     )
     .await
+}
+
+pub async fn run_project_activation_json<T: DeserializeOwned>(
+    executable: &Path,
+    args: &[String],
+    cancellation: &CancellationContext,
+) -> DesktopResult<T> {
+    let output = run_bounded_until(
+        executable,
+        args,
+        None,
+        false,
+        cancellation,
+        Deadline::after(PROJECT_ACTIVATION_TIMEOUT),
+    )
+    .await?;
+    if output.exit_code != Some(0) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = [
+            "project_activation_capability_unavailable",
+            "project_activation_restart_required",
+            "project_activation_reconcile_required",
+            "project_activation_config_conflict",
+            "runner_config_concurrent_change",
+        ]
+        .into_iter()
+        .find(|code| stderr.trim_start().starts_with(code))
+        .unwrap_or("webcodex_command_failed");
+        let next_action = match code {
+            "project_activation_capability_unavailable" | "project_activation_restart_required" => {
+                "Refresh this Runner before activating the selected project."
+            }
+            "project_activation_reconcile_required" | "project_activation_config_conflict" => {
+                "Recheck Runner and project status before retrying activation."
+            }
+            "runner_config_concurrent_change" => {
+                "Retry from the current Runner configuration; another operator changed it concurrently."
+            }
+            _ => "Open Activity for safe diagnostics, correct the configuration, and retry.",
+        };
+        return Err(DesktopError::new(
+            code,
+            "WebCodex could not activate the selected project on the current Runner",
+            next_action,
+        )
+        .with_details(serde_json::json!({ "exit_code": output.exit_code })));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|_| {
+        DesktopError::new(
+            "webcodex_contract_invalid",
+            "WebCodex returned invalid project activation output",
+            "Verify that Desktop and WebCodex binaries come from the same source baseline.",
+        )
+    })
 }
 
 pub async fn run_json_until<T: DeserializeOwned>(

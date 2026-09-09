@@ -13,6 +13,23 @@ pub struct RegisteredProjectOutput {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct ProjectActivationOutput {
+    pub client_id: String,
+    pub project: RegisteredProjectOutput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LegacyProjectRegisterOutput {
+    pub project: LegacyRegisteredProjectOutput,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LegacyRegisteredProjectOutput {
+    pub id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct LoginOutput {
     pub server_url: String,
     pub runner_config: String,

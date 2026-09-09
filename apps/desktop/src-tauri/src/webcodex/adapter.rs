@@ -1,6 +1,7 @@
-use super::cli::{run_json, run_json_until, ResolvedBinaries};
+use super::cli::{run_json, run_json_until, run_project_activation_json, ResolvedBinaries};
 use super::models::{
-    LoginOutput, OpsProjectsOutput, PairingCreateOutput, RunnerStatusOutput, ServerStatusOutput,
+    LegacyProjectRegisterOutput, LoginOutput, OpsProjectsOutput, PairingCreateOutput,
+    ProjectActivationOutput, RunnerStatusOutput, ServerStatusOutput,
 };
 use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
@@ -19,6 +20,12 @@ pub struct ProjectRuntimeIdentity {
     pub runner_config: PathBuf,
     pub user_token_file: PathBuf,
     pub server_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerConnectionObservation {
+    pub client_id: String,
+    pub online: bool,
 }
 
 pub struct WebCodexAdapter {
@@ -353,9 +360,10 @@ impl WebCodexAdapter {
             "--dir".into(),
             connections_dir.to_string_lossy().to_string(),
             // Desktop owns this connection directory and may intentionally
-            // re-enroll the same device when its selected/default project
-            // changes. The one-shot pairing code remains the authority for the
-            // replacement; --overwrite never broadens Server authority.
+            // re-enroll the same device only when its saved connection identity
+            // is no longer reusable. Project changes alone are not enrollment
+            // replacement. The one-shot pairing code remains the authority for
+            // a true replacement; --overwrite never broadens Server authority.
             "--overwrite".into(),
             "--allowed-root".into(),
             project.allowed_root.clone(),
@@ -393,12 +401,28 @@ impl WebCodexAdapter {
             .await
     }
 
-    async fn runner_ready_with_deadline(
+    pub async fn observe_runner_connection(
         &mut self,
         identity: &ProjectRuntimeIdentity,
+        expected_client_id: Option<&str>,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<RunnerConnectionObservation> {
+        self.observe_runner_connection_with_deadline(
+            identity,
+            expected_client_id,
+            cancellation,
+            None,
+        )
+        .await
+    }
+
+    async fn observe_runner_connection_with_deadline(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        expected_client_id: Option<&str>,
         cancellation: &CancellationContext,
         deadline: Option<Deadline>,
-    ) -> DesktopResult<bool> {
+    ) -> DesktopResult<RunnerConnectionObservation> {
         let webcodex = match deadline {
             Some(deadline) => self
                 .ensure_binaries_until(cancellation, deadline)
@@ -430,6 +454,16 @@ impl WebCodexAdapter {
         {
             return Err(invalid_contract("runner status"));
         }
+        if !same_existing_file(Path::new(&output.config.path), &identity.runner_config)
+            || !same_server(&output.config.server_url, &identity.server_url)
+            || expected_client_id.is_some_and(|expected| expected != output.config.client_id)
+        {
+            return Err(DesktopError::new(
+                "runner_identity_mismatch",
+                "The saved Desktop connection no longer matches the configured Runner identity",
+                "Refresh this Runner connection before activating another project.",
+            ));
+        }
         let runtime = output
             .runtime
             .unwrap_or(super::models::RunnerRuntimeOutput {
@@ -437,9 +471,91 @@ impl WebCodexAdapter {
                 reachable: None,
                 client_online: None,
             });
-        Ok(runtime.checked
-            && runtime.reachable == Some(true)
-            && runtime.client_online == Some(true))
+        Ok(RunnerConnectionObservation {
+            client_id: output.config.client_id,
+            online: runtime.checked
+                && runtime.reachable == Some(true)
+                && runtime.client_online == Some(true),
+        })
+    }
+
+    async fn runner_ready_with_deadline(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        cancellation: &CancellationContext,
+        deadline: Option<Deadline>,
+    ) -> DesktopResult<bool> {
+        self.observe_runner_connection_with_deadline(identity, None, cancellation, deadline)
+            .await
+            .map(|observation| observation.online)
+    }
+
+    pub async fn activate_project(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        expected_client_id: &str,
+        project: &ProjectSelection,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<ProjectRuntimeIdentity> {
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
+        let args = [
+            "project".into(),
+            "activate".into(),
+            "--config".into(),
+            identity.runner_config.to_string_lossy().to_string(),
+            "--user-token-file".into(),
+            identity.user_token_file.to_string_lossy().to_string(),
+            project.path.clone(),
+            "--json".into(),
+        ];
+        let output: ProjectActivationOutput =
+            run_project_activation_json(&webcodex, &args, cancellation).await?;
+        if output.client_id != expected_client_id
+            || output.project.id.trim().is_empty()
+            || output.project.runtime_project.trim().is_empty()
+            || !same_path(&output.project.path, &project.path)
+        {
+            return Err(invalid_contract("project activation"));
+        }
+        Ok(ProjectRuntimeIdentity {
+            project_id: output.project.id,
+            runtime_project_id: output.project.runtime_project,
+            project_path: output.project.path,
+            runner_config: identity.runner_config.clone(),
+            user_token_file: identity.user_token_file.clone(),
+            server_url: identity.server_url.clone(),
+        })
+    }
+
+    pub async fn legacy_register_project(
+        &mut self,
+        identity: &ProjectRuntimeIdentity,
+        client_id: &str,
+        project: &ProjectSelection,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<ProjectRuntimeIdentity> {
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
+        let args = [
+            "project".into(),
+            "register".into(),
+            "--config".into(),
+            identity.runner_config.to_string_lossy().to_string(),
+            project.path.clone(),
+            "--json".into(),
+        ];
+        let output: LegacyProjectRegisterOutput =
+            run_json(&webcodex, &args, None, false, cancellation).await?;
+        if output.project.id.trim().is_empty() || !same_path(&output.project.path, &project.path) {
+            return Err(invalid_contract("legacy project registration"));
+        }
+        Ok(ProjectRuntimeIdentity {
+            runtime_project_id: format!("agent:{client_id}:{}", output.project.id),
+            project_id: output.project.id,
+            project_path: output.project.path,
+            runner_config: identity.runner_config.clone(),
+            user_token_file: identity.user_token_file.clone(),
+            server_url: identity.server_url.clone(),
+        })
     }
 
     pub async fn project_ready(
@@ -651,6 +767,19 @@ fn remove_tunnel_credentials(command: &mut Command) {
         "OPENAI_API_KEY",
     ] {
         command.env_remove(name);
+    }
+}
+
+fn same_server(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/')
+        .eq_ignore_ascii_case(right.trim_end_matches('/'))
+}
+
+fn same_existing_file(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ if cfg!(windows) => display_path(left).eq_ignore_ascii_case(&display_path(right)),
+        _ => left == right,
     }
 }
 

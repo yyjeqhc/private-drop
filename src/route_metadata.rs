@@ -174,10 +174,13 @@ pub(crate) enum RouteId {
     JobsStop,
     JobsList,
     JobsTail,
+    RunnerConfigCheck,
+    RunnerConfigReload,
     ProjectsList,
     ProjectsRegister,
     ProjectsCreate,
     ProjectsUnregister,
+    ProjectsResolveOrRegister,
     ProjectsReadFile,
     ProjectsGitStatus,
     ProjectsGitDiff,
@@ -456,9 +459,39 @@ mod tests {
             AdminWebStylesCss as usize + 1,
             "canonical iteration must cover every RouteId exactly once",
         );
-        assert_eq!(iter_routes().count(), 139, "canonical route closure");
+        assert_eq!(iter_routes().count(), 142, "canonical route closure");
         assert_eq!(lookup("GET", "/mcp").unwrap().id, McpGet);
         assert_eq!(lookup("POST", "/mcp").unwrap().id, McpPost);
+    }
+
+    #[test]
+    fn desktop_project_activation_operator_routes_stay_hidden_and_narrowly_scoped() {
+        let check = spec(RouteId::RunnerConfigCheck);
+        assert_eq!(
+            check.scope_policy,
+            webcodex_core::authority::OAuthRouteScopePolicy::Require(
+                webcodex_core::authority::SCOPE_RUNTIME_READ,
+            )
+        );
+        assert_eq!(check.openapi_projection, RouteOpenApiProjection::Hidden);
+
+        let reload = spec(RouteId::RunnerConfigReload);
+        assert_eq!(
+            reload.scope_policy,
+            webcodex_core::authority::OAuthRouteScopePolicy::Require(
+                webcodex_core::authority::SCOPE_RUNNER_MANAGE,
+            )
+        );
+        assert_eq!(reload.openapi_projection, RouteOpenApiProjection::Hidden);
+
+        let activate = spec(RouteId::ProjectsResolveOrRegister);
+        assert_eq!(
+            activate.scope_policy,
+            webcodex_core::authority::OAuthRouteScopePolicy::Require(
+                webcodex_core::authority::SCOPE_PROJECT_WRITE,
+            )
+        );
+        assert_eq!(activate.openapi_projection, RouteOpenApiProjection::Hidden);
     }
 
     #[test]
@@ -554,7 +587,7 @@ mod tests {
             );
             references += 1;
         }
-        assert_eq!(references, 139, "A2 production leaf RouteId closure");
+        assert_eq!(references, 142, "A2 production leaf RouteId closure");
     }
 
     #[test]

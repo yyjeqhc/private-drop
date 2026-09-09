@@ -64,6 +64,13 @@ struct UnregisterProjectRequest {
     expected_revision: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolveOrRegisterProjectRequest {
+    client_id: String,
+    path: String,
+}
+
 #[handler]
 pub async fn projects_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/list", "listProjects");
@@ -180,6 +187,35 @@ pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Res
         )
         .await;
     render_result(res, &audit, "create_project", None, result);
+}
+
+/// `POST /api/projects/resolve-or-register` — hidden operator path bootstrap.
+/// The request carries only an exact Runner identity and path, then delegates to
+/// the same ModelHidden ToolRuntime convergence primitive used by workflow
+/// bootstrap. The Server never writes Runner project TOML here.
+#[handler]
+pub async fn projects_resolve_or_register(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/resolve-or-register",
+        "resolveOrRegisterProject",
+    );
+    let Some(runtime) = require_runtime(depot, res) else {
+        return;
+    };
+    let Some(body) = parse_json_body::<ResolveOrRegisterProjectRequest>(req, res).await else {
+        return;
+    };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .resolve_or_register_project(body.client_id, body.path, auth.as_ref())
+        .await;
+    render_result(res, &audit, "resolve_or_register_project", None, result);
 }
 
 /// `POST /api/projects/unregister` — narrow ordinary authenticated project
