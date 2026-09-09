@@ -374,7 +374,10 @@ fn classify_transition_and_mark_overlap(
         }
         return (WindowLoopTransition::Overlap, true);
     }
-    let Some(previous) = inner.previous_meaningful.get(key) else {
+    // Consume the predecessor at arrival. Only this request's eligible
+    // completion may establish the next anchor; cancellation, streaming,
+    // timeout, or active-record eviction must not leave an older call behind.
+    let Some(previous) = inner.previous_meaningful.remove(key) else {
         return (WindowLoopTransition::Unavailable, false);
     };
     (
@@ -748,6 +751,29 @@ mod tests {
             1_700,
         );
         assert_eq!(clean_followup.transition().gap_ms(), Some(150));
+    }
+
+    #[test]
+    fn interrupted_meaningful_call_consumes_existing_anchor() {
+        for complete_ineligible in [false, true] {
+            let registry = WindowActivityRegistry::default();
+            let window = window("interrupted");
+            let principal = ("username", "alice");
+            meaningful_start(&registry, &window, "first", principal, 1_000)
+                .complete(completion(1_000, 1_100), true);
+            let interrupted = meaningful_start(&registry, &window, "interrupted", principal, 1_200);
+            assert_eq!(interrupted.transition().gap_ms(), Some(100));
+            if complete_ineligible {
+                interrupted.complete(completion(1_200, 1_400), false);
+            } else {
+                drop(interrupted);
+            }
+            let next = meaningful_start(&registry, &window, "next", principal, 1_500);
+            assert_eq!(next.transition(), WindowLoopTransition::Unavailable);
+            next.complete(completion(1_500, 1_600), true);
+            let recovered = meaningful_start(&registry, &window, "recovered", principal, 1_700);
+            assert_eq!(recovered.transition().gap_ms(), Some(100));
+        }
     }
 
     #[test]

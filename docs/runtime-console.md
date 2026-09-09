@@ -39,6 +39,9 @@ Status/discovery calls do not break the meaningful sequence. Overlapping calls
 are classified as overlap rather than producing a negative serial gap. Streaming
 handoff is not stream completion, and a Server restart loses process-local prior
 completion state, so both cases leave ordinary next-call timing unavailable.
+A meaningful request consumes its predecessor at arrival; cancellation and hard
+timeout also break continuity until a later eligible response establishes a new
+anchor.
 Legacy ActionAudit `window_ended_at_ms` remains the audit-record boundary and is
 not used as the HTTP response-handoff performance timestamp.
 

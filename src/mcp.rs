@@ -675,7 +675,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 &runtime,
                 audit.as_ref().map(|(audit, _, _)| audit),
                 audit_event,
-                None,
+                timeout_model_ergonomics.as_ref(),
                 &mut live_window_request,
                 timing,
                 false,

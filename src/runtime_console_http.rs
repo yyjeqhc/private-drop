@@ -1645,8 +1645,9 @@ fn project_window_loop_timings(
             continue;
         };
         let key = (principal_kind.clone(), principal_id.clone());
+        let previous_index = previous_meaningful.remove(&key);
         if event.window_transition_kind.as_deref() == Some("serial") {
-            if let Some(previous_index) = previous_meaningful.get(&key).copied() {
+            if let Some(previous_index) = previous_index {
                 let previous = &events[previous_index];
                 // Do not bridge over an event whose Project is hidden/revoked:
                 // exposing a derived timestamp across that boundary would turn
@@ -4719,6 +4720,40 @@ mod tests {
             .find(|event| event.service_ms == Some(50))
             .expect("second canonical-timing event");
         assert_eq!(second.window_transition_kind.as_deref(), Some("serial"));
+    }
+
+    #[test]
+    fn window_timing_does_not_bridge_an_ineligible_meaningful_event() {
+        let (_tmp, db, _runtime) = test_runtime_with_window_db();
+        let auth = crate::auth::shared_key_context("interrupted-timing");
+        let window_key = "a".repeat(64);
+        for (start, transition) in [(1_000, "unavailable"), (1_500, "serial"), (2_000, "serial")] {
+            record_timed_window_event(
+                &db,
+                &auth,
+                &window_key,
+                None,
+                start,
+                start + 100,
+                start + 100,
+                transition,
+            );
+        }
+        let mut events = db
+            .list_window_activity_events(&window_key, None, 20)
+            .unwrap();
+        assert_eq!(events.len(), 3);
+        // A retained pre-fix sequence can still label the third request serial.
+        // Neither a visible nor a revoked stream may be skipped to pair it with A.
+        events[1].window_continuity_eligible = Some(false);
+        events[1].response_streaming = Some(true);
+        for visible in [[true, true, true], [true, false, true]] {
+            let timings = project_window_loop_timings(&events, &visible);
+            assert_eq!(timings[2].next_call_gap_ms, visible[1].then_some(400));
+            assert_eq!(timings[2].cycle_ms, visible[1].then_some(500));
+            assert!(timings[1].next_call_gap_ms.is_none());
+            assert!(timings[1].service_ms.is_none());
+        }
     }
 
     #[tokio::test]
