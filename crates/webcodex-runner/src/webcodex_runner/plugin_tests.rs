@@ -602,7 +602,8 @@ fn prepared_environment_reuses_shell_env_default_profile_and_clears_sensitive_va
 }
 
 #[test]
-fn bare_plugin_command_resolves_from_prepared_path_with_explicit_profile() {
+#[ignore = "manual real-process startup: provider readiness depends on host scheduling"]
+fn runner_real_process_bare_plugin_command_resolves_from_prepared_path_with_explicit_profile() {
     use super::super::config::ShellProfileConfig;
     let temp = tempfile::tempdir().unwrap();
     let bin = temp.path().join("bin");

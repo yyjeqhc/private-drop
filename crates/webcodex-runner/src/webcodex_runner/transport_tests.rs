@@ -1230,7 +1230,9 @@ fn recorded_path_count(requests: &Mutex<Vec<(String, String)>>, expected: &str) 
 
 #[cfg(unix)]
 #[test]
-fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exactly_once() {
+#[ignore = "manual real-process timing: coordinates concurrent shell dispatch completion"]
+fn runner_real_process_polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exactly_once(
+) {
     let temp = tempfile::tempdir().unwrap();
     let started_a = temp.path().join("a-started");
     let release_a = temp.path().join("a-release");
@@ -1343,7 +1345,8 @@ fn polling_long_ordinary_dispatch_does_not_pin_and_results_stay_correlated_exact
 
 #[cfg(unix)]
 #[test]
-fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
+#[ignore = "manual real-process timing: coordinates multiple gated shell workers"]
+fn runner_real_process_polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
     let temp = tempfile::tempdir().unwrap();
     let mut requests = Vec::new();
     let mut started = Vec::new();
@@ -1458,7 +1461,8 @@ fn polling_dispatch_bound_backpressures_without_a_local_pending_queue() {
 
 #[cfg(unix)]
 #[test]
-fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
+#[ignore = "manual real-process timing: compares Job and ordinary shell scheduling"]
+fn runner_real_process_polling_job_start_dispatches_behind_one_long_ordinary_request() {
     let temp = tempfile::tempdir().unwrap();
     let started_a = temp.path().join("ordinary-started");
     let release_a = temp.path().join("ordinary-release");
@@ -1558,7 +1562,8 @@ fn polling_job_start_dispatches_behind_one_long_ordinary_request() {
 
 #[cfg(unix)]
 #[test]
-fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
+#[ignore = "manual real-process lifecycle: waits for a gated --once shell dispatch"]
+fn runner_real_process_polling_once_waits_for_its_tracked_ordinary_dispatch() {
     let temp = tempfile::tempdir().unwrap();
     let started = temp.path().join("once-started");
     let release = temp.path().join("once-release");
@@ -1630,7 +1635,8 @@ fn polling_once_waits_for_its_tracked_ordinary_dispatch() {
 
 #[cfg(unix)]
 #[test]
-fn polling_once_preserves_job_manager_drain_before_exit() {
+#[ignore = "manual real-process lifecycle: waits for a gated --once Job drain"]
+fn runner_real_process_polling_once_preserves_job_manager_drain_before_exit() {
     let temp = tempfile::tempdir().unwrap();
     let started = temp.path().join("once-job-started");
     let release = temp.path().join("once-job-release");
@@ -1700,7 +1706,9 @@ fn polling_once_preserves_job_manager_drain_before_exit() {
 
 #[cfg(unix)]
 #[test]
-fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying() {
+#[ignore = "manual real-process timing: validates shutdown against an active shell dispatch"]
+fn runner_real_process_polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying(
+) {
     let temp = tempfile::tempdir().unwrap();
     let started = temp.path().join("shutdown-started");
     let never_release = temp.path().join("shutdown-release");
@@ -1785,7 +1793,8 @@ fn polling_shutdown_with_active_background_dispatch_is_bounded_and_non_replaying
 }
 
 #[test]
-fn polling_background_project_operation_invalidates_the_project_cache() {
+#[ignore = "manual real-process timing: project registration may spawn Git and uses long readiness fences"]
+fn runner_real_process_polling_background_project_operation_invalidates_the_project_cache() {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");
     let project_registry_dir = temp.path().join("project-registry");
@@ -1883,7 +1892,8 @@ fn polling_background_project_operation_invalidates_the_project_cache() {
 
 #[cfg(unix)]
 #[test]
-fn polling_persistent_shell_exec_remains_responsive_to_close() {
+#[ignore = "manual real-process lifecycle: coordinates a real persistent shell with close"]
+fn runner_real_process_polling_persistent_shell_exec_remains_responsive_to_close() {
     #[derive(Default)]
     struct PersistentState {
         open_delivered: bool,

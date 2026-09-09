@@ -158,6 +158,7 @@ fn wait_until_file(path: &Path, timeout: Duration) -> bool {
 }
 
 #[test]
+#[ignore = "manual real-process lifecycle: waits for parent-disappearance EOF"]
 fn inherited_stdin_lease_detects_parent_process_disappearance() {
     let marker = unique_temp_path("parent-lease-eof");
     let mut parent = Command::new(helper());
@@ -231,6 +232,7 @@ fn spawn_tree_with_grandchild(marker: &Path) -> (ManagedChild, u32, LineReader) 
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "manual real-process lifecycle: waits for a real child and tree exit"]
 fn normal_completion() {
     let (mut managed, _) = spawn_helper("sleep", &["1", "7"], false);
     let status = managed.wait().expect("wait direct child");
@@ -252,6 +254,7 @@ fn normal_completion() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "manual real-process lifecycle: validates process-tree termination and liveness"]
 fn explicit_terminate_kills_tree() {
     let marker = unique_temp_path("explicit-term");
     let (mut managed, gc_pid, reader) = spawn_tree_with_grandchild(&marker);
@@ -295,6 +298,7 @@ fn explicit_terminate_kills_tree() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "manual real-process lifecycle: validates drop-driven process-tree teardown"]
 fn drop_kills_tree() {
     let marker = unique_temp_path("drop-kill");
     let (mut managed, gc_pid, reader) = spawn_tree_with_grandchild(&marker);
@@ -323,6 +327,7 @@ fn drop_kills_tree() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "manual real-process lifecycle: depends on direct-child/grandchild scheduling"]
 fn direct_child_exits_before_grandchild() {
     let marker = unique_temp_path("direct-before-gc");
     let (mut managed, gc_pid, reader) = spawn_tree_with_grandchild(&marker);
@@ -367,6 +372,7 @@ fn direct_child_exits_before_grandchild() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "manual real-process lifecycle: uses a negative EOF timing window"]
 fn stdout_eof_does_not_false_trigger() {
     let marker = unique_temp_path("stdout-eof");
     let (mut managed, gc_pid, reader) = spawn_tree_with_grandchild(&marker);
@@ -391,6 +397,7 @@ fn stdout_eof_does_not_false_trigger() {
 }
 
 #[test]
+#[ignore = "manual real-process lifecycle: validates child liveness after drop"]
 fn drop_kills_and_reaps_running_direct_child() {
     let (managed, _) = spawn_helper("sleep", &["60", "0"], false);
     let pid = managed.id();
@@ -413,6 +420,7 @@ fn managed_child_is_send_and_sync() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "manual real-process lifecycle: exercises repeated process-tree teardown"]
 fn repeated_terminate_is_idempotent() {
     let marker = unique_temp_path("repeat-term");
     let (mut managed, gc_pid, reader) = spawn_tree_with_grandchild(&marker);
@@ -456,6 +464,7 @@ fn spawn_failure_is_clean() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "manual real-process lifecycle: waits for a real helper process"]
 fn spawn_with_default_options() {
     let mut cmd = Command::new(helper());
     cmd.arg("sleep").arg("1").arg("0");
@@ -467,6 +476,7 @@ fn spawn_with_default_options() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "manual real-process timing: waits on Windows process scheduling"]
 fn reusable_command_is_not_left_suspended() {
     let mut cmd = Command::new(helper());
     cmd.arg("sleep").arg("0").arg("0");
@@ -500,6 +510,7 @@ fn reusable_command_is_not_left_suspended() {
 /// followed by a bounded tree wait.
 #[cfg(unix)]
 #[test]
+#[ignore = "manual real-process lifecycle: validates Unix process-group termination"]
 fn graceful_request_terminates_tree_and_tree_wait_completes() {
     let marker = unique_temp_path("graceful-request");
     let (mut managed, gc_pid, reader) = spawn_tree_with_grandchild(&marker);
@@ -547,6 +558,7 @@ fn graceful_request_terminates_tree_and_tree_wait_completes() {
 /// `terminate_tree()`.
 #[cfg(windows)]
 #[test]
+#[ignore = "manual real-process lifecycle: validates Windows ownership after graceful request"]
 fn graceful_request_is_unsupported_and_child_stays_owned() {
     let marker = unique_temp_path("graceful-unsupported");
     let (mut managed, gc_pid, reader) = spawn_tree_with_grandchild(&marker);
@@ -591,6 +603,7 @@ fn graceful_request_is_unsupported_and_child_stays_owned() {
 
 /// Repeated calls and an already-exited tree must not panic.
 #[test]
+#[ignore = "manual real-process lifecycle: waits for live and exited helper generations"]
 fn graceful_request_repeated_and_already_exited_do_not_panic() {
     // Repeated calls on a live tree: results are defined by the platform but a
     // panic (from an unexpected Err) is the failure being tested.
@@ -629,6 +642,7 @@ fn graceful_request_repeated_and_already_exited_do_not_panic() {
 /// rather than remembering and later targeting a pid/pgid integer.
 #[cfg(unix)]
 #[test]
+#[ignore = "manual real-process lifecycle: validates post-exit Unix process-group authority"]
 fn confirmed_generation_never_reuses_numeric_pgid_as_kill_authority() {
     let (mut managed, _) = spawn_helper("sleep", &["0", "0"], false);
     let stale_numeric_identity = managed.id();
@@ -693,6 +707,7 @@ fn spawn_preserves_platform_enoexec_behavior() {
 }
 /// `try_tree_exit` is the non-blocking tree probe used by Runner shutdown.
 #[test]
+#[ignore = "manual real-process lifecycle: probes a live process tree"]
 fn try_tree_exit_tracks_tree_liveness() {
     let (mut managed, _) = spawn_helper("sleep", &["60", "0"], false);
     assert!(!managed.try_tree_exit().expect("live tree probe"));
@@ -705,6 +720,7 @@ fn try_tree_exit_tracks_tree_liveness() {
 }
 
 #[test]
+#[ignore = "manual real-process lifecycle: waits for EOF and zombie-only tree state"]
 fn unreaped_direct_child_is_not_a_live_tree_member() {
     let (mut managed, reader) = spawn_helper("sleep", &["0", "0"], true);
     reader

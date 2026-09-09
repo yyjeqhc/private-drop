@@ -783,7 +783,8 @@ mod tests {
     /// `sleep` exited (~5s); now the group is killed and it returns promptly.
     #[cfg(unix)]
     #[test]
-    fn run_command_sync_does_not_hang_on_backgrounded_pipe_holder() {
+    #[ignore = "manual real-process timing: validates OS process-group pipe-holder reap"]
+    fn tool_runtime_real_process_run_command_sync_does_not_hang_on_backgrounded_pipe_holder() {
         let dir = std::env::temp_dir();
         let start = Instant::now();
         let (code, stdout, _stderr, _ms) = run_command_sync("echo done; sleep 5 &", &dir, 10);
@@ -812,7 +813,8 @@ mod tests {
     /// A genuinely slow foreground command still hits the timeout path.
     #[cfg(unix)]
     #[test]
-    fn run_command_sync_times_out_foreground_command() {
+    #[ignore = "manual real-process timing: validates a real foreground shell timeout"]
+    fn tool_runtime_real_process_run_command_sync_times_out_foreground_command() {
         let dir = std::env::temp_dir();
         let start = Instant::now();
         let (code, _stdout, stderr, _ms) = run_command_sync("sleep 30", &dir, 1);

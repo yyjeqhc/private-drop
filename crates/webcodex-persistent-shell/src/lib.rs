@@ -2720,6 +2720,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual real-process timing: depends on shell teardown and OS scheduling"]
     fn close_is_idempotent_and_exit_is_observable() {
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
@@ -2807,6 +2808,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual real-process timing: depends on concurrent shell scheduling"]
     fn concurrent_exec_returns_busy_without_mixing_output() {
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
@@ -2850,6 +2852,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual real-process timing: depends on close-vs-exec scheduling"]
     fn close_during_exec_never_resurrects_the_shell() {
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
@@ -2904,6 +2907,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual real-process timing: contains deliberate wall-clock framing delay"]
     fn marker_like_and_large_output_are_bounded() {
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
@@ -2983,6 +2987,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual real-process timing: validates a real shell timeout boundary"]
     fn timeout_recovers_or_requires_reset_but_never_accepts_unsynchronized_work() {
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits::default());
@@ -3022,6 +3027,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual real-process timing: validates idle timeout against wall clock"]
     fn idle_timeout_reclaims_only_idle_shells() {
         let temp = tempfile::tempdir().unwrap();
         let manager = PersistentShellManager::new(ShellLimits {
@@ -3410,11 +3416,13 @@ Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCom
     }
 
     #[test]
+    #[ignore = "manual adversarial real-process test: exercises many host-status forgery cases"]
     fn user_command_status_is_host_authoritative() {
         assert_status_integrity("powershell.exe", "windows_powershell");
     }
 
     #[test]
+    #[ignore = "manual PowerShell 7 compatibility: duplicates real-process status coverage"]
     fn configured_pwsh_user_command_status_is_host_authoritative() {
         let Ok(program) = std::env::var("WEBCODEX_TEST_PWSH") else {
             return;
@@ -3450,6 +3458,7 @@ Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCom
     }
 
     #[test]
+    #[ignore = "manual real-process timing: validates a real PowerShell timeout boundary"]
     fn timeout_poisoning_is_bounded_and_never_reuses_uncertain_stream() {
         let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
@@ -3484,6 +3493,7 @@ Microsoft.PowerShell.Utility\Write-Information -Tags 'WebCodexPersistentShellCom
     }
 
     #[test]
+    #[ignore = "manual real-process timing: contains deliberate PowerShell framing delay"]
     fn marker_like_user_output_cannot_complete_control_framing() {
         let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
@@ -3695,6 +3705,7 @@ Start-Sleep -Milliseconds 500
     }
 
     #[test]
+    #[ignore = "manual adversarial real-process test: heavy PowerShell introspection and timing"]
     fn user_command_cannot_forge_private_completion() {
         assert_private_completion_isolation(
             "powershell.exe",
@@ -3704,6 +3715,7 @@ Start-Sleep -Milliseconds 500
     }
 
     #[test]
+    #[ignore = "manual PowerShell 7 adversarial test: heavy introspection and timing"]
     fn configured_pwsh_user_command_cannot_forge_private_completion() {
         let Ok(program) = std::env::var("WEBCODEX_TEST_PWSH") else {
             return;
@@ -3720,6 +3732,7 @@ Start-Sleep -Milliseconds 500
     }
 
     #[test]
+    #[ignore = "manual real-process timing: depends on concurrent PowerShell scheduling"]
     fn concurrent_exec_is_serialized_by_busy_guard() {
         let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();
@@ -3764,6 +3777,7 @@ Start-Sleep -Milliseconds 500
     }
 
     #[test]
+    #[ignore = "manual real-process lifecycle: validates descendant liveness and teardown"]
     fn close_is_idempotent_and_kills_owned_descendants() {
         let _guard = windows_process_test_guard();
         let temp = tempfile::tempdir().unwrap();

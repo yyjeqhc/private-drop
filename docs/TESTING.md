@@ -20,7 +20,9 @@ waits, and the cost of each test lane.
 | fast unit | Pure parsing, validation, helpers, local state machines, small fixtures. | No network, no global env mutation, no long sleeps. | `cargo test -p webcodex --lib tool_call` |
 | contract/schema | Keep metadata, registry, MCP `tools/list`, OpenAPI, and runtime tool names synchronized. | No external network; in-process services are preferred. | `cargo test -p webcodex --lib metadata`; `cargo test -p webcodex --lib mcp`; `cargo test -p webcodex --lib openapi` |
 | local integration | Exercise HTTP handlers, runtime dispatch, sessions, local agent registry, temp dirs, loopback listeners, and database fixtures. | Loopback only, isolated temp dirs, bounded waits, no shared mutable state without a lock. | `cargo test -p webcodex --lib runtime_http -- --nocapture`; `cargo test -p webcodex --lib session -- --nocapture` |
-| Runner real-process | Process-tree ownership, real shell timeout/stop, validation/Git `ManagedChild`, and JobManager descendant cleanup. These tests are ignored by the ordinary Runner suite and share the `runner_real_process_` name prefix. | Real local child processes only; no external network. Keep concurrency bounded because the assertions intentionally exercise OS scheduling and process teardown. | `cargo test --locked -p webcodex-runner runner_real_process -- --ignored --test-threads=2` |
+| Runner real-process | Process-tree ownership, real shell timeout/stop, polling dispatch timing, Plugin startup, validation/Git `ManagedChild`, and JobManager descendant cleanup. These tests are ignored by the ordinary Runner suite and share the `runner_real_process_` name prefix. | Real local child processes only; no external network. Run serially because the assertions intentionally exercise OS scheduling and process teardown. | `cargo test --locked -p webcodex-runner runner_real_process -- --ignored --test-threads=1` |
+| Process lifecycle real-process | `ManagedChild` ownership, graceful/forced termination, descendants, EOF, liveness, and reaping. Most lifecycle tests in the integration target are ignored; pure type/spawn-error smoke remains ordinary. | Real local helper processes and OS liveness probes. | `cargo test --locked -p webcodex-process --test managed_child -- --ignored --test-threads=1` |
+| Persistent-shell timing | Timeout, concurrent busy-state, close-vs-exec, idle expiry, descendant teardown, and heavy adversarial PowerShell timing/status coverage. Fast state/error/exit smoke remains ordinary. | Real shell processes; serial execution only. | `cargo test --locked -p webcodex-persistent-shell -- --ignored --test-threads=1` |
 | Desktop Windows real-process | Windows Desktop stdin-EOF shutdown and bounded-command process-tree reclamation. These tests are ignored by the ordinary Desktop suite and share the `desktop_real_process_windows_` name prefix. | Real local child processes only; no external network. Run serially so PowerShell startup and process teardown do not compete with the ordinary Desktop libtest pool. | `cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml desktop_real_process_windows_ -- --ignored --test-threads=1` |
 | slow/manual ignored | Valuable coverage that is local but slow, serial, large-input, or global-state-sensitive. | Explicit operator opt-in; often `--ignored` and `--test-threads=1`. | Run the specific ignored test/filter documented by its subsystem. |
 | e2e/deployment smoke | Prove that binaries, local services, GPT Actions schema, MCP, artifact transfer, and an agent can work together. | Temporary local services and loopback ports; real deployment only when explicitly requested. | `bash scripts/e2e_zero_config_ws.sh`; `bash scripts/smoke_deployment.sh`; `bash scripts/smoke_artifact_transfer.sh` |
@@ -31,6 +33,23 @@ waits, and the cost of each test lane.
 | real-process job reconciliation harness | Boot a real server plus a WebSocket runner that advertises `job_state_reconciliation`. Scenario A keeps a raw async Job running across a SERVER-only restart and asserts the SAME runner instance, original `job_id`, preserved ownership/project/session, non-regressing sequence/log cursors, `recovered_after_server_restart`, original-process stop, and one side-effect set. Scenario B lets a Job complete while the Server is offline and reconciles the terminal result without duplicate logs or execution. Scenario C forces `run_process` past its synchronous grace window, then proves the handed-off structured Job survives a Server restart and an old Server-epoch observation token refreshes immediately for the same `job_id`. Scenario D uses a delayed Cargo fixture to force a real `cargo_check` validation handoff past its sync window, then proves the same restart/token-refresh/stop contract with the validation command started exactly once. Ordinary Runner-owned Jobs keep the Runner process alive for these scenarios; `run_detached_process` restart survival is a separate supervisor-ownership contract covered by its focused Runner suites and production dogfood. | Local processes, temp dirs/ports/tokens, and a temp project; no production services or QUIC certs. Scenario D intentionally takes roughly the validation sync window plus restart time. | `bash scripts/e2e_job_reconciliation_ws.sh` |
 | real-process job recovery failure/non-reconciliation harness | Cover the failure and non-reconciliation paths the happy-path reconciliation harness omits, using `WEBCODEX_JOB_RECOVERY_GRACE_SECS=10` (clamped, above the 5s floor) so the deadline is bounded without waiting the 120s default. Scenario C: kill the runner only (server stays up), let the job enter `recovering`, and assert the non-request-triggered recovery-timeout sweep transitions it to `lost` with `runner_recovery_deadline_exceeded`, `ended_at` set once, one list record, stop-on-lost stable, and the command never re-executes. Scenario D: instance B replaces instance A (same client_id, new `agent_instance_id`); A's job becomes `lost` with `runner_instance_replaced`, B starts its own new job, A's late update is rejected, first `ended_at`/reason preserved. Scenario E: a generation-2 Runner registered with `WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1` (no capability, no inventory) dispatches a job and, on disconnect, deterministically fences it to `lost` with `runner_disconnected_without_reconciliation` (never `recovering`); after a server restart the lost job has no durable record and a same-client new no-reconciliation instance cannot revive it. Scenario F: a long job across three server restarts keeps the same `job_id`, runs the command once, keeps `last_update_seq`/log cursors non-regressing and markers non-duplicating, and reaches a terminal `stopped` that survives a third restart with `ended_at` unchanged by terminal inventory replay. | Local processes, temp dirs/ports/tokens, and a temp project; no production services or QUIC certs. | `bash scripts/e2e_job_recovery_failures_ws.sh` |
 | security auth matrix | Cover OAuth, scope policy, shared-key behavior, token classes, read-only session guards, and denied mutations. | No external identity provider by default; use local fixtures and synthetic tokens. | `cargo test -p webcodex --lib oauth -- --nocapture`; `cargo test -p webcodex --lib scope -- --nocapture`; `cargo test -p webcodex --lib metadata -- --nocapture` |
+
+## Explicit High-Cost Local Evidence
+
+Ordinary `cargo test` and ordinary CI intentionally skip ignored timing/real-process
+coverage. Run the smallest relevant group locally when changing one of these boundaries:
+
+```bash
+cargo test --locked -p webcodex-runner runner_real_process -- --ignored --test-threads=1
+cargo test --locked -p webcodex-process --test managed_child -- --ignored --test-threads=1
+cargo test --locked -p webcodex-persistent-shell -- --ignored --test-threads=1
+cargo test --locked -p webcodex --lib tool_runtime_real_process_ -- --ignored --test-threads=1
+cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml desktop_real_process_windows_ -- --ignored --test-threads=1
+```
+
+These commands are evidence for the boundary they exercise, not a routine pre-commit
+check. Prefer one exact ignored test while iterating, then the relevant group when the
+change is ready for review.
 
 ## CI Mapping
 
@@ -114,9 +133,11 @@ The lanes above define test semantics; workflows decide when to run them.
   prefixes and empty or whitespace Bearer values must still be rejected.
 - Sleep, timeout, and polling tests must be bounded. Positive readiness uses one
   absolute deadline created once for the whole wait and never reset after partial
-  progress; prefer channels, notifications, or direct state inspection. Short
-  negative probes, semantic grace windows, and exact count/protocol iterations
-  may remain when they are the contract.
+  progress; prefer channels, notifications, or direct state inspection. A test whose
+  correctness materially depends on real process startup, scheduler timing, a long
+  sleep, or a wall-clock timeout belongs in ignored explicit evidence rather than the
+  default suite. Short deterministic negative probes, semantic grace windows, and
+  exact count/protocol iterations may remain when they are the contract.
   Async Runner shutdown waits are notification-driven by `ShutdownCoordinator`;
   tests should signal that state directly rather than sleep for a presumed polling interval.
 - Ignored tests are not dead tests. Each ignored test should have a reason and a
