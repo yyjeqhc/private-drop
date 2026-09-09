@@ -32,6 +32,8 @@ The Control-owned SQLite database remains the standalone authoritative transacti
 
 This reuses the existing durable database lifecycle instead of adding another JSON truth or process-local registry. Generic `Database::open` is storage-only: it may run schema migration and owner-independent housekeeping, but it never declares a Wake worker dead or performs takeover recovery. The standalone Control Server holds an exclusive instance guard bound to its exact database state for its full lifetime; crash/takeover Wake reconciliation runs only after a successor acquires that ownership proof. This is deliberately standalone coordination, not a distributed lease or cluster protocol. The schema is concrete to the current communication/wake use case rather than a generic actor/event framework. It does not assume SQLite is process memory, and the domain can later be mapped to another transactional backend without changing its IDs or public semantics.
 
+Agent Endpoint lifecycle, Conversation lifecycle, and Agent Delivery state are closed typed Store contracts. Their existing SQLite strings remain storage encodings and public serialization values; unknown persisted lifecycle values fail closed before authorization or delivery authority is evaluated. This does not change the independently typed Wake or Agent Task/TaskAttempt state machines.
+
 A Message append, sequence allocation, all requested Agent Deliveries, required Wake Intent coalescing/creation, Conversation update, and idempotency record commit in one immediate transaction. A forced Wake insertion failure therefore leaves no Message, no partial Inbox state, no Wake, no consumed sequence, and no stale idempotency outcome.
 
 ## Identity and authorization

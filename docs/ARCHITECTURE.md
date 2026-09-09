@@ -135,6 +135,8 @@ The Server persists managed accounts, OAuth state, project/task history, and dur
 
 Runner Jobs are reconciled when the same live Runner process reconnects. Ordinary child processes cannot be adopted by an unrelated replacement Runner; specialized detached execution has its own explicit durable ownership path. The stable Runner `client_id` and the current process lease are separate, but the exact lease field is an internal wire detail.
 
+Durable Store aggregates use closed typed Rust lifecycle/state contracts for business authority. SQLite `TEXT` values and `CHECK` constraints remain the persistence encoding, not a second semantic registry. In particular, a Connector Task's persisted lifecycle is distinct from its derived/effective state: cancellation, result decision, and Run interruption are projected from typed durable facts before the existing public strings are serialized. Connector Execution, result/approval, and durable communication lifecycles likewise decode fail-closed from their unchanged SQLite vocabularies.
+
 ## Module map
 
 ```text
