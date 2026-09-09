@@ -54,62 +54,40 @@ The lanes above define test semantics; workflows decide when to run them.
 - The heavy Linux Rust matrix `test-linux-rust` and Linux tooling lane
   `test-linux-tooling` run for every pull request as well as every push to `main`,
   including owner-authored PRs. They start in parallel with `contract` rather than
-  waiting for unrelated frontend/static work. The ordinary Runner package run now
-  excludes the explicitly ignored `runner_real_process_` group; `changes` selects a
-  separate Linux real-process lane for Runner/process-ownership surfaces, and the
-  historical `test` aggregate requires that lane to be `success` when selected or
-  `skipped` otherwise. Native child lanes likewise wait only for the cheap `changes`
-  classifier, while the stable macOS/Windows/native aggregates retain the mandatory
-  `contract` gate. Pushes to `main`, external-contributor PRs, and owner PRs carrying
-  `run-ci` still force the complete native matrix **and** the Runner real-process
-  lanes. Other owner PRs are upgraded automatically according to changed-path risk:
-  native process-owning Runner surfaces select the real-process lane in addition to
-  Windows/macOS native Runner coverage; Computer, platform-specific, Desktop, npm,
-  packaging, signing, and release surfaces retain their existing independent lanes.
-  Ordinary Rust domain/control changes remain on the mandatory Linux gates; native
-  package/install or real-process lanes are selected only by their own path risks or
-  an explicit full-native policy override, not merely because a broad Rust diff is
-  large.
-  The stable `test-macos`,
+  waiting for unrelated frontend/static work. Native child lanes likewise wait only
+  for the cheap `changes` classifier, while the stable macOS/Windows/native aggregates
+  retain the mandatory `contract` gate. Pushes to `main`, external-contributor PRs,
+  and owner PRs carrying `run-ci` force the complete deterministic native matrix.
+  Real-process and timing-sensitive ignored tests are deliberately outside ordinary
+  CI, including full-native overrides: run them explicitly when changing their
+  lifecycle boundary or investigating platform behavior. Computer, platform-specific,
+  Desktop, npm, packaging, signing, and release surfaces retain their existing
+  independent deterministic lanes. The stable `test-macos`,
   `test-windows`, and `test-native` aggregates always resolve and verify each child
   lane is `success` when required or `skipped` when not required, avoiding a skipped
   required-check context that could leave branch protection pending.
 - Linux Rust execution remains package-sharded: the server package `webcodex`, the
   Runner package `webcodex-runner`, and the remaining workspace crates run in
-  parallel. The Runner shard uses ordinary libtest semantics, so the named
-  real-process group is compiled but not executed there; the separate filtered
-  `--ignored` lane is its only ordinary-CI execution owner. The remainder shard uses
+  parallel. Ordinary libtest compiles ignored real-process coverage but does not
+  execute it. The remainder shard uses
   `--workspace --exclude webcodex --exclude webcodex-runner`, so newly added
   workspace members enter CI automatically rather than depending on a hand-maintained
   package list. The split changes scheduling, not process-ownership coverage.
 - Linux tooling runs in parallel with the Rust shards and retains
   release-verification tooling, Markdown-link validation, and npm package-smoke
-  tooling. macOS native coverage has core Runner/Computer, Runner real-process, and
-  Desktop package jobs; the first two run on both published architectures while the
-  Desktop job remains independently selected. Windows likewise separates the default
-  Runner/Computer suite from the real-process Runner group. That group now owns the
-  explicit shell/JobManager/Git/validation process-tree fixtures, detached-supervisor
-  lifecycle tests, Windows fake-SSH stop/timeout/tree fixtures, selected Plugin
-  provider/check shutdown and process-tree fixtures, and LSP child shutdown/reap/
-  idle-cleanup fixtures. Ordinary Plugin protocol/catalog and LSP navigation/restart
-  coverage stays in the default Runner suite. The real-process jobs themselves use two
-  libtest threads. Desktop Windows keeps its PowerShell-backed stdin EOF/process-tree
-  fixtures out of the ordinary parallel Desktop suite and executes the
-  `desktop_real_process_windows_` ignored group serially in the native Desktop job.
-  This preserves blocking native lifecycle coverage without turning PowerShell startup
-  latency into a default-suite scheduler race. The local-`sshd` SSH integration fixture
-  remains Linux-only because it depends on Linux daemon
-  account/auth configuration.
+  tooling. macOS and Windows native jobs keep deterministic Runner/Computer/Desktop
+  coverage, but they do not execute ignored real-process groups. Process-tree,
+  detached-supervisor, shell timeout/stop, PowerShell stdin EOF, fake-SSH lifecycle,
+  selected Plugin shutdown, and similar OS-scheduling-sensitive coverage is retained
+  as explicit local evidence. The local-`sshd` SSH integration fixture remains
+  Linux-only and manual because it depends on Linux daemon account/auth configuration.
 - Exact-source release acceptance is a separate trust boundary from ordinary CI.
   Release readiness first binds the exact source to a successful `main`-push CI run;
-  main pushes force full-native classification, so that proof includes the explicit
-  Runner real-process lanes on Linux, Windows, and both macOS architectures. Readiness
-  then runs its release-specific E2E/eval and disposable Server-image checks instead
-  of duplicating the same real-child-process lifecycle suite. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md)
-  and `.github/workflows/release-readiness.yml`.
-- Slow/manual and real-process lanes remain explicit targeted evidence unless
-  a workflow names them. Do not infer that one lane ran merely because another CI
-  job passed.
+  main pushes force the complete deterministic native classification. Readiness then
+  runs its release-specific E2E/eval and disposable Server-image checks. Manual
+  real-process evidence remains separate and must never be inferred from a passing CI
+  run. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
+  `.github/workflows/release-readiness.yml`.
 
 ## Default Test Principles
 
@@ -142,11 +120,9 @@ The lanes above define test semantics; workflows decide when to run them.
   Async Runner shutdown waits are notification-driven by `ShutdownCoordinator`;
   tests should signal that state directly rather than sleep for a presumed polling interval.
 - Ignored tests are not dead tests. Each ignored test should have a reason and a
-  documented lane for running it intentionally.
-  The `runner_real_process_` ignored tests belong to ordinary CI through their explicit
-  real-process jobs, while `desktop_real_process_windows_` is run serially by the
-  Windows Desktop native job. The separate real Codex/LSP ignored dogfood tests remain
-  opt-in and are intentionally excluded by these real-process name filters.
+  documented command for running it intentionally. Ordinary CI never opts into
+  `--ignored`: `runner_real_process_`, `desktop_real_process_windows_`, slow timing
+  regressions, and real Codex/LSP dogfood remain explicit local/operator evidence.
 
 ## `import_http` Coverage
 
