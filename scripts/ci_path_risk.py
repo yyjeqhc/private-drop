@@ -54,6 +54,8 @@ class Risk:
     needs_macos: bool = False
     needs_macos_desktop: bool = False
     needs_linux_arm64: bool = False
+    needs_frontend: bool = False
+    needs_desktop_frontend: bool = False
     needs_full_native: bool = False
     categories: set[str] = field(default_factory=set)
     changed_count: int = 0
@@ -74,6 +76,8 @@ class Risk:
             self.needs_macos = True
             self.needs_macos_desktop = True
             self.needs_linux_arm64 = True
+            self.needs_frontend = True
+            self.needs_desktop_frontend = True
         return self
 
     def outputs(self) -> dict[str, str]:
@@ -100,6 +104,8 @@ class Risk:
             "needs_macos": _bool(self.needs_macos),
             "needs_macos_desktop": _bool(self.needs_macos_desktop),
             "needs_linux_arm64": _bool(self.needs_linux_arm64),
+            "needs_frontend": _bool(self.needs_frontend),
+            "needs_desktop_frontend": _bool(self.needs_desktop_frontend),
             "needs_desktop_package": _bool(needs_desktop_package),
             "needs_full_native": _bool(self.needs_full_native),
             "categories": categories,
@@ -152,12 +158,20 @@ def _is_docs_or_text(path: str) -> bool:
     return path.startswith("docs/") or path in {"README.md", "CHANGELOG.md", "LICENSE"}
 
 
-def _is_frontend_only(path: str) -> bool:
-    return path.startswith("frontend/") or path.startswith("apps/desktop/src/") or path in {
+def _is_main_frontend(path: str) -> bool:
+    return path.startswith("frontend/")
+
+
+def _is_desktop_frontend(path: str) -> bool:
+    return path.startswith("apps/desktop/src/") or path in {
         "apps/desktop/index.html",
         "apps/desktop/tsconfig.json",
         "apps/desktop/vite.config.ts",
     }
+
+
+def _is_frontend_only(path: str) -> bool:
+    return _is_main_frontend(path) or _is_desktop_frontend(path)
 
 
 def _release_tooling(path: str) -> bool:
@@ -189,8 +203,13 @@ def _classify_path(risk: Risk, path: str) -> None:
     if _is_docs_or_text(path):
         risk.categories.add("docs")
         return
-    if _is_frontend_only(path):
+    if _is_main_frontend(path):
+        risk.needs_frontend = True
         risk.categories.add("frontend")
+        return
+    if _is_desktop_frontend(path):
+        risk.needs_desktop_frontend = True
+        risk.categories.add("desktop-frontend")
         return
 
     if path.startswith(".github/workflows/") or path == "scripts/ci_path_risk.py":
@@ -215,6 +234,7 @@ def _classify_path(risk: Risk, path: str) -> None:
         _mark_macos(risk, "desktop-native", desktop=True)
         return
     if path in {"apps/desktop/package.json", "apps/desktop/package-lock.json"}:
+        risk.needs_desktop_frontend = True
         _mark_windows_desktop(risk, "desktop-package")
         _mark_macos(risk, "desktop-package", desktop=True)
         return

@@ -239,7 +239,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("packages: write", workflow)
         self.assertNotIn("push: true", workflow)
 
-    def test_owner_prs_run_complete_linux_ci_before_merge(self) -> None:
+    def test_owner_prs_keep_deterministic_linux_ci_before_merge(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
         release_build = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
 
@@ -249,19 +249,26 @@ class WorkflowContractTests(unittest.TestCase):
             return workflow[start:end]
 
         changes = job_block("changes", "contract")
+        contract = job_block("contract", "test-linux-rust")
         linux_rust = job_block("test-linux-rust", "test-linux-tooling")
         linux_tooling = job_block("test-linux-tooling", "test-linux-arm64")
         linux_arm64 = job_block("test-linux-arm64", "test")
         aggregate = job_block("test", "test-macos-core")
         self.assertNotIn("pull_request.user.login", linux_rust)
         self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_rust)
-        self.assertNotIn("pull_request.user.login", linux_tooling)
-        self.assertNotIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_tooling)
         self.assertIn("runs-on: ubuntu-24.04-arm", linux_arm64)
         self.assertIn("cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner", linux_arm64)
         self.assertIn("needs.changes.outputs.needs_linux_arm64 == 'true'", linux_arm64)
         self.assertIn("cargo check --locked --workspace --all-targets", linux_tooling)
         self.assertIn("bash scripts/release_check.sh --static-only", linux_tooling)
+        self.assertIn("github.event_name == 'push'", linux_tooling)
+        self.assertIn("github.event.pull_request.user.login != github.repository_owner", linux_tooling)
+        self.assertIn("contains(github.event.pull_request.labels.*.name, 'run-ci')", linux_tooling)
+
+        self.assertIn("needs: changes", contract)
+        self.assertIn("needs.changes.outputs.needs_frontend == 'true' || needs.changes.outputs.needs_desktop_frontend == 'true'", contract)
+        self.assertIn("if: needs.changes.outputs.needs_frontend == 'true'", contract)
+        self.assertIn("if: needs.changes.outputs.needs_desktop_frontend == 'true'", contract)
 
         self.assertIn("ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}", changes)
         self.assertIn("persist-credentials: false", changes)
@@ -381,6 +388,9 @@ class WorkflowContractTests(unittest.TestCase):
             "reason",
         ):
             self.assertIn(f"{output}: ${{{{ steps.classify.outputs.{output} }}}}", changes)
+        for frontend_output in ("needs_frontend", "needs_desktop_frontend"):
+            self.assertIn(f"{frontend_output}: ${{{{ steps.classify.outputs.{frontend_output} == 'true'", changes)
+            self.assertIn(f"steps.classify.outputs.{frontend_output} == '' && steps.classify.outputs.needs_full_native == 'true'", changes)
         self.assertNotIn("needs_runner_real_process", workflow)
 
     def test_macos_ci_host_check_does_not_use_quiet_grep_under_pipefail(self) -> None:

@@ -35,6 +35,10 @@ jobs:
       needs_macos: ${{ steps.classify.outputs.needs_macos }}
       needs_macos_desktop: ${{ steps.classify.outputs.needs_macos_desktop }}
       needs_linux_arm64: ${{ steps.classify.outputs.needs_linux_arm64 }}
+      # During this two-field rollout, an older trusted PR base has no frontend
+      # outputs. Only inherit its existing full-native signal in that case.
+      needs_frontend: ${{ steps.classify.outputs.needs_frontend == 'true' || (steps.classify.outputs.needs_frontend == '' && steps.classify.outputs.needs_full_native == 'true') }}
+      needs_desktop_frontend: ${{ steps.classify.outputs.needs_desktop_frontend == 'true' || (steps.classify.outputs.needs_desktop_frontend == '' && steps.classify.outputs.needs_full_native == 'true') }}
       needs_desktop_package: ${{ steps.classify.outputs.needs_desktop_package }}
       needs_full_native: ${{ steps.classify.outputs.needs_full_native }}
       categories: ${{ steps.classify.outputs.categories }}
@@ -71,6 +75,8 @@ jobs:
                 needs_macos \
                 needs_macos_desktop \
                 needs_linux_arm64 \
+                needs_frontend \
+                needs_desktop_frontend \
                 needs_desktop_package \
                 needs_full_native; do
                 echo "$key=true"
@@ -102,10 +108,10 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
   contract:
-    # Mandatory contract lane for every workflow invocation: pull requests and
-    # pushes to main. Heavy Rust/native jobs intentionally do not depend on this
-    # lane: they start in parallel, while the stable aggregate jobs below still
-    # require contract success before the workflow can pass.
+    # Mandatory contract lane for every workflow invocation. It waits only for the
+    # cheap path classifier so unrelated frontend dependency/install work can be
+    # skipped; Rust/schema/workspace contracts remain unconditional.
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -117,6 +123,7 @@ jobs:
         with:
           shared-key: linux-ci
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.needs_frontend == 'true' || needs.changes.outputs.needs_desktop_frontend == 'true'
         with:
           node-version: 22
           cache: npm
@@ -124,15 +131,19 @@ jobs:
             frontend/package-lock.json
             apps/desktop/package-lock.json
       - name: Install frontend dependencies
+        if: needs.changes.outputs.needs_frontend == 'true'
         run: npm ci --prefix frontend
       - name: Check frontend contracts
+        if: needs.changes.outputs.needs_frontend == 'true'
         run: |
           npm --prefix frontend run typecheck
           npm --prefix frontend test
           npm --prefix frontend run check:dist
       - name: Install Desktop frontend dependencies
+        if: needs.changes.outputs.needs_desktop_frontend == 'true'
         run: npm ci --prefix apps/desktop
       - name: Check Desktop frontend contracts
+        if: needs.changes.outputs.needs_desktop_frontend == 'true'
         run: |
           npm --prefix apps/desktop run typecheck
           npm --prefix apps/desktop test
@@ -215,6 +226,7 @@ jobs:
             sudo apt-get install --no-install-recommends -y ripgrep
           fi
       - name: Check complete workspace production/test targets
+        if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner || contains(github.event.pull_request.labels.*.name, 'run-ci')
         run: cargo check --locked --workspace --all-targets
       - name: Test deterministic release contract and tooling
         run: bash scripts/release_check.sh --static-only

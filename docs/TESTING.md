@@ -59,17 +59,18 @@ The lanes above define test semantics; workflows decide when to run them.
   job classifies the exact PR base...head path set before native scheduling, while
   the `contract` job remains mandatory for every configured pull request and every
   push to `main`. The classifier is deterministic and local to Git: it does not use
-  commit messages or PR titles, and it emits per-platform and per-package-lane
+  commit messages or PR titles, and it emits frontend, per-platform, and package-lane
   requirements. For changed Rust/Cargo files it searches only bounded platform-marker
   lines from both the base and head file versions, so body-only changes inside an
   existing platform cfg remain visible without serializing near-complete file diffs.
   If that marker scan exceeds its bound, CI fails closed to native core plus
   architecture compilation while preserving path-derived package/Desktop decisions;
   only an untrustworthy changed-path inventory falls back to the complete native
-  matrix. The contract lane owns frontend install/type/test/dist validation,
-  workspace-boundary self-test/checks, formatting, the heuristic test-inventory
-  self-test/report (without count thresholds), and focused registry/OpenAPI/MCP
-  schema and metadata parity.
+  matrix. The contract lane always owns workspace-boundary self-test/checks,
+  formatting, the heuristic test-inventory self-test/report (without count thresholds),
+  and focused registry/OpenAPI/MCP schema and metadata parity. Main and Desktop
+  frontend dependency installation/type/test/build steps run only when the classifier
+  selects their respective frontend surface; full-native invocations select both.
 - The heavy Linux Rust matrix `test-linux-rust` and Linux tooling lane
   `test-linux-tooling` run for every pull request as well as every push to `main`,
   including owner-authored PRs. They start in parallel with `contract` rather than
@@ -94,7 +95,10 @@ The lanes above define test semantics; workflows decide when to run them.
   package list. The split changes scheduling, not process-ownership coverage.
 - Linux tooling runs in parallel with the Rust shards and retains
   release-verification tooling, Markdown-link validation, and npm package-smoke
-  tooling. macOS and Windows native jobs keep deterministic Runner/Computer/Desktop
+  tooling on every PR. The complete `cargo check --workspace --all-targets` pass is
+  reserved for pushes to `main`, external-contributor PRs, and explicit `run-ci` PRs;
+  ordinary owner PRs already pay for the package-sharded Rust test compilation and do
+  not repeat that broad compile-only pass. macOS and Windows native jobs keep deterministic Runner/Computer/Desktop
   coverage, but they do not execute ignored real-process groups. Process-tree,
   detached-supervisor, shell timeout/stop, PowerShell stdin EOF, fake-SSH lifecycle,
   selected Plugin shutdown, and similar OS-scheduling-sensitive coverage is retained

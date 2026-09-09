@@ -28,6 +28,22 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_windows"], "false")
         self.assertEqual(result["needs_macos"], "false")
         self.assertEqual(result["needs_linux_arm64"], "false")
+        self.assertEqual(result["needs_frontend"], "false")
+        self.assertEqual(result["needs_desktop_frontend"], "false")
+
+    def test_main_frontend_isolated_from_native_and_desktop_frontend(self) -> None:
+        result = classify("frontend/src/runtime.ts")
+        self.assertEqual(result["needs_frontend"], "true")
+        self.assertEqual(result["needs_desktop_frontend"], "false")
+        self.assertEqual(result["needs_windows"], "false")
+        self.assertEqual(result["needs_macos"], "false")
+
+    def test_desktop_frontend_isolated_from_main_frontend_and_native(self) -> None:
+        result = classify("apps/desktop/src/main.tsx")
+        self.assertEqual(result["needs_frontend"], "false")
+        self.assertEqual(result["needs_desktop_frontend"], "true")
+        self.assertEqual(result["needs_windows"], "false")
+        self.assertEqual(result["needs_macos"], "false")
 
     def test_desktop_rust_requires_windows_macos_and_desktop_packages(self) -> None:
         result = classify("apps/desktop/src-tauri/src/process/supervisor.rs")
@@ -35,6 +51,7 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_macos"], "true")
         self.assertEqual(result["needs_macos_desktop"], "true")
         self.assertEqual(result["needs_desktop_package"], "true")
+        self.assertEqual(result["needs_desktop_frontend"], "false")
 
     def test_process_requires_windows_core_and_macos_without_desktop_package(self) -> None:
         result = classify("crates/webcodex-process/src/lib.rs")
@@ -46,6 +63,13 @@ class PathRiskFixtureTests(unittest.TestCase):
         result = classify("crates/webcodex-runner/src/webcodex_runner/plugin.rs")
         self.assertEqual(result["needs_windows_runner"], "true")
         self.assertEqual(result["needs_macos"], "true")
+
+    def test_desktop_package_manifest_requires_frontend_and_native_desktop(self) -> None:
+        result = classify("apps/desktop/package-lock.json")
+        self.assertEqual(result["needs_desktop_frontend"], "true")
+        self.assertEqual(result["needs_frontend"], "false")
+        self.assertEqual(result["needs_windows_desktop"], "true")
+        self.assertEqual(result["needs_macos_desktop"], "true")
 
     def test_npm_installer_change_requires_native_windows_package_lane(self) -> None:
         result = classify("npm/webcodex/install.js")
@@ -178,6 +202,8 @@ class InvocationOverrideFixtureTests(unittest.TestCase):
         result = forced.outputs()
         self.assertEqual(result["needs_full_native"], "true")
         self.assertIn("override-run-ci", result["reason"])
+        self.assertEqual(result["needs_frontend"], "true")
+        self.assertEqual(result["needs_desktop_frontend"], "true")
 
     def test_push_main_forces_full_native(self) -> None:
         forced = risk.forced_risk_for_invocation(
