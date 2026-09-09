@@ -5,7 +5,7 @@
 __pycache__/
 *.pyc
 
-# Local runtime data (SQLite DB, uploads, job metadata)
+# Local runtime data (SQLite DB and durable runtime state)
 data*
 
 # Local Codex CLI workspace

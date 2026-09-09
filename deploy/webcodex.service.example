@@ -22,7 +22,7 @@ Type=simple
 User=webcodex
 Group=webcodex
 
-# Runtime data lives here (SQLite DB, uploads, job metadata). Persistent.
+# Runtime data lives here (SQLite DB and durable runtime state). Persistent.
 StateDirectory=webcodex
 WorkingDirectory=/opt/webcodex
 
