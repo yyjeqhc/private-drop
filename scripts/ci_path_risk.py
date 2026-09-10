@@ -170,7 +170,7 @@ def _is_frontend_only(path: str) -> bool:
 
 def _is_docker_surface(path: str) -> bool:
     return (
-        path in {"Dockerfile", "compose.yaml", "compose.build.yaml"}
+        path in {"Dockerfile", ".dockerignore", "compose.yaml", "compose.build.yaml"}
         or path.startswith("deploy/docker/")
         or path == "scripts/prepare_server_deployment_assets.py"
     )

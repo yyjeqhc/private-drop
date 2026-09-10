@@ -131,7 +131,7 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(dmg["needs_windows"], "false")
 
     def test_server_container_files_require_only_daily_amd64_docker_smoke(self) -> None:
-        for path in ("Dockerfile", "compose.yaml", "compose.build.yaml", "deploy/docker/bootstrap.sh"):
+        for path in ("Dockerfile", ".dockerignore", "compose.yaml", "compose.build.yaml", "deploy/docker/bootstrap.sh"):
             with self.subTest(path=path):
                 result = classify(path)
                 self.assertEqual(result["needs_docker"], "true")

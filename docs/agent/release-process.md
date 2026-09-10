@@ -160,7 +160,7 @@ bootstrap asset to the same Release; the bootstrap is generated from the reviewe
 publication-workflow source so guarded backfills do not depend on new tooling existing in
 an older application tag. `release-build.yml` remains a read-only candidate producer with
 no package-write authority. One well-connected Linux host performs the single full public-byte
-verifier for npm, native Release archives, and all three bounded Desktop distribution bytes after publication; it hashes macOS DMGs but does not replace native macOS ad-hoc signing evidence. The image workflow
+verifier for npm, native Release archives, and all four bounded Desktop distribution bytes after publication; it hashes macOS DMGs but does not replace native macOS ad-hoc signing evidence. The image workflow
 independently requires anonymous GHCR availability and verifies the public deployment-asset
 hashes. Do not fan release downloads or rebuilds out to per-platform development
 machines merely to prove that a foreign archive is downloadable. Native

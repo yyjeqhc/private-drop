@@ -45,13 +45,14 @@ fi
 # Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml.
 # The release operator first binds one successful exact-source main-push CI run;
 # that CI already owns the deterministic release/static contract, complete Linux
-# Rust coverage, frontend checks, both native macOS Runner suites, Windows x64
-# runtime/package/Desktop coverage, and lightweight Linux/Windows arm64
-# production-target compilation. Readiness revalidates that exact CI run attempt, then runs only:
+# Rust coverage and path-aware frontend, macOS Apple-Silicon, Windows x64,
+# Desktop, and amd64 Server-image checks. Readiness revalidates that exact CI
+# run attempt, then runs:
+#   - extended native Linux ARM64, macOS Intel/Desktop, and Windows ARM64/Desktop checks
 #   - WebSocket + polling zero-config E2E
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh with prebuilt debug fixtures
 #   - disposable linux/amd64 + linux/arm64 Server-image/runtime/bootstrap validation
-# Six-platform release-profile/ABI/package candidates plus the Windows x64 and
+# Six-platform release-profile/ABI/package candidates plus the Windows x64/ARM64 and
 # both native macOS Desktop artifacts are built exactly once after immutable tagging
 # by release-build.yml.
 #
@@ -84,7 +85,7 @@ die() {
 }
 
 # Sanity: cargo is needed only for the full local release check. Main CI uses
-# --static-only after its separate exact workspace all-targets check.
+# --static-only alongside its complete Linux Rust package test shards.
 if [ "$MODE" = full ] && ! command -v cargo >/dev/null 2>&1; then
     printf '[release] cargo is required\n' >&2
     exit 2
