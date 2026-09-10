@@ -70,7 +70,7 @@ pub enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 59] = [
+const ALL_RUNNER_FEATURES: &[RunnerFeature] = &[
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -147,7 +147,7 @@ pub(crate) enum RunnerFeatureInference {
 
 impl RunnerFeature {
     pub(crate) const fn all() -> &'static [Self] {
-        &ALL_RUNNER_FEATURES
+        ALL_RUNNER_FEATURES
     }
 
     pub const fn as_wire_name(self) -> &'static str {

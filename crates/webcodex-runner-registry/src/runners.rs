@@ -438,6 +438,12 @@ impl RunnerRegistry {
             inner.runners.get(&client_id),
             &runner_instance_id,
             &runner_features,
+            RunnerFeature::StructuredScriptTypescript,
+        )?;
+        reject_same_instance_feature_downgrade(
+            inner.runners.get(&client_id),
+            &runner_instance_id,
+            &runner_features,
             RunnerFeature::NativeToolPlugins,
         )?;
         if inner.runners.get(&client_id).is_some_and(|existing| {

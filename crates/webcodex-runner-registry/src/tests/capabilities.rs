@@ -559,6 +559,7 @@ async fn registration_required_sticky_features_reject_same_instance_downgrade() 
         RunnerFeature::CodingAgentRuns,
         RunnerFeature::StructuredCargoTestExecutionPolicy,
         RunnerFeature::StructuredScriptJavascript,
+        RunnerFeature::StructuredScriptTypescript,
     ] {
         let registry = RunnerRegistry::default();
         let client_id = format!("sticky-{}", feature.as_wire_name());

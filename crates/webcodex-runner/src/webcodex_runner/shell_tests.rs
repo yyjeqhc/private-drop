@@ -1556,43 +1556,105 @@ fn typescript_temp_file_uses_mts_and_exact_script_bytes() {
 
 #[test]
 #[ignore = "manual real-process smoke: requires compatible Node.js on PATH"]
-fn typescript_runtime_executes_erasable_mts_with_argv_stdin_and_cwd_when_available() {
+fn runner_real_process_node_script_runtime_preserves_argv_stdin_and_cwd() {
     let cwd = tempfile::tempdir().unwrap();
-    let project_registry_dir = tempfile::tempdir().unwrap();
-    let result = run_script_with_profiles_and_execution_state(
-        1,
-        &unrestricted_policy(),
-        &ShellConfig::default(),
-        project_registry_dir.path(),
-        &PreparedShellProfileCache::default(),
-        Some(cwd.path().to_string_lossy().as_ref()),
-        &ShellScriptPayload {
-            language: ShellScriptLanguage::Typescript,
-            script: r#"import { readFileSync } from 'node:fs';
+    let args = vec![
+        "two words".to_string(),
+        "$(literal); 雪".to_string(),
+        "--experimental-transform-types".to_string(),
+    ];
+    for (language, prelude) in [
+        (
+            ShellScriptLanguage::Javascript,
+            "const payload = { value: process.argv[2] ?? '' };",
+        ),
+        (
+            ShellScriptLanguage::Typescript,
+            r#"
 interface Payload { value: string }
 function identity<T>(value: T): T { return value; }
 const payload: Payload = identity<Payload>({ value: process.argv[2] ?? '' });
-const input: string = readFileSync(0, 'utf8').trim();
-console.log(JSON.stringify({ value: payload.value, input, cwd: process.cwd() }));
-"#
-            .to_string(),
-            args: vec!["two words".to_string()],
-        },
-        Some("stdin-value\n"),
-        30,
-        None,
-    );
-    assert_eq!(
-        result.execution_state,
-        ShellCommandExecutionState::Completed
-    );
-    assert_eq!(result.result.exit_code, Some(0), "{:?}", result.result);
-    let stdout = result.result.stdout.as_deref().unwrap_or_default();
-    assert!(stdout.contains("\"value\":\"two words\""), "{stdout}");
-    assert!(stdout.contains("\"input\":\"stdin-value\""), "{stdout}");
+"#,
+        ),
+    ] {
+        let script = format!(
+            "import {{ readFileSync }} from 'node:fs';\n{prelude}\n\
+             const input = await Promise.resolve(readFileSync(0, 'utf8'));\n\
+             console.log(JSON.stringify({{ value: payload.value, args: process.argv.slice(2), input, cwd: process.cwd() }}));"
+        );
+        let result = run_direct_script(
+            cwd.path(),
+            language,
+            script,
+            args.clone(),
+            Some("stdin-value\n"),
+            30,
+        );
+        assert_eq!(
+            result.execution_state,
+            ShellCommandExecutionState::Completed
+        );
+        assert_eq!(result.result.exit_code, Some(0), "{:?}", result.result);
+        let output: serde_json::Value =
+            serde_json::from_str(result.result.stdout.as_deref().unwrap()).unwrap();
+        assert_eq!(output["value"], "two words");
+        assert_eq!(output["args"], serde_json::json!(args));
+        assert_eq!(output["input"], "stdin-value\n");
+        assert_eq!(
+            Path::new(output["cwd"].as_str().unwrap())
+                .canonicalize()
+                .unwrap(),
+            cwd.path().canonicalize().unwrap()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "real-process stdin isolation: runs an isolated test process with a fake Node runtime"]
+fn runner_real_process_typescript_probe_receives_eof_instead_of_runner_stdin() {
+    const FIXTURE_ENV: &str = "WEBCODEX_TEST_TYPESCRIPT_PROBE_FIXTURE";
+    if let Some(fixture) = std::env::var_os(FIXTURE_ENV) {
+        let root = PathBuf::from(fixture);
+        let mut shell = ShellConfig {
+            program: root.join("node").to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        shell.env.insert("PATH".to_string(), String::new());
+        configured_script_runtime_plan(&shell, None, ShellScriptLanguage::Typescript, &root, None)
+            .expect("the version probe must receive EOF, not the Runner's inherited input");
+        return;
+    }
+
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let node = root.path().join("node");
+    std::fs::write(
+        &node,
+        "#!/bin/sh\n[ \"$1\" = --version ] || exit 8\nif IFS= read -r line; then exit 9; fi\nprintf 'v22.18.0\\n'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let input = root.path().join("runner-input");
+    std::fs::write(&input, "parent-only input\n").unwrap();
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .arg("--exact")
+        .arg(format!(
+            "{}::runner_real_process_typescript_probe_receives_eof_instead_of_runner_stdin",
+            module_path!().split_once("::").unwrap().1
+        ))
+        .args(["--ignored", "--nocapture"])
+        .env(FIXTURE_ENV, root.path())
+        .stdin(std::fs::File::open(input).unwrap());
+    let (status, stdout, stderr) = run_prepare_command(command, Duration::from_secs(10), None)
+        .expect("isolated probe regression test must finish within its deadline");
+    assert!(String::from_utf8_lossy(&stdout).contains("running 1 test"));
     assert!(
-        stdout.contains(cwd.path().to_string_lossy().as_ref()),
-        "{stdout}"
+        status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
     );
 }
 

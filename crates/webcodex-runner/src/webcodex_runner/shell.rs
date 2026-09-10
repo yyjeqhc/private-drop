@@ -707,7 +707,9 @@ fn configured_script_runtime_plan(
     let mut prefix_args = fixed_script_prefix_args(language);
     if language == ShellScriptLanguage::Typescript {
         let mut probe = Command::new(&program);
-        probe.arg("--version").current_dir(cwd);
+        // This Runner-owned probe has no input contract. In particular, never
+        // inherit the Runner's parent-liveness stdin or consume its input.
+        probe.arg("--version").current_dir(cwd).stdin(Stdio::null());
         apply_script_environment(&mut probe, shell, profile)?;
         let probe_result =
             run_prepare_command(probe, TYPESCRIPT_NODE_VERSION_PROBE_TIMEOUT, stop_requested);
