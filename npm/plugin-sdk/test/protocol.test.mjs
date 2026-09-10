@@ -107,6 +107,29 @@ test("definePlugin snapshots its catalog independently of the caller tools array
   assert.equal(JSON.stringify(first), "{}");
 });
 
+test("schema and catalog snapshots preserve special JSON property names", async () => {
+  const key = "__proto__";
+  const inputSchema = schema.object({ [key]: schema.string() });
+  assert.equal(Object.hasOwn(inputSchema.properties, key), true);
+  assert.deepEqual(inputSchema.required, [key]);
+
+  const tool = defineTool({
+    name: "special_key",
+    inputSchema,
+    execute(args) {
+      return textResult(String(args[key]));
+    },
+  });
+  const result = await exchange(
+    [JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} })],
+    definePlugin({ tools: [tool] }),
+  );
+  const listed = result.lines[0].result.tools[0].inputSchema;
+  assert.equal(Object.hasOwn(listed.properties, key), true);
+  assert.equal(listed.properties[key].type, "string");
+  assert.deepEqual(listed.required, [key]);
+});
+
 test("duplicate tool names fail before serving", () => {
   const make = () => defineTool({
     name: "same",

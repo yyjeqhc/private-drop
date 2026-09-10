@@ -98,10 +98,9 @@ function cloneAndFreezeJson(value: JsonValue): JsonValue {
     return Object.freeze(value.map((item) => cloneAndFreezeJson(item)));
   }
   if (value !== null && typeof value === "object") {
-    const clone: Record<string, JsonValue> = {};
-    for (const [key, child] of Object.entries(value)) {
-      clone[key] = cloneAndFreezeJson(child);
-    }
+    const clone = Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, cloneAndFreezeJson(child)]),
+    ) as Record<string, JsonValue>;
     return Object.freeze(clone);
   }
   return value;
@@ -188,7 +187,7 @@ function object<
   properties: TProperties,
   options?: TOptions,
 ): ObjectSchema<ObjectSchemaValue<TProperties, TOptions> & object> {
-  const wireProperties: Record<string, SchemaNode> = {};
+  const wireProperties = Object.create(null) as Record<string, SchemaNode>;
   const required: string[] = [];
   for (const [name, property] of Object.entries(properties)) {
     if (isOptional(property)) {
