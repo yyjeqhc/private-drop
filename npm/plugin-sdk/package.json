@@ -1,0 +1,44 @@
+{
+  "name": "@yyjeqhc/webcodex-plugin-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript authoring SDK for the WebCodex Native Tool Plugin Protocol v1.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build --silent && node --test test/*.test.mjs",
+    "pack:dry-run": "npm run build --silent && npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yyjeqhc/webcodex.git",
+    "directory": "npm/plugin-sdk"
+  },
+  "keywords": [
+    "webcodex",
+    "plugin",
+    "typescript",
+    "developer-tools"
+  ],
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "typescript": "^5.4.0"
+  }
+}
