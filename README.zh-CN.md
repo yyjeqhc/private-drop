@@ -59,6 +59,10 @@ WebCodex
 
 如果需要了解内部的 Server/Runner 架构、协议接口和权限边界，再阅读[架构说明](docs/ARCHITECTURE.md)、[MCP](docs/MCP.zh-CN.md)和[认证模型](docs/AUTH_MODEL.zh-CN.md)。
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=yyjeqhc/webcodex&type=Date)](https://www.star-history.com/yyjeqhc/webcodex)
+
 ## 平台支持
 
 - **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。

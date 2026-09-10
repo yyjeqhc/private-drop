@@ -59,6 +59,10 @@ your machine
 
 For the internal Server/Runner architecture, protocol surfaces, and authority boundaries, see [Architecture](docs/ARCHITECTURE.md), [MCP](docs/MCP.md), and [Authentication](docs/AUTH_MODEL.md).
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=yyjeqhc/webcodex&type=Date)](https://www.star-history.com/yyjeqhc/webcodex)
+
 ## Platforms
 
 - **Linux x64/arm64** — local `share`, Server, and Runner workflows.
