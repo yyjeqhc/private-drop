@@ -8,7 +8,7 @@
 
 ```text
 安装 Desktop
-→ 准备并确认 Tunnel 配置
+→ 在 Desktop 内保存 Tunnel ID 和 API key
 → 选择真正要让 ChatGPT 使用的项目
 → 等待 Service / Runner / Project 全部就绪
 → 启动 OpenAI Secure Tunnel
@@ -72,64 +72,45 @@ Tunnel 名称可以自定义；记录自己的 Tunnel ID。API key 建议使用 
 
 不要把真实 API key、WebCodex token 或 authorization 内容提交到 Git、issue、截图或聊天记录中。
 
-## 3. 配置 Desktop 所需环境变量
+## 3. 在 Desktop 内保存 Tunnel 配置（推荐）
 
-Desktop 普通 Tunnel 只需要：
+打开 **设置 → OpenAI Tunnel 网络**，或者在 **连接** 页面展开 **可选：检查 ChatGPT 安全隧道配置**：
+
+1. 在 **Tunnel ID** 输入框填写自己的 Tunnel ID。
+2. 在 **Tunnel API key** 密码输入框填写可用于该 Tunnel 的 API key。
+3. 点击 **保存配置**。看到“当前来源：本机配置文件（优先）”后即可启动连接，**不需要重启 Desktop**。
+
+这两个字段也可以在首次本机配置的可选 Tunnel 区域填写。已有保存的密钥时，API key 留空表示保留原密钥；界面不会取回密钥值，提交后输入框会清空。保存失败时会保留 Tunnel ID，并要求重新输入尚未保存的密钥。
+
+**优先级：完整的已保存配置 → Desktop 进程继承的环境变量。** 不会混用文件中的 Tunnel ID 和环境中的 API key。保存时不会修改系统环境，也不会自动启停运行中的连接；新值用于下一次普通 OpenAI Tunnel 或 OpenAI Quick Share 启动。正在运行的连接需要先停止再重新启动。
+
+配置保存在 Desktop 的本机应用数据目录中，相对路径为 `secrets/tunnel-config.json`：
+
+- macOS：`~/Library/Application Support/dev.webcodex.desktop/secrets/tunnel-config.json`。
+- Windows：`%LOCALAPPDATA%\dev.webcodex.desktop\secrets\tunnel-config.json`。
+
+该文件包含**未加密的 API key**，请不要放入项目、Git、工单或共享备份。macOS/Unix 写入权限为当前用户读写（`0600`）；Windows 继承本机用户应用数据目录的访问权限。保存采用原子替换，不会为密钥文件保留旧值备份。`secrets` 目录受 WebCodex 现有敏感路径策略保护。普通 `desktop-state.json` 仍只保存非密钥运行状态。
+
+点击 **清除已保存配置，改用环境变量** 会清除保存的一组值，恢复环境变量回退；文件中记录为 `null`。已有文件无效或无法读取时不会自动改用环境变量，请在界面重新保存，或者清除配置。手工编辑文件后需重新启动 Desktop；界面保存无需重启。
+
+### 可选：继续使用环境变量
+
+没有保存配置时，Desktop 使用当前进程继承的：
 
 ```text
 CONTROL_PLANE_TUNNEL_ID
 CONTROL_PLANE_API_KEY
 ```
 
-不需要额外配置 `OPENAI_ADMIN_KEY` 或 `OPENAI_API_KEY`。Desktop 安装包当前不把 `tunnel-client` 直接塞进安装目录；首次需要 OpenAI Secure Tunnel 时，WebCodex 会自动下载并校验固定版本，所以普通用户仍然不需要手动安装。若自动下载失败，再检查网络 / 代理，或高级用户显式设置 `WEBCODEX_TUNNEL_CLIENT_BIN`。
+无需额外设置 `OPENAI_ADMIN_KEY` 或 `OPENAI_API_KEY`。首次启动 OpenAI Secure Tunnel 时，WebCodex 会自动下载并校验固定版本的 `tunnel-client`；通常不用手动安装。下载失败时检查网络或代理，高级用户可指定 `WEBCODEX_TUNNEL_CLIENT_BIN`。
 
-### Windows
+Windows 用户可以设置当前用户的持久环境变量。macOS 从 Finder / Dock 启动不会读取 `~/.zshrc`；需要从已加载变量的 Terminal 启动应用，或者配置登录会话环境。如果选择这种高级方式，修改变量后须通过托盘 **退出 WebCodex**，再重新启动。关闭窗口只是隐藏，不会更新进程环境。**重新检测配置** 不会执行 shell 启动脚本，也不会读取手工修改的配置文件。
 
-建议设置为当前用户的持久环境变量，然后**完全退出 WebCodex，再重新启动**：
+### macOS 的 Computer Use 权限
 
-```powershell
-[Environment]::SetEnvironmentVariable("CONTROL_PLANE_TUNNEL_ID", "tunnel_...", "User")
-[Environment]::SetEnvironmentVariable("CONTROL_PLANE_API_KEY", "<restricted-tunnel-key>", "User")
-```
+如果需要截图、窗口观察、键盘鼠标等能力，请在 **系统设置 → 隐私与安全性** 为实际运行 WebCodex Runner / Desktop 的进程授予相应权限：包括 **屏幕与系统音频录制**，界面控制还需要 **辅助功能**。授权后按系统要求重启相关进程。
 
-### macOS
-
-下面以默认 shell 使用 zsh、变量已写入 `~/.zshrc` 为例；如果你使用其他 shell，请按实际配置调整。
-
-从 Finder / Dock 启动的 App **不会执行 `~/.zshrc`**。仅把变量写进 `.zshrc`，Terminal 能看到，但 Desktop 不一定能看到。
-
-临时测试可以从已经加载变量的 Terminal 启动：
-
-```bash
-source ~/.zshrc
-"/Applications/WebCodex Desktop.app/Contents/MacOS/WebCodex"
-```
-
-如果希望仍从 Finder / Dock 打开，可先把当前 shell 中的值写入当前登录会话的 launchd 环境，再重新打开 Desktop：
-
-```bash
-source ~/.zshrc
-launchctl setenv CONTROL_PLANE_TUNNEL_ID "$CONTROL_PLANE_TUNNEL_ID"
-launchctl setenv CONTROL_PLANE_API_KEY "$CONTROL_PLANE_API_KEY"
-```
-
-如果要使用截图、窗口观察、键盘鼠标等 Computer Use 能力，还需要在 **系统设置 → 隐私与安全性** 中为实际运行 WebCodex Runner / Desktop 的进程授予 macOS 要求的权限：至少包括 **屏幕与系统音频录制（Screen Recording）**，涉及界面控制时还需要 **辅助功能（Accessibility）**。授权后通常需要重新启动相关进程才能生效；WebCodex 不会绕过或替代系统权限确认。
-
-回到 Desktop 后，在 **连接** 页面展开 **可选：检查 ChatGPT 安全隧道配置**，查看 **OpenAI Tunnel 配置检测**（配置缺失时会自动展开）；也可以在 **设置 → OpenAI Tunnel 网络** 查看：
-
-- `Tunnel ID` 应显示**已检测**；
-- `Tunnel API key` 应显示**已检测**；
-- 页面只显示是否检测到，不会显示 API key value。
-
-如果刚修改环境变量，可以点击**重新检测配置**。这个动作只重新观察**当前 Desktop 进程**能看到的环境，不会执行 `~/.zshrc`，也不会偷偷加载 secret。
-
-如果重新检测仍显示“未检测”，请注意：**点击窗口 X 只是隐藏到菜单栏/系统托盘，不是重启。**需要通过菜单栏/托盘选择**退出 WebCodex**，确认进程真正退出，再重新启动。macOS 从 Finder / Dock 启动时仍不会读取 `~/.zshrc`；此时使用上面的 Terminal 启动或 launchd 会话环境方案。
-
-**成功时你应该看到：**两项配置都为“已检测”，OpenAI Secure Tunnel 操作可用。
-
-**失败时：**先点“重新检测配置”；仍缺失就完全退出 WebCodex 后重新启动。不要反复关闭/打开窗口假装重启。
-
-**下一步：**选择真正要给 ChatGPT 使用的项目。
+**成功时：**配置来源显示为本机文件，两项检测都通过。接下来选择真正要给 ChatGPT 使用的项目。
 
 ## 4. 启动本机运行环境并添加项目
 

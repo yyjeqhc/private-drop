@@ -7,6 +7,8 @@ import type {
 } from "../models/topology";
 
 export const desktopApi = {
+  updateTunnelConfig: (request: { action: "save"; tunnelId: string; apiKey: string | null } | { action: "use_environment" }) =>
+    invoke<DesktopState>("update_tunnel_config", { request }),
   getState: () => invoke<DesktopState>("get_desktop_state"),
   openPowerShellInstallGuide: () => invoke<void>("open_powershell_install_guide"),
   getLaunchAtLogin: () => invoke<boolean>("get_launch_at_login"),

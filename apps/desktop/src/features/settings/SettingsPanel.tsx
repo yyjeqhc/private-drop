@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/topology";
-import { useLocale } from "../../i18n/locale";
+import { LANGUAGES, useLocale } from "../../i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
 import { TunnelConfigDiagnostics } from "../connection/TunnelConfigDiagnostics";
 import { PowerShellInstallGuidance } from "./PowerShellInstallGuidance";
@@ -76,8 +76,7 @@ export function SettingsPanel({
             onChange={(event) => setLocale(event.target.value as typeof locale)}
             data-webcodex-control="locale"
           >
-            <option value="zh-CN">{t("locale.zh")}</option>
-            <option value="en-US">{t("locale.en")}</option>
+            {LANGUAGES.map((language) => <option key={language.value} value={language.value}>{language.label}</option>)}
           </select>
         </div>
       </section>

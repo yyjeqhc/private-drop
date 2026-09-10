@@ -264,6 +264,7 @@ pub enum DesktopOperationKind {
     RuntimeRefresh,
     RuntimeResume,
     TunnelProxyUpdate,
+    TunnelConfigUpdate,
 }
 
 impl DesktopOperationKind {
@@ -279,6 +280,7 @@ impl DesktopOperationKind {
             Self::RuntimeRefresh => "runtime_refresh",
             Self::RuntimeResume => "runtime_resume",
             Self::TunnelProxyUpdate => "tunnel_proxy_update",
+            Self::TunnelConfigUpdate => "tunnel_config_update",
         }
     }
 }
@@ -333,10 +335,23 @@ pub struct TunnelProxySnapshot {
     pub detected_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelConfigSource {
+    #[default]
+    Environment,
+    File,
+    Invalid,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct OpenAiTunnelConfigSnapshot {
     pub tunnel_id_present: bool,
     pub api_key_present: bool,
+    #[serde(default)]
+    pub source: TunnelConfigSource,
+    #[serde(default)]
+    pub saved_tunnel_id: Option<String>,
 }
 
 impl OpenAiTunnelConfigSnapshot {

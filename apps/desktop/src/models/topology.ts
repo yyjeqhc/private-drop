@@ -140,7 +140,8 @@ export type DesktopOperationKind =
   | "local_runtime_stop"
   | "runtime_refresh"
   | "runtime_resume"
-  | "tunnel_proxy_update";
+  | "tunnel_proxy_update"
+  | "tunnel_config_update";
 
 export type DesktopOperationPhase = "running" | "cancelling";
 
@@ -155,6 +156,8 @@ export interface DesktopOperation {
 export interface OpenAiTunnelConfigSnapshot {
   tunnel_id_present: boolean;
   api_key_present: boolean;
+  source: "file" | "environment" | "invalid";
+  saved_tunnel_id: string | null;
 }
 
 export interface PowerShellRuntimeSnapshot {

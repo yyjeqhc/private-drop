@@ -5,6 +5,7 @@ import { LocaleProvider } from "./i18n/locale";
 
 const api = vi.hoisted(() => ({
   getState: vi.fn(),
+  updateTunnelConfig: vi.fn(),
   openPowerShellInstallGuide: vi.fn(),
   refresh: vi.fn(),
   observeChatgptActivity: vi.fn(),
@@ -83,6 +84,8 @@ const readyState: DesktopState = {
   openai_tunnel_config: {
     tunnel_id_present: true,
     api_key_present: true,
+    source: "environment",
+    saved_tunnel_id: null,
   },
   regular_tunnel_available: true,
   runtime_autostart: false,
@@ -114,6 +117,8 @@ const firstRunState: DesktopState = {
   openai_tunnel_config: {
     tunnel_id_present: true,
     api_key_present: true,
+    source: "environment",
+    saved_tunnel_id: null,
   },
   regular_tunnel_available: true,
   runtime_autostart: false,
@@ -250,6 +255,51 @@ describe("semantic Desktop UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "更改文件夹" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Picker unavailable");
     expect(api.configureLocal).not.toHaveBeenCalled();
+  });
+
+  it("saves Tunnel settings without starting a connection or returning the secret", async () => {
+    api.getState.mockResolvedValue(readyState);
+    const savedState: DesktopState = { ...readyState, openai_tunnel_config: {
+      tunnel_id_present: true, api_key_present: true, source: "file", saved_tunnel_id: "tunnel_saved",
+    } };
+    api.updateTunnelConfig.mockResolvedValue(savedState);
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_saved" } });
+    const key = screen.getByLabelText("Tunnel API key");
+    expect(key).toHaveAttribute("type", "password");
+    fireEvent.change(key, { target: { value: "test-only-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(api.updateTunnelConfig).toHaveBeenCalledWith({ action: "save", tunnelId: "tunnel_saved", apiKey: "test-only-key" }));
+    expect(key).toHaveValue("");
+    await screen.findByText("当前来源：本机配置文件（优先）");
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(api.updateTunnelConfig).toHaveBeenLastCalledWith({ action: "save", tunnelId: "tunnel_saved", apiKey: null }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "清除已保存配置，改用环境变量" })).toBeEnabled());
+    api.updateTunnelConfig.mockResolvedValue(readyState);
+    fireEvent.click(screen.getByRole("button", { name: "清除已保存配置，改用环境变量" }));
+    await waitFor(() => expect(api.updateTunnelConfig).toHaveBeenLastCalledWith({ action: "use_environment" }));
+    expect(await screen.findByText("当前来源：Desktop 进程的环境变量")).toBeInTheDocument();
+  });
+
+  it("clears submitted keys on save failure and never submits runtime setup from a credential input", async () => {
+    api.getState.mockResolvedValue(firstRunState);
+    api.updateTunnelConfig.mockRejectedValue({ code: "tunnel_config_save_failed", message: "Could not save", next_action: "Retry." });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    const tunnelInput = screen.getByLabelText("Tunnel ID");
+    fireEvent.change(tunnelInput, { target: { value: "tunnel_test" } });
+    const key = screen.getByLabelText("Tunnel API key");
+    fireEvent.change(key, { target: { value: "test-only-key" } });
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    key.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(api.configureLocal).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存配置", hidden: true }));
+    expect(await screen.findByRole("alert", { hidden: true })).toBeInTheDocument();
+    expect(key).toHaveValue("");
+    expect(tunnelInput).toHaveValue("tunnel_test");
   });
 
   it("supports keyboard navigation without intercepting activity search typing", async () => {
@@ -425,6 +475,8 @@ describe("semantic Desktop UI", () => {
       openai_tunnel_config: {
         tunnel_id_present: true,
         api_key_present: false,
+        source: "environment",
+        saved_tunnel_id: null,
       },
     };
     const missingId: DesktopState = {
@@ -432,6 +484,8 @@ describe("semantic Desktop UI", () => {
       openai_tunnel_config: {
         tunnel_id_present: false,
         api_key_present: true,
+        source: "environment",
+        saved_tunnel_id: null,
       },
     };
     const bothMissing: DesktopState = {
@@ -439,6 +493,8 @@ describe("semantic Desktop UI", () => {
       openai_tunnel_config: {
         tunnel_id_present: false,
         api_key_present: false,
+        source: "environment",
+        saved_tunnel_id: null,
       },
     };
     const configured: DesktopState = {
@@ -447,6 +503,8 @@ describe("semantic Desktop UI", () => {
       openai_tunnel_config: {
         tunnel_id_present: true,
         api_key_present: true,
+        source: "environment",
+        saved_tunnel_id: null,
       },
     };
     api.getState.mockResolvedValue(missingKey);
@@ -456,30 +514,30 @@ describe("semantic Desktop UI", () => {
 
     const diagnostics = screen.getByText("OpenAI Tunnel 配置检测").closest("article");
     expect(diagnostics).not.toBeNull();
-    expect(within(diagnostics!).getByText("Tunnel ID").parentElement).toHaveTextContent("已检测");
-    expect(within(diagnostics!).getByText("Tunnel API key").parentElement).toHaveTextContent("未检测");
+    expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel ID").parentElement).toHaveTextContent("已检测");
+    expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel API key").parentElement).toHaveTextContent("未检测");
     expect(within(diagnostics!).getByText(/关闭窗口只会隐藏到托盘\/菜单栏/)).toBeInTheDocument();
     expect(diagnostics).not.toHaveTextContent("CONTROL_PLANE_API_KEY");
 
     api.getState.mockResolvedValueOnce(missingId);
     fireEvent.click(within(diagnostics!).getByRole("button", { name: "重新检测配置" }));
     await waitFor(() => {
-      expect(screen.getByText("Tunnel ID").parentElement).toHaveTextContent("未检测");
-      expect(screen.getByText("Tunnel API key").parentElement).toHaveTextContent("已检测");
+      expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel ID").parentElement).toHaveTextContent("未检测");
+      expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel API key").parentElement).toHaveTextContent("已检测");
     });
 
     api.getState.mockResolvedValueOnce(bothMissing);
     fireEvent.click(within(diagnostics!).getByRole("button", { name: "重新检测配置" }));
     await waitFor(() => {
-      expect(screen.getByText("Tunnel ID").parentElement).toHaveTextContent("未检测");
-      expect(screen.getByText("Tunnel API key").parentElement).toHaveTextContent("未检测");
+      expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel ID").parentElement).toHaveTextContent("未检测");
+      expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel API key").parentElement).toHaveTextContent("未检测");
     });
 
     api.getState.mockResolvedValueOnce(configured);
     fireEvent.click(within(diagnostics!).getByRole("button", { name: "重新检测配置" }));
     await waitFor(() => {
-      expect(screen.getByText("Tunnel ID").parentElement).toHaveTextContent("已检测");
-      expect(screen.getByText("Tunnel API key").parentElement).toHaveTextContent("已检测");
+      expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel ID").parentElement).toHaveTextContent("已检测");
+      expect(within(diagnostics!.querySelector("dl")!).getByText("Tunnel API key").parentElement).toHaveTextContent("已检测");
     });
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
   });

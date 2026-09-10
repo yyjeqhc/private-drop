@@ -131,6 +131,8 @@ const processErrors = new Set([
 ]);
 
 export function desktopErrorPresentation(error: DesktopError, t: Translate): ErrorPresentation {
+  if (error.code === "tunnel_config_invalid") return { title: t("error.tunnelTitle"), action: t("tunnelConfig.invalidInput") };
+  if (error.code === "tunnel_config_save_failed") return { title: t("error.fallbackTitle"), action: t("tunnelConfig.saveFailed") };
   if (binaryErrors.has(error.code)) return { title: t("error.binaryTitle"), action: t("error.binaryAction") };
   if (serverErrors.has(error.code) || error.code === "server_url_invalid") return { title: t("error.serverTitle"), action: t("error.serverAction") };
   if (error.code === "runtime_not_ready") return { title: t("error.runtimeTitle"), action: t("error.runtimeAction") };

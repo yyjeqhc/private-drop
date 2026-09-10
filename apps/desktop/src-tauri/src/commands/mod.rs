@@ -7,6 +7,15 @@ use crate::tray;
 use serde::Deserialize;
 use tauri::{AppHandle, State};
 
+#[tauri::command]
+pub async fn update_tunnel_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::tunnel_config::TunnelConfigRequest,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.update_tunnel_config(request).await)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRequest {

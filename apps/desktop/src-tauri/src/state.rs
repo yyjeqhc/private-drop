@@ -3,8 +3,7 @@ use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{
     aggregate_readiness, ChatGptActivitySnapshot, DesktopOperationKind, DesktopStateSnapshot,
-    Enrollment, Experience, Exposure, ExposureReadiness, OpenAiTunnelConfigSnapshot,
-    ProjectReadiness, ProjectSelection,
+    Enrollment, Experience, Exposure, ExposureReadiness, ProjectReadiness, ProjectSelection,
     QuickShareState, ReadinessNextActionKind, ReadinessSummaryKind, RegularConnectionPreference,
     RegularTunnelState, RegularTunnelStatus, RunnerReadiness, RunnerTopology, RuntimeTopology,
     ServerReadiness, ServerTopology, StoredDesktopConfig, StoredRuntime, TunnelProxyConfig,
@@ -15,6 +14,7 @@ use crate::operation::{
     OperationController,
 };
 use crate::process::{MachineEventReceiver, ProcessKind, ProcessPhase, ProcessSupervisor};
+use crate::tunnel_config::{TunnelConfig, TunnelConfigRequest};
 use crate::webcodex::{
     inspect_project_path, ProjectRuntimeIdentity, QuickShareReadyEvent, RegularTunnelReadyEvent,
     WebCodexAdapter,
@@ -113,7 +113,10 @@ impl AppState {
         }
         snapshot.current_operation = self.operations.current();
         snapshot.activity_sequence = self.activity.latest_sequence();
-        apply_openai_tunnel_configuration(&mut snapshot);
+        if snapshot.openai_tunnel_config.source == crate::models::TunnelConfigSource::Environment {
+            snapshot.openai_tunnel_config = crate::tunnel_config::environment_snapshot();
+            snapshot.openai_tunnel_configured = snapshot.openai_tunnel_config.is_configured();
+        }
         snapshot.regular_tunnel_available = true;
         snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         snapshot
@@ -182,6 +185,36 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RuntimeResume, true)
             .await?;
         let result = core.resume_saved_runtime(&cancellation).await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
+    }
+
+    pub async fn update_tunnel_config(
+        &self,
+        request: TunnelConfigRequest,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::TunnelConfigUpdate, false)
+            .await?;
+        let result = async {
+            cancellation.check()?;
+            let path = core.data_dir.join("secrets").join("tunnel-config.json");
+            let mut config = core.tunnel_config.clone();
+            core.tunnel_config = tokio::task::spawn_blocking(move || {
+                config.update(&path, request)?;
+                Ok::<_, DesktopError>(config)
+            })
+            .await
+            .map_err(|_| {
+                DesktopError::new(
+                    "tunnel_config_save_failed",
+                    "Could not complete the configuration save",
+                    "Check the saved configuration before retrying.",
+                )
+            })??;
+            core.get_state().await
+        }
+        .await;
         self.finish_operation(operation, cancellation, core, baseline, result)
             .await
     }
@@ -500,6 +533,7 @@ pub struct DesktopCore {
     default_project_dir: PathBuf,
     config_path: PathBuf,
     config: StoredDesktopConfig,
+    tunnel_config: TunnelConfig,
     snapshot: DesktopStateSnapshot,
     adapter: WebCodexAdapter,
     supervisor: SharedSupervisor,
@@ -513,10 +547,11 @@ impl DesktopCore {
         let default_project_dir = default_management_project_dir(&data_dir, &resource_dir);
         let config_path = data_dir.join("desktop-state.json");
         let config = load_config(&config_path, &activity)?;
+        let tunnel_config = TunnelConfig::load(&data_dir.join("secrets").join("tunnel-config.json"));
         let mut snapshot = DesktopStateSnapshot::default();
         snapshot.topology = config.topology.clone();
         snapshot.project = project_snapshot(&config);
-        apply_openai_tunnel_configuration(&mut snapshot);
+        apply_openai_tunnel_configuration(&mut snapshot, &tunnel_config);
         snapshot.regular_tunnel_available = true;
         snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         apply_config_projection(&mut snapshot, &config);
@@ -527,6 +562,7 @@ impl DesktopCore {
             default_project_dir,
             config_path,
             config,
+            tunnel_config,
             snapshot,
             adapter: WebCodexAdapter::new(Some(resource_dir.join("webcodex-runtime"))),
             supervisor,
@@ -536,7 +572,7 @@ impl DesktopCore {
     }
 
     pub async fn get_state(&mut self) -> DesktopResult<DesktopStateSnapshot> {
-        apply_openai_tunnel_configuration(&mut self.snapshot);
+        apply_openai_tunnel_configuration(&mut self.snapshot, &self.tunnel_config);
         self.snapshot.regular_tunnel_available = true;
         apply_config_projection(&mut self.snapshot, &self.config);
         if self.snapshot.regular_tunnel.is_some() {
@@ -735,7 +771,7 @@ impl DesktopCore {
     fn publish_snapshot(&mut self) -> DesktopStateSnapshot {
         self.snapshot.current_operation = None;
         self.snapshot.activity_sequence = self.activity.latest_sequence();
-        apply_openai_tunnel_configuration(&mut self.snapshot);
+        apply_openai_tunnel_configuration(&mut self.snapshot, &self.tunnel_config);
         self.snapshot.regular_tunnel_available = true;
         self.snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
         apply_config_projection(&mut self.snapshot, &self.config);
@@ -1556,11 +1592,14 @@ impl DesktopCore {
         }
         let deadline = Deadline::after(QUICK_SHARE_READY_TIMEOUT);
         let tunnel_proxy = effective_tunnel_proxy(&self.config.tunnel_proxy)?;
-        let command = self.adapter.quick_share_command(
+        let mut command = self.adapter.quick_share_command(
             Path::new(&project.path),
             provider,
             tunnel_proxy.url.as_deref(),
         )?;
+        if provider == "openai" {
+            self.tunnel_config.apply_to_command(&mut command)?;
+        }
         if deadline.is_elapsed() {
             return Err(readiness_timeout_error(
                 "quick_share_not_ready",
@@ -1763,11 +1802,11 @@ impl DesktopCore {
                 "Manage external exposure on the remote Server instead.",
             ));
         }
-        if !openai_tunnel_configuration().is_configured() {
+        if !self.tunnel_config.snapshot().is_configured() {
             return Err(DesktopError::new(
                 "tunnel_unavailable",
                 "OpenAI Secure Tunnel is not configured",
-                "Configure the canonical Control Plane Tunnel environment, then retry.",
+                "Save the Tunnel ID and API key in Desktop settings, then retry.",
             ));
         }
         if self
@@ -1814,9 +1853,10 @@ impl DesktopCore {
             })?;
         let deadline = Deadline::after(REGULAR_TUNNEL_READY_TIMEOUT);
         let tunnel_proxy = effective_tunnel_proxy(&self.config.tunnel_proxy)?;
-        let command = self
+        let mut command = self
             .adapter
             .regular_tunnel_command(&env_file, tunnel_proxy.url.as_deref())?;
+        self.tunnel_config.apply_to_command(&mut command)?;
         if deadline.is_elapsed() {
             return Err(readiness_timeout_error(
                 "tunnel_unavailable",
@@ -2594,7 +2634,7 @@ fn state_temp_path(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), id))
 }
 
-fn write_atomic_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_atomic_file_with_hook(path, bytes, |_| Ok(()))
 }
 
@@ -2938,29 +2978,8 @@ fn apply_config_projection(snapshot: &mut DesktopStateSnapshot, config: &StoredD
     };
 }
 
-fn openai_tunnel_configuration() -> OpenAiTunnelConfigSnapshot {
-    openai_tunnel_configuration_from_presence(
-        environment_variable_present("CONTROL_PLANE_TUNNEL_ID"),
-        environment_variable_present("CONTROL_PLANE_API_KEY"),
-    )
-}
-
-fn openai_tunnel_configuration_from_presence(
-    tunnel_id_present: bool,
-    api_key_present: bool,
-) -> OpenAiTunnelConfigSnapshot {
-    OpenAiTunnelConfigSnapshot {
-        tunnel_id_present,
-        api_key_present,
-    }
-}
-
-fn environment_variable_present(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|value| !value.is_empty())
-}
-
-fn apply_openai_tunnel_configuration(snapshot: &mut DesktopStateSnapshot) {
-    let configuration = openai_tunnel_configuration();
+fn apply_openai_tunnel_configuration(snapshot: &mut DesktopStateSnapshot, config: &TunnelConfig) {
+    let configuration = config.snapshot();
     snapshot.openai_tunnel_configured = configuration.is_configured();
     snapshot.openai_tunnel_config = configuration;
 }
@@ -4231,25 +4250,6 @@ mod tests {
             snapshot.readiness.next_action_kind,
             Some(ReadinessNextActionKind::CheckConnection)
         );
-    }
-
-    #[test]
-    fn tunnel_configuration_presence_matrix_is_value_free() {
-        for (tunnel_id_present, api_key_present, configured) in [
-            (false, false, false),
-            (true, false, false),
-            (false, true, false),
-            (true, true, true),
-        ] {
-            let observation =
-                openai_tunnel_configuration_from_presence(tunnel_id_present, api_key_present);
-            assert_eq!(observation.tunnel_id_present, tunnel_id_present);
-            assert_eq!(observation.api_key_present, api_key_present);
-            assert_eq!(observation.is_configured(), configured);
-            let encoded =
-                serde_json::to_value(&observation).expect("serialize presence observation");
-            assert_eq!(encoded.as_object().map(|object| object.len()), Some(2));
-        }
     }
 
     #[cfg(windows)]

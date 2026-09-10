@@ -8,7 +8,7 @@ The normal path is intentionally product-level; you do not need to understand th
 
 ```text
 install Desktop
-→ prepare and confirm the Tunnel configuration
+→ save the Tunnel ID and API key in Desktop
 → choose the real project ChatGPT should use
 → wait for Service / Runner / Project to become ready
 → start the official OpenAI Secure Tunnel
@@ -72,62 +72,45 @@ The Tunnel name is up to you. Record the Tunnel ID. A Restricted API key with on
 
 Do not commit or share real API keys, WebCodex tokens, or authorization values.
 
-## 3. Give Desktop the Tunnel settings
+## 3. Save Tunnel configuration inside Desktop (recommended)
 
-The normal Desktop Tunnel path needs only:
+Open **Settings → OpenAI Tunnel network**, or expand **Optional: check ChatGPT tunnel configuration** in **Connection**:
+
+1. Enter your Tunnel ID in **Tunnel ID**.
+2. Enter an API key authorized for that Tunnel in the **Tunnel API key** password field.
+3. Click **Save configuration**. Once the source shows the local configuration file, you can start the connection. **No Desktop restart is required.**
+
+The same fields are available in the optional Tunnel section during local setup. When a key is already saved, leaving its field blank keeps that key. Desktop never retrieves the secret into the UI; submission clears the input. A failed save retains the Tunnel ID but requires re-entering an unsaved key.
+
+**Priority: complete saved configuration → inherited Desktop process environment.** Desktop never combines a saved Tunnel ID with an environment API key. Saving does not modify system variables or start/stop a connection. New values apply to the next regular OpenAI Tunnel or OpenAI Quick Share start. Stop and start an active connection to apply them.
+
+The file is `secrets/tunnel-config.json` in Desktop's local application data directory:
+
+- macOS: `~/Library/Application Support/dev.webcodex.desktop/secrets/tunnel-config.json`.
+- Windows: `%LOCALAPPDATA%\dev.webcodex.desktop\secrets\tunnel-config.json`.
+
+This file contains an **unencrypted API key**. Keep it out of projects, Git, tickets, and shared backups. macOS/Unix writes are owner-only (`0600`); Windows inherits access permissions from the current user's local application data directory. Saves use atomic replacement without retaining old secret backups. The `secrets` directory is excluded by WebCodex’s existing sensitive-path policy. Ordinary `desktop-state.json` remains non-secret runtime state.
+
+**Clear saved configuration and use environment** clears the saved pair and restores environment fallback; the file records `null`. Invalid or unreadable saved configuration does not fall back automatically. Repair it by saving again in the UI or explicitly clear it. Manual file edits require restarting Desktop; in-app saves do not.
+
+### Optional: continue using environment variables
+
+Without saved configuration, Desktop uses its inherited process environment:
 
 ```text
 CONTROL_PLANE_TUNNEL_ID
 CONTROL_PLANE_API_KEY
 ```
 
-You do not need `OPENAI_ADMIN_KEY` or `OPENAI_API_KEY` for this path. The Desktop package does not bundle `tunnel-client`; when the official OpenAI Secure Tunnel is first needed, WebCodex downloads and verifies the pinned client automatically. Most users therefore do not install it manually. If managed download fails, check the network/proxy first; `WEBCODEX_TUNNEL_CLIENT_BIN` is an advanced override.
+No additional `OPENAI_ADMIN_KEY` or `OPENAI_API_KEY` is needed. On first OpenAI Secure Tunnel use, WebCodex automatically downloads and verifies a pinned `tunnel-client`; manual installation is normally unnecessary. If download fails, check networking or proxies. Advanced users can set `WEBCODEX_TUNNEL_CLIENT_BIN`.
 
-### Windows
+Windows users can set persistent variables for the current user. On macOS, Finder / Dock launches do not read `~/.zshrc`; launch from a Terminal that has loaded the variables or configure the login session environment. After changing variables through this advanced path, use **Quit WebCodex** in the tray and launch it again. Closing the window only hides it and cannot refresh its process environment. **Recheck configuration** neither executes shell startup scripts nor reloads manually edited configuration files.
 
-Set the values as persistent variables for the current user, then **fully quit WebCodex and start it again**:
+### macOS Computer Use permissions
 
-```powershell
-[Environment]::SetEnvironmentVariable("CONTROL_PLANE_TUNNEL_ID", "tunnel_...", "User")
-[Environment]::SetEnvironmentVariable("CONTROL_PLANE_API_KEY", "<restricted-tunnel-key>", "User")
-```
+For screenshots, window observation, keyboard or pointer control, grant the relevant permissions under **System Settings → Privacy & Security** to the process actually running WebCodex Runner/Desktop. These include **Screen & System Audio Recording**, and **Accessibility** for UI control. Restart the affected process when macOS requires it.
 
-### macOS
-
-Apps launched from Finder or the Dock do **not** read `~/.zshrc`. If you keep the values in your shell setup, Terminal may see them while Desktop does not.
-
-For a temporary test, launch Desktop from a Terminal that already has the variables:
-
-```bash
-source ~/.zshrc
-"/Applications/WebCodex Desktop.app/Contents/MacOS/WebCodex"
-```
-
-To keep launching from Finder or the Dock, copy the current values into the login session's launchd environment, then reopen Desktop:
-
-```bash
-source ~/.zshrc
-launchctl setenv CONTROL_PLANE_TUNNEL_ID "$CONTROL_PLANE_TUNNEL_ID"
-launchctl setenv CONTROL_PLANE_API_KEY "$CONTROL_PLANE_API_KEY"
-```
-
-If you want Computer Use features such as screenshots, window observation, keyboard, or pointer control, grant the permissions required by macOS to the process actually running WebCodex Runner/Desktop. At minimum this may include **Screen & System Audio Recording**; UI control also requires **Accessibility**. Restart the affected process after changing these permissions when macOS requires it.
-
-Back in Desktop, open **Connection → Optional: check ChatGPT tunnel configuration** and check **OpenAI Tunnel configuration detection**. Missing configuration expands this section automatically. The same checks are also available in **Settings → OpenAI Tunnel network**:
-
-- `Tunnel ID` should say **Detected**;
-- `Tunnel API key` should say **Detected**;
-- the UI reports presence only and never displays the API-key value.
-
-If you just changed environment variables, use **Recheck configuration**. Recheck only observes the environment visible to the **current Desktop process**. It does not execute `~/.zshrc` or secretly load credentials.
-
-If Recheck still says **Not detected**, remember that clicking the window close button only hides WebCodex in the menu bar/system tray. It does not create a new process. Use the tray/menu-bar **Quit WebCodex** action, make sure Desktop has actually exited, then start it again. On macOS, Finder/Dock still will not read `~/.zshrc`; use the Terminal-launch or login-session environment approach above.
-
-**Success looks like:** both fields say **Detected** and the OpenAI Secure Tunnel action is available.
-
-**If it fails:** use Recheck first; if the current process still cannot see the settings, fully quit WebCodex and relaunch it. Closing and reopening the window is not a restart.
-
-**Next:** choose the real project ChatGPT should use.
+**Success looks like:** the source is the local file and both presence checks pass. Next, select the actual project ChatGPT should use.
 
 ## 4. Start the local runtime and add your project
 
@@ -229,7 +212,7 @@ If Desktop shows a healthy Service / Runner / Project / Tunnel but ChatGPT still
 
 ## Troubleshooting
 
-**OpenAI Secure Tunnel is disabled:** use **OpenAI Tunnel configuration detection**. It shows exactly which presence check is missing. **Recheck configuration** observes only the current process. If you just set the variables, fully quit WebCodex and launch a new process; closing the window is not a quit.
+**OpenAI Secure Tunnel is disabled:** save a complete Tunnel ID and API key in Desktop, then check that the local runtime is ready. If using environment fallback, fully quit and reopen after changing variables.
 
 **macOS Terminal sees the values but Desktop does not:** Finder/Dock apps do not load `~/.zshrc`; use the Terminal-launch or `launchctl setenv` path above. Desktop Recheck does not execute shell startup scripts.
 

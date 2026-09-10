@@ -14,7 +14,7 @@ import { ProjectsPanel } from "./features/projects/ProjectsPanel";
 import { ConnectionPanel } from "./features/connection/ConnectionPanel";
 import { ActivityPanel } from "./features/activity/ActivityPanel";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
-import { useLocale } from "./i18n/locale";
+import { LANGUAGES, useLocale } from "./i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "./i18n/presentation";
 
 type Navigation = "home" | "projects" | "connection" | "activity" | "settings";
@@ -340,8 +340,7 @@ export default function App() {
             onChange={(event) => setLocale(event.target.value as typeof locale)}
             data-webcodex-control="locale"
           >
-            <option value="zh-CN">{t("locale.zh")}</option>
-            <option value="en-US">{t("locale.en")}</option>
+            {LANGUAGES.map((language) => <option key={language.value} value={language.value}>{language.label}</option>)}
           </select>
         </div>
         <div className="sidebar-status">
@@ -455,6 +454,7 @@ function operationLabel(
     case "local_runtime_stop": return t("operation.localRuntimeStop");
     case "runtime_refresh": return t("operation.runtimeRefresh");
     case "runtime_resume": return t("operation.runtimeResume");
+    case "tunnel_config_update": return t("operation.tunnelConfigUpdate");
     case "tunnel_proxy_update": return t("operation.tunnelProxyUpdate");
   }
 }

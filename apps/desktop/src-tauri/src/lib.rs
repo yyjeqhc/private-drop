@@ -9,6 +9,7 @@ mod platform;
 mod process;
 mod state;
 mod tray;
+mod tunnel_config;
 mod webcodex;
 
 use state::AppState;
@@ -51,6 +52,7 @@ pub fn run() {
             commands::observe_chatgpt_activity,
             commands::resume_saved_runtime,
             commands::update_tunnel_proxy,
+            commands::update_tunnel_config,
             commands::inspect_project,
             commands::configure_local_setup,
             commands::configure_remote_setup,
