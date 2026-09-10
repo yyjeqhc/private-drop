@@ -68,7 +68,7 @@ WebCodex
 - **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。
 - **macOS x64/arm64** —— 支持 Desktop 本机 Server + Runner、OpenAI Secure Tunnel、本机 `share` 和独立 Runner 工作流。
 - **Windows x64** —— 推荐 Desktop 本机 Server + Runner + 官方 OpenAI Secure Tunnel；同时支持 CLI + Runner、本地前台 Server，以及显式 `webcodex share --tunnel cloudflare|openai|none`。
-- **Windows arm64** —— 支持 CLI + Runner、本地前台 Server 与 `share`，managed OpenAI `tunnel-client` 可用。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此使用 Cloudflare 时需要受信任的显式/`PATH` `cloudflared`。0.4.0 Desktop installer 仅提供 Windows x64。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
+- **Windows arm64** —— 支持 CLI + Runner、本地前台 Server 与 `share`，managed OpenAI `tunnel-client` 可用。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此使用 Cloudflare 时需要受信任的显式/`PATH` `cloudflared`。当前 Desktop installer 仅提供 Windows x64。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
 
 Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
 

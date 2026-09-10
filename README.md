@@ -68,7 +68,7 @@ For the internal Server/Runner architecture, protocol surfaces, and authority bo
 - **Linux x64/arm64** — local `share`, Server, and Runner workflows.
 - **macOS x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, local `share`, and standalone Runner workflows.
 - **Windows x64** — Desktop local Server + Runner with the official OpenAI Secure Tunnel, plus CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`.
-- **Windows arm64** — CLI + Runner, local foreground Server, and `share`; managed OpenAI `tunnel-client` is supported. The pinned Cloudflare release has no official Windows ARM64 artifact, so Cloudflare requires a trusted explicit/PATH `cloudflared`. The 0.4.0 Desktop installer is Windows x64 only. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
+- **Windows arm64** — CLI + Runner, local foreground Server, and `share`; managed OpenAI `tunnel-client` is supported. The pinned Cloudflare release has no official Windows ARM64 artifact, so Cloudflare requires a trusted explicit/PATH `cloudflared`. The Desktop installer is currently Windows x64 only. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
 
 Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
 
