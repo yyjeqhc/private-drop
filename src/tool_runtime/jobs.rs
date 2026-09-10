@@ -1829,13 +1829,17 @@ impl ToolRuntime {
     /// Hidden REST compatibility wrapper for stopping a runtime Job by id.
     /// Registered Project Jobs are Runner-owned, so this delegates directly to
     /// the Runner Job registry and never attempts Server-local process control.
-    pub async fn stop_job(&self, job_id: String) -> ToolResult {
+    pub async fn stop_job(&self, job_id: String, auth: Option<&AuthContext>) -> ToolResult {
         if !is_safe_job_id(&job_id) {
             return ToolResult::err("invalid job id");
         }
         match self
             .runner_registry
-            .stop_job(&job_id, "runtime_http".to_string())
+            .stop_job_for_auth(
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                &job_id,
+                crate::runner_http::requested_by_from_auth(auth),
+            )
             .await
         {
             Ok(job) => ToolResult::ok(json!({

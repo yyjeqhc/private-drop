@@ -142,7 +142,8 @@ pub async fn job_stop(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     let Some(body) = parse_json_body::<JobStopRequest>(req, res).await else {
         return;
     };
-    let result = runtime.stop_job(body.job_id).await;
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime.stop_job(body.job_id, auth.as_ref()).await;
     render_result(res, &audit, "job_stop", None, result);
 }
 

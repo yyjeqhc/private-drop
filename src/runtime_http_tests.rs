@@ -251,6 +251,7 @@ fn build_projects_router(
                     Router::with_path("projects/git_diff_summary").post(projects_git_diff_summary),
                 )
                 .push(Router::with_path("jobs/list").post(jobs_list))
+                .push(Router::with_path("jobs/stop").post(job_stop))
                 .push(Router::with_path("jobs/tail").post(job_tail))
                 .push(Router::with_path("runtime/status").post(runtime_status)),
         )
