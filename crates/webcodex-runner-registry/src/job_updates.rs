@@ -35,9 +35,10 @@ use webcodex_core::runner_protocol::{
     RunnerJobUpdateRequest, RunnerRequest, ShellCommandExecutionState, ShellJobActivity,
     ShellJobActivityPhase, ShellJobActivitySource, ShellJobContext, ShellJobInfo,
     ShellJobOpRequest, ShellJobStructuredExecutionMetadata, ShellJobValidationMetadata,
-    ShellJobValidationStep, ShellProcessArgv, ShellRunRequest, ShellScriptPayload,
-    DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_CWD_MAX_BYTES, PROCESS_STDIN_MAX_BYTES,
-    STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
+    ShellJobValidationStep, ShellProcessArgv, ShellRunRequest, ShellScriptLanguage,
+    ShellScriptPayload, DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, PROCESS_CWD_MAX_BYTES,
+    PROCESS_STDIN_MAX_BYTES, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
+    STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
 
 #[derive(Clone, Copy)]
@@ -693,6 +694,11 @@ impl RunnerRegistry {
         let validation_tool = metadata.validation_tool.clone();
         let assertion_name = metadata.assertion_name.clone();
         let structured_execution = metadata.structured_execution;
+        let javascript_script_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::Script(script))
+                if script.language == ShellScriptLanguage::Javascript
+        );
         let structured_stdin = metadata.stdin;
         if validation_steps.len() > 3
             || validation_steps.iter().any(|step| !step.is_canonical())
@@ -949,6 +955,15 @@ impl RunnerRegistry {
         {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support structured_execution_jobs"
+            ));
+        }
+        if javascript_script_request
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::StructuredScriptJavascript)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {client_id} does not support structured_script_javascript"
             ));
         }
         if detached_request

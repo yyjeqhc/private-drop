@@ -984,6 +984,53 @@ async fn structured_process_reconciliation_restores_active_and_terminal_evidence
 }
 
 #[tokio::test]
+async fn javascript_structured_job_start_requires_additive_runner_capability() {
+    let registry = RunnerRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let metadata = || ShellJobStartMetadata {
+        project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+        session_id: Some(SESSION_ID.to_string()),
+        project_cwd: Some("/srv/demo".to_string()),
+        purpose: Some("operation".to_string()),
+        shell: Some("javascript".to_string()),
+        visibility: ShellJobVisibility::HiddenUntilHandoff,
+        structured_execution: Some(StructuredJobExecution::Script(ShellScriptPayload {
+            language: ShellScriptLanguage::Javascript,
+            script: "await Promise.resolve();\n".to_string(),
+            args: Vec::new(),
+        })),
+        ..Default::default()
+    };
+
+    let error = registry
+        .start_job_with_metadata(start_request(""), "tester".to_string(), metadata())
+        .await
+        .unwrap_err();
+    assert!(error.contains("structured_script_javascript"), "{error}");
+
+    let mut upgraded = register_request(INSTANCE_A, empty_inventory());
+    upgraded.capabilities.structured_script_javascript = true;
+    registry.register(upgraded).await.unwrap();
+    let job = registry
+        .start_job_with_metadata(start_request(""), "tester".to_string(), metadata())
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("JavaScript script Job request");
+    assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
+    assert_eq!(
+        request.script.as_ref().map(|script| script.language),
+        Some(ShellScriptLanguage::Javascript)
+    );
+}
+
+#[tokio::test]
 async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_without_redispatch() {
     let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
@@ -2417,6 +2464,42 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
         validation_progress: None,
         activity: None,
     }
+}
+
+#[test]
+fn job_inventory_accepts_javascript_structured_script_context() {
+    let mut javascript = standalone_snapshot("javascript-running", "running");
+    javascript.context.shell = Some("javascript".to_string());
+    javascript.context.command_preview = "javascript script (24 bytes, 1 args)".to_string();
+    javascript.context.structured_execution = Some(
+        crate::runner_protocol::ShellJobStructuredExecutionMetadata {
+            execution_source: "run_script".to_string(),
+            language: Some(ShellScriptLanguage::Javascript),
+            script_bytes: Some(24),
+            arg_count: 1,
+            stdin_present: false,
+            validation_identity: None,
+            validation_tool: None,
+            assertion_name: None,
+        },
+    );
+    let inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![javascript.clone()],
+    };
+    validate_job_inventory(CLIENT_ID, &[project_summary()], &inventory).unwrap();
+
+    javascript.context.shell = Some("node".to_string());
+    let error = validate_job_inventory(
+        CLIENT_ID,
+        &[project_summary()],
+        &ShellJobInventory {
+            active_complete: true,
+            jobs: vec![javascript],
+        },
+    )
+    .unwrap_err();
+    assert!(error.contains("shell is invalid"), "{error}");
 }
 
 #[tokio::test]

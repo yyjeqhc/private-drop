@@ -395,6 +395,7 @@ mod tests {
                         structured_go_test_packages: true,
                         structured_process_argv: true,
                         structured_script_payload: false,
+                        structured_script_javascript: false,
                         internal_posix_script: false,
                         structured_execution_jobs: false,
                         detached_process_jobs: false,

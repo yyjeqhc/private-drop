@@ -1999,6 +1999,10 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     capabilities.structured_go_test_packages = true;
     capabilities.structured_process_argv = true;
     capabilities.structured_script_payload = true;
+    // JavaScript extends the older typed-script wire enum. Advertise it
+    // separately so a newer Server never sends that variant to an older Runner
+    // which already advertised structured_script_payload.
+    capabilities.structured_script_javascript = true;
     capabilities.internal_posix_script = true;
     capabilities.structured_execution_jobs = true;
     // Detached process ownership is an independent additive authority. Until
@@ -3238,7 +3242,13 @@ fn validate_runner_job_context_operation(
     if context.shell.as_deref().is_some_and(|shell| {
         !matches!(
             shell,
-            "sh" | "bash" | "powershell" | "configured" | "custom" | "remote" | "direct_argv"
+            "sh" | "bash"
+                | "powershell"
+                | "javascript"
+                | "configured"
+                | "custom"
+                | "remote"
+                | "direct_argv"
         )
     }) {
         return Err("job recovery context shell is invalid".to_string());

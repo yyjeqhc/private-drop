@@ -304,30 +304,34 @@ impl ToolRuntime {
         }
         let wait_timeout = timeout;
         let (request_id, receiver) = match self
-                .runner_registry
-                .enqueue_script(
-                    client_id,
-                    Some(effective_cwd),
-                    payload,
-                    stdin,
-                    timeout,
-                    wait_timeout,
-                    "tool_runtime".to_string(),
+            .runner_registry
+            .enqueue_script(
+                client_id,
+                Some(effective_cwd),
+                payload,
+                stdin,
+                timeout,
+                wait_timeout,
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(enqueued) => enqueued,
+            Err(error) => {
+                return process_tool_failure_result(
+                    command_rejected_message(
+                        &error,
+                        if language == ShellScriptLanguage::Javascript {
+                            "confirm the Runner is connected and advertises structured_script_payload plus structured_script_javascript, then retry only if target state proves no script started."
+                        } else {
+                            "confirm the Runner is connected and advertises structured_script_payload, then retry only if target state proves no script started."
+                        },
+                    ),
+                    classify_process_failure(&error),
+                    ShellCommandExecutionState::NotStarted,
                 )
-                .await
-            {
-                Ok(enqueued) => enqueued,
-                Err(error) => {
-                    return process_tool_failure_result(
-                        command_rejected_message(
-                            &error,
-                            "confirm the Runner is connected and advertises structured_script_payload, then retry only if target state proves no script started.",
-                        ),
-                        classify_process_failure(&error),
-                        ShellCommandExecutionState::NotStarted,
-                    )
-                }
-            };
+            }
+        };
         let mut result = match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), receiver)
             .await
         {

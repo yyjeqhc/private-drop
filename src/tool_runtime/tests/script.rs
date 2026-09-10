@@ -62,6 +62,7 @@ async fn register_script_agent(
         structured_validation_argv: true,
         structured_process_argv: true,
         structured_script_payload,
+        structured_script_javascript: structured_script_payload,
         ..Default::default()
     };
     register_agent_with_projects(
@@ -87,6 +88,7 @@ async fn register_script_job_agent(
         structured_validation_argv: true,
         structured_process_argv: true,
         structured_script_payload: true,
+        structured_script_javascript: true,
         structured_execution_jobs: true,
         ..Default::default()
     };

@@ -459,6 +459,45 @@ fn runner_recovery_context_accepts_server_validation_identity_metadata() {
     );
 }
 
+#[test]
+fn runner_recovery_context_accepts_javascript_script_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let script = runner_protocol::ShellScriptPayload {
+        language: runner_protocol::ShellScriptLanguage::Javascript,
+        script: "console.log('recovered');\n".to_string(),
+        args: vec!["literal arg".to_string()],
+    };
+    let mut request = shell_job_request(temp.path(), "");
+    request.kind = "start_script_job".to_string();
+    request.timeout_secs = 60;
+    request.script = Some(script.clone());
+    let context = request.job_context.as_mut().unwrap();
+    context.shell = Some("javascript".to_string());
+    context.command_preview = format!(
+        "javascript script ({} bytes, {} args)",
+        script.script.len(),
+        script.args.len()
+    );
+    context.structured_execution = Some(runner_protocol::ShellJobStructuredExecutionMetadata {
+        execution_source: "run_script".to_string(),
+        language: Some(runner_protocol::ShellScriptLanguage::Javascript),
+        script_bytes: Some(script.script.len()),
+        arg_count: script.args.len(),
+        stdin_present: false,
+        validation_identity: None,
+        validation_tool: None,
+        assertion_name: None,
+    });
+    let context = context.clone();
+
+    validate_runner_job_context(&context, &request, "ws-client").unwrap();
+
+    let mut invalid = context;
+    invalid.shell = Some("node".to_string());
+    let error = validate_runner_job_context(&invalid, &request, "ws-client").unwrap_err();
+    assert!(error.contains("shell is invalid"), "{error}");
+}
+
 fn wait_for_job_envelope(
     rx: &mut tokio::sync::mpsc::Receiver<RunnerEnvelope>,
     message: &str,

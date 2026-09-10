@@ -234,6 +234,12 @@ pub const RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_process_
 /// older Runners must fail closed rather than interpreting script text through
 /// the legacy command channel.
 pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script_payload";
+/// The Runner understands the additive `javascript` semantic language in typed
+/// `run_script` payloads. Older generation-2 Runners already advertise
+/// `structured_script_payload` while accepting only sh/bash/PowerShell, so this
+/// remains a separate rolling-upgrade fence. It describes script protocol
+/// semantics, not local Node.js executable availability.
+pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT: &str = "structured_script_javascript";
 /// Runner-owned WebCodex-generated POSIX programs execute through an explicit
 /// internal runtime instead of the configured interactive shell. Missing on
 /// older Runners is false so Control never sends the dedicated request kind to
@@ -429,6 +435,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
     RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
     RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT,
     RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
     RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS,
@@ -603,6 +610,12 @@ pub struct RunnerCapabilities {
     /// inferred from shell, validation argv, or process argv support.
     #[serde(default)]
     pub structured_script_payload: bool,
+    /// Additive typed-script support for the canonical `javascript` language.
+    /// Missing on older Runners is false and is never inferred from
+    /// `structured_script_payload` or protocol generation. Node availability is
+    /// resolved separately at execution time.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_script_javascript: bool,
     /// Dedicated server-generated POSIX script request kind. Missing on older
     /// Runners is false and is never inferred from raw shell or typed public
     /// script support.
@@ -929,6 +942,7 @@ impl Default for RunnerCapabilities {
             structured_go_test_packages: false,
             structured_process_argv: false,
             structured_script_payload: false,
+            structured_script_javascript: false,
             internal_posix_script: false,
             structured_execution_jobs: false,
             detached_process_jobs: false,
@@ -3690,6 +3704,7 @@ mod envelope_tests {
                 structured_go_test_packages: true,
                 structured_process_argv: true,
                 structured_script_payload: true,
+                structured_script_javascript: true,
                 internal_posix_script: true,
                 structured_execution_jobs: true,
                 detached_process_jobs: true,
@@ -4368,6 +4383,7 @@ mod envelope_tests {
         assert!(!capabilities.structured_go_test_json);
         assert!(capabilities.structured_process_argv);
         assert!(capabilities.structured_script_payload);
+        assert!(!capabilities.structured_script_javascript);
         assert!(capabilities.async_jobs);
         assert!(!capabilities.structured_execution_jobs);
         assert!(!RunnerCapabilities::default().structured_script_payload);
@@ -4382,6 +4398,7 @@ mod envelope_tests {
         assert!(!capabilities.structured_go_test_json);
         assert!(!capabilities.structured_process_argv);
         assert!(!capabilities.structured_script_payload);
+        assert!(!capabilities.structured_script_javascript);
         assert!(!capabilities.structured_execution_jobs);
     }
 
@@ -4883,6 +4900,7 @@ mod envelope_tests {
                 "structured_go_test_packages",
                 "structured_process_argv",
                 "structured_script_payload",
+                "structured_script_javascript",
                 "internal_posix_script",
                 "structured_execution_jobs",
                 "detached_process_jobs",
