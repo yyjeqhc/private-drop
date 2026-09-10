@@ -39,6 +39,34 @@ pub(crate) fn validate_structured_edit_runner_path(path: &str) -> Result<(), Str
     Ok(())
 }
 
+fn checked_structured_edit_target(cwd: Option<&str>, resolved: &Path) -> Result<PathBuf, String> {
+    let root = cwd.ok_or_else(|| "structured edit request missing project root".to_string())?;
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| format!("project root does not exist: {error}"))?;
+    let parent = resolved
+        .parent()
+        .ok_or_else(|| "target path has no parent directory".to_string())?;
+    let name = resolved
+        .file_name()
+        .ok_or_else(|| "target path has no file name".to_string())?;
+    // Resolve parent aliases before planning or creating directories, including
+    // any not-yet-created suffix. Keep the final component so batch operations
+    // retain their existing rejection of symlink files.
+    let target = canonical_batch_identity(parent)?.join(name);
+    let identity = canonical_batch_identity(&target)?;
+    // Check both the directory entry that will be changed and the target that
+    // a content/hash read would follow if the final component is a symlink.
+    for candidate in [&target, &identity] {
+        let relative = candidate
+            .strip_prefix(&root)
+            .map_err(|_| "structured edit path escapes project root".to_string())?;
+        if is_sensitive_edit_path(&relative.to_string_lossy()) {
+            return Err("refusing to edit sensitive path".to_string());
+        }
+    }
+    Ok(target)
+}
+
 fn write_file_atomic_strict(path: &Path, content: &str, tmp_prefix: &str) -> Result<(), String> {
     let parent = path
         .parent()
@@ -222,6 +250,16 @@ pub(crate) fn handle_write_project_file_request(
             )
         }
     };
+    let target = match checked_structured_edit_target(request.cwd.as_deref(), resolved) {
+        Ok(target) => target,
+        Err(error) => {
+            return line_edit_stdout(
+                write_project_file_error(serde_json::json!(path), error),
+                start,
+            )
+        }
+    };
+    let resolved = target.as_path();
     let exists = std::fs::symlink_metadata(resolved).is_ok();
     if exists && !overwrite {
         return line_edit_stdout(
@@ -1184,8 +1222,9 @@ fn resolve_unique_patch_path(
             start,
         ));
     }
-    let resolved =
-        resolve_requested_path(policy, request.cwd.as_deref(), path).map_err(|error| {
+    let resolved = resolve_requested_path(policy, request.cwd.as_deref(), path)
+        .and_then(|resolved| checked_structured_edit_target(request.cwd.as_deref(), &resolved))
+        .map_err(|error| {
             batch_error(
                 Some(index),
                 Some(kind),
@@ -1627,7 +1666,9 @@ pub(crate) fn handle_apply_text_edits_file_request(
                 start,
             );
         }
-        let resolved = match resolve_requested_path(policy, request.cwd.as_deref(), &change.path) {
+        let resolved = match resolve_requested_path(policy, request.cwd.as_deref(), &change.path)
+            .and_then(|resolved| checked_structured_edit_target(request.cwd.as_deref(), &resolved))
+        {
             Ok(path) => path,
             Err(error) => {
                 return batch_error(
@@ -1674,7 +1715,9 @@ pub(crate) fn handle_apply_text_edits_file_request(
                     start,
                 );
             }
-            match resolve_requested_path(policy, request.cwd.as_deref(), to_path) {
+            match resolve_requested_path(policy, request.cwd.as_deref(), to_path).and_then(
+                |resolved| checked_structured_edit_target(request.cwd.as_deref(), &resolved),
+            ) {
                 Ok(path) => {
                     let identity = match canonical_batch_identity(&path) {
                         Ok(identity) => identity,

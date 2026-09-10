@@ -176,6 +176,9 @@ mod shell_job_tree;
 mod shell_profiles;
 #[path = "main_tests/structured_delete.rs"]
 mod structured_delete;
+#[cfg(unix)]
+#[path = "main_tests/structured_write_paths.rs"]
+mod structured_write_paths;
 #[path = "main_tests/write_project_file.rs"]
 mod write_project_file;
 
