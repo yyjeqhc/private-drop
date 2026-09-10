@@ -163,7 +163,7 @@ pub fn run_script_input_schema() -> Value {
         (
             "language",
             "string",
-            "Required semantic script language. The Runner selects the concrete interpreter; Session default_shell never overrides this field.",
+            "Required semantic script language. JavaScript is Node.js-backed with fixed .mjs module semantics; the Runner resolves the concrete interpreter, and callers cannot provide a runtime path. Session default_shell never overrides this field.",
             true,
         ),
         (
@@ -209,7 +209,7 @@ pub fn run_script_input_schema() -> Value {
             false,
         ),
     ]));
-    schema["properties"]["language"]["enum"] = json!(["sh", "bash", "powershell"]);
+    schema["properties"]["language"]["enum"] = json!(["sh", "bash", "powershell", "javascript"]);
     schema["properties"]["script"]["minLength"] = json!(1);
     schema["properties"]["script"]["maxLength"] = json!(SCRIPT_MAX_BYTES);
     schema["properties"]["args"]["maxItems"] = json!(SCRIPT_ARG_MAX_COUNT);

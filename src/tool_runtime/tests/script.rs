@@ -175,8 +175,8 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project = register_script_agent(&runtime, "script-wire", temp.path(), true).await;
-    let mut large_script = "# typed script payload\n".repeat(1_800);
-    large_script.push_str("printf 'done\\n'\n");
+    let mut large_script = "// typed script payload\n".repeat(1_800);
+    large_script.push_str("console.log('done');\n");
     assert!(large_script.len() > 32 * 1024);
 
     let task = tokio::spawn({
@@ -186,7 +186,7 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_sync_call(project, None, ShellScriptLanguage::Bash, large_script),
+                    script_sync_call(project, None, ShellScriptLanguage::Javascript, large_script),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -197,7 +197,7 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
     assert_eq!(request.command, "");
     assert!(request.process.is_none());
     let payload = request.script.as_ref().expect("typed script payload");
-    assert_eq!(payload.language, ShellScriptLanguage::Bash);
+    assert_eq!(payload.language, ShellScriptLanguage::Javascript);
     assert_eq!(payload.script, large_script);
     assert_eq!(
         payload.args,
@@ -219,7 +219,7 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["language"], "bash");
+    assert_eq!(result.output["language"], "javascript");
     assert_eq!(result.output["stdout_tail"], "done\n");
     for omitted in [
         "execution_source",
@@ -258,8 +258,8 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
                     script_call(
                         project,
                         None,
-                        ShellScriptLanguage::Bash,
-                        "printf 'fast\\n'\n",
+                        ShellScriptLanguage::Javascript,
+                        "console.log('fast');\n",
                     ),
                     Some(&auth),
                 )
@@ -297,6 +297,7 @@ async fn run_script_fast_success_projects_back_and_removes_the_hidden_job() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["language"], "javascript");
     for omitted in [
         "execution_state",
         "command_started",
@@ -440,7 +441,12 @@ async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hid
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_call(project, None, ShellScriptLanguage::Bash, "true\n"),
+                    script_call(
+                        project,
+                        None,
+                        ShellScriptLanguage::Javascript,
+                        "Promise.resolve();\n",
+                    ),
                     Some(&auth),
                 )
                 .await
@@ -469,7 +475,9 @@ async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hid
         None,
         None,
         None,
-        Some("interpreter_unavailable: bash is unavailable"),
+        Some(
+            "interpreter_unavailable: JavaScript/Node interpreter is unavailable; command was not started",
+        ),
     )
     .await;
 
@@ -497,9 +505,9 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
     );
     let auth = auth_context(None, true);
     let unique_body = format!(
-        "# raw-body-{}\n{}\nprintf 'done\\n'\n",
+        "// raw-body-{}\n{}\nconsole.log('done');\n",
         uuid::Uuid::new_v4(),
-        "# typed script payload\n".repeat(1_800)
+        "// typed script payload\n".repeat(1_800)
     );
     assert!(unique_body.len() > 32 * 1024);
     let unique_arg = format!("raw-arg-{}", uuid::Uuid::new_v4());
@@ -517,7 +525,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
                 .dispatch_with_auth(
                     ToolCall::RunScript {
                         project,
-                        language: ShellScriptLanguage::Bash,
+                        language: ShellScriptLanguage::Javascript,
                         script: body,
                         args: vec![arg],
                         stdin: Some(stdin),
@@ -537,6 +545,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
     assert_eq!(request.command, "");
     assert!(request.process.is_none());
     let payload = request.script.as_ref().expect("typed script payload");
+    assert_eq!(payload.language, ShellScriptLanguage::Javascript);
     assert_eq!(payload.script, unique_body);
     assert_eq!(payload.args.as_slice(), std::slice::from_ref(&unique_arg));
     assert_eq!(request.stdin.as_deref(), Some(unique_stdin.as_str()));
@@ -568,7 +577,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
         .as_ref()
         .expect("safe structured metadata");
     assert_eq!(metadata.execution_source, "run_script");
-    assert_eq!(metadata.language, Some(ShellScriptLanguage::Bash));
+    assert_eq!(metadata.language, Some(ShellScriptLanguage::Javascript));
     assert_eq!(metadata.script_bytes, Some(unique_body.len()));
     assert_eq!(metadata.arg_count, 1);
     assert!(metadata.stdin_present);
@@ -626,6 +635,10 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
     assert_eq!(
         observed_job["structured_execution"]["execution_source"],
         "run_script"
+    );
+    assert_eq!(
+        observed_job["structured_execution"]["language"],
+        "javascript"
     );
     assert_eq!(
         observed_job["structured_execution"]["script_bytes"],
@@ -688,7 +701,12 @@ async fn run_script_nonzero_timeout_uncertainty_and_interpreter_absence_are_trut
         async move {
             runtime
                 .dispatch_with_auth(
-                    script_sync_call(project, None, ShellScriptLanguage::Sh, "exit 19"),
+                    script_sync_call(
+                        project,
+                        None,
+                        ShellScriptLanguage::Javascript,
+                        "process.exit(19);",
+                    ),
                     Some(&auth_context(None, true)),
                 )
                 .await
@@ -854,7 +872,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
             }),
         )
         .unwrap();
-    let raw_script = "printf RAW_SCRIPT_BODY";
+    let raw_script = "console.log('RAW_SCRIPT_BODY');";
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -865,7 +883,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
                     script_sync_call(
                         project,
                         Some(session_id),
-                        ShellScriptLanguage::Sh,
+                        ShellScriptLanguage::Javascript,
                         raw_script,
                     ),
                     Some(&auth_context(None, true)),
@@ -880,7 +898,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
     );
     assert_eq!(
         request.script.as_ref().unwrap().language,
-        ShellScriptLanguage::Sh,
+        ShellScriptLanguage::Javascript,
         "Session default_shell must not override explicit language"
     );
     complete_script_lifecycle(
@@ -911,7 +929,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
         .find(|event| event.kind == "tool_call_started" && event.tool_name == "run_script")
         .unwrap();
     let input = started.input_summary.as_ref().unwrap();
-    assert_eq!(input["language"], "sh");
+    assert_eq!(input["language"], "javascript");
     assert_eq!(input["script_bytes"], raw_script.len());
     assert_eq!(input["arg_count"], 4);
     assert_eq!(input["stdin_present"], true);
@@ -925,7 +943,7 @@ async fn run_script_session_defaults_and_evidence_are_body_and_stdin_free() {
 
     let commands = recorder.commands.lock().unwrap();
     assert_eq!(commands.len(), 1);
-    let expected_preview = format!("sh script ({} bytes, 4 args)", raw_script.len());
+    let expected_preview = format!("javascript script ({} bytes, 4 args)", raw_script.len());
     assert_eq!(commands[0].as_deref(), Some(expected_preview.as_str()));
     assert!(!commands[0].as_deref().unwrap().contains("RAW_SCRIPT_BODY"));
 }

@@ -282,7 +282,7 @@ fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
     );
     assert_eq!(
         properties["language"]["enum"],
-        json!(["sh", "bash", "powershell"])
+        json!(["sh", "bash", "powershell", "javascript"])
     );
     assert_eq!(properties["script"]["minLength"], 1);
     assert_eq!(properties["script"]["maxLength"], 512 * 1024);

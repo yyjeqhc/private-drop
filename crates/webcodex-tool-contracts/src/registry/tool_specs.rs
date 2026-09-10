@@ -303,13 +303,8 @@ mod tests {
             assert!(!description.contains("run_job"), "{name}: {description}");
         }
         assert!(find("run_process").description.contains("run_shell"));
-        for name in [
-            "run_script",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test",
-        ] {
+        assert!(find("run_script").description.contains("run_shell"));
+        for name in ["cargo_fmt", "cargo_check", "cargo_test", "go_test"] {
             let description = &find(name).description;
             assert!(!description.contains("run_shell"), "{name}: {description}");
         }
@@ -378,7 +373,7 @@ mod tests {
         for spec in &specs {
             if !matches!(
                 spec.name.as_str(),
-                "run_shell" | "run_process" | "session_shell_exec"
+                "run_shell" | "run_process" | "run_script" | "session_shell_exec"
             ) {
                 assert!(
                     !spec.description.contains("run_shell"),

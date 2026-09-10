@@ -23,7 +23,7 @@ fn supports_model_facing_result_expectation(tool_name: &str) -> bool {
 
 #[test]
 fn run_script_tool_call_parser_accepts_declared_languages() {
-    for language in ["sh", "bash", "powershell"] {
+    for language in ["sh", "bash", "powershell", "javascript"] {
         let parsed = ToolCall::from_tool_name(
             "run_script",
             json!({

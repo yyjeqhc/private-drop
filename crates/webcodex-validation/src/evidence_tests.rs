@@ -1645,6 +1645,17 @@ fn generic_validation_scope_and_complex_script_identity_fail_closed() {
     .unwrap();
     assert!(complex.identity.starts_with("command:"));
     assert!(complex.validation_tool.is_none());
+    let javascript = run_script_validation_identity(
+        "javascript",
+        "await import('node:test');",
+        &[],
+        None,
+        Some("."),
+        Some("test"),
+    )
+    .unwrap();
+    assert!(javascript.identity.starts_with("command:"));
+    assert!(javascript.validation_tool.is_none());
 }
 
 #[test]

@@ -565,6 +565,9 @@ fn configured_script_interpreter(
         ShellScriptLanguage::Powershell => {
             matches!(configured_basename.as_str(), "pwsh" | "pwsh.exe")
         }
+        ShellScriptLanguage::Javascript => {
+            matches!(configured_basename.as_str(), "node" | "node.exe")
+        }
     };
     let mut candidates = Vec::new();
     if configured_matches {
@@ -578,6 +581,7 @@ fn configured_script_interpreter(
             candidates.push("powershell".to_string());
         }
         ShellScriptLanguage::Powershell => candidates.push("pwsh".to_string()),
+        ShellScriptLanguage::Javascript => candidates.push("node".to_string()),
     }
     candidates.dedup_by(|left, right| {
         if cfg!(windows) {
@@ -594,9 +598,12 @@ fn configured_script_interpreter(
             return Ok(path.into_os_string());
         }
     }
+    let interpreter_name = match language {
+        ShellScriptLanguage::Javascript => "JavaScript/Node",
+        _ => language.as_str(),
+    };
     Err(format!(
-        "interpreter_unavailable: {} interpreter is unavailable; command was not started",
-        language.as_str()
+        "interpreter_unavailable: {interpreter_name} interpreter is unavailable; command was not started"
     ))
 }
 
@@ -608,7 +615,7 @@ fn build_script_command(
 ) -> Command {
     let mut command = Command::new(interpreter.into());
     match language {
-        ShellScriptLanguage::Sh | ShellScriptLanguage::Bash => {
+        ShellScriptLanguage::Sh | ShellScriptLanguage::Bash | ShellScriptLanguage::Javascript => {
             command.arg(script_path);
         }
         ShellScriptLanguage::Powershell => {

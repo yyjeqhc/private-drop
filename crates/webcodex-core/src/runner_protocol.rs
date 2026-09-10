@@ -1536,6 +1536,7 @@ pub enum ShellScriptLanguage {
     Sh,
     Bash,
     Powershell,
+    Javascript,
 }
 
 impl ShellScriptLanguage {
@@ -1544,6 +1545,7 @@ impl ShellScriptLanguage {
             Self::Sh => "sh",
             Self::Bash => "bash",
             Self::Powershell => "powershell",
+            Self::Javascript => "javascript",
         }
     }
 
@@ -1551,6 +1553,7 @@ impl ShellScriptLanguage {
         match self {
             Self::Sh | Self::Bash => ".sh",
             Self::Powershell => ".ps1",
+            Self::Javascript => ".mjs",
         }
     }
 }
@@ -4466,6 +4469,21 @@ mod envelope_tests {
             .unwrap_err()
             .contains("shell command mode"));
         }
+    }
+
+    #[test]
+    fn javascript_script_language_is_canonical_and_uses_mjs() {
+        assert_eq!(ShellScriptLanguage::Javascript.as_str(), "javascript");
+        assert_eq!(ShellScriptLanguage::Javascript.file_extension(), ".mjs");
+        assert_eq!(
+            serde_json::to_string(&ShellScriptLanguage::Javascript).unwrap(),
+            "\"javascript\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ShellScriptLanguage>("\"javascript\"").unwrap(),
+            ShellScriptLanguage::Javascript
+        );
+        assert!(serde_json::from_str::<ShellScriptLanguage>("\"js\"").is_err());
     }
 
     #[test]
