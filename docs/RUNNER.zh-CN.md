@@ -210,6 +210,21 @@ Profile 的安全要点：
   env 键数量、program、dialect）——绝不暴露 `init_script` 正文或环境值。
 - Profile 以清空环境 + 显式白名单运行；请声明所需 env。
 
+### `run_script` 的 typed 脚本语言
+
+`run_script` 接受 `sh`、`bash`、`powershell` 和 `javascript`。JavaScript 是
+Runner 上的外部 Node.js 执行：WebCodex 从准备好的 shell/profile PATH 解析
+`node`（仅当已配置的 shell/profile program 本身是 `node`/`node.exe` 时也可
+直接使用），将 typed 脚本正文写入 Runner-owned `.mjs` 临时文件，并通过
+native argv 启动 `node <temporary.mjs> <args...>`。`.mjs` 固定 Node ESM 模块
+语义，不受项目 `package.json` 或临时目录 metadata 影响。脚本参数与 stdin
+继续独立传递，子进程继续使用相同的 resolved project cwd、timeout/cancellation、
+Runner policy 和 Job lifecycle。
+
+WebCodex 不会安装或 bootstrap npm dependencies，不会注入 `node_modules` 或
+`NODE_PATH`，也不会 fallback 到 Bun、Deno、`tsx` 或 TypeScript。Node builtin、
+现代 JavaScript、Promise/async 能力由 Runner 已安装的 Node.js runtime 提供。
+
 ## Job 与并发
 
 Job 是在发起调用返回后仍继续运行的长命令或校验。Job 有稳定的 `job_id`、有界的

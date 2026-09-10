@@ -378,13 +378,21 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let run_script_desc = desc("run_script");
     for phrase in [
-        "program-like shell content",
-        "loops",
-        "if/else branches",
-        "functions",
-        "traps",
-        "multi-stage scripts",
-        "owned by the current runner",
+        "sh, bash, powershell, or javascript",
+        "node.js-backed",
+        ".mjs",
+        "prepared execution environment",
+        "cannot choose a runtime executable/path",
+        "does not install npm dependencies",
+        "bun",
+        "deno",
+        "tsx",
+        "typescript",
+        "run_process for one short native executable with literal argv",
+        "run_script for program-like scripts",
+        "run_shell when shell grammar is required",
+        "same execution / same job",
+        "never restarted",
         "outlive the current runner process",
         "run_detached_process",
     ] {

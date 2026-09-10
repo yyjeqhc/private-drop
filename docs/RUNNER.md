@@ -249,6 +249,23 @@ Security notes for profiles:
 - Profiles run with a cleared environment plus an explicit allowlist; declare
   the env they need.
 
+### Typed `run_script` languages
+
+`run_script` accepts `sh`, `bash`, `powershell`, and `javascript`. JavaScript is
+external Node.js execution on the Runner: WebCodex resolves `node` from the
+prepared shell/profile PATH (or uses the configured shell/profile program when
+it is `node`/`node.exe`), writes the typed body to a Runner-owned `.mjs` file,
+and launches `node <temporary.mjs> <args...>` with native argv. `.mjs` fixes
+Node ESM module semantics independently of project `package.json` or temporary
+directory metadata. Script args and stdin remain separate inputs, and the child
+uses the same resolved project cwd, timeout/cancellation, policy, and Job
+lifecycle as other typed scripts.
+
+WebCodex does not install or bootstrap npm dependencies, inject `node_modules`
+or `NODE_PATH`, or fall back to Bun, Deno, `tsx`, or TypeScript. Node built-ins,
+modern JavaScript, promises, and async code are available according to the
+Runner's installed Node.js runtime.
+
 ## Jobs and concurrency
 
 A Job is a long-running command or validation that continues after the

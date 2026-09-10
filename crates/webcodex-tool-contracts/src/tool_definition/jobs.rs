@@ -118,7 +118,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             true,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Run bounded sh, bash, or PowerShell content as typed script data from a Runner-owned file. Prefer this for program-like shell content such as loops, if/else branches, functions, traps, or multi-stage scripts rather than a short command chain. Long work continues as the same execution, owned by the current Runner; the script body never becomes shell command text. If work must outlive the current Runner process, use a native executable and discover run_detached_process instead.",
+        "Run bounded sh, bash, PowerShell, or JavaScript content as typed script data from a Runner-owned file. JavaScript is Node.js-backed with fixed .mjs module semantics; the Runner resolves node from its prepared execution environment. Callers cannot choose a runtime executable/path, WebCodex does not install npm dependencies, and JavaScript does not fall back to Bun, Deno, tsx, or TypeScript. Prefer run_process for one short native executable with literal argv, run_script for program-like scripts such as loops, branches, functions, or multi-stage data/text/filesystem processing, and run_shell when shell grammar is required. Long work continues as the same execution / same Job after handoff and is never restarted; the script body never becomes shell command text. If work must outlive the current Runner process, use a native executable and discover run_detached_process instead.",
         run_script_input_schema,
     ),
     adaptive_runtime_direct(

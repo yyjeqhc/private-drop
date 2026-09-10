@@ -50,6 +50,18 @@ fn process_argv_helper() -> PathBuf {
         .clone()
 }
 
+fn create_fake_native_executable(path: &Path) {
+    #[cfg(windows)]
+    std::fs::copy(process_argv_helper(), path).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+}
+
 fn run_direct_process(
     cwd: &Path,
     executable: &Path,
@@ -1084,6 +1096,115 @@ fn missing_script_interpreter_is_prestart_and_does_not_run_script() {
     assert!(!marker.exists());
 }
 
+#[test]
+fn missing_javascript_interpreter_is_prestart_and_does_not_run_script() {
+    let cwd = tempfile::tempdir().unwrap();
+    let marker = cwd.path().join("marker");
+    let project_registry_dir = tempfile::tempdir().unwrap();
+    let mut shell = ShellConfig {
+        program: "custom-shell".to_string(),
+        ..Default::default()
+    };
+    shell.env.insert("PATH".to_string(), String::new());
+    let result = run_script_with_profiles_and_execution_state(
+        1,
+        &unrestricted_policy(),
+        &shell,
+        project_registry_dir.path(),
+        &PreparedShellProfileCache::default(),
+        Some(cwd.path().to_string_lossy().as_ref()),
+        &ShellScriptPayload {
+            language: ShellScriptLanguage::Javascript,
+            script: "import { writeFileSync } from 'node:fs'; writeFileSync('marker', 'ran');"
+                .to_string(),
+            args: Vec::new(),
+        },
+        None,
+        10,
+        None,
+    );
+    assert_eq!(
+        result.execution_state,
+        ShellCommandExecutionState::NotStarted
+    );
+    assert!(result.result.exit_code.is_none());
+    let error = result.result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("interpreter_unavailable"), "{error}");
+    assert!(error.contains("JavaScript/Node"), "{error}");
+    assert!(!marker.exists());
+}
+
+#[test]
+fn javascript_interpreter_resolves_node_from_prepared_profile_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let node = temp
+        .path()
+        .join(format!("node{}", std::env::consts::EXE_SUFFIX));
+    create_fake_native_executable(&node);
+    let profile = PreparedShellProfile {
+        profile_name: "js-test".to_string(),
+        program: "bash".to_string(),
+        args: Vec::new(),
+        dialect: ShellDialect::Posix,
+        env_snapshot: std::collections::HashMap::from([(
+            "PATH".to_string(),
+            temp.path().to_string_lossy().into_owned(),
+        )]),
+    };
+
+    let resolved = configured_script_interpreter(
+        &ShellConfig::default(),
+        Some(&profile),
+        ShellScriptLanguage::Javascript,
+    )
+    .unwrap();
+    assert_eq!(PathBuf::from(resolved), node);
+}
+
+#[test]
+fn javascript_interpreter_accepts_configured_node_executable() {
+    let temp = tempfile::tempdir().unwrap();
+    let node = temp
+        .path()
+        .join(format!("node{}", std::env::consts::EXE_SUFFIX));
+    create_fake_native_executable(&node);
+    let mut shell = ShellConfig {
+        program: node.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    shell.env.insert("PATH".to_string(), String::new());
+
+    let resolved =
+        configured_script_interpreter(&shell, None, ShellScriptLanguage::Javascript).unwrap();
+    assert_eq!(PathBuf::from(resolved), node);
+}
+
+#[test]
+fn javascript_interpreter_does_not_fallback_to_alternate_runtimes() {
+    let temp = tempfile::tempdir().unwrap();
+    for runtime in ["bun", "deno", "tsx", "npx", "npm"] {
+        create_fake_native_executable(
+            &temp
+                .path()
+                .join(format!("{runtime}{}", std::env::consts::EXE_SUFFIX)),
+        );
+    }
+    let mut shell = ShellConfig {
+        program: "custom-shell".to_string(),
+        ..Default::default()
+    };
+    shell.env.insert(
+        "PATH".to_string(),
+        temp.path().to_string_lossy().into_owned(),
+    );
+
+    let error =
+        configured_script_interpreter(&shell, None, ShellScriptLanguage::Javascript).unwrap_err();
+    assert!(error.contains("interpreter_unavailable"), "{error}");
+    assert!(error.contains("JavaScript/Node"), "{error}");
+    assert!(!error.contains(temp.path().to_string_lossy().as_ref()));
+}
+
 #[cfg(unix)]
 #[test]
 fn arbitrary_configured_shell_is_not_treated_as_a_script_language() {
@@ -1161,6 +1282,33 @@ fn sh_and_bash_plans_pass_a_script_file_without_command_text_mode() {
 }
 
 #[test]
+fn javascript_plan_uses_mjs_file_and_native_literal_argv() {
+    use std::ffi::OsStr;
+
+    let script_path = Path::new("/runner/scratch/payload.mjs");
+    let args = vec![
+        "two words".to_string(),
+        "$(literal)".to_string(),
+        "; literal".to_string(),
+    ];
+    let command = build_script_command("node", ShellScriptLanguage::Javascript, script_path, &args);
+    assert_eq!(command.get_program(), OsStr::new("node"));
+    let actual = command.get_args().collect::<Vec<_>>();
+    assert_eq!(
+        actual,
+        [
+            script_path.as_os_str(),
+            OsStr::new("two words"),
+            OsStr::new("$(literal)"),
+            OsStr::new("; literal")
+        ]
+    );
+    for forbidden in ["-e", "-p", "-c", "-Command"] {
+        assert!(!actual.iter().any(|arg| *arg == OsStr::new(forbidden)));
+    }
+}
+
+#[test]
 fn powershell_plan_uses_ps1_file_and_never_command_text_mode() {
     use std::ffi::OsStr;
 
@@ -1191,6 +1339,23 @@ fn powershell_plan_uses_ps1_file_and_never_command_text_mode() {
         let arg = arg.to_string_lossy();
         arg.eq_ignore_ascii_case("-Command") || arg.eq_ignore_ascii_case("-c")
     }));
+}
+
+#[test]
+fn javascript_temp_file_uses_mjs_and_exact_script_bytes() {
+    let payload = ShellScriptPayload {
+        language: ShellScriptLanguage::Javascript,
+        script: "import { readFile } from 'node:fs/promises';\nawait Promise.resolve(readFile);"
+            .to_string(),
+        args: Vec::new(),
+    };
+    let (temporary_path, _original, absolute) = create_temporary_script(&payload).unwrap();
+    assert_eq!(
+        absolute.extension().and_then(|ext| ext.to_str()),
+        Some("mjs")
+    );
+    assert_eq!(std::fs::read(&absolute).unwrap(), payload.script.as_bytes());
+    temporary_path.close().unwrap();
 }
 
 #[test]

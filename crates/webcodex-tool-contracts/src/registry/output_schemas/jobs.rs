@@ -391,7 +391,7 @@ fn job_structured_execution_metadata_schema() -> Value {
                     },
                     "language": {
                         "anyOf": [
-                            {"type": "string", "enum": ["sh", "bash", "powershell"]},
+                            {"type": "string", "enum": ["sh", "bash", "powershell", "javascript"]},
                             {"type": "null"}
                         ]
                     },
@@ -902,7 +902,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             properties.extend(structured_continuation_properties());
             let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["properties"]["language"]["enum"] =
-                json!(["sh", "bash", "powershell"]);
+                json!(["sh", "bash", "powershell", "javascript"]);
             schema["properties"]["output"]["properties"]["execution_source"]["const"] =
                 json!("run_script");
             schema["properties"]["output"]["allOf"] =

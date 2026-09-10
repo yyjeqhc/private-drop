@@ -705,7 +705,7 @@ fn key_tool_output_schemas_include_expected_fields() {
     }
     assert_eq!(
         output_schema_property(&specs, "run_script", "language")["enum"],
-        serde_json::json!(["sh", "bash", "powershell"])
+        serde_json::json!(["sh", "bash", "powershell", "javascript"])
     );
     assert_eq!(
         output_schema_property(&specs, "run_script", "execution_source")["const"],
