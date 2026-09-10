@@ -1,0 +1,327 @@
+name: Extended native CI
+
+run-name: Extended native ${{ inputs.source_sha }}
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact 40-character source commit to validate
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact 40-character source commit to validate
+        required: true
+        type: string
+
+# Expensive/scarce native architectures live here instead of ordinary PR/main CI.
+# Release readiness calls this workflow for the exact pre-tag source, while maintainers
+# can dispatch it explicitly at any time without publishing artifacts.
+permissions:
+  contents: read
+
+concurrency:
+  group: extended-native-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate exact source input
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+  linux-arm64:
+    needs: source
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: extended-linux-arm64-ci
+      - name: Verify native Linux ARM64 production surfaces
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(uname -m)" = aarch64
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$rust_host" = aarch64-unknown-linux-gnu
+          cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  macos-intel:
+    needs: source
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: extended-macos-intel-ci
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Verify native macOS Intel host
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(uname -m)" = x86_64
+          rust_host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$rust_host" = x86_64-apple-darwin
+      - name: Check macOS Intel runtime surfaces
+        run: |
+          cargo check --locked --workspace
+          cargo test --locked -p webcodex-runner -p webcodex-computer
+      - name: Install Desktop dependencies
+        run: npm ci --prefix apps/desktop
+      - name: Check Desktop frontend and Rust
+        run: |
+          npm --prefix apps/desktop run typecheck
+          npm --prefix apps/desktop test
+          npm --prefix apps/desktop run build
+          cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Build exact macOS Intel runtime for Desktop
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          short_source="$(git rev-parse --short=12 HEAD)"
+          version="$(node -p "require('./npm/webcodex/package.json').version")"
+          built_at="$(git show -s --format=%ct HEAD)"
+          export WEBCODEX_BUILT_AT="$built_at"
+          cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
+          for name in webcodex webcodex-server webcodex-runner; do
+            binary="target/dogfood/$name"
+            actual="$($binary --version)"
+            expected="$name $version (commit $short_source, dirty=false, built_at=$built_at)"
+            test "$actual" = "$expected"
+            test "$(/usr/bin/lipo -archs "$binary")" = x86_64
+          done
+          {
+            echo "source=$source_sha"
+            echo "version=$version"
+            echo "built_at=$built_at"
+          } >> "$GITHUB_OUTPUT"
+      - name: Stage exact runtime for macOS Intel Desktop
+        id: desktop_bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/webcodex-extended-darwin-x64-bundle"
+          python3 scripts/prepare_desktop_bundle_macos.py \
+            --bin-dir target/dogfood \
+            --version "${{ steps.runtime.outputs.version }}" \
+            --source-sha "${{ steps.runtime.outputs.source }}" \
+            --built-at "${{ steps.runtime.outputs.built_at }}" \
+            --platform darwin-x64 \
+            --signing-mode adhoc \
+            --output-dir "$stage"
+          {
+            echo "config=$stage/tauri.bundle.conf.json"
+            echo "metadata=$stage/desktop-bundle.json"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and smoke macOS Intel Desktop DMG
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          CI: "true"
+          APPLE_SIGNING_IDENTITY: "-"
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-extended-darwin-x64-tauri"
+          npm exec tauri -- build \
+            --bundles dmg \
+            --config "${{ steps.desktop_bundle.outputs.config }}" \
+            --ci -- --locked
+          bundle_dir="$CARGO_TARGET_DIR/release/bundle/dmg"
+          shopt -s nullglob
+          candidates=("$bundle_dir"/*.dmg)
+          test "${#candidates[@]}" -eq 1
+          dmg="$RUNNER_TEMP/webcodex-extended-darwin-x64.dmg"
+          cp "${candidates[0]}" "$dmg"
+          cd "$GITHUB_WORKSPACE"
+          bash scripts/desktop_install_macos_smoke.sh \
+            --dmg "$dmg" \
+            --version "${{ steps.runtime.outputs.version }}" \
+            --source-sha "${{ steps.runtime.outputs.source }}" \
+            --built-at "${{ steps.runtime.outputs.built_at }}" \
+            --platform darwin-x64 \
+            --stage-metadata "${{ steps.desktop_bundle.outputs.metadata }}" \
+            --signing-mode adhoc
+      - name: Require final macOS Intel source cleanliness
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+  windows-arm64:
+    needs: source
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          architecture: arm64
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: extended-windows-arm64-ci
+      - name: Verify native Windows ARM64 host and runtime surfaces
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ((git rev-parse HEAD).Trim() -ne "${{ inputs.source_sha }}") { throw "Extended source mismatch" }
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'ARM64') { throw "Expected native Windows ARM64 host" }
+          $hostLine = rustc -vV | Select-String '^host: '
+          if ($hostLine.Line -ne 'host: aarch64-pc-windows-msvc') { throw "Unexpected Rust host: $($hostLine.Line)" }
+          cargo check --locked -p webcodex -p webcodex-cli -p webcodex-runner
+          if ($LASTEXITCODE -ne 0) { throw "Windows ARM64 cargo check failed" }
+      - name: Install Desktop dependencies
+        run: npm ci --prefix apps/desktop
+      - name: Check Desktop frontend and Rust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm --prefix apps/desktop run typecheck
+          if ($LASTEXITCODE -ne 0) { throw "Desktop typecheck failed" }
+          npm --prefix apps/desktop test
+          if ($LASTEXITCODE -ne 0) { throw "Desktop tests failed" }
+          npm --prefix apps/desktop run build
+          if ($LASTEXITCODE -ne 0) { throw "Desktop frontend build failed" }
+          cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets
+          if ($LASTEXITCODE -ne 0) { throw "Desktop cargo check failed" }
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Desktop cargo test failed" }
+      - name: Build exact Windows ARM64 runtime for Desktop
+        id: runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $source = (git rev-parse HEAD).Trim()
+          $short = (git rev-parse --short=12 HEAD).Trim()
+          $version = (node -e "console.log(require('./npm/webcodex/package.json').version)").Trim()
+          $builtAt = [Int64]((git show -s --format=%ct HEAD).Trim())
+          $env:WEBCODEX_BUILT_AT = "$builtAt"
+          cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
+          if ($LASTEXITCODE -ne 0) { throw "Windows ARM64 runtime build failed" }
+          foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
+            $binary = Join-Path "target\dogfood" "$name.exe"
+            $output = @(& $binary --version)
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0 -or $output.Count -eq 0 -or -not $output[0]) { throw "$name --version failed" }
+            $actual = $output[0].TrimEnd()
+            $expected = "$name $version (commit $short, dirty=false, built_at=$builtAt)"
+            if ($actual -ne $expected) { throw "Unexpected $name identity: $actual" }
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $binary))
+            if ($bytes.Length -lt 64) { throw "$binary is too small to be a PE image" }
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+            if ($peOffset -lt 0 -or $peOffset -gt $bytes.Length - 6) { throw "Invalid PE header offset for $binary" }
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0xAA64) { throw ("Unexpected ARM64 PE machine for {0}: 0x{1:x4}" -f $binary, $machine) }
+          }
+          "source=$source" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "built_at=$builtAt" >> $env:GITHUB_OUTPUT
+      - name: Stage exact runtime for Windows ARM64 Desktop
+        id: desktop_bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $stage = Join-Path $env:RUNNER_TEMP "webcodex-extended-win32-arm64-bundle"
+          & .\scripts\prepare_desktop_bundle.ps1 `
+            -BinDir "target\dogfood" `
+            -Version "${{ steps.runtime.outputs.version }}" `
+            -SourceSha "${{ steps.runtime.outputs.source }}" `
+            -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}") `
+            -OutputDir $stage
+          "config=$(Join-Path $stage 'tauri.bundle.conf.json')" >> $env:GITHUB_OUTPUT
+      - name: Build unsigned Windows ARM64 Desktop NSIS candidate
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP "webcodex-extended-win32-arm64-tauri"
+          node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config "${{ steps.desktop_bundle.outputs.config }}" --ci --no-sign -- --locked
+          if ($LASTEXITCODE -ne 0) { throw "Tauri Windows ARM64 NSIS build failed" }
+          $bundleDir = Join-Path $env:CARGO_TARGET_DIR "release\bundle\nsis"
+          $built = @(Get-ChildItem -LiteralPath $bundleDir -Filter "*-setup.exe" -File)
+          if ($built.Count -ne 1) { throw "Expected exactly one Windows ARM64 NSIS candidate, found $($built.Count)" }
+          $installer = Join-Path $env:RUNNER_TEMP "webcodex-extended-win32-arm64-setup.exe"
+          Copy-Item -LiteralPath $built[0].FullName -Destination $installer
+          "DESKTOP_EXTENDED_INSTALLER=$installer" >> $env:GITHUB_ENV
+      - name: Smoke Windows ARM64 Desktop installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & .\scripts\desktop_install_windows_smoke.ps1 `
+            -Installer $env:DESKTOP_EXTENDED_INSTALLER `
+            -Version "${{ steps.runtime.outputs.version }}" `
+            -SourceSha "${{ steps.runtime.outputs.source }}" `
+            -BuiltAt ([Int64]"${{ steps.runtime.outputs.built_at }}") `
+            -Platform win32-arm64
+      - name: Require final Windows ARM64 source cleanliness
+        shell: pwsh
+        run: |
+          git diff --check
+          if (@(git status --porcelain --untracked-files=all).Count -ne 0) { throw "Extended Windows ARM64 checkout became dirty" }
+
+  summary:
+    needs: [source, linux-arm64, macos-intel, windows-arm64]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all extended native lanes
+        shell: bash
+        env:
+          SOURCE_RESULT: ${{ needs.source.result }}
+          LINUX_ARM64_RESULT: ${{ needs.linux-arm64.result }}
+          MACOS_INTEL_RESULT: ${{ needs.macos-intel.result }}
+          WINDOWS_ARM64_RESULT: ${{ needs.windows-arm64.result }}
+        run: |
+          set -euo pipefail
+          for result in "$SOURCE_RESULT" "$LINUX_ARM64_RESULT" "$MACOS_INTEL_RESULT" "$WINDOWS_ARM64_RESULT"; do
+            test "$result" = success
+          done

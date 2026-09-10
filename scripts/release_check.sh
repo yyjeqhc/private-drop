@@ -206,8 +206,15 @@ if bash scripts/test_python_tooling.sh \
     && grep -Fq 'DESKTOP_RESULT' .github/workflows/ci.yml \
     && grep -Fq 'prepare_desktop_bundle_macos.py' .github/workflows/ci.yml \
     && grep -Fq 'desktop_install_macos_smoke.sh' .github/workflows/ci.yml \
+    && grep -Fq 'test-docker-server:' .github/workflows/ci.yml \
+    && grep -Fq 'workflow_dispatch:' .github/workflows/extended-native.yml \
+    && grep -Fq 'macos-15-intel' .github/workflows/extended-native.yml \
+    && grep -Fq 'windows-11-arm' .github/workflows/extended-native.yml \
+    && ! grep -Fq 'macos-15-intel' .github/workflows/ci.yml \
+    && ! grep -Fq 'windows-11-arm' .github/workflows/ci.yml \
     && grep -Fq 'desktop_artifacts' .github/workflows/release-build.yml \
     && grep -Fq 'prepare_desktop_bundle.ps1' .github/workflows/release-build.yml \
+    && grep -Fq 'win32-arm64-setup.exe' .github/workflows/release-build.yml \
     && grep -Fq 'prepare_desktop_bundle_macos.py' .github/workflows/release-build.yml \
     && python3 scripts/check_markdown_links.py \
     && bash scripts/tests/test_npm_package_smoke_existing_binaries.sh; then

@@ -16,7 +16,7 @@ class ReleaseDoctorTests(unittest.TestCase):
         detail = doctor._platform_contract(Path.cwd())
         self.assertIn("darwin-x64", detail)
         self.assertIn("win32-arm64", detail)
-        self.assertIn("Desktop darwin-x64, darwin-arm64, win32-x64", detail)
+        self.assertIn("Desktop darwin-x64, darwin-arm64, win32-x64, win32-arm64", detail)
         workflow = doctor._workflow_contract(Path.cwd())
         self.assertIn("authoritative build", workflow)
 

@@ -651,16 +651,14 @@ jobs:
           }
 
       - name: Install Desktop dependencies
-        if: matrix.platform == 'win32-x64'
         run: npm ci --prefix apps/desktop
 
-      - name: Stage exact Windows x64 runtime for Desktop
-        if: matrix.platform == 'win32-x64'
+      - name: Stage exact native Windows runtime for Desktop
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
-          $stage = Join-Path $env:RUNNER_TEMP "webcodex-desktop-release-bundle"
+          $stage = Join-Path $env:RUNNER_TEMP "webcodex-desktop-$env:WEBCODEX_RELEASE_PLATFORM-release-bundle"
           & .\scripts\prepare_desktop_bundle.ps1 `
             -BinDir $binDir `
             -Version $env:VERSION `
@@ -670,19 +668,19 @@ jobs:
 
           $shortSource = $env:SOURCE_SHA.Substring(0, 12)
           if ($env:BUILD_KIND -eq "release") {
-            $installerName = "webcodex-desktop-v$env:VERSION-win32-x64-setup.exe"
+            $installerName = "webcodex-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe"
           } else {
-            $installerName = "webcodex-desktop-$env:INPUT_TAG-$shortSource-v$env:VERSION-win32-x64-setup.exe"
+            $installerName = "webcodex-desktop-$env:INPUT_TAG-$shortSource-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe"
           }
           $desktopDist = Join-Path $env:GITHUB_WORKSPACE "dist"
           $installerPath = Join-Path $desktopDist $installerName
+          $tauriTarget = Join-Path $env:GITHUB_WORKSPACE "target\desktop-$env:WEBCODEX_RELEASE_PLATFORM-release-tauri"
           "DESKTOP_TAURI_CONFIG=$(Join-Path $stage 'tauri.bundle.conf.json')" >> $env:GITHUB_ENV
-          "DESKTOP_TAURI_TARGET=$(Join-Path $env:GITHUB_WORKSPACE 'target\desktop-release-tauri')" >> $env:GITHUB_ENV
+          "DESKTOP_TAURI_TARGET=$tauriTarget" >> $env:GITHUB_ENV
           "DESKTOP_INSTALLER_NAME=$installerName" >> $env:GITHUB_ENV
           "DESKTOP_INSTALLER_PATH=$installerPath" >> $env:GITHUB_ENV
 
-      - name: Build unsigned Windows x64 Desktop NSIS candidate
-        if: matrix.platform == 'win32-x64'
+      - name: Build unsigned native Windows Desktop NSIS candidate
         working-directory: apps/desktop
         shell: pwsh
         run: |
@@ -702,8 +700,7 @@ jobs:
             [System.Text.Encoding]::ASCII
           )
 
-      - name: Smoke Windows x64 Desktop NSIS candidate
-        if: matrix.platform == 'win32-x64'
+      - name: Smoke native Windows Desktop NSIS candidate
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -711,7 +708,8 @@ jobs:
             -Installer $env:DESKTOP_INSTALLER_PATH `
             -Version $env:VERSION `
             -SourceSha $env:SOURCE_SHA `
-            -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT)
+            -BuiltAt ([Int64]$env:WEBCODEX_BUILT_AT) `
+            -Platform $env:WEBCODEX_RELEASE_PLATFORM
 
       - name: Upload Windows candidate
         uses: actions/upload-artifact@v4
@@ -724,14 +722,13 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-      - name: Upload Windows x64 Desktop candidate
-        if: matrix.platform == 'win32-x64'
+      - name: Upload native Windows Desktop candidate
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ needs.prepare.outputs.archive_stem }}-desktop-win32-x64
+          name: ${{ needs.prepare.outputs.archive_stem }}-desktop-${{ matrix.platform }}
           path: |
-            dist/webcodex-desktop-*-win32-x64-setup.exe
-            dist/webcodex-desktop-*-win32-x64-setup.exe.sha256
+            dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe
+            dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -771,14 +768,17 @@ jobs:
             desktop_darwin_x64="webcodex-desktop-v$VERSION-darwin-x64.dmg"
             desktop_darwin_arm64="webcodex-desktop-v$VERSION-darwin-arm64.dmg"
             desktop_win32_x64="webcodex-desktop-v$VERSION-win32-x64-setup.exe"
+            desktop_win32_arm64="webcodex-desktop-v$VERSION-win32-arm64-setup.exe"
           else
             desktop_darwin_x64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-darwin-x64.dmg"
             desktop_darwin_arm64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-darwin-arm64.dmg"
             desktop_win32_x64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-win32-x64-setup.exe"
+            desktop_win32_arm64="webcodex-desktop-$INPUT_TAG-$short_source-v$VERSION-win32-arm64-setup.exe"
           fi
           export DESKTOP_DARWIN_X64_FILENAME="$desktop_darwin_x64"
           export DESKTOP_DARWIN_ARM64_FILENAME="$desktop_darwin_arm64"
           export DESKTOP_WIN32_X64_FILENAME="$desktop_win32_x64"
+          export DESKTOP_WIN32_ARM64_FILENAME="$desktop_win32_arm64"
           expected=(
             "$ARCHIVE_STEM-linux-x64.tar.gz"
             "$ARCHIVE_STEM-linux-x64.tar.gz.sha256"
@@ -802,6 +802,8 @@ jobs:
             "$desktop_darwin_arm64.evidence.json"
             "$desktop_win32_x64"
             "$desktop_win32_x64.sha256"
+            "$desktop_win32_arm64"
+            "$desktop_win32_arm64.sha256"
           )
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
           if find candidate-input -mindepth 1 ! -type f -print -quit | grep -q .; then
@@ -819,7 +821,7 @@ jobs:
           for platform in "${platforms[@]}"; do
             (cd candidate-input && sha256sum -c "$ARCHIVE_STEM-$platform.tar.gz.sha256")
           done
-          for desktop_filename in "$desktop_darwin_x64" "$desktop_darwin_arm64" "$desktop_win32_x64"; do
+          for desktop_filename in "$desktop_darwin_x64" "$desktop_darwin_arm64" "$desktop_win32_x64" "$desktop_win32_arm64"; do
             (cd candidate-input && sha256sum -c "$desktop_filename.sha256")
           done
 
@@ -866,6 +868,7 @@ jobs:
           cp "candidate-input/$desktop_darwin_x64" release-bundle/
           cp "candidate-input/$desktop_darwin_arm64" release-bundle/
           cp "candidate-input/$desktop_win32_x64" release-bundle/
+          cp "candidate-input/$desktop_win32_arm64" release-bundle/
           cp candidate-input/linux-x64-elf.txt candidate-input/linux-arm64-elf.txt release-bundle/
 
           if [ "$BUILD_KIND" = release ]; then
@@ -881,6 +884,7 @@ jobs:
               cat "candidate-input/$desktop_darwin_x64.sha256"
               cat "candidate-input/$desktop_darwin_arm64.sha256"
               cat "candidate-input/$desktop_win32_x64.sha256"
+              cat "candidate-input/$desktop_win32_arm64.sha256"
             } > release-bundle/SHA256SUMS
           fi
 
@@ -902,6 +906,7 @@ jobs:
               "darwin-x64": os.environ["DESKTOP_DARWIN_X64_FILENAME"],
               "darwin-arm64": os.environ["DESKTOP_DARWIN_ARM64_FILENAME"],
               "win32-x64": os.environ["DESKTOP_WIN32_X64_FILENAME"],
+              "win32-arm64": os.environ["DESKTOP_WIN32_ARM64_FILENAME"],
           }
           desktop_artifacts = {}
           for platform, filename in desktop_files.items():

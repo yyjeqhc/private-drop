@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Installer,
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$SourceSha,
-    [Parameter(Mandatory = $true)][Int64]$BuiltAt
+    [Parameter(Mandatory = $true)][Int64]$BuiltAt,
+    [Parameter(Mandatory = $true)][ValidateSet("win32-x64", "win32-arm64")][string]$Platform
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,6 +87,26 @@ function Get-VersionLine([string]$binary, [string]$name) {
     }
 }
 
+function Get-PeMachine([string]$binary) {
+    $bytes = [System.IO.File]::ReadAllBytes($binary)
+    if ($bytes.Length -lt 64 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+        throw "installed Desktop executable is not a PE image: $binary"
+    }
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    if ($peOffset -lt 0 -or $peOffset -gt $bytes.Length - 6) {
+        throw "installed Desktop executable has an invalid PE header offset: $binary"
+    }
+    if (
+        $bytes[$peOffset] -ne 0x50 -or
+        $bytes[$peOffset + 1] -ne 0x45 -or
+        $bytes[$peOffset + 2] -ne 0x00 -or
+        $bytes[$peOffset + 3] -ne 0x00
+    ) {
+        throw "installed Desktop executable has an invalid PE signature: $binary"
+    }
+    return [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+}
+
 function Wait-Until([scriptblock]$Condition, [int]$Seconds, [string]$Failure) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     do {
@@ -124,6 +145,11 @@ try {
     $desktopExe = Join-Path $installedDir "WebCodex.exe"
     if (-not (Test-Path -LiteralPath $desktopExe -PathType Leaf)) {
         throw "installed WebCodex Desktop executable is missing: $desktopExe"
+    }
+    $expectedDesktopMachine = if ($Platform -eq "win32-x64") { 0x8664 } else { 0xAA64 }
+    $actualDesktopMachine = Get-PeMachine $desktopExe
+    if ($actualDesktopMachine -ne $expectedDesktopMachine) {
+        throw ("installed WebCodex Desktop architecture mismatch: expected 0x{0:x4}, got 0x{1:x4}" -f $expectedDesktopMachine, $actualDesktopMachine)
     }
     $runtimeDir = Join-Path $installedDir "webcodex-runtime"
     if (-not (Test-Path -LiteralPath $runtimeDir -PathType Container)) {

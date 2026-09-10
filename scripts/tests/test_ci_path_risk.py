@@ -27,7 +27,7 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_full_native"], "false")
         self.assertEqual(result["needs_windows"], "false")
         self.assertEqual(result["needs_macos"], "false")
-        self.assertEqual(result["needs_linux_arm64"], "false")
+        self.assertEqual(result["needs_docker"], "false")
         self.assertEqual(result["needs_frontend"], "false")
         self.assertEqual(result["needs_desktop_frontend"], "false")
 
@@ -130,6 +130,15 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(dmg["needs_macos_desktop"], "true")
         self.assertEqual(dmg["needs_windows"], "false")
 
+    def test_server_container_files_require_only_daily_amd64_docker_smoke(self) -> None:
+        for path in ("Dockerfile", "compose.yaml", "compose.build.yaml", "deploy/docker/bootstrap.sh"):
+            with self.subTest(path=path):
+                result = classify(path)
+                self.assertEqual(result["needs_docker"], "true")
+                self.assertEqual(result["needs_full_native"], "false")
+                self.assertEqual(result["needs_windows"], "false")
+                self.assertEqual(result["needs_macos"], "false")
+
     def test_release_or_signing_is_full_native(self) -> None:
         for path in (
             ".github/workflows/release-build.yml",
@@ -138,8 +147,7 @@ class PathRiskFixtureTests(unittest.TestCase):
             with self.subTest(path=path):
                 result = classify(path)
                 self.assertEqual(result["needs_full_native"], "true")
-                self.assertEqual(result["needs_windows_arm64"], "true")
-                self.assertEqual(result["needs_linux_arm64"], "true")
+                self.assertEqual(result["needs_docker"], "true")
                 self.assertEqual(result["needs_macos_desktop"], "true")
 
     def test_any_workflow_policy_change_is_full_native(self) -> None:
@@ -175,14 +183,13 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_macos"], "true")
         self.assertIn("platform-cfg", result["categories"])
 
-    def test_aarch64_cfg_requests_all_architecture_native_lanes(self) -> None:
+    def test_aarch64_cfg_requests_daily_macos_native_lane(self) -> None:
         result = classify(
             "src/runtime.rs",
             platform_diff='+#[cfg(target_arch = "aarch64")]\n+fn arm_only() {}',
         )
-        self.assertEqual(result["needs_linux_arm64"], "true")
-        self.assertEqual(result["needs_windows_arm64"], "true")
         self.assertEqual(result["needs_macos"], "true")
+        self.assertEqual(result["needs_windows"], "false")
         self.assertIn("aarch64-cfg", result["categories"])
 
     def test_changed_paths_are_repository_relative_and_bounded(self) -> None:
@@ -205,13 +212,11 @@ class InvocationOverrideFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_frontend"], "true")
         self.assertEqual(result["needs_desktop_frontend"], "true")
 
-    def test_push_main_forces_full_native(self) -> None:
+    def test_push_main_uses_path_classifier(self) -> None:
         forced = risk.forced_risk_for_invocation(
             "push", external_contributor=False, run_ci=False
         )
-        self.assertIsNotNone(forced)
-        assert forced is not None
-        self.assertEqual(forced.outputs()["needs_full_native"], "true")
+        self.assertIsNone(forced)
 
     def test_external_contributor_preserves_full_native_policy(self) -> None:
         forced = risk.forced_risk_for_invocation(
@@ -264,8 +269,6 @@ class GitRangeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["needs_full_native"], "false")
         self.assertEqual(result["needs_windows_core"], "true")
         self.assertEqual(result["needs_macos"], "true")
-        self.assertEqual(result["needs_linux_arm64"], "true")
-        self.assertEqual(result["needs_windows_arm64"], "true")
         self.assertEqual(result["needs_windows_package"], "false")
         self.assertEqual(result["needs_windows_desktop"], "false")
         self.assertEqual(result["needs_macos_desktop"], "false")
@@ -317,8 +320,7 @@ class GitRangeIntegrationTests(unittest.TestCase):
             self.assertEqual(result["needs_windows_package"], "false")
             self.assertEqual(result["needs_windows_desktop"], "false")
             self.assertEqual(result["needs_macos_desktop"], "false")
-            self.assertEqual(result["needs_linux_arm64"], "false")
-            self.assertEqual(result["needs_windows_arm64"], "false")
+            self.assertEqual(result["needs_docker"], "false")
 
     def test_real_git_rename_is_observed_as_delete_plus_add_and_upgrades_risk(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

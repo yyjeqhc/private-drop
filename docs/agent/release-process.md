@@ -112,18 +112,19 @@ Before tagging or publishing, follow sections in
 `.github/workflows/release-readiness.yml`, dispatched through
 `scripts/release_operator.py readiness-start` for one exact merged `main` SHA and
 observed through the same durable state with `readiness-status`. Before dispatch, the operator
-requires and records exactly one successful main-push CI run for that source. The workflow
-revalidates the exact CI run id/attempt with read-only Actions authority, so readiness reuses
-rather than repeats the cross-platform correctness already proven by main CI: complete Linux
-Rust/tooling coverage, frontend contracts, both native macOS Runner suites, Windows x64
-runtime/package/Desktop-installer lanes, and lightweight Linux/Windows arm64 production-target compilation.
-Readiness then runs only release-specific WebSocket/polling E2E plus coding-loop compare eval;
-after both pass, native `linux/amd64` and `linux/arm64` disposable Server-image jobs verify
-build/runtime/health/non-root behavior and digest-pinned bootstrap generation. These jobs do not
-log in to a registry, upload artifacts, push packages, or produce formal release candidates.
-Six-platform native release-profile/ABI/package validation and the formal Windows x64, macOS Intel,
-and macOS Apple-Silicon Desktop artifacts are intentionally left to the single authoritative
-`release-build.yml` run after immutable tagging instead of being built twice.
+requires and records exactly one successful main-push daily CI run for that source. The workflow
+revalidates the exact CI run id/attempt with read-only Actions authority, then calls the reusable
+`extended-native.yml` workflow against the same exact source. Ordinary CI retains complete Linux
+Rust/tooling coverage plus path-aware Windows x64, macOS Apple-Silicon, Desktop, and amd64 Server-image
+checks; scarce Linux ARM64, macOS Intel, and Windows ARM64 runners are intentionally absent from it.
+Extended native validation supplies Linux ARM64 production coverage plus macOS Intel and Windows ARM64
+runtime/Desktop build and install smoke before tagging. Readiness then runs release-specific
+WebSocket/polling E2E plus coding-loop compare eval; after both pass, native `linux/amd64` and
+`linux/arm64` disposable Server-image jobs verify build/runtime/health/non-root behavior and
+digest-pinned bootstrap generation. These jobs do not log in to a registry, upload artifacts,
+push packages, or produce formal release candidates. Six-platform native release-profile/ABI/package
+validation and the formal Windows x64/ARM64 plus macOS Intel/Apple-Silicon Desktop artifacts remain
+owned by the single authoritative `release-build.yml` run after immutable tagging.
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 
@@ -139,8 +140,8 @@ runs `release_operator.py preflight`, then GitHub Actions validates the exact pr
 source in the durable readiness workflow. After explicit authorization creates the
 immutable tag, `release_operator.py build-start` / `build-status` bind one durable
 `rb_*` request to the reviewed release-build workflow; GitHub Actions builds and assembles
-one same-run native candidate bundle containing the six runtime archives and the three Desktop
-distribution artifacts (Windows x64, macOS Intel, and macOS Apple Silicon). Each Mac lane reuses the
+one same-run native candidate bundle containing the six runtime archives and the four Desktop
+distribution artifacts (Windows x64/ARM64, macOS Intel, and macOS Apple Silicon). Each Mac lane reuses the
 same unsigned runtime build input for its archive and `.app`, then records the bundled post-signing
 digests separately. Verification and formal GitHub Release builds are ad-hoc signed and intentionally
 not notarized, so the release pipeline does not depend on paid Apple Developer Program credentials.

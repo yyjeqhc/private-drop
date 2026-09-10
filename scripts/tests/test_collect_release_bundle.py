@@ -193,6 +193,10 @@ class BundleTests(unittest.TestCase):
                 summary["desktop_artifacts"]["win32-x64"]["filename"],
                 f"webcodex-desktop-v{VERSION}-win32-x64-setup.exe",
             )
+            self.assertEqual(
+                summary["desktop_artifacts"]["win32-arm64"]["filename"],
+                f"webcodex-desktop-v{VERSION}-win32-arm64-setup.exe",
+            )
 
     def test_release_bundle_rejects_missing_desktop(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

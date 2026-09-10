@@ -23,15 +23,15 @@ from typing import BinaryIO
 DEFAULT_REPO = "yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
-DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64")
+DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 RELEASE_WORKFLOW_PATH = ".github/workflows/release-build.yml"
 API_VERSION = "2022-11-28"
 USER_AGENT = "webcodex-release-bundle-collector/1"
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_COUNT = 16
-MAX_ARTIFACT_ZIP_BYTES = 256 * 1024 * 1024
+MAX_ARTIFACT_ZIP_BYTES = 384 * 1024 * 1024
 MAX_ZIP_MEMBERS = 16
-MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_UNCOMPRESSED_BYTES = 384 * 1024 * 1024
 MAX_MEMBER_BYTES = 96 * 1024 * 1024
 MAX_REPORT_BYTES = 2 * 1024 * 1024
 MAX_RELEASE_BUILD_BYTES = 256 * 1024
@@ -74,7 +74,7 @@ def desktop_artifact_filename(
 ) -> str:
     if platform not in DESKTOP_PLATFORMS:
         raise CollectionError(f"unsupported Desktop platform: {platform!r}")
-    suffix = "-setup.exe" if platform == "win32-x64" else ".dmg"
+    suffix = "-setup.exe" if platform.startswith("win32-") else ".dmg"
     if build_kind == "release":
         return f"webcodex-desktop-v{version}-{platform}{suffix}"
     if build_kind == "verification":

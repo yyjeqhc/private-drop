@@ -581,7 +581,7 @@ class DraftVerificationTests(unittest.TestCase):
                     timeout=5,
                 )
             self.assertTrue(summary["draft"])
-            self.assertEqual(len(summary["assets"]), 10)
+            self.assertEqual(len(summary["assets"]), 11)
 
             desktop_name = meta["desktop_artifacts"]["darwin-arm64"]["filename"]
             desktop_asset = next(asset for asset in release["assets"] if asset["name"] == desktop_name)
@@ -650,8 +650,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("dist/webcodex-desktop-*.dmg", workflow)
         self.assertIn("dist/webcodex-desktop-*.dmg.sha256", workflow)
         self.assertIn("dist/webcodex-desktop-*.dmg.evidence.json", workflow)
-        self.assertIn("dist/webcodex-desktop-*-win32-x64-setup.exe", workflow)
-        self.assertIn("dist/webcodex-desktop-*-win32-x64-setup.exe.sha256", workflow)
+        self.assertIn("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe", workflow)
+        self.assertIn("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe.sha256", workflow)
+        self.assertIn("webcodex-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe", workflow)
+        self.assertIn("-Platform $env:WEBCODEX_RELEASE_PLATFORM", workflow)
 
         self.assertNotIn('desktop="dist/${{ steps.desktop_bundle.outputs.desktop_name }}"', workflow)
         self.assertNotIn('$installer = Join-Path "dist" $env:DESKTOP_INSTALLER_NAME', workflow)

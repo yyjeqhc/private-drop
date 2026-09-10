@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
-DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64")
+DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 
 
@@ -31,7 +31,7 @@ def archive_filename(version: str, platform: str) -> str:
 def desktop_filename(version: str, platform: str) -> str:
     if platform not in DESKTOP_PLATFORMS:
         raise SystemExit(f"unsupported Desktop platform: {platform}")
-    suffix = "-setup.exe" if platform == "win32-x64" else ".dmg"
+    suffix = "-setup.exe" if platform.startswith("win32-") else ".dmg"
     return f"webcodex-desktop-v{version}-{platform}{suffix}"
 
 

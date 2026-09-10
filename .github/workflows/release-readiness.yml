@@ -22,11 +22,12 @@ on:
         required: true
         type: string
 
-# This workflow is a pre-tag, non-publication gate. The exact source's complete
-# cross-platform correctness evidence comes from its already-successful main-push
-# CI run. Readiness revalidates that immutable run attempt, then executes only
-# release-specific E2E/eval and disposable Server-image validation. Formal native
-# release-profile candidates are built exactly once after tagging by release-build.
+# This workflow is a pre-tag, non-publication gate. The exact source's common
+# development correctness comes from its already-successful main-push CI run.
+# Readiness revalidates that immutable run attempt, invokes the expensive native
+# architectures through extended-native, then executes release-specific E2E/eval
+# and disposable Server-image validation. Formal release-profile candidates are
+# still built exactly once after tagging by release-build.
 permissions:
   contents: read
   actions: read
@@ -110,6 +111,12 @@ jobs:
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- CI run: \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  extended-native:
+    needs: ci-proof
+    uses: ./.github/workflows/extended-native.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
 
   e2e:
     needs: ci-proof
@@ -391,7 +398,7 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
 
   summary:
-    needs: [ci-proof, e2e, eval, server-image]
+    needs: [ci-proof, extended-native, e2e, eval, server-image]
     runs-on: ubuntu-latest
     steps:
       - name: Record readiness summary
@@ -406,7 +413,8 @@ jobs:
             echo "### Release readiness passed"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
-            echo "- exact-main CI: run \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\` already proved cross-platform correctness"
+            echo "- exact-main CI: run \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\` proved the common daily CI contract"
+            echo "- extended native: Linux ARM64, macOS Intel Desktop, and Windows ARM64 Desktop validation passed"
             echo "- release-specific gates: WebSocket/polling E2E and coding-loop compare eval passed"
             echo "- disposable Server images: linux/amd64 and linux/arm64 build, runtime, health, and digest-pinned bootstrap generation passed"
             echo "- native release-profile candidates produced: no (authoritative release-build owns them after immutable tagging)"

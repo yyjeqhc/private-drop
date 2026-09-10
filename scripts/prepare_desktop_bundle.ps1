@@ -1,4 +1,4 @@
-# Stage exact WebCodex runtime bytes for a Windows x64 Tauri Desktop bundle.
+# Stage exact WebCodex runtime bytes for a native Windows Tauri Desktop bundle.
 #
 # This helper consumes already-built release binaries, verifies one exact
 # source/version/build identity, copies them into an ignored generated tree,
