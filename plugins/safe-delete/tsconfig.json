@@ -9,13 +9,11 @@
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
-    "allowJs": true,
-    "checkJs": false,
     "rootDir": ".",
     "outDir": "dist",
     "declaration": false,
     "sourceMap": false,
     "skipLibCheck": true
   },
-  "include": ["plugin.ts", "domain.js"]
+  "include": ["plugin.ts", "domain.ts"]
 }

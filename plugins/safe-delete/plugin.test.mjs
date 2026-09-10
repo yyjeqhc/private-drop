@@ -12,11 +12,11 @@ import {
   resolveAuthorizedTarget,
   runTrashBackend,
   safeDelete,
-} from "./domain.js";
+} from "./dist/domain.js";
 
 const PROTOCOL_VERSION = "webcodex-plugin-v1";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const pluginPath = path.join(here, "plugin.mjs");
+const pluginPath = path.join(here, "dist", "plugin.js");
 
 const EXPECTED_SAFE_DELETE_TOOL = {
   name: "safe_delete",

@@ -46,10 +46,9 @@ unlink; it falls through to another Trash backend instead.
 ## Runner configuration
 
 Set `cwd` to the exact project/root you want this Plugin to be allowed to trash
-from. The checked-in `plugin.mjs` is a stable Runner entrypoint that loads the
-compiled TypeScript output, so build the Plugin before check/reload. Use an
-absolute path to that entrypoint when the Plugin code lives outside the authority
-root:
+from. Build the TypeScript Plugin before check/reload, then configure the Runner
+to execute `dist/plugin.js`. Use an absolute path when the Plugin code lives
+outside the authority root:
 
 ```toml
 [plugins]
@@ -59,7 +58,7 @@ request_timeout_secs = 30
 id = "safe-delete"
 name = "Safe Delete"
 command = "node"
-args = ["/absolute/path/to/webcodex/plugins/safe-delete/plugin.mjs"]
+args = ["/absolute/path/to/webcodex/plugins/safe-delete/dist/plugin.js"]
 cwd = "/absolute/path/to/project"
 timeout_secs = 30
 ```
@@ -98,8 +97,8 @@ npm --prefix plugins/safe-delete run typecheck
 npm --prefix plugins/safe-delete test
 ```
 
-The TypeScript entrypoint owns only authoring/runtime boilerplate. Path authority,
-Trash backend selection, and result classification remain in the safe-delete
-domain implementation, while the Rust Runner remains authoritative for Plugin
+The Plugin implementation is TypeScript-only. Its domain module owns path authority,
+Trash backend selection, and result classification; the SDK entrypoint owns only
+authoring/runtime boilerplate. The Rust Runner remains authoritative for Plugin
 admission, schema/runtime validation, timeout, process lifecycle, and
 `OutcomeUnknown` handling.

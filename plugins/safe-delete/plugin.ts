@@ -4,7 +4,6 @@ import {
   runPlugin,
   schema,
 } from "@yyjeqhc/webcodex-plugin-sdk";
-import type { InferSchema, ToolResult } from "@yyjeqhc/webcodex-plugin-sdk";
 
 import { MAX_PATH_CHARS, safeDelete } from "./domain.js";
 
@@ -28,8 +27,6 @@ const outputSchema = schema.object({
   errorCode: schema.string({ maxLength: 128 }),
 });
 
-type SafeDeleteOutput = InferSchema<typeof outputSchema>;
-
 const safeDeleteTool = defineTool({
   name: "safe_delete",
   title: "Safe delete",
@@ -44,9 +41,7 @@ const safeDeleteTool = defineTool({
     openWorldHint: true,
   },
   execute(args) {
-    // The domain implementation remains JavaScript to keep this migration behavior-only.
-    // The Runner still validates structuredContent against outputSchema at runtime.
-    return safeDelete(args) as ToolResult<SafeDeleteOutput>;
+    return safeDelete(args);
   },
 });
 

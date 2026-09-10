@@ -36,10 +36,9 @@ Trash / Recycle Bin。
 
 ## Runner 配置
 
-把 `cwd` 设置为你希望这个 Plugin **唯一有权移动到回收站**的项目/目录。仓库中的
-`plugin.mjs` 是稳定 Runner entrypoint，只负责加载 TypeScript 构建产物，因此在
-check/reload 前先完成构建。如果 Plugin 脚本不在这个权限根下，使用该 entrypoint 的
-绝对路径：
+把 `cwd` 设置为你希望这个 Plugin **唯一有权移动到回收站**的项目/目录。在
+check/reload 前先构建 TypeScript Plugin，然后让 Runner 直接执行 `dist/plugin.js`。
+如果 Plugin 代码不在这个权限根下，使用构建产物的绝对路径：
 
 ```toml
 [plugins]
@@ -49,7 +48,7 @@ request_timeout_secs = 30
 id = "safe-delete"
 name = "Safe Delete"
 command = "node"
-args = ["/absolute/path/to/webcodex/plugins/safe-delete/plugin.mjs"]
+args = ["/absolute/path/to/webcodex/plugins/safe-delete/dist/plugin.js"]
 cwd = "/absolute/path/to/project"
 timeout_secs = 30
 ```
@@ -87,6 +86,7 @@ npm --prefix plugins/safe-delete run typecheck
 npm --prefix plugins/safe-delete test
 ```
 
-TypeScript entrypoint 只承载 authoring/runtime boilerplate；路径权限、Trash backend
-选择与结果分类仍属于 safe-delete domain。Rust Runner 继续权威负责 Plugin admission、
-schema/runtime validation、timeout、process lifecycle 与 `OutcomeUnknown` 处理。
+Plugin 实现现在完全使用 TypeScript。domain module 负责路径权限、Trash backend
+选择与结果分类；SDK entrypoint 只承载 authoring/runtime boilerplate。Rust Runner 继续
+权威负责 Plugin admission、schema/runtime validation、timeout、process lifecycle 与
+`OutcomeUnknown` 处理。

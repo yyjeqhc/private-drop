@@ -92,7 +92,7 @@ class PathRiskFixtureTests(unittest.TestCase):
     def test_safe_delete_dogfood_uses_plugin_sdk_contract_lane(self) -> None:
         for path in (
             "plugins/safe-delete/plugin.ts",
-            "plugins/safe-delete/domain.js",
+            "plugins/safe-delete/domain.ts",
             "plugins/safe-delete/package-lock.json",
         ):
             with self.subTest(path=path):
