@@ -187,12 +187,6 @@ button:disabled { opacity: .48; cursor: default; }
 .dashboard-page .lede { margin-bottom: 0; }
 .dashboard-page .readiness-banner strong { font-size: 18px; line-height: 1.5; }
 .readiness-banner.pending { border-left: 3px solid #b58a38; }
-.shortcut-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
-.shortcut-card { position: relative; display: grid; gap: 10px; align-content: start; min-width: 0; padding: 20px; border: 1px solid #dde2e4; border-radius: 12px; background: #fff; text-align: left; cursor: pointer; }
-.shortcut-card:hover { border-color: #70aeb8; background: #eff9fa; }
-.shortcut-card > strong { font-size: 14px; }
-.shortcut-card > span:not(.nav-icon):not(.shortcut-arrow) { color: #626d76; font-size: 12px; line-height: 1.6; }
-.shortcut-card .shortcut-arrow { position: absolute; right: 18px; top: 16px; color: #087f8c; }
 .dashboard-page .runtime-actions { margin-top: 28px; padding-top: 20px; border-top: 1px solid #dfe3e5; line-height: 1.6; }
 .runtime-action-buttons { flex-wrap: wrap; }
 .runtime-action-buttons button { white-space: normal; padding: 10px 14px; }
@@ -260,13 +254,11 @@ button:disabled { opacity: .48; cursor: default; }
   .readiness-actions, .runtime-action-buttons { flex-wrap: wrap; justify-content: flex-start; }
   .readiness-actions > span { text-align: left; }
   .setting-row { grid-template-columns: 1fr; }
-  .shortcut-grid, .workflow-steps { grid-template-columns: 1fr; }
+  .workflow-steps { grid-template-columns: 1fr; }
   .workflow-steps li { border-right: 0; border-bottom: 1px solid #e3eaee; }
   .workflow-steps li:last-child { border-bottom: 0; }
   .workspace-project { flex-wrap: wrap; }
   .setup-overview { flex-wrap: wrap; gap: 12px; }
-  .shortcut-card { padding: 16px 40px 16px 16px; grid-template-columns: 20px minmax(0, 1fr); }
-  .shortcut-card > span:not(.nav-icon):not(.shortcut-arrow) { grid-column: 2; }
 }
 
 @media (max-width: 600px) {
@@ -286,3 +278,8 @@ button:disabled { opacity: .48; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
 }
+
+.workflow-guide > summary { cursor: pointer; color: #596573; }
+.tunnel-copy { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+.tunnel-copy > label, .tunnel-copy > [role="status"] { grid-column: 1 / -1; }
+.tunnel-copy > input { min-width: 0; }

@@ -26,6 +26,9 @@ const api = vi.hoisted(() => ({
   setLaunchAtLogin: vi.fn(),
 }));
 
+const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => clipboard);
+
 const tauriEvents = vi.hoisted(() => ({
   handler: null as null | ((event: { payload: unknown }) => void),
   listen: vi.fn(),
@@ -211,6 +214,62 @@ describe("semantic Desktop UI", () => {
     api.stopRegularTunnel.mockResolvedValue(readyState);
   });
 
+  it("keeps a user stop consistent after refresh and offers Start", async () => {
+    const stopped = setupState();
+    api.getState.mockResolvedValue(stopped);
+    api.refresh.mockResolvedValue(stopped);
+    renderApp();
+    await screen.findByRole("heading", { name: "WebCodex", level: 1 });
+    expect(screen.getByRole("status")).toHaveTextContent("已停止");
+    expect(screen.getByRole("button", { name: "启动" })).toBeEnabled();
+    expect(screen.queryByText(/运行环境正常/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/服务需要处理/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await waitFor(() => expect(api.refresh).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status")).toHaveTextContent("已停止");
+    expect(screen.getAllByText("启动后继续").length).toBeGreaterThan(1);
+  });
+
+  it("retries and repeats Tunnel ID copying without restarting or exposing an API key", async () => {
+    const writeText = clipboard.writeText.mockRejectedValueOnce(new Error("clipboard denied")).mockResolvedValue(undefined);
+    api.getState.mockResolvedValue({ ...readyState,
+      openai_tunnel_config: { ...readyState.openai_tunnel_config, effective_tunnel_id: "tunnel_fixture" },
+      regular_tunnel: { provider: "openai", status: "ready", clipboard_state: "unavailable", clipboard_contains: "tunnel_id", ready_for_chatgpt: true },
+    });
+    const view = renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "连接" }));
+    const copy = screen.getByRole("button", { name: "复制 Tunnel ID" });
+    fireEvent.click(copy);
+    expect(await screen.findByText(/复制失败，请重试/)).toBeInTheDocument();
+    fireEvent.click(copy);
+    await screen.findByText("连接信息已复制到剪贴板");
+    fireEvent.click(copy);
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(3));
+    expect(writeText).toHaveBeenLastCalledWith("tunnel_fixture");
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    expect(api.stopRegularTunnel).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Tunnel API key")).toHaveValue("");
+    view.unmount();
+  });
+
+  it("shows named project results and hides routine process events", async () => {
+    api.getState.mockResolvedValue(readyState);
+    api.activity.mockResolvedValue([
+      { sequence: 1, timestamp_ms: 1, source: "desktop", level: "info", event_kind: "operation_started", message: "Desktop operation started: local_project_activate" },
+      { sequence: 2, timestamp_ms: 2, source: "runner", level: "info", event_kind: "process_started", message: "" },
+      { sequence: 3, timestamp_ms: 3, source: "desktop", level: "info", event_kind: "project_activated", message: "sample-project" },
+    ]);
+    renderApp();
+    await screen.findByRole("heading", { name: "WebCodex", level: 1 });
+    expect(screen.getByText(/如果目录为空/)).toBeInTheDocument();
+    expect(screen.queryByText(/读取.*README/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "活动" }));
+    await screen.findByText("已切换到 sample-project");
+    expect(screen.getAllByRole("article")[0]).toHaveTextContent("已切换到 sample-project");
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    expect(screen.getAllByRole("article")[1]).toHaveTextContent("正在激活项目");
+  });
+
   it("starts a tunnel only after explicit action and allows retry after failure", async () => {
     api.getState.mockResolvedValue(readyState);
     api.startRegularTunnel.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Tunnel failed", next_action: "Retry." });
@@ -265,7 +324,8 @@ describe("semantic Desktop UI", () => {
     } };
     api.updateTunnelConfig.mockResolvedValue(savedState);
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: "设置" }));
+    fireEvent.click(await screen.findByRole("button", { name: "连接" }));
+    fireEvent.click(screen.getByText("可选：检查 ChatGPT 安全隧道配置"));
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_saved" } });
     const key = screen.getByLabelText("Tunnel API key");
     expect(key).toHaveAttribute("type", "password");
@@ -311,15 +371,19 @@ describe("semantic Desktop UI", () => {
     ]);
     renderApp();
     await screen.findByRole("button", { name: "活动" });
-    fireEvent.keyDown(window, { key: "4", metaKey: true });
+    const language = screen.getByRole("combobox", { name: "界面语言" });
+    language.focus();
+    fireEvent.keyDown(language, { key: "4", metaKey: true });
     const search = screen.getByRole("searchbox");
-    await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("checkbox", { name: "显示进程详情" }));
+    expect(screen.getAllByRole("article")).toHaveLength(2);
     fireEvent.click(screen.getByRole("checkbox", { name: "只看警告和错误" }));
     expect(screen.getAllByRole("article")).toHaveLength(1);
     fireEvent.change(search, { target: { value: "no matching source" } });
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     expect(screen.getByText("没有匹配的活动，请调整搜索或筛选条件。")).toBeInTheDocument();
-    fireEvent.keyDown(search, { key: "1", ctrlKey: true });
+    fireEvent.keyDown(search, { key: "a", ctrlKey: true });
     expect(screen.getByRole("searchbox")).toBeInTheDocument();
     fireEvent.change(search, { target: { value: "" } });
     fireEvent.click(screen.getByRole("checkbox", { name: "只看警告和错误" }));
@@ -355,7 +419,7 @@ describe("semantic Desktop UI", () => {
     vi.mocked(open).mockResolvedValue(projectC.path);
 
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: /查看项目/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "项目" }));
     expect(screen.getByRole("heading", { level: 1, name: "此电脑上的项目" })).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: "选择其他项目" }));
@@ -408,7 +472,7 @@ describe("semantic Desktop UI", () => {
     vi.mocked(open).mockResolvedValue(projectC.path);
 
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: /查看项目/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "项目" }));
     fireEvent.click(screen.getByRole("button", { name: "选择其他项目" }));
 
     await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledWith(projectC.path));
@@ -464,7 +528,7 @@ describe("semantic Desktop UI", () => {
 
     expect(screen.getByRole("radiogroup", { name: "连接方式" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
-    expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeDisabled();
+    expect(screen.queryByRole("radio", { name: /Cloudflare/ })).not.toBeInTheDocument();
   });
 
   it("separates observed ChatGPT use from Desktop-managed tunnel state", async () => {
@@ -845,7 +909,7 @@ describe("semantic Desktop UI", () => {
     });
 
     renderApp();
-    const submit = await screen.findByRole("button", { name: "恢复运行环境" });
+    const submit = await screen.findByRole("button", { name: "启动" });
     fireEvent.click(submit);
 
     const alert = await screen.findByRole("alert");
@@ -943,7 +1007,7 @@ describe("semantic Desktop UI", () => {
     await screen.findByRole("heading", { level: 1, name: "WebCodex" });
 
     fireEvent.click(screen.getByRole("button", { name: "连接" }));
-    expect(await screen.findByRole("heading", { level: 2, name: "安全隧道正在运行，但连接信息仍需要处理" })).toBeInTheDocument();
+    expect(await screen.findByText("安全隧道正在运行，但连接信息仍需要处理")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动安全隧道" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止安全隧道" })).toBeInTheDocument();
   });
@@ -971,7 +1035,7 @@ describe("semantic Desktop UI", () => {
         await Promise.resolve();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: "恢复运行环境" }));
+      fireEvent.click(screen.getByRole("button", { name: "启动" }));
       expect(api.resumeSavedRuntime).toHaveBeenCalledTimes(1);
 
       await act(async () => {

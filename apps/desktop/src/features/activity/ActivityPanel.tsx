@@ -7,7 +7,9 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
   const { t, formatTime } = useLocale();
   const [query, setQuery] = useState("");
   const [problemsOnly, setProblemsOnly] = useState(false);
+  const [showProcesses, setShowProcesses] = useState(false);
   const visible = [...activity].reverse().filter((entry) => {
+    if (!showProcesses && entry.level === "info" && entry.event_kind.startsWith("process_")) return false;
     if (problemsOnly && entry.level !== "error" && entry.level !== "warning") return false;
     return `${activityMessage(entry, t)} ${activitySource(entry.source, t)}`
       .toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
@@ -25,6 +27,10 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
         <label className="activity-filter">
           <input type="checkbox" checked={problemsOnly} onChange={(event) => setProblemsOnly(event.target.checked)} />
           {t("activity.problemsOnly")}
+        </label>
+        <label className="activity-filter">
+          <input type="checkbox" checked={showProcesses} onChange={(event) => setShowProcesses(event.target.checked)} />
+          {t("activity.showProcesses")}
         </label>
         <span role="status">{t("activity.count", { count: visible.length })}</span>
       </div>

@@ -6,7 +6,6 @@ import { desktopApi } from "./lib/desktop-api";
 import type {
   ActivityEntry,
   DesktopError,
-  DesktopOperationKind,
   DesktopState,
 } from "./models/topology";
 import { FirstRun } from "./features/onboarding/FirstRun";
@@ -16,7 +15,7 @@ import { ConnectionPanel } from "./features/connection/ConnectionPanel";
 import { ActivityPanel } from "./features/activity/ActivityPanel";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
 import { LANGUAGES, useLocale } from "./i18n/locale";
-import { desktopErrorPresentation, normalizeDesktopError } from "./i18n/presentation";
+import { desktopErrorPresentation, normalizeDesktopError, runtimeLabel, operationLabel } from "./i18n/presentation";
 
 type Navigation = "home" | "projects" | "connection" | "activity" | "settings";
 
@@ -89,8 +88,6 @@ export default function App() {
   useEffect(() => {
     const navigateWithKeyboard = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.repeat) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) return;
       const page = NAVIGATION[Number(event.key) - 1];
       if (!page) return;
       event.preventDefault();
@@ -388,7 +385,7 @@ export default function App() {
         </div>
         <div className="sidebar-status">
           <i className={`status-dot ${state.readiness.runtime_ready ? "ready" : "unknown"}`} aria-hidden="true" />
-          <div><strong>{state.readiness.runtime_ready ? t("sidebar.runtimeReady") : state.topology ? t("common.stopped") : t("sidebar.needsSetup")}</strong><span>{sidebarConnectionLabel(state, t)}</span></div>
+          <div><strong>{runtimeLabel(state, t)}</strong><span>{sidebarConnectionLabel(state, t)}</span></div>
         </div>
       </aside>
 
@@ -467,6 +464,7 @@ export default function App() {
 }
 
 function sidebarConnectionLabel(state: DesktopState, t: ReturnType<typeof useLocale>["t"]) {
+  if (!state.readiness.runtime_ready) return t("workspace.afterStart");
   if (state.regular_tunnel?.status !== "error" && state.readiness.runtime_ready && state.chatgpt_activity?.observed) {
     return t("sidebar.chatgptObserved");
   }
@@ -482,26 +480,6 @@ function shouldStartPreferredTunnel(state: DesktopState) {
     state.readiness.runtime_ready &&
     state.openai_tunnel_configured &&
     !state.regular_tunnel;
-}
-
-function operationLabel(
-  kind: DesktopOperationKind,
-  t: ReturnType<typeof useLocale>["t"],
-) {
-  switch (kind) {
-    case "local_setup": return t("operation.localSetup");
-    case "local_project_activate": return t("operation.localProjectActivate");
-    case "remote_setup": return t("operation.remoteSetup");
-    case "quick_share_start": return t("operation.quickShareStart");
-    case "quick_share_stop": return t("operation.quickShareStop");
-    case "regular_tunnel_start": return t("operation.regularTunnelStart");
-    case "regular_tunnel_stop": return t("operation.regularTunnelStop");
-    case "local_runtime_stop": return t("operation.localRuntimeStop");
-    case "runtime_refresh": return t("operation.runtimeRefresh");
-    case "runtime_resume": return t("operation.runtimeResume");
-    case "tunnel_config_update": return t("operation.tunnelConfigUpdate");
-    case "tunnel_proxy_update": return t("operation.tunnelProxyUpdate");
-  }
 }
 
 function AppError({ error }: { error: DesktopError }) {

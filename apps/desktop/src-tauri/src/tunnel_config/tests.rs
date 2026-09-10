@@ -41,6 +41,10 @@ fn saved_pair_roundtrips_overrides_environment_and_never_projects_key() {
         .unwrap();
     let mut config = TunnelConfig::load(&fixture.path());
     assert_eq!(config.snapshot().source, TunnelConfigSource::File);
+    assert_eq!(
+        config.snapshot().effective_tunnel_id.as_deref(),
+        Some("tunnel_saved")
+    );
     let projected = serde_json::to_string(&config.snapshot()).unwrap();
     assert!(!projected.contains("test-only-api-key"));
     let mut command = Command::new("unused");

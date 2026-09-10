@@ -24,6 +24,7 @@ pub fn run() {
             desktop_shell::handle_second_instance(app, &argv);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--background"]),

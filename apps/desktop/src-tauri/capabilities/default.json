@@ -3,6 +3,6 @@
   "identifier": "desktop-default",
   "description": "Minimal WebCodex Desktop window permissions",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "dialog:allow-open", "clipboard-manager:allow-write-text"]
 }
 

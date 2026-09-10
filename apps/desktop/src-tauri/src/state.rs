@@ -566,6 +566,18 @@ impl DesktopCore {
         let mut snapshot = DesktopStateSnapshot::default();
         snapshot.topology = config.topology.clone();
         snapshot.project = project_snapshot(&config);
+        if config.topology.is_some() && config.runtime_autostart == Some(false) {
+            snapshot.readiness = aggregate_readiness(
+                ServerReadiness::Stopped,
+                RunnerReadiness::Stopped,
+                ExposureReadiness::Disabled,
+                if config.project.is_some() {
+                    ProjectReadiness::Configured
+                } else {
+                    ProjectReadiness::None
+                },
+            );
+        }
         apply_openai_tunnel_configuration(&mut snapshot, &tunnel_config);
         snapshot.regular_tunnel_available = true;
         snapshot.powershell_runtime = crate::platform::powershell_runtime_snapshot();
@@ -725,6 +737,18 @@ impl DesktopCore {
             Err(_) => ServerReadiness::Unknown,
         };
         cancellation.check()?;
+        // A saved user stop remains stopped across refresh, while a reachable
+        // external service is still observed normally.
+        if !runtime_autostart(&self.config) && server != ServerReadiness::Ready {
+            self.snapshot.chatgpt_activity = None;
+            self.snapshot.readiness = aggregate_readiness(
+                ServerReadiness::Stopped,
+                RunnerReadiness::Stopped,
+                ExposureReadiness::Disabled,
+                ProjectReadiness::Configured,
+            );
+            return self.get_state().await;
+        }
         let runner = match self.adapter.runner_ready(&identity, cancellation).await {
             Ok(true) => RunnerReadiness::Ready,
             Ok(false) => RunnerReadiness::Connecting,
@@ -1027,6 +1051,15 @@ impl DesktopCore {
             return Err(error);
         }
 
+        self.activity.push(
+            ActivityEventKind::ProjectActivated,
+            "desktop",
+            ActivityLevel::Info,
+            std::path::Path::new(&committed_project.path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy(),
+        );
         self.snapshot.project = Some(committed_project);
         self.snapshot.chatgpt_activity = None;
         self.snapshot.readiness = aggregate_readiness(
@@ -2090,13 +2123,17 @@ impl DesktopCore {
             ));
         }
         cancellation.check()?;
-        let handoff_available = event.connection.clipboard_state == "copied";
+        // The schema-v1 ready event is emitted only after the daemon is ready.
+        // Its ready_for_chatgpt flag additionally requires CLI clipboard success;
+        // Desktop can also hand off the same non-secret ID through its copy field.
+        let id_available = self.tunnel_config.snapshot().effective_tunnel_id.is_some();
+        let handoff_available = event.connection.clipboard_state == "copied" || id_available;
         self.snapshot.regular_tunnel = Some(RegularTunnelState {
             provider: event.provider,
             status: RegularTunnelStatus::Ready,
             clipboard_state: event.connection.clipboard_state,
             clipboard_contains: event.connection.clipboard_contains,
-            ready_for_chatgpt: event.ready_for_chatgpt && handoff_available,
+            ready_for_chatgpt: (event.ready_for_chatgpt || id_available) && handoff_available,
         });
         self.config.preferred_connection = Some(RegularConnectionPreference::OpenAiTunnel);
         self.save_config().await?;
@@ -3464,6 +3501,34 @@ mod tests {
         assert!(!json.contains("wc_pat_"));
         assert!(!json.contains("wc_agent_"));
         assert!(!json.contains("CONTROL_PLANE_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn explicit_stop_survives_refresh_and_desktop_restart() {
+        let data_dir = unique_state_dir("stopped-refresh");
+        let mut core = DesktopCore::new(data_dir.clone(), data_dir.join("resources")).unwrap();
+        core.config = test_stored_config("stopped");
+        core.config.topology = Some(RuntimeTopology {
+            experience: Experience::Full,
+            server: ServerTopology::Local,
+            runner: RunnerTopology::Local,
+            exposure: Exposure::None,
+            enrollment: Enrollment::ManagedPairing,
+        });
+        let cancellation = CancellationContext::never();
+        core.stop_local_runtime(&cancellation).await.unwrap();
+        let refreshed = core.refresh_runtime_status(&cancellation).await.unwrap();
+        assert_eq!(
+            refreshed.readiness.summary_kind,
+            ReadinessSummaryKind::RuntimeStopped
+        );
+        assert!(!refreshed.runtime_autostart);
+        let restarted = DesktopCore::new(data_dir.clone(), data_dir.join("resources")).unwrap();
+        assert_eq!(
+            restarted.snapshot.readiness.summary_kind,
+            ReadinessSummaryKind::RuntimeStopped
+        );
+        std::fs::remove_dir_all(data_dir).unwrap();
     }
 
     #[test]

@@ -94,6 +94,8 @@ pub enum ProjectReadiness {
 #[serde(rename_all = "snake_case")]
 pub enum ReadinessSummaryKind {
     ReadyForChatGpt,
+    RuntimeStopped,
+    RuntimeStarting,
     ServiceNeedsAttention,
     RunnerDisconnected,
     ProjectNotReady,
@@ -156,6 +158,22 @@ pub fn aggregate_readiness(
             ReadinessSummaryKind::ReadyForChatGpt,
             None,
             "Ready to use with ChatGPT".to_string(),
+            None,
+        )
+    } else if server == ServerReadiness::Stopped && runner == RunnerReadiness::Stopped {
+        (
+            ReadinessSummaryKind::RuntimeStopped,
+            Some(ReadinessNextActionKind::StartOrReconnectService),
+            "Runtime stopped".to_string(),
+            Some("Start the runtime to continue.".to_string()),
+        )
+    } else if server == ServerReadiness::Starting
+        || (server == ServerReadiness::Ready && runner == RunnerReadiness::Connecting)
+    {
+        (
+            ReadinessSummaryKind::RuntimeStarting,
+            None,
+            "Runtime starting".to_string(),
             None,
         )
     } else if !matches!(server, ServerReadiness::Ready) {
@@ -354,6 +372,8 @@ pub struct OpenAiTunnelConfigSnapshot {
     pub source: TunnelConfigSource,
     #[serde(default)]
     pub saved_tunnel_id: Option<String>,
+    #[serde(default)]
+    pub effective_tunnel_id: Option<String>,
 }
 
 impl OpenAiTunnelConfigSnapshot {
@@ -478,6 +498,37 @@ mod tests {
         assert_eq!(local.runner, remote.runner);
         assert_ne!(local.server, remote.server);
         assert_ne!(local.exposure, remote.exposure);
+    }
+
+    #[test]
+    fn stopped_starting_and_failed_readiness_are_distinct() {
+        for (server, runner, expected) in [
+            (
+                ServerReadiness::Stopped,
+                RunnerReadiness::Stopped,
+                ReadinessSummaryKind::RuntimeStopped,
+            ),
+            (
+                ServerReadiness::Starting,
+                RunnerReadiness::Stopped,
+                ReadinessSummaryKind::RuntimeStarting,
+            ),
+            (
+                ServerReadiness::Error,
+                RunnerReadiness::Stopped,
+                ReadinessSummaryKind::ServiceNeedsAttention,
+            ),
+        ] {
+            let state = aggregate_readiness(
+                server,
+                runner,
+                ExposureReadiness::LocalReady,
+                ProjectReadiness::Configured,
+            );
+            assert_eq!(state.summary_kind, expected);
+            assert!(!state.runtime_ready);
+            assert!(!state.ready_for_chatgpt);
+        }
     }
 
     #[test]

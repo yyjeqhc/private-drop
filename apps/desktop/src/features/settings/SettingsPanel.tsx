@@ -3,7 +3,6 @@ import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/topology";
 import { LANGUAGES, useLocale } from "../../i18n/locale";
 import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
-import { TunnelConfigDiagnostics } from "../connection/TunnelConfigDiagnostics";
 import { PowerShellInstallGuidance } from "./PowerShellInstallGuidance";
 
 export function SettingsPanel({
@@ -102,7 +101,6 @@ export function SettingsPanel({
 
       <section className="settings-section" aria-labelledby="settings-tunnel-title">
         <h2 id="settings-tunnel-title">{t("settings.tunnel")}</h2>
-        <TunnelConfigDiagnostics state={state} onState={onState} />
         <article className="detail-card tunnel-proxy-settings">
           <div className="field-group">
             <label htmlFor="desktop-tunnel-proxy-mode">{t("settings.tunnelProxy")}</label>
@@ -117,7 +115,7 @@ export function SettingsPanel({
               <option value="direct">{t("settings.tunnelProxyDirect")}</option>
               <option value="custom">{t("settings.tunnelProxyCustom")}</option>
             </select>
-            {proxyMode === "auto" && <span className="field-help">{t("settings.tunnelProxyAutoHelp")}</span>}
+            {proxyMode === "auto" && <span className="field-help">{t(navigator.platform.startsWith("Win") ? "settings.tunnelProxyAutoHelp" : "settings.tunnelProxyAutoHelpLocal")}</span>}
           </div>
           {proxyMode === "custom" && (
             <div className="field-group">
@@ -159,8 +157,8 @@ export function SettingsPanel({
         </article>
       </section>
 
-      <section className="settings-section" aria-labelledby="settings-diagnostics-title">
-        <h2 id="settings-diagnostics-title">{t("settings.diagnostics")}</h2>
+      <details className="settings-section">
+        <summary>{t("settings.diagnostics")}</summary>
         <PowerShellInstallGuidance state={state} onState={onState} />
         <article className="detail-card">
         {state.binaries ? (
@@ -174,16 +172,13 @@ export function SettingsPanel({
           <p>{t("settings.binariesPending")}</p>
         )}
         </article>
-      </section>
 
-      <section className="settings-section" aria-labelledby="settings-advanced-title">
-        <h2 id="settings-advanced-title">{t("settings.advanced")}</h2>
         <article className="detail-card">
           <dl className="detail-list">
             <div><dt>{t("settings.runtimeProjectId")}</dt><dd>{state.project?.runtime_project_id ?? t("settings.notEstablished")}</dd></div>
           </dl>
         </article>
-      </section>
+      </details>
     </section>
   );
 }

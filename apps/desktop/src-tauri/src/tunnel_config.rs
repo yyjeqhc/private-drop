@@ -117,6 +117,7 @@ impl TunnelConfig {
                 api_key_present: true,
                 source: TunnelConfigSource::File,
                 saved_tunnel_id: Some(value.tunnel_id.clone()),
+                effective_tunnel_id: Some(value.tunnel_id.clone()),
             };
         }
         environment_snapshot()
@@ -143,6 +144,13 @@ pub(crate) fn environment_snapshot() -> OpenAiTunnelConfigSnapshot {
             .is_some_and(|value| !value.is_empty()),
         source: TunnelConfigSource::Environment,
         saved_tunnel_id: None,
+        effective_tunnel_id: std::env::var("CONTROL_PLANE_TUNNEL_ID").ok().filter(|id| {
+            !id.is_empty()
+                && id.len() <= 256
+                && id
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+        }),
     }
 }
 

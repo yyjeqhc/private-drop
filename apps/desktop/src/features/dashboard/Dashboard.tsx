@@ -3,6 +3,7 @@ import { useLocale } from "../../i18n/locale";
 import {
   projectReadinessLabel,
   readinessNextAction,
+  runtimeLabel,
   readinessSummary,
   runnerReadinessLabel,
   serverReadinessLabel,
@@ -43,7 +44,7 @@ export function Dashboard({
     state.readiness.runtime_ready &&
     state.openai_tunnel_configured &&
     !state.regular_tunnel;
-  const summary = readinessSummary(state.readiness.summary_kind, state.readiness.summary, t);
+  const summary = state.readiness.runtime_ready ? readinessSummary(state.readiness.summary_kind, state.readiness.summary, t) : runtimeLabel(state, t);
   const nextAction = readinessNextAction(
     state.readiness.next_action_kind,
     state.readiness.next_action,
@@ -93,6 +94,9 @@ export function Dashboard({
               {t("home.connectChatGpt")}
             </button>
           )}
+          {state.readiness.runtime_ready && !canConnectChatGpt && !connectionVerified && (
+            <button className="primary-button" onClick={() => onNavigate("connection")}>{t("workspace.connectionSettings")}</button>
+          )}
           {nextAction && !canResumeRuntime && !canConnectChatGpt && <span>{nextAction}</span>}
         </div>
       </div>
@@ -122,24 +126,26 @@ export function Dashboard({
       )}
 
       {!isQuickShare && (
-        <ol className="workflow-steps" aria-label={t("workspace.progress")}>
-          <li className={state.readiness.runtime_ready ? "complete" : ""}>
-            <span className="step-number" aria-hidden="true">01</span>
-            <strong>{t("workspace.prepare")}</strong>
-            <p>{state.readiness.runtime_ready ? t("sidebar.runtimeReady") : t("workspace.prepareHint")}</p>
-          </li>
-          <li className={state.readiness.runtime_ready && (state.readiness.ready_for_chatgpt || state.regular_tunnel?.ready_for_chatgpt) ? "complete" : ""}>
-            <span className="step-number" aria-hidden="true">02</span>
-            <strong>{t("workspace.connect")}</strong>
-            <p>{connectionExplanation(state, t)}</p>
-            <button className="text-button" onClick={() => onNavigate("connection")}>{t("workspace.connectionSettings")} →</button>
-          </li>
-          <li className={connectionVerified ? "complete" : ""}>
-            <span className="step-number" aria-hidden="true">03</span>
-            <strong>{t("workspace.verify")}</strong>
-            <p>{connectionVerified ? t("home.connectionObserved") : t("workspace.verifyHint")}</p>
-          </li>
-        </ol>
+        <details className="workflow-guide" open={!connectionVerified}>
+          <summary>{t("workspace.progress")}</summary>
+          <ol className="workflow-steps" aria-label={t("workspace.progress")}>
+            <li className={state.readiness.runtime_ready ? "complete" : ""}>
+              <span className="step-number" aria-hidden="true">01</span>
+              <strong>{t("workspace.prepare")}</strong>
+              <p>{state.readiness.runtime_ready ? t("sidebar.runtimeReady") : t("workspace.prepareHint")}</p>
+            </li>
+            <li className={state.readiness.runtime_ready && (state.readiness.ready_for_chatgpt || state.regular_tunnel?.ready_for_chatgpt) ? "complete" : ""}>
+              <span className="step-number" aria-hidden="true">02</span>
+              <strong>{t("workspace.connect")}</strong>
+              <p>{connectionExplanation(state, t)}</p>
+            </li>
+            <li className={connectionVerified ? "complete" : ""}>
+              <span className="step-number" aria-hidden="true">03</span>
+              <strong>{t("workspace.verify")}</strong>
+              <p>{!state.readiness.runtime_ready ? t("workspace.afterStart") : connectionVerified ? t("home.connectionObserved") : t("workspace.verifyHint")}</p>
+            </li>
+          </ol>
+        </details>
       )}
 
       <details className="runtime-details">
@@ -170,35 +176,19 @@ export function Dashboard({
             explanation={connectionExplanation(state, t)}
           />
         </div>
-      </details>
 
-      <section className="dashboard-shortcuts" aria-labelledby="home-shortcuts-title">
-        <div className="section-heading">
-          <h2 id="home-shortcuts-title">{t("home.shortcuts")}</h2>
-        </div>
-        <div className="shortcut-grid">
-          {(["projects", "connection", "activity"] as const).map((page) => (
-            <button className="shortcut-card" key={page} onClick={() => onNavigate(page)}>
-              <span className={`nav-icon nav-${page}`} aria-hidden="true" />
-              <strong>{t(`home.open.${page}`)}</strong>
-              <span>{t(`home.hint.${page}`)}</span>
-              <span className="shortcut-arrow" aria-hidden="true">↗</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {!isQuickShare && state.topology && (
-        <div className="runtime-actions">
-          <span>{t("home.runtimeOwnership")}</span>
-          <div className="runtime-action-buttons">
-            <button className="secondary-button" onClick={onChangeSetup} disabled={operationBusy} data-webcodex-action="change-runtime-setup">{t("home.changeSetup")}</button>
-            {state.readiness.runtime_ready && (
-              <button className="secondary-button" onClick={onStopRuntime} disabled={operationBusy} data-webcodex-action="stop-runtime">{t("home.stopRuntime")}</button>
-            )}
+        {!isQuickShare && state.topology && (
+          <div className="runtime-actions">
+            <span>{t("home.runtimeOwnership")}</span>
+            <div className="runtime-action-buttons">
+              <button className="secondary-button" onClick={onChangeSetup} disabled={operationBusy} data-webcodex-action="change-runtime-setup">{t("home.changeSetup")}</button>
+              {state.readiness.runtime_ready && (
+                <button className="secondary-button" onClick={onStopRuntime} disabled={operationBusy} data-webcodex-action="stop-runtime">{t("home.stopRuntime")}</button>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </details>
     </section>
   );
 }
@@ -266,6 +256,7 @@ function connectionLabel(state: DesktopState, t: Translate) {
 }
 
 function connectionExplanation(state: DesktopState, t: Translate) {
+  if (!state.readiness.runtime_ready) return t("workspace.afterStart");
   if (state.regular_tunnel?.status !== "error" && chatgptActivityObserved(state)) {
     return t("home.connectionObserved");
   }

@@ -52,7 +52,7 @@ In **Settings → Background & startup**, **Launch WebCodex at login** registers
 
 ### Everyday controls
 
-- Use the sidebar to open Home, Projects, Connection, Activity, and Settings. Use **⌘ + 1–5** on macOS or **Ctrl + 1–5** on Windows. These shortcuts do not intercept typing in form fields.
+- Use the sidebar to open Home, Projects, Connection, Activity, and Settings. Use **⌘ + 1–5** on macOS or **Ctrl + 1–5** on Windows. Navigation shortcuts also work inside inputs and language selectors; ordinary typing and text-editing shortcuts remain available.
 - Home shows the current project, next action, and three usage steps. Expand **View runtime diagnostics** to inspect all four components.
 - In **Activity**, search messages or sources, or select **Warnings and errors only**. Results are newest first. Filtering changes the view without deleting records.
 - Use Tab to focus main buttons and Enter to activate them. Navigation moves focus into page content.
@@ -198,7 +198,7 @@ After saving the ChatGPT connection, return to Desktop. Saving a connection in C
 
 ## 8. Minimal acceptance check
 
-After connecting, start with **one minimal real project read**, for example: “List the WebCodex projects, then read README from the project I just selected.” Only this proves the full path is actually working:
+After connecting, start with **one minimal real project read**, for example: “List the WebCodex projects, then list the top-level files in the project I just selected; report an empty directory as empty.” Only this proves the full path is actually working:
 
 - list the WebCodex projects;
 - read a file from the project you explicitly added;

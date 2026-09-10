@@ -1,5 +1,7 @@
 import type {
   ActivityEntry,
+  DesktopState,
+  DesktopOperationKind,
   DesktopError,
   ProjectReadiness,
   ReadinessNextActionKind,
@@ -13,6 +15,8 @@ type Translate = (key: MessageKey, params?: Record<string, string | number>) => 
 
 const summaryKeys: Record<ReadinessSummaryKind, MessageKey> = {
   ready_for_chat_gpt: "readiness.readyForChatGpt",
+  runtime_stopped: "common.stopped",
+  runtime_starting: "common.starting",
   service_needs_attention: "readiness.serviceNeedsAttention",
   runner_disconnected: "readiness.runnerDisconnected",
   project_not_ready: "readiness.projectNotReady",
@@ -66,6 +70,8 @@ const activityKeys: Record<ActivityEntry["event_kind"], MessageKey> = {
   regular_tunnel_ready: "activity.regularTunnelReady",
   regular_tunnel_stopped: "activity.regularTunnelStopped",
   runtime_stopped: "activity.runtimeStopped",
+  project_activated: "activity.projectActivated",
+  state_recovered: "activity.stateRecovered",
   operation_started: "activity.operationStarted",
   operation_cancel_requested: "activity.operationCancelRequested",
   operation_cancelled: "activity.operationCancelled",
@@ -73,7 +79,12 @@ const activityKeys: Record<ActivityEntry["event_kind"], MessageKey> = {
 };
 
 export function activityMessage(entry: ActivityEntry, t: Translate) {
-  return t(activityKeys[entry.event_kind]);
+  if (entry.event_kind === "project_activated") return t("activity.projectActivated", { project: entry.message });
+  if (entry.event_kind === "operation_started") {
+    const kind = entry.message.split(": ")[1];
+    if (Object.hasOwn(operationKeys, kind)) return `${t("activity.operationStarted")} · ${operationLabel(kind as DesktopOperationKind, t)}`;
+  }
+  return activityKeys[entry.event_kind] ? t(activityKeys[entry.event_kind]) : entry.message;
 }
 
 export function activitySource(source: string, t: Translate) {
@@ -187,4 +198,31 @@ export function projectReadinessLabel(value: ProjectReadiness, t: Translate) {
   if (value === "error") return t("common.error");
   if (value === "none") return t("project.none");
   return t("common.unknown");
+}
+
+const operationKeys: Record<DesktopOperationKind, MessageKey> = {
+  local_setup: "operation.localSetup",
+  local_project_activate: "operation.localProjectActivate",
+  remote_setup: "operation.remoteSetup",
+  quick_share_start: "operation.quickShareStart",
+  quick_share_stop: "operation.quickShareStop",
+  regular_tunnel_start: "operation.regularTunnelStart",
+  regular_tunnel_stop: "operation.regularTunnelStop",
+  local_runtime_stop: "operation.localRuntimeStop",
+  runtime_refresh: "operation.runtimeRefresh",
+  runtime_resume: "operation.runtimeResume",
+  tunnel_config_update: "operation.tunnelConfigUpdate",
+  tunnel_proxy_update: "operation.tunnelProxyUpdate",
+};
+
+export function operationLabel(kind: DesktopOperationKind, t: Translate) {
+  return t(operationKeys[kind]);
+}
+
+export function runtimeLabel(state: DesktopState, t: Translate) {
+  if (state.readiness.runtime_ready) return t("sidebar.runtimeReady");
+  if (!state.topology) return t("sidebar.needsSetup");
+  if (["runtime_resume", "local_setup", "remote_setup"].includes(state.current_operation?.kind ?? "") || state.readiness.server === "starting") return t("common.starting");
+  if (state.readiness.server === "stopped" && state.readiness.runner === "stopped") return t("common.stopped");
+  return readinessSummary(state.readiness.summary_kind, state.readiness.summary, t);
 }

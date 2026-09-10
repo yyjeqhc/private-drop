@@ -55,6 +55,8 @@ export type ProjectReadiness =
 
 export type ReadinessSummaryKind =
   | "ready_for_chat_gpt"
+  | "runtime_stopped"
+  | "runtime_starting"
   | "service_needs_attention"
   | "runner_disconnected"
   | "project_not_ready"
@@ -159,6 +161,7 @@ export interface OpenAiTunnelConfigSnapshot {
   api_key_present: boolean;
   source: "file" | "environment" | "invalid";
   saved_tunnel_id: string | null;
+  effective_tunnel_id?: string | null;
 }
 
 export interface PowerShellRuntimeSnapshot {
@@ -219,6 +222,8 @@ export interface ActivityEntry {
     | "regular_tunnel_ready"
     | "regular_tunnel_stopped"
     | "runtime_stopped"
+    | "project_activated"
+    | "state_recovered"
     | "operation_started"
     | "operation_cancel_requested"
     | "operation_cancelled"

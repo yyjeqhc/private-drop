@@ -34,6 +34,7 @@ pub enum ActivityEventKind {
     RegularTunnelStopped,
     RuntimeStopped,
     StateRecovered,
+    ProjectActivated,
     OperationStarted,
     OperationCancelRequested,
     OperationCancelled,

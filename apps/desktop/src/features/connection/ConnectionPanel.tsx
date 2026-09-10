@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState } from "../../models/topology";
 import { useLocale } from "../../i18n/locale";
 import {
   desktopErrorPresentation,
   normalizeDesktopError,
+  runtimeLabel,
 } from "../../i18n/presentation";
 import { TunnelConfigDiagnostics } from "./TunnelConfigDiagnostics";
 
-type RegularProvider = "local" | "openai" | "cloudflare";
+type RegularProvider = "local" | "openai";
 
 export function ConnectionPanel({
   state,
@@ -23,6 +25,19 @@ export function ConnectionPanel({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<DesktopError | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const tunnelId = state.openai_tunnel_config.effective_tunnel_id ?? state.openai_tunnel_config.saved_tunnel_id;
+  useEffect(() => {
+    if (copyStatus !== "copied") return;
+    const timer = window.setTimeout(() => setCopyStatus("idle"), 2500);
+    return () => window.clearTimeout(timer);
+  }, [copyStatus]);
+  useEffect(() => setCopyStatus("idle"), [tunnelId]);
+  const copyTunnelId = async () => {
+    if (!tunnelId) return;
+    try { await writeText(tunnelId); setCopyStatus("copied"); }
+    catch { setCopyStatus("failed"); }
+  };
   const topology = state.topology;
   const mutationBusy = busy || Boolean(state.current_operation);
 
@@ -93,19 +108,18 @@ export function ConnectionPanel({
         <h2 id="connection-current-title" className="section-title">{t("connection.current")}</h2>
         <div className="status-value">
           <i className={`status-dot ${chatgptObserved ? "ready" : tunnelLocallyReady ? "ready" : tunnelError ? "error" : state.regular_tunnel ? "pending" : "unknown"}`} aria-hidden="true" />
-          <strong>{chatgptObserved ? t("connection.observed") : tunnelLocallyReady ? t("connection.tunnelReady") : currentConnection(state, t)}</strong>
+          <strong>{!state.readiness.runtime_ready ? runtimeLabel(state, t) : chatgptObserved ? t("connection.observed") : tunnelLocallyReady ? t("connection.tunnelReady") : currentConnection(state, t)}</strong>
         </div>
-        <p>{chatgptObserved ? t("connection.observedDescription") : tunnelLocallyReady ? t("connection.waitingForChatGpt") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
+        <p>{!state.readiness.runtime_ready ? t("workspace.afterStart") : chatgptObserved ? t("connection.observedDescription") : tunnelLocallyReady ? t("connection.waitingForChatGpt") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
       </article>
 
       {error && <LocalizedError error={error} />}
 
       {state.regular_tunnel ? (
-        <article className="handoff-card" aria-labelledby="regular-tunnel-ready-title">
+        <article className="handoff-card" aria-label="OpenAI Secure Tunnel">
           <div>
             <span className="section-kicker">OpenAI Secure Tunnel</span>
-            <h2 id="regular-tunnel-ready-title" className="handoff-title">{tunnelError ? t("common.error") : !tunnelEstablished ? t("common.starting") : tunnelLocallyReady ? t("connection.tunnelReady") : t("connection.tunnelHandoffNeedsAction")}</h2>
-            <span>{tunnelError ? t("workspace.stopToRetry") : !tunnelEstablished ? t("connection.tunnelStarting") : state.regular_tunnel?.clipboard_state === "copied" ? t("connection.clipboardReady") : t("clipboard.unavailable")}</span>
+            <span>{tunnelError ? t("workspace.stopToRetry") : !tunnelEstablished ? t("connection.tunnelStarting") : null}</span>
           </div>
           <button
             className="danger-button"
@@ -140,15 +154,6 @@ export function ConnectionPanel({
               description={state.openai_tunnel_configured ? t("connection.openaiDescription") : t("connection.openaiNotConfigured")}
               disabled={mutationBusy || !state.openai_tunnel_configured}
             />
-            <ProviderOption
-              id="regular-provider-cloudflare"
-              value="cloudflare"
-              checked={provider === "cloudflare"}
-              onChange={chooseProvider}
-              title="Cloudflare"
-              description={t("connection.cloudflareQuickOnly")}
-              disabled
-            />
           </fieldset>
 
           {!state.readiness.runtime_ready && <p className="inline-note">{t("connection.runtimeRequired")}</p>}
@@ -160,6 +165,14 @@ export function ConnectionPanel({
           )}
         </div>
       )}
+      {tunnelId && (
+        <article className="detail-card tunnel-copy">
+          <label htmlFor="active-tunnel-id">Tunnel ID</label>
+          <input id="active-tunnel-id" readOnly value={tunnelId} onFocus={(event) => event.target.select()} />
+          <button className="secondary-button" onClick={() => void copyTunnelId()}>{t("connection.copyTunnelId")}</button>
+          <span role="status">{copyStatus === "copied" ? t("connection.clipboardReady") : copyStatus === "failed" ? t("connection.copyFailed") : ""}</span>
+        </article>
+      )}
       <article className="connection-instructions detail-card">
         <h2>{t("workspace.handoffTitle")}</h2>
         <ol>
@@ -170,6 +183,7 @@ export function ConnectionPanel({
       </article>
       <details className="setup-tunnel-details" open={!state.openai_tunnel_configured}>
         <summary>{t("workspace.optionalTunnel")}</summary>
+        <p>{t("connection.description")}</p>
         <TunnelConfigDiagnostics state={state} onState={onState} />
       </details>
     </section>
@@ -182,7 +196,6 @@ function PageHeading() {
     <>
       <div className="eyebrow">{t("connection.eyebrow")}</div>
       <h1 id="connection-title">{t("connection.title")}</h1>
-      <p className="lede">{t("connection.description")}</p>
     </>
   );
 }
