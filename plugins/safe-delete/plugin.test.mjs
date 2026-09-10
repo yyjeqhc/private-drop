@@ -8,29 +8,63 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  PROTOCOL_VERSION,
-  SAFE_DELETE_TOOL,
   moveToFreedesktopTrash,
   resolveAuthorizedTarget,
   runTrashBackend,
   safeDelete,
-} from "./plugin.mjs";
+} from "./domain.js";
 
+const PROTOCOL_VERSION = "webcodex-plugin-v1";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const pluginPath = path.join(here, "plugin.mjs");
+
+const EXPECTED_SAFE_DELETE_TOOL = {
+  name: "safe_delete",
+  title: "Safe delete",
+  description:
+    "Move exactly one ordinary file or directory under this Plugin provider's configured cwd to the operating system Trash/Recycle Bin. Use this instead of permanent deletion when recovery may be needed. The path must be relative to the provider cwd. The provider cwd itself, paths that escape it, symlinks/junctions, and unsupported file types are rejected. This tool never permanently deletes the requested path through rm, unlink, Remove-Item, or another fallback.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        minLength: 1,
+        maxLength: 4096,
+        description:
+          "One file or directory path relative to the Plugin provider cwd. Absolute paths and parent traversal are rejected.",
+      },
+    },
+    required: ["path"],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      outcome: {
+        type: "string",
+        enum: ["trashed", "already_absent", "rejected", "failed", "unknown"],
+      },
+      path: { type: "string", maxLength: 4096 },
+      backend: {
+        type: "string",
+        enum: ["none", "freedesktop", "gio", "trash-put", "foundation", "powershell"],
+      },
+      errorCode: { type: "string", maxLength: 128 },
+    },
+    required: ["outcome", "path", "backend", "errorCode"],
+    additionalProperties: false,
+  },
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+};
 
 function tempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "webcodex-safe-delete-"));
 }
-
-test("tool definition marks the operation destructive and single-path", () => {
-  assert.equal(SAFE_DELETE_TOOL.name, "safe_delete");
-  assert.equal(SAFE_DELETE_TOOL.annotations.destructiveHint, true);
-  assert.equal(SAFE_DELETE_TOOL.annotations.readOnlyHint, false);
-  assert.equal(SAFE_DELETE_TOOL.annotations.idempotentHint, false);
-  assert.deepEqual(SAFE_DELETE_TOOL.inputSchema.required, ["path"]);
-  assert.equal(SAFE_DELETE_TOOL.inputSchema.additionalProperties, false);
-});
 
 test("absolute paths, root deletion, and parent traversal are rejected", () => {
   const root = tempRoot();
@@ -345,7 +379,7 @@ test("successful backend must make the target absent before reporting trashed", 
   }
 });
 
-test("JSON-RPC initialize/list/call works without touching Trash for an absent path", async () => {
+test("TypeScript SDK preserves initialize/list/call wire behavior for an absent path", async () => {
   const root = tempRoot();
   const child = spawn(process.execPath, [pluginPath], {
     cwd: root,
@@ -378,8 +412,17 @@ test("JSON-RPC initialize/list/call works without touching Trash for an absent p
     assert.equal(exitCode, 0);
     assert.equal(responses.length, 3);
     assert.equal(responses[0].result.protocolVersion, PROTOCOL_VERSION);
-    assert.equal(responses[1].result.tools[0].name, "safe_delete");
-    assert.equal(responses[2].result.structuredContent.outcome, "already_absent");
+    assert.deepEqual(responses[1].result.tools, [EXPECTED_SAFE_DELETE_TOOL]);
+    assert.deepEqual(responses[2].result, {
+      content: [{ type: "text", text: "Nothing was deleted: already-gone.txt is already absent." }],
+      structuredContent: {
+        outcome: "already_absent",
+        path: "already-gone.txt",
+        backend: "none",
+        errorCode: "",
+      },
+      isError: false,
+    });
   } finally {
     lines.close();
     fs.rmSync(root, { recursive: true, force: true });

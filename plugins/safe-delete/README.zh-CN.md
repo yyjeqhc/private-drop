@@ -1,7 +1,8 @@
 # Safe Delete Native Plugin
 
-`safe_delete` 是一个零第三方依赖的 WebCodex Native Tool Plugin。它不会永久删除
-文件，而是把一个普通文件或目录移动到操作系统的 Trash / Recycle Bin。
+`safe_delete` 是一个使用 `@yyjeqhc/webcodex-plugin-sdk` 编写的 TypeScript WebCodex
+Native Tool Plugin。它不会永久删除文件，而是把一个普通文件或目录移动到操作系统的
+Trash / Recycle Bin。
 
 它有意作为 Plugin 提供，而不是加入 WebCodex 内建文件系统工具。只有在你确实希望
 模型获得这项额外本机能力的 Runner 上才安装它。
@@ -35,8 +36,10 @@
 
 ## Runner 配置
 
-把 `cwd` 设置为你希望这个 Plugin **唯一有权移动到回收站**的项目/目录。如果 Plugin
-脚本不在这个权限根下，使用脚本的绝对路径：
+把 `cwd` 设置为你希望这个 Plugin **唯一有权移动到回收站**的项目/目录。仓库中的
+`plugin.mjs` 是稳定 Runner entrypoint，只负责加载 TypeScript 构建产物，因此在
+check/reload 前先完成构建。如果 Plugin 脚本不在这个权限根下，使用该 entrypoint 的
+绝对路径：
 
 ```toml
 [plugins]
@@ -73,9 +76,17 @@ provider-local Tool，不会成为外层 MCP tool name。
 
 ## 开发
 
-不需要执行 npm install：
+SDK 通过仓库内 `file:` dependency 使用，不需要引入新的 workspace/package-manager
+架构。从仓库根目录执行：
 
 ```bash
-node --check plugins/safe-delete/plugin.mjs
-node --test plugins/safe-delete/plugin.test.mjs
+npm ci --prefix npm/plugin-sdk
+npm --prefix npm/plugin-sdk run build
+npm ci --prefix plugins/safe-delete
+npm --prefix plugins/safe-delete run typecheck
+npm --prefix plugins/safe-delete test
 ```
+
+TypeScript entrypoint 只承载 authoring/runtime boilerplate；路径权限、Trash backend
+选择与结果分类仍属于 safe-delete domain。Rust Runner 继续权威负责 Plugin admission、
+schema/runtime validation、timeout、process lifecycle 与 `OutcomeUnknown` 处理。
