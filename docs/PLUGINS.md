@@ -229,6 +229,40 @@ restart-only fields without starting disposable Plugin processes. Use
 `plugin_tool check(runner, plugin)` when you need executable resolution plus the
 Plugin `initialize -> tools/list` protocol/admission preflight.
 
+## TypeScript Plugin SDK
+
+`@yyjeqhc/webcodex-plugin-sdk` is an optional TypeScript authoring layer for Native
+Tool Plugins:
+
+```text
+raw executable protocol
+    -> @yyjeqhc/webcodex-plugin-sdk
+    -> still webcodex-plugin-v1
+    -> Runner-authoritative check / reload / call
+```
+
+The SDK supplies the small v1 schema builder, `defineTool`, `definePlugin`, result
+helpers, and serial newline-delimited JSON-RPC stdio runtime so Plugin authors do
+not need to hand-write framing and dispatch boilerplate. It is **not** an MCP SDK,
+does not change Plugin authority, and does not sandbox the trusted executable.
+The Server and Runner do not need Node because the SDK exists; only a Plugin that
+chooses this SDK needs Node on its Runner machine. TypeScript is an authoring/build
+dependency: production executes the compiled ESM JavaScript, with no TypeScript
+runtime requirement.
+
+SDK types are authoring assistance, not a second admission authority. The Rust
+Runner still owns protocol/schema admission, frozen catalog semantics, bounds,
+timeout/process lifecycle, output validation, and `OutcomeUnknown`. In particular,
+`plugin_tool check` remains the authoritative admission check. An explicit SDK
+`errorResult(...)` is a known completed application result; an unhandled handler
+throw/rejection stops the provider without fabricating a ToolResult so the Runner
+can retain send ambiguity for effectful calls.
+
+See [`../npm/plugin-sdk/README.md`](../npm/plugin-sdk/README.md) and the TypeScript
+[`echo-plugin.ts`](../npm/plugin-sdk/examples/echo-plugin.ts) example. The raw,
+zero-dependency [`native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs)
+remains the protocol reference and does not depend on the SDK.
+
 ## WebCodex Plugin Protocol v1
 
 The native protocol is newline-delimited JSON-RPC 2.0 framing with the protocol

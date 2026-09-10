@@ -202,6 +202,36 @@ reload` 则提供更窄、只需要 `plugin:manage` 的专门入口。Plugin man
 需要检查 executable resolution 以及 Plugin `initialize -> tools/list` protocol/admission 时，
 使用 `plugin_tool check(runner, plugin)`。
 
+## TypeScript Plugin SDK
+
+`@yyjeqhc/webcodex-plugin-sdk` 是 Native Tool Plugin 的可选 TypeScript authoring layer：
+
+```text
+raw executable protocol
+    -> @yyjeqhc/webcodex-plugin-sdk
+    -> 仍然是 webcodex-plugin-v1
+    -> Runner-authoritative check / reload / call
+```
+
+SDK 提供小型 v1 schema builder、`defineTool`、`definePlugin`、result helper，以及严格
+串行的 newline-delimited JSON-RPC stdio runtime，让 Plugin 作者不用重复手写 framing 和
+dispatch 样板代码。它**不是** MCP SDK，不会改变 Plugin authority，也不会 sandbox 受信任
+executable。WebCodex Server / Runner 不会因为 SDK 而要求 Node；只有主动选择这个 SDK 的
+Plugin 自己需要 Runner 机器提供 Node。TypeScript 只用于 authoring/build，生产环境执行编译
+后的 ESM JavaScript，不要求 TypeScript runtime。
+
+SDK 类型只是 authoring assistance，并不是第二套 admission authority。Rust Runner 继续权威
+拥有 protocol/schema admission、frozen catalog、bounds、timeout/process lifecycle、output
+validation 与 `OutcomeUnknown`。`plugin_tool check` 仍然是 authoritative admission check。
+其中显式 `errorResult(...)` 表示确定的 completed application result；未处理的 handler
+throw/rejection 会终止 provider，并且不会伪造 ToolResult，因此 effectful call 的 send
+ambiguity 仍可由 Runner 正确保留。
+
+完整 SDK 说明见 [`../npm/plugin-sdk/README.zh-CN.md`](../npm/plugin-sdk/README.zh-CN.md)，
+TypeScript 示例见 [`echo-plugin.ts`](../npm/plugin-sdk/examples/echo-plugin.ts)。原有无 SDK
+依赖的 raw [`native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs) 继续作为 protocol
+reference 保留。
+
 ## WebCodex Plugin Protocol v1
 
 Native protocol 使用 newline-delimited JSON-RPC 2.0 framing，protocol version 是
