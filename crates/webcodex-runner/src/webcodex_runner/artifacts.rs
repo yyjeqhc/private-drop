@@ -184,12 +184,18 @@ fn project_root(request: &RunnerFilePayload) -> Result<std::path::PathBuf, Strin
     std::fs::canonicalize(cwd).map_err(|e| format!("project root does not exist: {}", e))
 }
 
-fn ensure_existing_target_in_project_root(resolved: &Path, root: &Path) -> Result<(), String> {
+fn resolve_existing_target_in_project_root(
+    resolved: &Path,
+    root: &Path,
+) -> Result<PathBuf, String> {
     let target = std::fs::canonicalize(resolved).map_err(|e| format!("read failed: {}", e))?;
-    if target != root && !target.starts_with(root) {
-        return Err("artifact path escapes project root".to_string());
+    let relative = target
+        .strip_prefix(root)
+        .map_err(|_| "artifact path escapes project root".to_string())?;
+    if is_sensitive_artifact_path(&relative.to_string_lossy()) {
+        return Err("refusing sensitive artifact target".to_string());
     }
-    Ok(())
+    Ok(target)
 }
 
 fn ensure_parent_in_project_root(resolved: &Path, root: &Path) -> Result<(), String> {
@@ -2213,23 +2219,27 @@ fn handle_read_project_artifact_metadata(
         Ok(value) => value,
         Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
     };
-    if let Err(e) = ensure_existing_target_in_project_root(resolved, &root) {
-        let target_missing = matches!(
-            std::fs::symlink_metadata(resolved),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound
-        );
-        if allow_missing && target_missing {
-            return line_edit_stdout(
-                json!({
-                    "path": path,
-                    "exists": false,
-                    "missing": true,
-                }),
-                start,
+    let target = match resolve_existing_target_in_project_root(resolved, &root) {
+        Ok(target) => target,
+        Err(e) => {
+            let target_missing = matches!(
+                std::fs::symlink_metadata(resolved),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound
             );
+            if allow_missing && target_missing {
+                return line_edit_stdout(
+                    json!({
+                        "path": path,
+                        "exists": false,
+                        "missing": true,
+                    }),
+                    start,
+                );
+            }
+            return line_edit_stdout(metadata_error(Some(path), e), start);
         }
-        return line_edit_stdout(metadata_error(Some(path), e), start);
-    }
+    };
+    let resolved = target.as_path();
     let max_bytes = match parse_usize_field(&payload, "max_bytes", DEFAULT_MAX_ARTIFACT_BYTES) {
         Ok(value) => value,
         Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
@@ -2361,10 +2371,14 @@ fn handle_read_project_artifact_export_chunk(
         Ok(root) => root,
         Err(e) => return line_edit_stdout(read_error(Some(path), e), start),
     };
-    if let Err(e) = ensure_existing_target_in_project_root(resolved, &root) {
-        let msg = e.replacen("read failed", "stat failed", 1);
-        return line_edit_stdout(read_error(Some(path), msg), start);
-    }
+    let target = match resolve_existing_target_in_project_root(resolved, &root) {
+        Ok(target) => target,
+        Err(e) => {
+            let msg = e.replacen("read failed", "stat failed", 1);
+            return line_edit_stdout(read_error(Some(path), msg), start);
+        }
+    };
+    let resolved = target.as_path();
     if payload.get("expected_file_bytes").is_none() {
         return line_edit_stdout(
             read_error(Some(path), "expected_file_bytes is required"),
@@ -2502,10 +2516,14 @@ fn handle_read_project_artifact(
         Ok(root) => root,
         Err(e) => return line_edit_stdout(read_error(Some(path), e), start),
     };
-    if let Err(e) = ensure_existing_target_in_project_root(resolved, &root) {
-        let msg = e.replacen("read failed", "stat failed", 1);
-        return line_edit_stdout(read_error(Some(path), msg), start);
-    }
+    let target = match resolve_existing_target_in_project_root(resolved, &root) {
+        Ok(target) => target,
+        Err(e) => {
+            let msg = e.replacen("read failed", "stat failed", 1);
+            return line_edit_stdout(read_error(Some(path), msg), start);
+        }
+    };
+    let resolved = target.as_path();
     let offset = match parse_usize_field(&payload, "offset", 0) {
         Ok(value) => value,
         Err(e) => return line_edit_stdout(read_error(Some(path), e), start),

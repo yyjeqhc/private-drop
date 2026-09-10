@@ -1,5 +1,72 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn file_project_artifact_reads_reject_canonical_sensitive_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = project_policy(root.path());
+    let content = b"fixture content";
+    std::fs::write(root.path().join(".env"), content).unwrap();
+    std::fs::create_dir(root.path().join(".git")).unwrap();
+    std::fs::write(root.path().join(".git/config"), content).unwrap();
+    std::os::unix::fs::symlink(".env", root.path().join("report.txt")).unwrap();
+    std::os::unix::fs::symlink(".git", root.path().join("reports")).unwrap();
+
+    for path in ["report.txt", "reports/config"] {
+        for kind in [
+            "file_read_project_artifact",
+            "file_read_project_artifact_metadata",
+            "file_read_project_artifact_export_chunk",
+        ] {
+            let output = line_edit_json(handle_file_request(
+                &policy,
+                &json_file_op_request(
+                    root.path(),
+                    kind,
+                    path,
+                    serde_json::json!({
+                        "expected_file_bytes": content.len(),
+                        "offset": 0,
+                        "length": content.len(),
+                    }),
+                ),
+            ));
+            assert!(
+                output["error"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("sensitive"),
+                "{kind} accepted {path}: {output}"
+            );
+            assert!(output["content_base64"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty());
+            assert!(output["sha256"].is_null());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn file_project_artifact_reads_allow_non_sensitive_internal_aliases() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = project_policy(root.path());
+    std::fs::write(root.path().join("report.txt"), b"fixture content").unwrap();
+    std::os::unix::fs::symlink("report.txt", root.path().join("alias.txt")).unwrap();
+    let output = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            root.path(),
+            "file_read_project_artifact",
+            "alias.txt",
+            serde_json::json!({}),
+        ),
+    ));
+    assert!(output.get("error").is_none(), "{output}");
+    assert_eq!(output["content_base64"], "Zml4dHVyZSBjb250ZW50");
+}
+
 fn fake_zip_eocd_with_entries(entries: u16) -> Vec<u8> {
     let mut bytes = b"PK\x05\x06".to_vec();
     bytes.extend_from_slice(&[0, 0]); // disk number
