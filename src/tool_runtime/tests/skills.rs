@@ -15,6 +15,10 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use webcodex_core::configured_skills::{
+    ConfiguredSkillDescriptor, ConfiguredSkillRootsListResponse, ConfiguredSkillRootsReadResponse,
+    ConfiguredSkillRootsRequest, CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT,
+};
 use webcodex_core::skill_store::{
     RunnerSkillDescriptor, SkillStoreListActiveResponse, SkillStoreReadResponse, SkillStoreRequest,
     SKILL_STORE_RESPONSE_FORMAT,
@@ -150,6 +154,16 @@ fn skill_by_name<'a>(result: &'a ToolResult, name: &str) -> &'a Value {
 }
 
 #[derive(Debug, Clone)]
+struct FakeConfiguredSkillState {
+    skill_id: String,
+    name: String,
+    description: String,
+    definition_revision: String,
+    definition_text: String,
+    resource_text: String,
+}
+
+#[derive(Debug, Clone)]
 struct FakeOperatorSkillState {
     skill_id: String,
     skill_key: String,
@@ -157,6 +171,7 @@ struct FakeOperatorSkillState {
     description: String,
     package_revision: String,
     definition_revision: String,
+    configured: Option<FakeConfiguredSkillState>,
     resource_text: String,
 }
 
@@ -199,7 +214,113 @@ async fn call_kernel_with_fake_operator_store(
             "operator Skill fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
-            if request.kind == "skill_store" {
+            if request.kind == "configured_skill_roots" {
+                let operation: ConfiguredSkillRootsRequest = serde_json::from_str(
+                    request
+                        .content
+                        .as_deref()
+                        .expect("typed configured Skill roots request"),
+                )
+                .unwrap();
+                let state = operator
+                    .lock()
+                    .unwrap()
+                    .configured
+                    .clone()
+                    .expect("configured Skill fixture state");
+                let (exit_code, stdout, error) = match operation {
+                    ConfiguredSkillRootsRequest::List => (
+                        Some(0),
+                        Some(
+                            serde_json::to_string(&ConfiguredSkillRootsListResponse {
+                                format: CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT.to_string(),
+                                skills: vec![ConfiguredSkillDescriptor {
+                                    skill_id: state.skill_id,
+                                    name: state.name,
+                                    description: state.description,
+                                    definition_revision: state.definition_revision,
+                                }],
+                                invalid_count: 0,
+                                diagnostics: Vec::new(),
+                                discovery_truncated: false,
+                            })
+                            .unwrap(),
+                        ),
+                        None,
+                    ),
+                    ConfiguredSkillRootsRequest::Read {
+                        skill_id,
+                        path,
+                        start_line,
+                        limit,
+                        expected_definition_revision,
+                    } => {
+                        let error = if skill_id != state.skill_id {
+                            Some("skill_not_found".to_string())
+                        } else if expected_definition_revision
+                            .as_deref()
+                            .is_some_and(|expected| expected != state.definition_revision)
+                        {
+                            Some("skill_definition_changed".to_string())
+                        } else {
+                            None
+                        };
+                        if let Some(error) = error {
+                            (None, None, Some(error))
+                        } else {
+                            let text = if path == "SKILL.md" {
+                                state.definition_text
+                            } else {
+                                state.resource_text
+                            };
+                            assert!(limit >= 1);
+                            let sha256 = if path == "SKILL.md" {
+                                state.definition_revision.clone()
+                            } else {
+                                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                                    .to_string()
+                            };
+                            (
+                                Some(0),
+                                Some(
+                                    serde_json::to_string(&ConfiguredSkillRootsReadResponse {
+                                        format: CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT.to_string(),
+                                        skill_id: state.skill_id,
+                                        name: state.name,
+                                        definition_revision: state.definition_revision,
+                                        path,
+                                        sha256,
+                                        file_bytes: text.len(),
+                                        total_lines: 1,
+                                        text,
+                                        start_line,
+                                        end_line: Some(start_line),
+                                        returned_lines: 1,
+                                        has_more: false,
+                                        next_start_line: None,
+                                    })
+                                    .unwrap(),
+                                ),
+                                None,
+                            )
+                        }
+                    }
+                };
+                runtime
+                    .runner_registry
+                    .complete(RunnerResultRequest {
+                        client_id: client_id.to_string(),
+                        runner_instance_id: "inst".to_string(),
+                        request_id: request.request_id,
+                        exit_code,
+                        stdout,
+                        stderr: Some(String::new()),
+                        duration_ms: Some(1),
+                        error,
+                    })
+                    .await
+                    .unwrap();
+            } else if request.kind == "skill_store" {
                 let operation: SkillStoreRequest = serde_json::from_str(
                     request
                         .content
@@ -360,6 +481,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
         description: "Operator-installed guidance".to_string(),
         package_revision: package_a.clone(),
         definition_revision: definition.clone(),
+        configured: None,
         resource_text: "resource-a".to_string(),
     }));
 
@@ -456,6 +578,129 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     assert_eq!(pinned_read.output["trust"], "operator_installed_guidance");
     assert_eq!(pinned_read.output["package_revision"], package_b);
     assert_eq!(pinned_read.output["definition_revision"], definition);
+}
+
+#[tokio::test]
+async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog() {
+    let project_root = tempfile::tempdir().unwrap();
+    write_skill(
+        project_root.path(),
+        "project-duplicate",
+        "duplicate",
+        "Project guidance",
+        "project body\n",
+    );
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "skill-three-source-union";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            file_read: true,
+            configured_skill_roots_read: true,
+            skill_store_read: true,
+            ..Default::default()
+        },
+        vec![registered_project(
+            "project",
+            project_root.path().to_string_lossy().as_ref(),
+        )],
+    )
+    .await;
+    let project = crate::tool_runtime::runner_project_runtime_id(client_id, "project");
+    let configured_id = format!("wc_skill_{}", "2".repeat(32));
+    let managed_id = format!("wc_skill_{}", "3".repeat(32));
+    let configured_revision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let managed_revision = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    let managed_package = format!("wc_skillpkg_{}", "a".repeat(64));
+    let sources = Arc::new(Mutex::new(FakeOperatorSkillState {
+        skill_id: managed_id.clone(),
+        skill_key: "managed-duplicate".to_string(),
+        name: "duplicate".to_string(),
+        description: "Managed guidance".to_string(),
+        package_revision: managed_package.clone(),
+        definition_revision: managed_revision.to_string(),
+        configured: Some(FakeConfiguredSkillState {
+            skill_id: configured_id.clone(),
+            name: "duplicate".to_string(),
+            description: "Configured guidance".to_string(),
+            definition_revision: configured_revision.to_string(),
+            definition_text: "configured definition".to_string(),
+            resource_text: "configured resource".to_string(),
+        }),
+        resource_text: "managed resource".to_string(),
+    }));
+
+    let listed = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_list",
+        json!({"project": project, "limit": 10}),
+        sources.clone(),
+    )
+    .await;
+    assert!(listed.success, "{:?}", listed.error);
+    assert_eq!(listed.output["total_count"], 3);
+    let skills = listed.output["skills"].as_array().unwrap();
+    assert!(skills.iter().all(|skill| skill["name_conflict"] == true));
+    let configured = skills
+        .iter()
+        .find(|skill| skill["skill_id"] == configured_id)
+        .unwrap();
+    assert_eq!(configured["source_scope"], "runner");
+    assert_eq!(configured["trust"], "operator_configured_guidance");
+    assert!(configured["package_revision"].is_null());
+    let managed = skills
+        .iter()
+        .find(|skill| skill["skill_id"] == managed_id)
+        .unwrap();
+    assert_eq!(managed["trust"], "operator_installed_guidance");
+    assert_eq!(managed["package_revision"], managed_package);
+    let project_skill = skills
+        .iter()
+        .find(|skill| skill["source_scope"] == "project")
+        .unwrap();
+    assert_eq!(project_skill["trust"], "project_content");
+
+    let configured_read = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": configured_id,
+            "path": "references/guide.md",
+            "expected_definition_revision": configured_revision
+        }),
+        sources.clone(),
+    )
+    .await;
+    assert!(configured_read.success, "{:?}", configured_read.error);
+    assert_eq!(configured_read.output["text"], "configured resource");
+    assert_eq!(
+        configured_read.output["trust"],
+        "operator_configured_guidance"
+    );
+    assert!(configured_read.output["package_revision"].is_null());
+
+    let managed_read = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": managed_id,
+            "path": "references/guide.md",
+            "expected_package_revision": managed_package,
+            "expected_definition_revision": managed_revision
+        }),
+        sources,
+    )
+    .await;
+    assert!(managed_read.success, "{:?}", managed_read.error);
+    assert_eq!(managed_read.output["text"], "managed resource");
+    assert_eq!(managed_read.output["trust"], "operator_installed_guidance");
 }
 
 #[tokio::test]

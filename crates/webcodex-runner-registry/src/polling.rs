@@ -399,7 +399,7 @@ impl RunnerRegistry {
             let stale_skill_store_error =
                 inner.pending_by_id.get(&request_id).and_then(|pending| {
                     match (&pending.operation, pending.skill_store_fence.as_ref()) {
-                        (RunnerOperation::SkillStore(_), Some(fence)) => {
+                        (RunnerOperation::SkillStore(_), Some(fence)) if !fence.configured_roots => {
                             let Some(runner) = inner.runners.get(&body.client_id) else {
                                 return Some(
                                     "stale_runner: Skill store target Runner disappeared before dispatch"
@@ -424,11 +424,38 @@ impl RunnerRegistry {
                                 )
                             })
                         }
-                        (RunnerOperation::SkillStore(_), None) => Some(
-                            "stale_runner: Skill store exact dispatch fence is missing".to_string(),
+                        (RunnerOperation::ConfiguredSkillRoots(_), Some(fence))
+                            if fence.configured_roots && !fence.management =>
+                        {
+                            let Some(runner) = inner.runners.get(&body.client_id) else {
+                                return Some(
+                                    "stale_runner: configured Skill roots target Runner disappeared before dispatch"
+                                        .to_string(),
+                                );
+                            };
+                            if runner.runner_instance_id != fence.runner_instance_id {
+                                return Some(
+                                    "stale_runner: configured Skill roots target Runner changed before dispatch"
+                                        .to_string(),
+                                );
+                            }
+                            (!runner
+                                .runner_features
+                                .supports(RunnerFeature::ConfiguredSkillRootsRead))
+                            .then(|| {
+                                "configured_skill_roots_capability_unavailable: exact Runner no longer advertises configured_skill_roots_read before dispatch"
+                                    .to_string()
+                            })
+                        }
+                        (RunnerOperation::SkillStore(_) | RunnerOperation::ConfiguredSkillRoots(_), None) => Some(
+                            "stale_runner: Skill source exact dispatch fence is missing".to_string(),
+                        ),
+                        (RunnerOperation::SkillStore(_) | RunnerOperation::ConfiguredSkillRoots(_), Some(_)) => Some(
+                            "stale_runner: Skill source dispatch fence mode does not match the request kind"
+                                .to_string(),
                         ),
                         (_, Some(_)) => Some(
-                            "stale_runner: Skill store dispatch fence is attached to the wrong request kind"
+                            "stale_runner: Skill source dispatch fence is attached to the wrong request kind"
                                 .to_string(),
                         ),
                         (_, None) => None,

@@ -278,6 +278,9 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             managed_worktree: false,
             // Runner-global Skill store support is runtime-only and never
             // inferred from project/file capabilities in generated config.
+            // Configured live Skill roots are Runner-owned runtime config and
+            // require an explicit running-binary capability.
+            configured_skill_roots_read: false,
             skill_store_read: false,
             skill_store_manage: false,
             // Desktop observation is a runtime/platform capability and is never

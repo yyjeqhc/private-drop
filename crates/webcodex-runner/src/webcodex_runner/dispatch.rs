@@ -3,10 +3,10 @@ use super::lsp::{handle_lsp_operation, LspSupervisor};
 use super::transport::ResultSubmission;
 use super::validation::handle_validation_request;
 use super::{
-    handle_computer_operation, handle_prepare_managed_worktree_operation,
-    handle_project_lifecycle_operation, handle_project_operation,
-    handle_resolve_or_register_project_operation, handle_skill_store_request,
-    run_internal_posix_script_with_profiles_and_execution_state,
+    handle_computer_operation, handle_configured_skill_roots_request,
+    handle_prepare_managed_worktree_operation, handle_project_lifecycle_operation,
+    handle_project_operation, handle_resolve_or_register_project_operation,
+    handle_skill_store_request, run_internal_posix_script_with_profiles_and_execution_state,
     run_internal_search_script_with_profiles_and_execution_state,
     run_process_with_profiles_and_execution_state, run_script_with_profiles_and_execution_state,
     run_shell_with_profiles_and_execution_state, run_ssh_shell_with_execution_state, CommandResult,
@@ -416,6 +416,11 @@ pub(crate) fn dispatch_request_with_outcome(
                 duration_ms: Some(0),
                 error: None,
             };
+            sink.submit_result_with_metadata(request_id, result, config, runtime)
+                .map(|_| true)
+        }
+        RunnerOperation::ConfiguredSkillRoots(operation) => {
+            let result = handle_configured_skill_roots_request(&config.skills, operation);
             sink.submit_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }

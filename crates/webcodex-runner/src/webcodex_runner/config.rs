@@ -40,6 +40,15 @@ const DEFAULT_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS: u64 = 30 * 60;
 const MIN_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS: u64 = 1;
 const MAX_PERSISTENT_SHELL_IDLE_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
+pub(crate) const MAX_CONFIGURED_SKILL_ROOTS: usize = 16;
+pub(crate) const MAX_CONFIGURED_SKILL_ROOT_PATH_BYTES: usize = 4096;
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub(crate) struct SkillsConfig {
+    #[serde(default)]
+    pub(crate) roots: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RunnerConfig {
     pub(crate) server_url: String,
@@ -72,6 +81,8 @@ pub(crate) struct RunnerConfig {
     pub(crate) max_concurrent_jobs: Option<usize>,
     #[serde(default)]
     pub(crate) policy: RunnerPolicy,
+    #[serde(default)]
+    pub(crate) skills: SkillsConfig,
     /// Transport selection: `"websocket"` (default), `"polling"`, `"quic"`,
     /// or explicit `"auto"` fallback mode.
     #[serde(default)]
@@ -494,6 +505,7 @@ pub(crate) struct HotRunnerConfig {
     pub(crate) generation: u64,
     pub(crate) policy: RunnerPolicy,
     pub(crate) shell: ShellConfig,
+    pub(crate) skills: SkillsConfig,
     /// Static/manual `[ssh.resources]` from the current runner.toml generation.
     pub(crate) static_ssh: SshConfig,
     /// Effective process-local resources: current static resources plus the
@@ -515,6 +527,7 @@ impl HotRunnerConfig {
             generation,
             policy: cfg.policy.clone(),
             shell: cfg.shell.clone(),
+            skills: cfg.skills.clone(),
             static_ssh: cfg.ssh.clone(),
             ssh,
             external_tools: Arc::new(ExternalToolRouter::new(&cfg.tool_providers)),
@@ -909,6 +922,11 @@ fn reload_error_code(error: &str) -> &'static str {
 
 fn reload_error_diagnostic(error: &str) -> (Option<&'static str>, Option<&'static str>) {
     const OUT_OF_RANGE_FIELDS: &[(&str, &str)] = &[
+        ("skills.roots may contain at most ", "skills.roots"),
+        (
+            "skills.roots entries must be non-empty paths of at most ",
+            "skills.roots",
+        ),
         (
             "max_concurrent_jobs must be between ",
             "max_concurrent_jobs",
@@ -934,6 +952,12 @@ fn reload_error_diagnostic(error: &str) -> (Option<&'static str>, Option<&'stati
             "mcp.request_timeout_secs",
         ),
     ];
+    if error.starts_with("skills.roots entries must be absolute paths")
+        || error.starts_with("skills.roots contains an unsupported Windows path namespace")
+        || error.starts_with("skills.roots contains duplicate path identities")
+    {
+        return (Some("skills.roots"), Some("invalid_path"));
+    }
     OUT_OF_RANGE_FIELDS
         .iter()
         .find_map(|(prefix, field)| {
@@ -988,7 +1012,7 @@ pub(crate) fn restart_required_fields(
     macro_rules! classify {
         ($($field:ident),+ $(,)?) => {{
             let RunnerConfig {
-                policy: _, shell: _, ssh: _, plugins: _, tool_providers: _, legacy_projects_dir: _,
+                policy: _, shell: _, skills: _, ssh: _, plugins: _, tool_providers: _, legacy_projects_dir: _,
                 $($field: _),+
             } = candidate;
             [$((stringify!($field), startup.$field != candidate.$field)),+]
@@ -1443,6 +1467,7 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
         return Err("websocket_connect_timeout_secs must be > 0".to_string());
     }
     validate_max_concurrent_jobs(cfg.max_concurrent_jobs)?;
+    validate_skills_config(&cfg.skills)?;
     if let Some(host_context) = cfg.host_context.take() {
         cfg.host_context = Some(host_context.normalized()?);
     }
@@ -1513,6 +1538,51 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
     validate_plugin_config(&cfg.plugins, &cfg.shell)?;
     validate_acp_config(&cfg.acp)?;
     Ok(cfg)
+}
+
+pub(crate) fn configured_skill_root_identity(root: &Path) -> String {
+    let lexical = root.components().collect::<PathBuf>();
+    crate::runner_config::paths::normalize_path_identity(&lexical)
+}
+
+fn validate_skills_config(config: &SkillsConfig) -> Result<(), String> {
+    use std::collections::HashSet;
+
+    if config.roots.len() > MAX_CONFIGURED_SKILL_ROOTS {
+        return Err(format!(
+            "skills.roots may contain at most {MAX_CONFIGURED_SKILL_ROOTS} entries"
+        ));
+    }
+    let mut identities = HashSet::with_capacity(config.roots.len());
+    for root in &config.roots {
+        let text = root.to_string_lossy();
+        if text.is_empty()
+            || text.len() > MAX_CONFIGURED_SKILL_ROOT_PATH_BYTES
+            || text.contains('\0')
+        {
+            return Err(format!(
+                "skills.roots entries must be non-empty paths of at most {MAX_CONFIGURED_SKILL_ROOT_PATH_BYTES} bytes"
+            ));
+        }
+        if !root.is_absolute()
+            || crate::runner_config::paths::project_path_has_parent_traversal(root)
+        {
+            return Err(
+                "skills.roots entries must be absolute paths without parent traversal".to_string(),
+            );
+        }
+        #[cfg(windows)]
+        if crate::runner_config::paths::windows_project_path_kind(root)
+            == Some(crate::runner_config::paths::WindowsProjectPathKind::UnsupportedNamespace)
+        {
+            return Err("skills.roots contains an unsupported Windows path namespace".to_string());
+        }
+        let identity = configured_skill_root_identity(root);
+        if !identities.insert(identity) {
+            return Err("skills.roots contains duplicate path identities".to_string());
+        }
+    }
+    Ok(())
 }
 
 fn validate_acp_env_name(value: &str) -> Result<(), ()> {

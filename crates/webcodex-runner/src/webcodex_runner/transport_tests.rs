@@ -42,6 +42,7 @@ fn test_runner_config(server_url: String) -> RunnerConfig {
             crate::webcodex_runner::default_websocket_connect_timeout_secs(),
         quic: None,
         shell: ShellConfig::default(),
+        skills: super::super::config::SkillsConfig::default(),
         ssh: Default::default(),
         tool_providers: Default::default(),
         mcp_gateway: Default::default(),

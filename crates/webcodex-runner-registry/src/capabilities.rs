@@ -43,6 +43,7 @@ pub enum RunnerFeature {
     ProjectLifecycle,
     ProjectPathRegistration,
     ManagedWorktree,
+    ConfiguredSkillRootsRead,
     SkillStoreRead,
     SkillStoreManage,
     ComputerObserve,
@@ -67,7 +68,7 @@ pub enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 57] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 58] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -103,6 +104,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 57] = [
     RunnerFeature::ProjectLifecycle,
     RunnerFeature::ProjectPathRegistration,
     RunnerFeature::ManagedWorktree,
+    RunnerFeature::ConfiguredSkillRootsRead,
     RunnerFeature::SkillStoreRead,
     RunnerFeature::SkillStoreManage,
     RunnerFeature::ComputerObserve,
@@ -187,6 +189,7 @@ impl RunnerFeature {
             Self::ProjectLifecycle => wire::RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
             Self::ProjectPathRegistration => wire::RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
             Self::ManagedWorktree => wire::RUNNER_CAPABILITY_MANAGED_WORKTREE,
+            Self::ConfiguredSkillRootsRead => wire::RUNNER_CAPABILITY_CONFIGURED_SKILL_ROOTS_READ,
             Self::SkillStoreRead => wire::RUNNER_CAPABILITY_SKILL_STORE_READ,
             Self::SkillStoreManage => wire::RUNNER_CAPABILITY_SKILL_STORE_MANAGE,
             Self::ComputerObserve => wire::RUNNER_CAPABILITY_COMPUTER_OBSERVE,
@@ -259,6 +262,7 @@ impl RunnerFeature {
             wire::RUNNER_CAPABILITY_PROJECT_LIFECYCLE => Self::ProjectLifecycle,
             wire::RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION => Self::ProjectPathRegistration,
             wire::RUNNER_CAPABILITY_MANAGED_WORKTREE => Self::ManagedWorktree,
+            wire::RUNNER_CAPABILITY_CONFIGURED_SKILL_ROOTS_READ => Self::ConfiguredSkillRootsRead,
             wire::RUNNER_CAPABILITY_SKILL_STORE_READ => Self::SkillStoreRead,
             wire::RUNNER_CAPABILITY_SKILL_STORE_MANAGE => Self::SkillStoreManage,
             wire::RUNNER_CAPABILITY_COMPUTER_OBSERVE => Self::ComputerObserve,
@@ -326,6 +330,7 @@ impl RunnerFeature {
             | Self::SshPersistentShell
             | Self::DetachedProcessJobs
             | Self::ManagedWorktree
+            | Self::ConfiguredSkillRootsRead
             | Self::SkillStoreRead
             | Self::SkillStoreManage
             | Self::ComputerObserve
@@ -394,6 +399,7 @@ impl RunnerFeature {
             Self::ProjectLifecycle => capabilities.project_lifecycle,
             Self::ProjectPathRegistration => capabilities.project_path_registration,
             Self::ManagedWorktree => capabilities.managed_worktree,
+            Self::ConfiguredSkillRootsRead => capabilities.configured_skill_roots_read,
             Self::SkillStoreRead => capabilities.skill_store_read,
             Self::SkillStoreManage => capabilities.skill_store_manage,
             Self::ComputerObserve => capabilities.computer_observe,

@@ -3,6 +3,7 @@ pub(crate) mod checkpoints;
 pub(crate) mod coding_agent;
 pub(crate) mod computer;
 pub(crate) mod config;
+pub(crate) mod configured_skills;
 pub(crate) mod detached_job;
 pub(crate) mod dispatch;
 #[cfg(windows)]
@@ -50,6 +51,7 @@ pub(crate) use config::{
     default_websocket_connect_timeout_secs, QuicClientConfig, ShellProfileConfig,
     CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
 };
+pub(crate) use configured_skills::handle_configured_skill_roots_request;
 #[cfg(test)]
 pub(super) use dispatch::dispatch_request;
 pub(super) use dispatch::{dispatch_request_with_outcome, RunnerDispatchOutcome};

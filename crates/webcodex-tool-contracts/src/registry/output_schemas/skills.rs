@@ -12,13 +12,33 @@ fn descriptor_schema() -> Value {
             "description": {"type": "string", "maxLength": MAX_SKILL_DESCRIPTION_CHARS},
             "definition_revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "source_scope": {"type": "string", "enum": ["project", "runner"]},
-            "trust": {"type": "string", "enum": ["project_content", "operator_installed_guidance"]},
+            "trust": {"type": "string", "enum": ["project_content", "operator_configured_guidance", "operator_installed_guidance"]},
             "package_revision": {"anyOf": [{"type":"string","pattern":"^wc_skillpkg_[0-9a-f]{64}$"},{"type":"null"}]},
             "name_conflict": {"type": "boolean"}
         },
         "required": ["skill_id", "name", "description", "definition_revision", "source_scope", "trust", "package_revision", "name_conflict"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descriptor_trust_distinguishes_configured_and_managed_runner_guidance() {
+        let schema = descriptor_schema();
+        let values = schema["properties"]["trust"]["enum"]
+            .as_array()
+            .expect("trust enum");
+        assert!(values.iter().any(|value| value == "project_content"));
+        assert!(values
+            .iter()
+            .any(|value| value == "operator_configured_guidance"));
+        assert!(values
+            .iter()
+            .any(|value| value == "operator_installed_guidance"));
+    }
 }
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {

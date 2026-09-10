@@ -89,6 +89,67 @@ client_id = "oe"
 }
 
 #[test]
+fn runner_config_skill_roots_default_empty_and_accept_absolute_paths() {
+    let omitted: RunnerConfig = toml::from_str(
+        "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\n",
+    )
+    .unwrap();
+    assert!(omitted.skills.roots.is_empty());
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("runner.toml");
+    let live_root = tmp.path().join("live-skills");
+    std::fs::write(
+        &config_path,
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\nproject_registry_dir = \"project-registry\"\n[skills]\nroots = [{:?}]\n[policy]\nallow_cwd_anywhere = true\n",
+            live_root.to_string_lossy().as_ref()
+        ),
+    )
+    .unwrap();
+    let configured = load_config(&config_path).unwrap();
+    assert_eq!(configured.skills.roots, vec![live_root]);
+}
+
+#[test]
+fn runner_config_skill_roots_validation_fails_closed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("runner.toml");
+    let render = |roots: &str| {
+        format!(
+            "server_url = \"http://127.0.0.1:8000\"\ntoken = \"t\"\nclient_id = \"oe\"\nproject_registry_dir = \"project-registry\"\n[skills]\nroots = [{roots}]\n[policy]\nallow_cwd_anywhere = true\n"
+        )
+    };
+
+    std::fs::write(&config_path, render("\"relative/skills\"")).unwrap();
+    let error = load_config(&config_path).unwrap_err();
+    assert!(
+        error.contains("absolute paths without parent traversal"),
+        "{error}"
+    );
+
+    let absolute = std::env::current_dir().unwrap().join("skill-root");
+    let encoded = format!("{:?}", absolute.to_string_lossy().as_ref());
+    let too_many = std::iter::repeat_n(encoded, 17)
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(&config_path, render(&too_many)).unwrap();
+    let error = load_config(&config_path).unwrap_err();
+    assert!(error.contains("at most 16 entries"), "{error}");
+
+    let too_long = std::env::current_dir()
+        .unwrap()
+        .join("x".repeat(crate::webcodex_runner::config::MAX_CONFIGURED_SKILL_ROOT_PATH_BYTES + 1));
+    std::fs::write(
+        &config_path,
+        render(&format!("{:?}", too_long.to_string_lossy().as_ref())),
+    )
+    .unwrap();
+    let error = load_config(&config_path).unwrap_err();
+    assert!(error.contains("at most 4096 bytes"), "{error}");
+}
+
+#[test]
 fn runner_config_rejects_zero_websocket_connect_timeout() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("agent.toml");

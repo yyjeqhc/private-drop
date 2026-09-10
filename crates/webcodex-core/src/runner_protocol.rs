@@ -264,6 +264,10 @@ pub const RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_regi
 /// source/ref and owns the filesystem destination; missing on older Runners is
 /// false and is never inferred from generic Git or path-registration support.
 pub const RUNNER_CAPABILITY_MANAGED_WORKTREE: &str = "managed_worktree";
+/// Runner-global read-only discovery/read for operator-configured live Skill roots.
+/// Missing on older Runners is false and is never inferred from generic file_read,
+/// project lifecycle support, or managed Skill Store support.
+pub const RUNNER_CAPABILITY_CONFIGURED_SKILL_ROOTS_READ: &str = "configured_skill_roots_read";
 /// Runner-global read-only operator-installed Skill store discovery/read.
 /// Missing on older Runners is false and is never inferred from file_read or
 /// project lifecycle support.
@@ -437,6 +441,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
     RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
     RUNNER_CAPABILITY_MANAGED_WORKTREE,
+    RUNNER_CAPABILITY_CONFIGURED_SKILL_ROOTS_READ,
     RUNNER_CAPABILITY_SKILL_STORE_READ,
     RUNNER_CAPABILITY_SKILL_STORE_MANAGE,
     RUNNER_CAPABILITY_COMPUTER_OBSERVE,
@@ -638,6 +643,10 @@ pub struct RunnerCapabilities {
     /// Runners fail closed instead of falling back to Server-side Git/path work.
     #[serde(default, skip_serializing_if = "is_false")]
     pub managed_worktree: bool,
+    /// Read-only operator-configured live Skill root support. Paths remain
+    /// Runner-local trusted configuration and are never accepted on this wire.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub configured_skill_roots_read: bool,
     /// Read-only operator-installed Skill store support. Missing on older
     /// Runners is false and never follows from generic file_read.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -841,12 +850,14 @@ impl RunnerConfigOperationResponse {
                 if matches!(
                     field,
                     "max_concurrent_jobs"
+                        | "skills.roots"
                         | "shell.max_persistent_shells"
                         | "shell.persistent_shell_idle_timeout_secs"
                         | "acp.max_concurrent_runs"
                         | "acp.permission_timeout_secs"
                         | "mcp.request_timeout_secs"
                 ) => {}
+            (Some("skills.roots"), Some("invalid_path")) => {}
             _ => return Err("invalid config error diagnostic"),
         }
         if let Some(code) = self.error_code.as_deref() {
@@ -937,6 +948,7 @@ impl Default for RunnerCapabilities {
             project_lifecycle: false,
             project_path_registration: false,
             managed_worktree: false,
+            configured_skill_roots_read: false,
             skill_store_read: false,
             skill_store_manage: false,
             computer_observe: false,
@@ -3695,6 +3707,7 @@ mod envelope_tests {
                 project_lifecycle: false,
                 project_path_registration: false,
                 managed_worktree: false,
+                configured_skill_roots_read: false,
                 skill_store_read: false,
                 skill_store_manage: false,
                 computer_observe: false,
@@ -4873,6 +4886,7 @@ mod envelope_tests {
                 "project_lifecycle",
                 "project_path_registration",
                 "managed_worktree",
+                "configured_skill_roots_read",
                 "skill_store_read",
                 "skill_store_manage",
                 "computer_observe",

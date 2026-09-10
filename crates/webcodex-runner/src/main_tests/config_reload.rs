@@ -72,6 +72,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     let mut hot_only = startup.clone();
     hot_only.policy.max_timeout_secs += 1;
     hot_only.shell.program = "bash".to_string();
+    hot_only.skills.roots.push(PathBuf::from("live-skill-root"));
     hot_only.plugins.request_timeout_secs += 1;
     hot_only.tool_providers.strategy =
         webcodex_runner::config::ToolProviderStrategy::ClaudeCodeThenNative;
@@ -101,6 +102,46 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
             webcodex_runner::config::restart_required_fields(&startup, &changed).join(" "),
             "capabilities client_id display_name hostname host_context max_concurrent_jobs mcp_gateway owner poll_interval_ms project_registry_dir quic server_url token transport websocket_connect_timeout_secs"
         );
+}
+
+#[test]
+fn skill_roots_config_change_is_hot_reloadable_and_generation_fenced() {
+    let (tmp, path, runtime) = reload_fixture();
+    let old = runtime.snapshot();
+    assert!(old.skills.roots.is_empty());
+    let live_root = tmp.path().join("live-skills");
+    let candidate = format!(
+        "{}\n[skills]\nroots = [{:?}]\n",
+        reload_toml(
+            "oe",
+            None,
+            60,
+            1024,
+            "sh",
+            "native",
+            false,
+            "claude",
+            "project_search_generation_1",
+        ),
+        live_root.to_string_lossy().as_ref()
+    );
+    std::fs::write(&path, candidate).unwrap();
+
+    let checked = runtime.check_config();
+    assert_eq!(checked.valid, Some(true));
+    assert!(!checked.restart_required);
+    assert!(checked.restart_required_fields.is_empty());
+    assert_eq!(checked.current_generation, Some(1));
+    assert!(old.skills.roots.is_empty());
+
+    let reloaded = runtime.reload_config(1);
+    assert_eq!(reloaded.valid, Some(true));
+    assert!(!reloaded.restart_required);
+    assert_eq!(reloaded.current_generation, Some(2));
+    let active = runtime.snapshot();
+    assert_eq!(active.generation, 2);
+    assert_eq!(active.skills.roots, vec![live_root]);
+    assert!(old.skills.roots.is_empty());
 }
 
 #[test]

@@ -572,7 +572,7 @@ fn runner_config(
 ) -> RunnerConfig {
     use super::super::config::{
         default_websocket_connect_timeout_secs, AcpConfig, McpGatewayConfig, RunnerPolicy,
-        SshConfig, ToolProvidersConfig,
+        SkillsConfig, SshConfig, ToolProvidersConfig,
     };
     RunnerConfig {
         server_url: "http://127.0.0.1:8000".to_string(),
@@ -592,6 +592,7 @@ fn runner_config(
         websocket_connect_timeout_secs: default_websocket_connect_timeout_secs(),
         quic: None,
         shell,
+        skills: SkillsConfig::default(),
         ssh: SshConfig::default(),
         tool_providers: ToolProvidersConfig::default(),
         mcp_gateway: McpGatewayConfig::default(),

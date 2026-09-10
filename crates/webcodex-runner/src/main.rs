@@ -2011,6 +2011,10 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // advertise a capability that the binary does not implement.
     capabilities.project_path_registration = true;
     capabilities.managed_worktree = true;
+    // Runner-configured live Skill root discovery/read is a separate read-only
+    // capability. It remains explicit even with no configured roots so Server
+    // rolling upgrades never infer this authority from file_read or Skill Store.
+    capabilities.configured_skill_roots_read = true;
     // Runner-global operator-installed Skill store read and management are
     // explicit rolling-upgrade capabilities implemented by this binary.
     capabilities.skill_store_read = true;

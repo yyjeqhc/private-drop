@@ -311,6 +311,8 @@ mod computer_observe;
 mod computer_snapshot_artifact;
 #[path = "tests/computer_text_input.rs"]
 mod computer_text_input;
+#[path = "tests/configured_skills.rs"]
+mod configured_skills;
 #[path = "tests/connection_lease.rs"]
 mod connection_lease;
 #[path = "tests/disconnect_reconciliation.rs"]

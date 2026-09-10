@@ -205,6 +205,7 @@ impl RunnerRecord {
 pub(super) struct SkillStoreDispatchFence {
     pub(super) runner_instance_id: String,
     pub(super) management: bool,
+    pub(super) configured_roots: bool,
 }
 
 #[derive(Debug)]
@@ -239,9 +240,9 @@ pub(super) struct PendingShellRequest {
     /// Revalidated at dequeue so neither check nor reload can silently retarget
     /// a replacement process using the same client_id.
     pub(super) expected_runner_config_runner_instance_id: Option<String>,
-    /// Exact Runner process lease plus read/manage mode captured for a
-    /// Runner-global Skill store request. Revalidated at dequeue so a
-    /// replacement process using the same client_id cannot inherit authority.
+    /// Exact Runner process lease plus source/read/manage mode captured for a
+    /// Runner-global Skill request. Revalidated at dequeue so a replacement
+    /// process using the same client_id cannot inherit authority.
     pub(super) skill_store_fence: Option<SkillStoreDispatchFence>,
     pub(super) dispatched: bool,
 }

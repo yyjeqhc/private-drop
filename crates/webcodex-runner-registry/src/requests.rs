@@ -21,6 +21,7 @@ use webcodex_core::coding_agent::{
     validate_request as validate_coding_agent_request, CodingAgentDispatchState,
     CodingAgentRequest, CodingAgentResponse,
 };
+use webcodex_core::configured_skills::ConfiguredSkillRootsRequest;
 use webcodex_core::lsp_bridge::{RunnerLspPayload, RunnerLspRequest};
 use webcodex_core::mcp_gateway::{
     validate_request as validate_mcp_gateway_request, McpGatewayDispatchState, McpGatewayRequest,
@@ -1183,6 +1184,79 @@ impl RunnerRegistry {
         remove_pending_request_locked(&mut inner, request_id).map(|pending| pending.dispatched)
     }
 
+    /// Enqueue one read-only configured live Skill-root operation for one exact
+    /// Runner process. No native root path crosses this boundary: the Runner
+    /// resolves the opaque Skill identity against its own current hot config.
+    pub async fn enqueue_configured_skill_roots(
+        &self,
+        client_id: &str,
+        expected_runner_instance_id: &str,
+        operation: ConfiguredSkillRootsRequest,
+        auth: Option<&crate::RunnerAccess>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        operation
+            .validate()
+            .map_err(|_| "invalid configured Skill roots request".to_string())?;
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = encode_runner_operation(
+            &request_id,
+            client_id,
+            requested_by,
+            RunnerOperation::ConfiguredSkillRoots(operation),
+        )
+        .map_err(|_| "invalid configured Skill roots request".to_string())?;
+        let mut inner = self.inner.lock().await;
+        let runner = inner
+            .runners
+            .get(client_id)
+            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
+        assert_runner_access(auth, runner)
+            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        if runner.runner_instance_id != expected_runner_instance_id {
+            return Err(
+                "stale Runner identity; configured Skill roots request was not dispatched"
+                    .to_string(),
+            );
+        }
+        if !runner
+            .runner_features
+            .supports(RunnerFeature::ConfiguredSkillRootsRead)
+        {
+            return Err(
+                "configured_skill_roots_capability_unavailable: exact Runner does not support configured_skill_roots_read"
+                    .to_string(),
+            );
+        }
+        if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
+            return Err(
+                "exact Runner is offline; configured Skill roots request was not dispatched"
+                    .to_string(),
+            );
+        }
+        enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
+            &mut inner,
+            client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        let pending = inner
+            .pending_by_id
+            .get_mut(&request_id)
+            .expect("configured Skill roots request was just enqueued");
+        pending.skill_store_fence = Some(SkillStoreDispatchFence {
+            runner_instance_id: expected_runner_instance_id.to_string(),
+            management: false,
+            configured_roots: true,
+        });
+        notify_runner_locked(&inner, client_id);
+        Ok((request_id, rx))
+    }
+
     /// Enqueue one closed Runner-global Skill store operation for one exact
     /// live Runner process. Read and management capabilities are independent;
     /// the exact process lease and capability are revalidated again at dequeue.
@@ -1253,6 +1327,7 @@ impl RunnerRegistry {
         pending.skill_store_fence = Some(SkillStoreDispatchFence {
             runner_instance_id: expected_runner_instance_id.to_string(),
             management,
+            configured_roots: false,
         });
         notify_runner_locked(&inner, client_id);
         Ok((request_id, rx))

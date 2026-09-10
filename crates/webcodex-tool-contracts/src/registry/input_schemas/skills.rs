@@ -87,7 +87,7 @@ pub fn skill_read_file_input_schema() -> Value {
         "type": "object",
         "properties": {
             "project": {"type": "string", "minLength": 1, "description": "Required authorized runtime Project id."},
-            "skill_id": {"type": "string", "pattern": "^wc_skill_[0-9a-f]{32}$", "description": "Opaque project-scoped Skill identity returned by skills.catalog or skill_list."},
+            "skill_id": {"type": "string", "pattern": "^wc_skill_[0-9a-f]{32}$", "description": "Opaque Skill identity returned by skills.catalog or skill_list; it selects one exact source/package without exposing native Runner paths."},
             "path": {"type": "string", "minLength": 1, "maxLength": MAX_SKILL_RESOURCE_PATH_CHARS, "description": "Skill-package-relative UTF-8 text resource path. Defaults to SKILL.md; absolute paths and traversal are forbidden."},
             "start_line": {"type": "integer", "minimum": 1},
             "limit": {"type": "integer", "minimum": 1, "maximum": MAX_SKILL_READ_LINES},

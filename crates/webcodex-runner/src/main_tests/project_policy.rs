@@ -125,6 +125,35 @@ fn default_policy_denies_paths_outside_allowed_roots() {
 }
 
 #[test]
+fn configured_skill_roots_do_not_expand_generic_file_authority() {
+    let project = tempfile::tempdir().unwrap();
+    let skills = tempfile::tempdir().unwrap();
+    let project_root = project.path().canonicalize().unwrap();
+    let skill_root = skills.path().canonicalize().unwrap();
+    let outside_file = skill_root.join("outside.txt");
+    std::fs::write(&outside_file, "must stay outside project authority").unwrap();
+
+    let config = RunnerConfig {
+        policy: RunnerPolicy {
+            allowed_roots: vec![project_root.clone()],
+            ..RunnerPolicy::default()
+        },
+        skills: crate::webcodex_runner::config::SkillsConfig {
+            roots: vec![skill_root.clone()],
+        },
+        ..test_config(project_root)
+    };
+    assert_eq!(config.skills.roots, vec![skill_root]);
+    let error = resolve_requested_path(
+        &config.policy,
+        None,
+        outside_file.to_string_lossy().as_ref(),
+    )
+    .expect_err("configured Skill roots must not grant generic file authority");
+    assert!(error.contains("outside allowed_roots"), "{error}");
+}
+
+#[test]
 fn load_config_explicit_allowed_roots_override_home_default() {
     let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();

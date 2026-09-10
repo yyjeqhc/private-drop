@@ -480,6 +480,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
                 project_lifecycle: true,
                 project_path_registration: true,
                 managed_worktree: true,
+                configured_skill_roots_read: true,
                 skill_store_read: true,
                 skill_store_manage: true,
                 computer_observe: true,

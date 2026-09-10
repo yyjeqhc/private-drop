@@ -6,6 +6,10 @@
 //! then operation identity and its required payload travel together.
 
 use crate::coding_agent::{validate_request as validate_coding_agent_request, CodingAgentRequest};
+use crate::configured_skills::{
+    ConfiguredSkillRootsRequest, CONFIGURED_SKILL_ROOTS_REQUEST_KIND,
+    CONFIGURED_SKILL_ROOTS_REQUEST_MAX_BYTES,
+};
 use crate::lsp_bridge::RunnerLspPayload;
 use crate::mcp_gateway::{validate_request as validate_mcp_gateway_request, McpGatewayRequest};
 use crate::plugin::{validate_request as validate_plugin_gateway_request, PluginGatewayRequest};
@@ -521,6 +525,7 @@ pub enum RunnerOperation {
     McpGateway(McpGatewayRequest),
     PluginGateway(PluginGatewayRequest),
     CodingAgent(CodingAgentRequest),
+    ConfiguredSkillRoots(ConfiguredSkillRootsRequest),
     SkillStore(SkillStoreRequest),
     SshResource(SshResourceRequest),
     RunnerConfig(RunnerConfigOperationRequest),
@@ -550,6 +555,7 @@ impl RunnerOperation {
             Self::McpGateway(_) => "mcp_gateway",
             Self::PluginGateway(_) => "plugin_gateway",
             Self::CodingAgent(_) => "coding_agent",
+            Self::ConfiguredSkillRoots(_) => CONFIGURED_SKILL_ROOTS_REQUEST_KIND,
             Self::SkillStore(_) => "skill_store",
             Self::SshResource(_) => "ssh_resource",
             Self::RunnerConfig(_) => RUNNER_CONFIG_REQUEST_KIND,
@@ -752,6 +758,19 @@ fn encode_operation(
                 .map_err(|error| format!("invalid CodingAgent request: {error}"))?;
             wire.timeout_secs = 120;
             wire.coding_agent = Some(operation);
+        }
+        RunnerOperation::ConfiguredSkillRoots(operation) => {
+            operation
+                .validate()
+                .map_err(|error| format!("invalid configured Skill roots request: {error}"))?;
+            let content = serde_json::to_string(&operation).map_err(|error| {
+                format!("could not encode configured Skill roots request: {error}")
+            })?;
+            if content.len() > CONFIGURED_SKILL_ROOTS_REQUEST_MAX_BYTES {
+                return Err("configured Skill roots request exceeds V2 payload bound".to_string());
+            }
+            wire.content = Some(content);
+            wire.timeout_secs = 30;
         }
         RunnerOperation::SkillStore(operation) => {
             let content = serde_json::to_string(&operation)
@@ -1093,6 +1112,21 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
             validate_coding_agent_request(&operation)
                 .map_err(|error| format!("invalid CodingAgent request: {error}"))?;
             Ok(RunnerOperation::CodingAgent(operation))
+        }
+        CONFIGURED_SKILL_ROOTS_REQUEST_KIND => {
+            ensure_special_payloads_absent(wire)?;
+            ensure_empty_generic_execution_fields(wire, true)?;
+            let content = bounded_content(
+                wire,
+                CONFIGURED_SKILL_ROOTS_REQUEST_MAX_BYTES,
+                CONFIGURED_SKILL_ROOTS_REQUEST_KIND,
+            )?;
+            let operation = serde_json::from_str::<ConfiguredSkillRootsRequest>(content)
+                .map_err(|error| format!("invalid configured Skill roots payload: {error}"))?;
+            operation
+                .validate()
+                .map_err(|error| format!("invalid configured Skill roots request: {error}"))?;
+            Ok(RunnerOperation::ConfiguredSkillRoots(operation))
         }
         "skill_store" => {
             ensure_special_payloads_absent(wire)?;
@@ -2028,6 +2062,9 @@ mod tests {
                     timeout_secs: 60,
                 },
             )),
+            RunnerOperation::ConfiguredSkillRoots(
+                crate::configured_skills::ConfiguredSkillRootsRequest::List,
+            ),
             RunnerOperation::SkillStore(crate::skill_store::SkillStoreRequest::ListActive),
             RunnerOperation::SshResource(crate::ssh_resource::SshResourceRequest::List),
             RunnerOperation::RunnerConfig(RunnerConfigOperationRequest {
@@ -2166,6 +2203,7 @@ mod tests {
             "mcp_gateway",
             "plugin_gateway",
             "coding_agent",
+            CONFIGURED_SKILL_ROOTS_REQUEST_KIND,
             "skill_store",
             "ssh_resource",
             RUNNER_CONFIG_REQUEST_KIND,
