@@ -264,6 +264,10 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             structured_go_test_packages: false,
             structured_process_argv: true,
             structured_script_payload: true,
+            // JavaScript is an additive typed-script semantic implemented by
+            // the running binary. Static config must not make an older binary
+            // appear to understand the newer language variant.
+            structured_script_javascript: false,
             // Internal generated-program execution is a running-binary
             // capability and must fail closed across mixed-version rollout.
             internal_posix_script: false,

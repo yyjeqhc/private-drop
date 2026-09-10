@@ -384,6 +384,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "prepared execution environment",
         "cannot choose a runtime executable/path",
         "does not install npm dependencies",
+        "relative esm imports resolve from the runner-owned temporary module",
         "bun",
         "deno",
         "tsx",

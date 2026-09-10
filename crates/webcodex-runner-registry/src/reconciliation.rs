@@ -95,7 +95,13 @@ fn validate_context(
     if context.shell.as_deref().is_some_and(|shell| {
         !matches!(
             shell,
-            "sh" | "bash" | "powershell" | "direct_argv" | "configured" | "custom" | "remote"
+            "sh" | "bash"
+                | "powershell"
+                | "javascript"
+                | "direct_argv"
+                | "configured"
+                | "custom"
+                | "remote"
         )
     }) {
         return Err("job inventory shell is invalid".to_string());

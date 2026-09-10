@@ -313,10 +313,17 @@ Node ESM module semantics independently of project `package.json` or temporary
 directory metadata. Script args and stdin remain separate inputs, and the child
 uses the same resolved project cwd, timeout/cancellation, policy, and Job
 lifecycle as other typed scripts.
+For rolling upgrades, JavaScript also requires the Runner to advertise the
+additive `structured_script_javascript` capability; that bit means the Runner
+understands this typed-script language, not that `node` is installed. Node
+availability is checked separately before script startup.
 
 WebCodex does not install or bootstrap npm dependencies, inject `node_modules`
-or `NODE_PATH`, or fall back to Bun, Deno, `tsx`, or TypeScript. Node built-ins,
-modern JavaScript, promises, and async code are available according to the
+or `NODE_PATH`, or fall back to Bun, Deno, `tsx`, or TypeScript. Because the
+entry `.mjs` lives in a Runner-owned temporary directory, relative ESM imports
+resolve from that temporary module rather than the project cwd; use Node
+built-ins or explicit project paths/file URLs when importing project code.
+Modern JavaScript, promises, and async code are available according to the
 Runner's installed Node.js runtime.
 
 ## Jobs and concurrency

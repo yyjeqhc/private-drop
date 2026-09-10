@@ -35,6 +35,7 @@ pub enum RunnerFeature {
     StructuredGoTestPackages,
     StructuredProcessArgv,
     StructuredScriptPayload,
+    StructuredScriptJavascript,
     InternalPosixScript,
     StructuredExecutionJobs,
     DetachedProcessJobs,
@@ -96,6 +97,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 58] = [
     RunnerFeature::StructuredGoTestPackages,
     RunnerFeature::StructuredProcessArgv,
     RunnerFeature::StructuredScriptPayload,
+    RunnerFeature::StructuredScriptJavascript,
     RunnerFeature::InternalPosixScript,
     RunnerFeature::StructuredExecutionJobs,
     RunnerFeature::DetachedProcessJobs,
@@ -181,6 +183,9 @@ impl RunnerFeature {
             Self::StructuredGoTestPackages => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
             Self::StructuredProcessArgv => wire::RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
             Self::StructuredScriptPayload => wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+            Self::StructuredScriptJavascript => {
+                wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT
+            }
             Self::InternalPosixScript => wire::RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
             Self::StructuredExecutionJobs => wire::RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
             Self::DetachedProcessJobs => wire::RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS,
@@ -254,6 +259,9 @@ impl RunnerFeature {
             wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES => Self::StructuredGoTestPackages,
             wire::RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV => Self::StructuredProcessArgv,
             wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD => Self::StructuredScriptPayload,
+            wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT => {
+                Self::StructuredScriptJavascript
+            }
             wire::RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT => Self::InternalPosixScript,
             wire::RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS => Self::StructuredExecutionJobs,
             wire::RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS => Self::DetachedProcessJobs,
@@ -319,6 +327,7 @@ impl RunnerFeature {
             | Self::ProjectPathRegistration => RunnerFeatureInference::GenerationEligible,
             Self::Shell
             | Self::Git
+            | Self::StructuredScriptJavascript
             | Self::StructuredCargoTestExecutionPolicy
             | Self::ApplyTextEditLineScope
             | Self::ApplyPatch
@@ -391,6 +400,7 @@ impl RunnerFeature {
             Self::StructuredGoTestPackages => capabilities.structured_go_test_packages,
             Self::StructuredProcessArgv => capabilities.structured_process_argv,
             Self::StructuredScriptPayload => capabilities.structured_script_payload,
+            Self::StructuredScriptJavascript => capabilities.structured_script_javascript,
             Self::InternalPosixScript => capabilities.internal_posix_script,
             Self::StructuredExecutionJobs => capabilities.structured_execution_jobs,
             Self::DetachedProcessJobs => capabilities.detached_process_jobs,

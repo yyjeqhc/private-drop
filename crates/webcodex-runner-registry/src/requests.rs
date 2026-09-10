@@ -40,7 +40,7 @@ use webcodex_core::runner_operation::{
 use webcodex_core::runner_protocol::{
     shell_computer_request_payload_max_bytes, PersistentShellRequest, PersistentShellResult,
     RunnerConfigOperationRequest, RunnerRequest, ShellFileOpRequest, ShellJobContext,
-    ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptPayload,
+    ShellProcessArgv, ShellRunRequest, ShellRunResponse, ShellScriptLanguage, ShellScriptPayload,
     RAW_SHELL_COMMAND_MAX_BYTES, RUNNER_CAPABILITY_APPLY_PATCH,
     RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE, RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE, RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
@@ -49,7 +49,8 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_FILE_WRITE, RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     RUNNER_CAPABILITY_PERSISTENT_SHELL, RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
     RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE, RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD, RUNNER_CONFIG_REQUEST_MAX_BYTES,
+    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT, RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    RUNNER_CONFIG_REQUEST_MAX_BYTES,
 };
 use webcodex_core::skill_store::SkillStoreRequest;
 use webcodex_core::ssh_resource::{SshResourceRequest, SSH_RESOURCE_REQUEST_MAX_BYTES};
@@ -936,6 +937,7 @@ impl RunnerRegistry {
             wait_timeout_secs,
         )?;
         let normalized_cwd = cwd.map(|cwd| cwd.trim().to_string());
+        let requires_javascript = script.language == ShellScriptLanguage::Javascript;
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -959,6 +961,15 @@ impl RunnerRegistry {
         {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support {RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD}"
+            ));
+        }
+        if requires_javascript
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::StructuredScriptJavascript)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {client_id} does not support {RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT}"
             ));
         }
         enqueue_pending_request_locked(

@@ -266,9 +266,14 @@ native argv 启动 `node <temporary.mjs> <args...>`。`.mjs` 固定 Node ESM 模
 语义，不受项目 `package.json` 或临时目录 metadata 影响。脚本参数与 stdin
 继续独立传递，子进程继续使用相同的 resolved project cwd、timeout/cancellation、
 Runner policy 和 Job lifecycle。
+滚动升级时，JavaScript 还要求 Runner 显式声明 additive
+`structured_script_javascript` capability；这个 capability 只表示 Runner 理解该 typed
+script language，并不表示本机一定安装了 `node`。Node 是否可用会在脚本启动前独立检查。
 
 WebCodex 不会安装或 bootstrap npm dependencies，不会注入 `node_modules` 或
-`NODE_PATH`，也不会 fallback 到 Bun、Deno、`tsx` 或 TypeScript。Node builtin、
+`NODE_PATH`，也不会 fallback 到 Bun、Deno、`tsx` 或 TypeScript。由于入口 `.mjs`
+位于 Runner-owned 临时目录，相对 ESM import 会相对于该临时 module 解析，而不是
+project cwd；导入项目代码时应使用 Node builtin 或显式的项目路径/file URL。
 现代 JavaScript、Promise/async 能力由 Runner 已安装的 Node.js runtime 提供。
 
 ## Job 与并发
