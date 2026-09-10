@@ -205,6 +205,32 @@ describe("semantic Desktop UI", () => {
     api.stopRegularTunnel.mockResolvedValue(readyState);
   });
 
+  it("supports keyboard navigation without intercepting activity search typing", async () => {
+    api.getState.mockResolvedValue(readyState);
+    api.activity.mockResolvedValue([
+      { sequence: 1, timestamp_ms: 1, source: "runner", level: "info", event_kind: "process_started", message: "" },
+      { sequence: 2, timestamp_ms: 2, source: "service", level: "error", event_kind: "process_exited", message: "" },
+    ]);
+    renderApp();
+    await screen.findByRole("button", { name: "活动" });
+    fireEvent.keyDown(window, { key: "4", metaKey: true });
+    const search = screen.getByRole("searchbox");
+    await waitFor(() => expect(screen.getAllByRole("article")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("checkbox", { name: "只看警告和错误" }));
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    fireEvent.change(search, { target: { value: "no matching source" } });
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.getByText("没有匹配的活动，请调整搜索或筛选条件。")).toBeInTheDocument();
+    fireEvent.keyDown(search, { key: "1", ctrlKey: true });
+    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "只看警告和错误" }));
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+    expect(screen.getByRole("button", { name: "项目" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
   it("opens dashboard shortcuts and moves keyboard focus into the destination", async () => {
     api.getState.mockResolvedValue(readyState);
     renderApp();

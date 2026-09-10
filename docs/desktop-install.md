@@ -48,6 +48,13 @@ WebCodex Desktop is a long-running local runtime controller. Closing the main wi
 
 In **Settings → Background & startup**, **Launch WebCodex at login** registers Desktop with the operating system and starts it in the background without opening the main window. This setting is separate from the saved runtime preferences: `runtime_autostart` still decides whether the saved local runtime is restored, and the saved connection preference still decides whether the regular ChatGPT Tunnel is restored when appropriate.
 
+### Everyday controls
+
+- Use the sidebar to open Home, Projects, Connection, Activity, and Settings. Use **⌘ + 1–5** on macOS or **Ctrl + 1–5** on Windows. These shortcuts do not intercept typing in form fields.
+- Home groups readiness and next actions. Component status fits in one row in wide windows and wraps in smaller windows.
+- In **Activity**, search messages or sources, or select **Warnings and errors only**. Results are newest first. Filtering changes the view without deleting records.
+- Use Tab to focus main buttons and Enter to activate them. Navigation moves focus into page content.
+
 ## 2. Prepare an OpenAI Tunnel
 
 Create a Tunnel in the OpenAI Platform and prepare an API key that can use that Tunnel:

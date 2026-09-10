@@ -18,6 +18,8 @@ import { desktopErrorPresentation, normalizeDesktopError } from "./i18n/presenta
 
 type Navigation = "home" | "projects" | "connection" | "activity" | "settings";
 
+const NAVIGATION: Navigation[] = ["home", "projects", "connection", "activity", "settings"];
+
 const REGULAR_TUNNEL_OBSERVATION_INTERVAL_MS = 1_500;
 const CHATGPT_ACTIVITY_OBSERVATION_INTERVAL_MS = 30_000;
 const ACTIVE_OPERATION_OBSERVATION_INTERVAL_MS = 1_000;
@@ -80,6 +82,20 @@ export default function App() {
       disposed = true;
       unlisten?.();
     };
+  }, []);
+
+  useEffect(() => {
+    const navigateWithKeyboard = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.repeat) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      const page = NAVIGATION[Number(event.key) - 1];
+      if (!page) return;
+      event.preventDefault();
+      setNavigation(page);
+    };
+    window.addEventListener("keydown", navigateWithKeyboard);
+    return () => window.removeEventListener("keydown", navigateWithKeyboard);
   }, []);
 
   const openSetup = () => {
@@ -298,16 +314,19 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark" aria-hidden="true">W</div><div><strong>WebCodex</strong><span>Desktop</span></div></div>
         <nav aria-label={t("nav.main")}>
-          {(["home", "projects", "connection", "activity", "settings"] as Navigation[]).map((item) => (
+          {NAVIGATION.map((item, index) => (
             <button
               key={item}
               className={navigation === item ? "active" : ""}
               onClick={() => setNavigation(item)}
               aria-current={navigation === item ? "page" : undefined}
+              aria-keyshortcuts={`Control+${index + 1} Meta+${index + 1}`}
+              title={`${t(`nav.${item}`)} (⌘ / Ctrl + ${index + 1})`}
               data-webcodex-action={`navigate-${item}`}
             >
               <span className={`nav-icon nav-${item}`} aria-hidden="true" />
               {t(`nav.${item}`)}
+              <kbd aria-hidden="true">{index + 1}</kbd>
             </button>
           ))}
         </nav>

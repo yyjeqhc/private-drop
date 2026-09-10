@@ -21,7 +21,7 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
-.app-shell { height: 100vh; display: grid; grid-template-columns: 232px minmax(0, 1fr); background: #f4f6f7; }
+.app-shell { height: 100vh; display: grid; grid-template-columns: 208px minmax(0, 1fr); background: #f4f6f7; }
 .sidebar { position: relative; padding: 20px 14px 16px; border-right: 1px solid #dfe3e5; background: rgba(250, 251, 251, .94); display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 22px; }
 .brand > div:last-child { display: grid; line-height: 1.05; gap: 4px; }
@@ -45,10 +45,10 @@ a:focus-visible {
 .sidebar-status strong { font-size: 14px; font-weight: 600; }
 .sidebar-status span { font-size: 12px; color: #899097; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.main-content { min-width: 0; overflow: auto; padding: 40px clamp(24px, 4vw, 64px) 56px; }
+.main-content { min-width: 0; overflow: auto; padding: 28px clamp(24px, 3vw, 48px) 40px; }
 .page-section, .first-run, .setup-shell { width: min(960px, 100%); margin: 0 auto; }
 .eyebrow, .section-kicker { display: block; text-transform: uppercase; letter-spacing: .095em; font-size: 12px; line-height: 1.4; font-weight: 700; color: #626d76; }
-h1 { margin: 6px 0 10px; font-size: 32px; line-height: 1.16; letter-spacing: -.035em; font-weight: 650; color: #202428; }
+h1 { margin: 6px 0 10px; font-size: 28px; line-height: 1.16; letter-spacing: -.035em; font-weight: 650; color: #202428; }
 h2 { margin: 3px 0 0; font-size: 18px; letter-spacing: -.02em; }
 .lede { margin: 0 0 28px; max-width: 710px; color: #687178; font-size: 14px; line-height: 1.6; }
 
@@ -96,7 +96,7 @@ input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 auto; accent-color
 .setup-choice-card small { color: #7f878d; font-size: 12px; line-height: 1.45; }
 .setup-actions { margin-top: 18px; display: flex; align-items: center; gap: 14px; }
 .action-help { color: #81898e; font-size: 12px; }
-.primary-button, .secondary-button, .danger-button { border-radius: 7px; min-height: 42px; padding: 0 14px; cursor: pointer; font-size: 13px; font-weight: 650; }
+.primary-button, .secondary-button, .danger-button { border-radius: 7px; min-height: 44px; padding: 0 14px; cursor: pointer; font-size: 13px; font-weight: 650; }
 .primary-button { border: 1px solid #4d5bb6; background: #5967c4; color: #fff; }
 .primary-button:hover:not(:disabled) { background: #4d5bb6; }
 .secondary-button { border: 1px solid #d2d7d9; background: #fff; color: #50585e; }
@@ -121,9 +121,9 @@ button:disabled { opacity: .48; cursor: default; }
 
 .page-heading-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
 .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
-.status-card { min-height: 142px; border: 1px solid #dde2e4; border-radius: 12px; background: #fff; padding: 18px; display: flex; flex-direction: column; box-shadow: 0 1px 2px rgba(22,26,29,.025); }
+.status-card { min-height: 122px; border: 1px solid #dde2e4; border-radius: 12px; background: #fff; padding: 18px; display: flex; flex-direction: column; box-shadow: 0 1px 2px rgba(22,26,29,.025); }
 .status-value { display: flex; align-items: center; gap: 8px; margin-top: 11px; font-size: 17px; font-weight: 650; text-transform: capitalize; }
-.status-card p { color: #81898e; font-size: 12px; line-height: 1.5; margin: 14px 0 0; overflow-wrap: anywhere; }
+.status-card p { color: #626d76; font-size: 13px; line-height: 1.5; margin: 14px 0 0; overflow-wrap: anywhere; }
 .status-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #aeb5b9; display: inline-block; margin-top: 3px; }
 .status-dot.ready { background: #4d8d72; box-shadow: 0 0 0 3px rgba(77,141,114,.10); }
 .status-dot.pending { background: #c29a4d; }
@@ -200,6 +200,23 @@ button:disabled { opacity: .48; cursor: default; }
 .page-heading-row > div, .status-card, .activity-row > div { min-width: 0; }
 .activity-row span { overflow-wrap: anywhere; }
 
+/* Keep daily controls readable and reachable at desktop window sizes. */
+.sidebar nav kbd { margin-left: auto; font: inherit; font-size: 11px; opacity: .6; border: 1px solid #ccd2df; border-radius: 4px; padding: 1px 5px; }
+.sidebar nav button.active { box-shadow: inset 3px 0 #5967c4; }
+.activity-toolbar { display: flex; align-items: end; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; padding: 16px; background: #fff; border: 1px solid #dde2e4; border-radius: 12px; }
+.activity-toolbar .field-group { flex: 1 1 240px; }
+.activity-filter { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 13px; cursor: pointer; }
+.activity-toolbar > span { color: #626d76; font-size: 12px; padding-bottom: 14px; }
+.activity-row { padding: 15px 16px; }
+.activity-row strong { line-height: 1.6; }
+.activity-row span { color: #626d76; line-height: 1.5; }
+.detail-card > strong { overflow-wrap: anywhere; }
+.readiness-banner .readiness-actions { display: flex; flex-wrap: wrap; }
+@media (min-width: 1200px) {
+  .status-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .status-value { font-size: 15px; line-height: 1.5; }
+}
+
 @media (max-width: 1050px) {
   .main-content { padding-left: 38px; padding-right: 38px; }
   .entry-grid { grid-template-columns: 1fr; }
@@ -226,7 +243,7 @@ button:disabled { opacity: .48; cursor: default; }
   .sidebar nav { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .sidebar nav button { flex-direction: column; justify-content: center; gap: 6px; height: 60px; padding: 6px 2px; font-size: 12px; }
   .sidebar-locale { position: absolute; top: 12px; right: 12px; margin: 0; padding: 0; border: 0; }
-  .sidebar-locale label, .sidebar-status { display: none; }
+  .sidebar-locale label, .sidebar-status, .sidebar nav kbd { display: none; }
   .sidebar-locale select { width: 120px; }
   .main-content { padding: 24px 18px 40px; }
   .page-heading-row { gap: 12px; }
