@@ -205,6 +205,53 @@ describe("semantic Desktop UI", () => {
     api.stopRegularTunnel.mockResolvedValue(readyState);
   });
 
+  it("starts a tunnel only after explicit action and allows retry after failure", async () => {
+    api.getState.mockResolvedValue(readyState);
+    api.startRegularTunnel.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Tunnel failed", next_action: "Retry." });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "连接" }));
+    fireEvent.click(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ }));
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    const start = screen.getByRole("button", { name: "启动安全隧道" });
+    fireEvent.click(start);
+    expect(await screen.findByRole("alert")).toHaveTextContent("tunnel_unavailable");
+    await waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+    await waitFor(() => expect(api.startRegularTunnel).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  it("keeps stop failures visible and never duplicates a failed tunnel", async () => {
+    api.getState.mockResolvedValue({
+      ...readyState,
+      regular_tunnel: { provider: "openai", status: "error", clipboard_state: "unavailable", clipboard_contains: "tunnel_id", ready_for_chatgpt: false },
+    });
+    api.stopRegularTunnel.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Stop failed", next_action: "Retry." });
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "连接" }));
+    expect(screen.queryByRole("button", { name: "启动安全隧道" })).not.toBeInTheDocument();
+    const stop = document.querySelector<HTMLButtonElement>('[data-webcodex-action="stop-regular-tunnel"]')!;
+    fireEvent.click(stop);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Stop failed");
+    await waitFor(() => expect(stop).toBeEnabled());
+    fireEvent.click(stop);
+    await waitFor(() => expect(screen.getByRole("button", { name: "启动安全隧道" })).toBeEnabled());
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+  });
+
+  it("shows the current project before optional diagnostics and handles picker errors", async () => {
+    api.getState.mockResolvedValue(readyState);
+    vi.mocked(open).mockRejectedValueOnce({ code: "project_invalid", message: "Picker unavailable", next_action: "Retry." });
+    renderApp();
+    await screen.findByRole("heading", { level: 2, name: "repo" });
+    expect(screen.getByText("查看运行诊断").closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "选择其他项目" }));
+    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    fireEvent.click(screen.getByRole("button", { name: "更改文件夹" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Picker unavailable");
+    expect(api.configureLocal).not.toHaveBeenCalled();
+  });
+
   it("supports keyboard navigation without intercepting activity search typing", async () => {
     api.getState.mockResolvedValue(readyState);
     api.activity.mockResolvedValue([

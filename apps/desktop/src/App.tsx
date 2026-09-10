@@ -1,3 +1,4 @@
+import brandIcon from "./assets/brand.png";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { desktopApi } from "./lib/desktop-api";
@@ -284,7 +285,7 @@ export default function App() {
   if (!state) {
     return (
       <main className="splash">
-        <div className="brand-mark" aria-hidden="true">W</div>
+        <img className="brand-mark" src={brandIcon} alt="" />
         {error ? (
           <section className="startup-error" aria-label="WebCodex">
             <AppError error={error} />
@@ -312,7 +313,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark" aria-hidden="true">W</div><div><strong>WebCodex</strong><span>Desktop</span></div></div>
+        <div className="brand"><img className="brand-mark" src={brandIcon} alt="" /><div><strong>WebCodex</strong><span>Desktop</span></div></div>
         <nav aria-label={t("nav.main")}>
           {NAVIGATION.map((item, index) => (
             <button

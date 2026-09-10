@@ -57,13 +57,13 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
 
   const chooseProject = async () => {
     setError(null);
-    const selection = await open({
-      directory: true,
-      multiple: false,
-      title: t("setup.chooseProject"),
-    });
-    if (typeof selection !== "string") return;
     try {
+      const selection = await open({
+        directory: true,
+        multiple: false,
+        title: t("setup.chooseProject"),
+      });
+      if (typeof selection !== "string") return;
       setProject(await desktopApi.inspectProject(selection));
     } catch (value) {
       setError(normalizeDesktopError(value));
@@ -121,6 +121,11 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         <div className="eyebrow">{t("first.welcome")}</div>
         <h1 id="first-run-title">{t("first.title")}</h1>
         <p className="lede">{t("first.description")}</p>
+        <ol className="setup-overview" aria-label={t("workspace.progress")}>
+          <li><span>01</span>{t("workspace.prepare")}</li>
+          <li><span>02</span>{t("workspace.connect")}</li>
+          <li><span>03</span>{t("workspace.verify")}</li>
+        </ol>
         <div className="entry-grid">
           <button className="entry-card recommended" onClick={() => setMode("local")} data-webcodex-action="choose-local-setup">
             <span className="entry-badge">{t("first.recommended")}</span>
@@ -161,9 +166,35 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       <div className="eyebrow">{modeLabel(mode, t)}</div>
       <h1 id="setup-title">{setupTitle(mode, t)}</h1>
       <p className="lede">{setupDescription(mode, t)}</p>
+      <div className="project-picker-card">
+        <div>
+          <span className="section-kicker">{t("setup.project")}</span>
+          <strong>{project ? project.path : t("setup.chooseProject")}</strong>
+          {mode === "local" && !project && (
+            <span className="project-meta">{t("setup.projectRequired")}</span>
+          )}
+          {project && (
+            <span className="project-meta">
+              {t("setup.allowedRoot", {
+                root: project.allowed_root,
+                kind: project.is_git_repository ? t("setup.gitRepository") : t("setup.folder"),
+              })}
+            </span>
+          )}
+        </div>
+        <button type="button" className="secondary-button" onClick={chooseProject} disabled={mutationBusy} data-webcodex-action="choose-project">
+          {project ? t("setup.changeFolder") : t("setup.chooseFolder")}
+        </button>
+      </div>
+
       <PowerShellInstallGuidance state={state} onState={onState} />
 
-      {mode === "local" && <TunnelConfigDiagnostics state={state} onState={onState} />}
+      {mode === "local" && (
+        <details className="setup-tunnel-details">
+          <summary>{t("workspace.optionalTunnel")}</summary>
+          <TunnelConfigDiagnostics state={state} onState={onState} />
+        </details>
+      )}
 
       {mode === "remote" && (
         <div className="form-card">
@@ -253,27 +284,6 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
           </span>
         </label>
       )}
-
-      <div className="project-picker-card">
-        <div>
-          <span className="section-kicker">{t("setup.project")}</span>
-          <strong>{project ? project.path : t("setup.chooseProject")}</strong>
-          {mode === "local" && !project && (
-            <span className="project-meta">{t("setup.projectRequired")}</span>
-          )}
-          {project && (
-            <span className="project-meta">
-              {t("setup.allowedRoot", {
-                root: project.allowed_root,
-                kind: project.is_git_repository ? t("setup.gitRepository") : t("setup.folder"),
-              })}
-            </span>
-          )}
-        </div>
-        <button type="button" className="secondary-button" onClick={chooseProject} disabled={mutationBusy} data-webcodex-action="choose-project">
-          {project ? t("setup.changeFolder") : t("setup.chooseFolder")}
-        </button>
-      </div>
 
       {mode === "remote" && (
         <details className="advanced-enrollment">

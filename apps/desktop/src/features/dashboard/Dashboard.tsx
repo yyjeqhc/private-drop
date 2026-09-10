@@ -34,6 +34,7 @@ export function Dashboard({
   const { t } = useLocale();
   const isQuickShare = state.topology?.experience === "quick_share";
   const operationBusy = Boolean(state.current_operation);
+  const connectionVerified = chatgptActivityObserved(state) && state.regular_tunnel?.status !== "error";
   const canResumeRuntime = !isQuickShare && Boolean(state.topology) && !state.readiness.runtime_ready;
   const canConnectChatGpt = !isQuickShare &&
     state.topology?.server.kind === "local" &&
@@ -57,7 +58,7 @@ export function Dashboard({
         <div>
           <div className="eyebrow">{t("home.eyebrow")}</div>
           <h1 id="home-title">WebCodex</h1>
-          <p className="lede">{summary}</p>
+          <p className="lede">{t("workspace.description")}</p>
         </div>
         <button
           className="secondary-button"
@@ -94,32 +95,80 @@ export function Dashboard({
         </div>
       </div>
 
-      <div className="status-grid" aria-label={t("home.components")}>
-        <StatusCard
-          title={t("home.service")}
-          value={serviceLabel(state, t)}
-          state={state.readiness.server}
-          explanation={serviceExplanation(state, t)}
-        />
-        <StatusCard
-          title={t("home.runner")}
-          value={runnerReadinessLabel(state.readiness.runner, t)}
-          state={state.readiness.runner}
-          explanation={t("home.runnerExplanation")}
-        />
-        <StatusCard
-          title={t("home.projects")}
-          value={state.readiness.project === "ready" ? t("home.projectReady") : projectReadinessLabel(state.readiness.project, t)}
-          state={state.readiness.project}
-          explanation={state.project?.path ?? t("home.noProject")}
-        />
-        <StatusCard
-          title={t("home.connection")}
-          value={connectionLabel(state, t)}
-          state={connectionCardState(state)}
-          explanation={connectionExplanation(state, t)}
-        />
-      </div>
+      <article className="workspace-project">
+        <div className="project-emblem" aria-hidden="true"><span className="nav-icon nav-projects" /></div>
+        <div className="workspace-project-copy">
+          <span className="section-kicker">{t("workspace.currentProject")}</span>
+          <h2>{state.project?.path.split(/[\\/]/).filter(Boolean).pop() ?? t("home.noProject")}</h2>
+          <p>{state.project?.path ?? t("setup.projectRequired")}</p>
+        </div>
+        <button className="secondary-button" onClick={onChangeSetup} disabled={operationBusy || refreshing}>
+          {state.project ? t("project.change") : t("project.add")}
+        </button>
+      </article>
+
+      {state.quick_share && (
+        <div className="handoff-card">
+          <div>
+            <span className="section-kicker">{t("home.quickShareHandoff")}</span>
+            <strong>{state.quick_share.ready_for_chatgpt ? t("home.handoffReady") : t("home.handoffAction")}</strong>
+            {state.quick_share.mcp_url && <code>{state.quick_share.mcp_url}</code>}
+            <span>{quickShareClipboardLabel(state.quick_share.clipboard_state, state.quick_share.clipboard_contains, t)}</span>
+          </div>
+          <button className="danger-button" onClick={onStopQuickShare} disabled={operationBusy} data-webcodex-action="stop-quick-share">{t("home.stopShare")}</button>
+        </div>
+      )}
+
+      {!isQuickShare && (
+        <ol className="workflow-steps" aria-label={t("workspace.progress")}>
+          <li className={state.readiness.runtime_ready ? "complete" : ""}>
+            <span className="step-number" aria-hidden="true">01</span>
+            <strong>{t("workspace.prepare")}</strong>
+            <p>{state.readiness.runtime_ready ? t("sidebar.runtimeReady") : t("workspace.prepareHint")}</p>
+          </li>
+          <li className={state.readiness.runtime_ready && (state.readiness.ready_for_chatgpt || state.regular_tunnel?.ready_for_chatgpt) ? "complete" : ""}>
+            <span className="step-number" aria-hidden="true">02</span>
+            <strong>{t("workspace.connect")}</strong>
+            <p>{connectionExplanation(state, t)}</p>
+            <button className="text-button" onClick={() => onNavigate("connection")}>{t("workspace.connectionSettings")} →</button>
+          </li>
+          <li className={connectionVerified ? "complete" : ""}>
+            <span className="step-number" aria-hidden="true">03</span>
+            <strong>{t("workspace.verify")}</strong>
+            <p>{connectionVerified ? t("home.connectionObserved") : t("workspace.verifyHint")}</p>
+          </li>
+        </ol>
+      )}
+
+      <details className="runtime-details">
+        <summary>{t("workspace.diagnostics")}</summary>
+        <div className="status-grid" aria-label={t("home.components")}>
+          <StatusCard
+            title={t("home.service")}
+            value={serviceLabel(state, t)}
+            state={state.readiness.server}
+            explanation={serviceExplanation(state, t)}
+          />
+          <StatusCard
+            title={t("home.runner")}
+            value={runnerReadinessLabel(state.readiness.runner, t)}
+            state={state.readiness.runner}
+            explanation={t("home.runnerExplanation")}
+          />
+          <StatusCard
+            title={t("home.projects")}
+            value={state.readiness.project === "ready" ? t("home.projectReady") : projectReadinessLabel(state.readiness.project, t)}
+            state={state.readiness.project}
+            explanation={state.project?.path ?? t("home.noProject")}
+          />
+          <StatusCard
+            title={t("home.connection")}
+            value={connectionLabel(state, t)}
+            state={connectionCardState(state)}
+            explanation={connectionExplanation(state, t)}
+          />
+        </div>
+      </details>
 
       <section className="dashboard-shortcuts" aria-labelledby="home-shortcuts-title">
         <div className="section-heading">
@@ -136,18 +185,6 @@ export function Dashboard({
           ))}
         </div>
       </section>
-
-      {state.quick_share && (
-        <div className="handoff-card">
-          <div>
-            <span className="section-kicker">{t("home.quickShareHandoff")}</span>
-            <strong>{state.quick_share.ready_for_chatgpt ? t("home.handoffReady") : t("home.handoffAction")}</strong>
-            {state.quick_share.mcp_url && <code>{state.quick_share.mcp_url}</code>}
-            <span>{quickShareClipboardLabel(state.quick_share.clipboard_state, state.quick_share.clipboard_contains, t)}</span>
-          </div>
-          <button className="danger-button" onClick={onStopQuickShare} disabled={operationBusy} data-webcodex-action="stop-quick-share">{t("home.stopShare")}</button>
-        </div>
-      )}
 
       {!isQuickShare && state.topology && (
         <div className="runtime-actions">

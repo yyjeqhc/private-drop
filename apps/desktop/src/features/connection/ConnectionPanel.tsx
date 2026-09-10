@@ -27,7 +27,7 @@ export function ConnectionPanel({
   const mutationBusy = busy || Boolean(state.current_operation);
 
   const run = async (operation: () => Promise<DesktopState>) => {
-    if (state.current_operation) return;
+    if (mutationBusy) return;
     setBusy(true);
     setError(null);
     try {
@@ -41,11 +41,6 @@ export function ConnectionPanel({
 
   const chooseProvider = (value: RegularProvider) => {
     setProvider(value);
-    if (value === "openai" && !state.regular_tunnel && state.readiness.runtime_ready && state.openai_tunnel_configured) {
-      void run(desktopApi.startRegularTunnel);
-    } else if (value === "local" && state.regular_tunnel) {
-      void run(desktopApi.stopRegularTunnel);
-    }
   };
 
   if (topology?.server.kind === "remote") {
@@ -94,8 +89,6 @@ export function ConnectionPanel({
     >
       <PageHeading />
 
-      <TunnelConfigDiagnostics state={state} onState={onState} />
-
       <article className="connection-current detail-card" aria-labelledby="connection-current-title">
         <h2 id="connection-current-title" className="section-title">{t("connection.current")}</h2>
         <div className="status-value">
@@ -105,12 +98,14 @@ export function ConnectionPanel({
         <p>{chatgptObserved ? t("connection.observedDescription") : tunnelLocallyReady ? t("connection.waitingForChatGpt") : tunnelEstablished ? t("connection.tunnelHandoffNeedsAction") : t("connection.notVerified")}</p>
       </article>
 
-      {tunnelEstablished ? (
+      {error && <LocalizedError error={error} />}
+
+      {state.regular_tunnel ? (
         <article className="handoff-card" aria-labelledby="regular-tunnel-ready-title">
           <div>
             <span className="section-kicker">OpenAI Secure Tunnel</span>
-            <h2 id="regular-tunnel-ready-title" className="handoff-title">{tunnelLocallyReady ? t("connection.tunnelReady") : t("connection.tunnelHandoffNeedsAction")}</h2>
-            <span>{state.regular_tunnel?.clipboard_state === "copied" ? t("connection.clipboardReady") : t("clipboard.unavailable")}</span>
+            <h2 id="regular-tunnel-ready-title" className="handoff-title">{tunnelError ? t("common.error") : !tunnelEstablished ? t("common.starting") : tunnelLocallyReady ? t("connection.tunnelReady") : t("connection.tunnelHandoffNeedsAction")}</h2>
+            <span>{tunnelError ? t("workspace.stopToRetry") : !tunnelEstablished ? t("connection.tunnelStarting") : state.regular_tunnel?.clipboard_state === "copied" ? t("connection.clipboardReady") : t("clipboard.unavailable")}</span>
           </div>
           <button
             className="danger-button"
@@ -158,12 +153,25 @@ export function ConnectionPanel({
 
           {!state.readiness.runtime_ready && <p className="inline-note">{t("connection.runtimeRequired")}</p>}
 
-          {error && <LocalizedError error={error} />}
-          {provider === "openai" && canStart && (
-            <p className="inline-note">{mutationBusy ? t("connection.tunnelStarting") : t("connection.openaiSelectHint")}</p>
+          {provider === "openai" && (
+            <button className="primary-button" disabled={mutationBusy || !canStart} onClick={() => void run(desktopApi.startRegularTunnel)} data-webcodex-action="start-regular-tunnel">
+              {mutationBusy ? t("connection.tunnelStarting") : t("home.connectChatGpt")}
+            </button>
           )}
         </div>
       )}
+      <article className="connection-instructions detail-card">
+        <h2>{t("workspace.handoffTitle")}</h2>
+        <ol>
+          <li>{t("workspace.handoffOne")}</li>
+          <li>{t("workspace.handoffTwo")}</li>
+          <li>{t("workspace.verifyHint")}</li>
+        </ol>
+      </article>
+      <details className="setup-tunnel-details" open={!state.openai_tunnel_configured}>
+        <summary>{t("workspace.optionalTunnel")}</summary>
+        <TunnelConfigDiagnostics state={state} onState={onState} />
+      </details>
     </section>
   );
 }

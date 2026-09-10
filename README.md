@@ -12,7 +12,7 @@ Ask your assistant to inspect a repository, modify code, run tests, use Git, or 
 
 If you want ChatGPT to keep using your real development environment, start with a **regular Server + Runner**. This is the full development experience: durable access to multiple projects plus project exploration, editing, Git, commands, tests, long-running work, and code navigation. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are only ways for ChatGPT to reach the Server; they do not switch you into a different restricted experience.
 
-For Windows or macOS, the recommended first path is **WebCodex Desktop + the official OpenAI Secure Tunnel**. Follow the screenshot-based [Desktop installation guide](docs/desktop-install.md). For CLI, an existing Server, self-hosting, or advanced setup, use the [Full Setup guide](docs/PERSONAL_SETUP.md).
+For Windows or macOS, the recommended first path is **WebCodex Desktop + the official OpenAI Secure Tunnel**. Follow the [Desktop installation guide](docs/desktop-install.md). For CLI, an existing Server, self-hosting, or advanced setup, use the [Full Setup guide](docs/PERSONAL_SETUP.md).
 
 ### Just trying it for a few minutes: temporary share
 
@@ -81,6 +81,7 @@ Those are follow-up operating concerns, not concepts a first-time user should ha
 ## Documentation
 
 - [Desktop installation](docs/desktop-install.md) — recommended Windows/macOS path: Desktop + official OpenAI Secure Tunnel
+- [Using Desktop](docs/desktop-guide.md) — projects, connections, activity, and background operation
 - [Full Setup](docs/PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
 - [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
 - [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run && node ./scripts/check-form-control-css.mjs",
+    "icons": "node ./scripts/generate-icons.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
