@@ -558,9 +558,11 @@ jobs:
         with:
           shared-key: windows-runner-ci
       - name: Run Windows Runner and Computer tests
-        # Keep process contention bounded without forcing all 700+ Runner tests
-        # through one test thread. Concurrency exercised inside each test is unchanged.
-        run: cargo test --locked -p webcodex-runner -p webcodex-computer -- --test-threads=2
+        # The Runner suite mixes timing-sensitive process, PowerShell, and cache tests.
+        # Even two concurrent test functions can starve bounded startup/timeout windows
+        # on loaded Windows hosts. Serialize test functions; concurrency exercised
+        # inside each individual test remains unchanged.
+        run: cargo test --locked -p webcodex-runner -p webcodex-computer -- --test-threads=1
 
   test-windows-package:
     needs: changes
