@@ -108,6 +108,52 @@ allowed_roots = ["/root/git"]
 runtime 工具 `register_project` 与 `create_project` 让客户端在在线 Runner 上
 注册已有目录或创建新目录，受 Runner 的 `allowed_roots` policy 约束。
 
+## Skill 来源
+
+`skill_list` 继续只暴露一个 catalog，但其中保留三种彼此独立的 ownership / lifecycle：
+
+| 来源 | 位置 / owner | Trust | 版本语义 |
+| --- | --- | --- | --- |
+| Project Skills | `<project>/.agents/skills/<package>/SKILL.md` | `project_content` | Project live content；没有 package revision。 |
+| Configured live Runner Skill roots | Runner 主机上由 operator 配置的绝对目录 | `operator_configured_guidance` | 直接读取的只读 live filesystem content；没有 install、activation、rollback 或 package revision。 |
+| Managed Runner Skill Store | Runner state 下的 `runner-skills-v1` | `operator_installed_guidance` | immutable package revision，并保留 install、activation、remove 与 rollback-oriented Store 语义。 |
+
+Configured live roots 默认不存在，需要在 Runner 的 `runner.toml` 中显式配置：
+
+```toml
+[skills]
+roots = [
+    "/home/alice/.codex/skills",
+    "/home/alice/.agents/skills",
+    "/opt/company/agent-skills",
+]
+```
+
+Windows 使用等价的本机绝对路径；包含反斜杠时可以使用 TOML literal string：
+
+```toml
+[skills]
+roots = [
+    'C:\Users\alice\.codex\skills',
+    'C:\Users\alice\.agents\skills',
+]
+```
+
+每个 root 直接包含 `<root>/<package>/SKILL.md`，package 内可以有 `references/`
+等 resource。WebCodex 不会把它们复制到 managed Store；`skill_install`、
+`skill_activate` 与 `skill_remove_revision` 仍然只修改 managed Store。
+
+这些路径始终属于 **Runner 主机**；Server 与 Runner 不在同一台机器时也不会改用
+Server 的 filesystem。Configured roots 不会加入 `[policy].allowed_roots`，因此不会给普通
+Project file/shell/process 工具扩大文件系统 authority，native root path 也不会投影到
+model-facing Skill catalog。Skill read 只提交 opaque `skill_id` 与 package-relative resource
+path，由 Runner 根据 trusted config 解析 root，并拒绝 traversal 与 link escape。
+
+Skill 文件本身是 live 的：修改 `SKILL.md` 或 resource 后，下一次 discovery/read 会直接
+看到新内容，不需要 reload。只有修改 `roots` 配置列表时才需要按正式流程先执行
+`runner_config_check`，再携带当前 generation 执行 `runner_config_reload`；该字段支持 hot
+reload，不需要重启 Runner 进程。
+
 ## 本地 MCP provider
 
 Runner 可以直接托管供 WebCodex 内建 MCP gateway 使用的 persistent stdio MCP provider：
@@ -379,7 +425,7 @@ User scope 使用 `systemctl --user`；system scope 使用 `/etc/systemd/system`
 4. reload 后调用 `runtime_status(client_id=...)`（或 `list_runners`）检查当前运行状态。
 
 `runner_config_reload` 不写 `runner.toml`，只激活磁盘上已经存在的 candidate。policy、
-shell、Native Plugin 与静态 SSH resource 中可热加载的字段可以立即生效；`restart_required_fields`
+shell、configured Skill roots、Native Plugin 与静态 SSH resource 中可热加载的字段可以立即生效；`restart_required_fields`
 报告的字段仍保持 startup-only，重启前不会假装已在线生效。无效 candidate 保留旧 active
 snapshot 与 generation。`ssh_resource` managed mutation 不同：它使用 frozen startup
 snapshot，且只在工具返回 `restart_required=true` 时要求重启 Runner。

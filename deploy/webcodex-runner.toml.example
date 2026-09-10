@@ -72,6 +72,15 @@ conda activate ml
 # host = "tmp"
 # default_cwd = "/opt/webcodex-edge"
 
+# Optional read-only live Skill roots on this Runner host. These paths do not
+# expand [policy].allowed_roots and are not copied into the managed Skill Store.
+# Editing files under a root is visible on the next Skill discovery/read; editing
+# this roots list is applied with runner config check/reload, without a restart.
+[skills]
+roots = []
+# roots = ["/home/webcodex/.codex/skills", "/opt/company/agent-skills"]
+# Windows TOML literal-string example: roots = ['C:\Users\alice\.codex\skills']
+
 [capabilities]
 file_read = true
 file_write = true

@@ -119,6 +119,59 @@ The runtime tools `register_project` and `create_project` let a client register
 an existing directory or create a new one on an online Runner, subject to the
 Runner's `allowed_roots` policy.
 
+## Skill sources
+
+`skill_list` presents one catalog while preserving three distinct ownership and
+lifecycle models:
+
+| Source | Location / owner | Trust | Version semantics |
+| --- | --- | --- | --- |
+| Project Skills | `<project>/.agents/skills/<package>/SKILL.md` | `project_content` | Live project content; no package revision. |
+| Configured live Runner Skill roots | Operator-selected absolute directories on the Runner host | `operator_configured_guidance` | Live read-only filesystem content; no install, activation, rollback, or package revision. |
+| Managed Runner Skill Store | Runner state under `runner-skills-v1` | `operator_installed_guidance` | Immutable package revisions with install, activation, removal, and rollback-oriented Store semantics. |
+
+Configured live roots are optional and have no implicit defaults. Each configured
+root contains normal Agent Skill packages directly:
+
+```toml
+[skills]
+roots = [
+    "/home/alice/.codex/skills",
+    "/home/alice/.agents/skills",
+    "/opt/company/agent-skills",
+]
+```
+
+On Windows, use absolute local paths; TOML literal strings are convenient for
+backslashes:
+
+```toml
+[skills]
+roots = [
+    'C:\Users\alice\.codex\skills',
+    'C:\Users\alice\.agents\skills',
+]
+```
+
+A root has the form `<root>/<package>/SKILL.md`, with optional package resources
+such as `references/`. These directories are read directly by the Runner. WebCodex
+does not copy them into the managed Store, and `skill_install`, `skill_activate`,
+and `skill_remove_revision` continue to mutate only that Store.
+
+The configured paths belong to the **Runner host**, even when the Server is on a
+different machine. They are not added to `[policy].allowed_roots`, do not grant
+ordinary Project file/shell/process tools access to those directories, and native
+root paths are not projected through the model-facing Skill catalog. Skill reads
+accept only an opaque `skill_id` plus a package-relative resource path; the Runner
+resolves the root from its trusted configuration and rejects traversal or link
+escapes.
+
+Skill files remain live: editing `SKILL.md` or a resource is visible to the next
+discovery/read without any reload. Changing the configured `roots` list is a
+hot-reloadable Runner configuration change: edit `runner.toml`, run
+`runner_config_check`, then `runner_config_reload` with the current generation.
+No Runner process restart is required.
+
 ## Local MCP providers
 
 The Runner can directly host persistent stdio MCP providers for WebCodex's built-in MCP gateway:
@@ -476,7 +529,7 @@ of finding its PID or sending signals manually:
 4. Inspect `runtime_status(client_id=...)` (or `list_runners`) after reload.
 
 `runner_config_reload` never writes `runner.toml`; it only activates the candidate
-already on disk. Hot-reloadable policy, shell, Native Plugin, and static SSH-resource changes can
+already on disk. Hot-reloadable policy, shell, configured Skill roots, Native Plugin, and static SSH-resource changes can
 become active immediately, while fields reported in `restart_required_fields`
 remain startup-only until the Runner restarts. Invalid candidates leave the active
 snapshot and generation unchanged. Managed `ssh_resource` mutations are different:
