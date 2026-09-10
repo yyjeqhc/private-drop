@@ -73,15 +73,21 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_macos_desktop"], "true")
 
     def test_plugin_sdk_isolated_from_native_frontend_desktop_and_docker(self) -> None:
-        result = classify("npm/plugin-sdk/src/runtime.ts")
-        self.assertEqual(result["needs_plugin_sdk"], "true")
-        self.assertEqual(result["needs_full_native"], "false")
-        self.assertEqual(result["needs_windows"], "false")
-        self.assertEqual(result["needs_macos"], "false")
-        self.assertEqual(result["needs_docker"], "false")
-        self.assertEqual(result["needs_frontend"], "false")
-        self.assertEqual(result["needs_desktop_frontend"], "false")
-        self.assertIn("plugin-sdk", result["categories"])
+        for path in (
+            "npm/plugin-sdk/src/runtime.ts",
+            "npm/plugin-sdk/README.md",
+            "npm/plugin-sdk/LICENSE",
+        ):
+            with self.subTest(path=path):
+                result = classify(path)
+                self.assertEqual(result["needs_plugin_sdk"], "true")
+                self.assertEqual(result["needs_full_native"], "false")
+                self.assertEqual(result["needs_windows"], "false")
+                self.assertEqual(result["needs_macos"], "false")
+                self.assertEqual(result["needs_docker"], "false")
+                self.assertEqual(result["needs_frontend"], "false")
+                self.assertEqual(result["needs_desktop_frontend"], "false")
+                self.assertIn("plugin-sdk", result["categories"])
 
     def test_npm_installer_change_requires_native_windows_package_lane(self) -> None:
         result = classify("npm/webcodex/install.js")
