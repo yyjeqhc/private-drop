@@ -24,7 +24,7 @@
   },
   "scripts": {
     "postinstall": "node install.js",
-    "test": "node test/self-test.js && node test/release-manifest-check-self-test.js",
+    "test": "node test/self-test.js && node test/release-manifest-check-self-test.js && node --test test/download-cleanup.test.js",
     "pack:release-dry-run": "npm pack --dry-run",
     "prepack": "node test/release-manifest-check.js --quiet",
     "prepublishOnly": "node test/release-manifest-check.js"

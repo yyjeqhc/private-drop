@@ -483,10 +483,19 @@ function fetchToFile(url, dest, options = {}, redirects = 0, deadlineAt = null) 
       settled = true;
       clearTimers();
       if (response) response.destroy();
-      if (file) file.destroy();
       if (request) request.destroy();
-      removePartial();
-      reject(message instanceof Error ? message : new Error(message));
+      const finishFailure = () => {
+        removePartial();
+        reject(message instanceof Error ? message : new Error(message));
+      };
+      if (file && !file.closed) {
+        // destroy() closes asynchronously, including a pending open. Callers
+        // must not remove the temporary directory until the handle is closed.
+        file.once("close", finishFailure);
+        file.destroy();
+      } else {
+        finishFailure();
+      }
     };
     const succeed = () => {
       if (settled) return;
