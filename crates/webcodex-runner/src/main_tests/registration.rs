@@ -173,6 +173,7 @@ fn computer_register_request_announces_platform_capabilities_and_generation() {
     assert!(caps.structured_process_argv);
     assert!(caps.structured_script_payload);
     assert!(caps.structured_script_javascript);
+    assert!(caps.structured_script_typescript);
     assert!(caps.internal_posix_script);
     assert!(caps.structured_execution_jobs);
     assert!(caps.lsp_read_only_navigation);

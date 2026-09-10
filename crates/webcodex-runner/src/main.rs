@@ -2003,6 +2003,10 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // separately so a newer Server never sends that variant to an older Runner
     // which already advertised structured_script_payload.
     capabilities.structured_script_javascript = true;
+    // TypeScript extends the same typed-script wire enum independently from
+    // JavaScript. This bit means the binary understands the semantic protocol;
+    // local Node availability/version is resolved only when execution starts.
+    capabilities.structured_script_typescript = true;
     capabilities.internal_posix_script = true;
     capabilities.structured_execution_jobs = true;
     // Detached process ownership is an independent additive authority. Until
@@ -3249,6 +3253,7 @@ fn validate_runner_job_context_operation(
             "sh" | "bash"
                 | "powershell"
                 | "javascript"
+                | "typescript"
                 | "configured"
                 | "custom"
                 | "remote"

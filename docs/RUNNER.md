@@ -304,27 +304,54 @@ Security notes for profiles:
 
 ### Typed `run_script` languages
 
-`run_script` accepts `sh`, `bash`, `powershell`, and `javascript`. JavaScript is
-external Node.js execution on the Runner: WebCodex resolves `node` from the
-prepared shell/profile PATH (or uses the configured shell/profile program when
-it is `node`/`node.exe`), writes the typed body to a Runner-owned `.mjs` file,
-and launches `node <temporary.mjs> <args...>` with native argv. `.mjs` fixes
-Node ESM module semantics independently of project `package.json` or temporary
-directory metadata. Script args and stdin remain separate inputs, and the child
-uses the same resolved project cwd, timeout/cancellation, policy, and Job
-lifecycle as other typed scripts.
-For rolling upgrades, JavaScript also requires the Runner to advertise the
-additive `structured_script_javascript` capability; that bit means the Runner
-understands this typed-script language, not that `node` is installed. Node
-availability is checked separately before script startup.
+`run_script` accepts `sh`, `bash`, `powershell`, `javascript`, and `typescript`.
+JavaScript and TypeScript are external Node.js execution on the Runner. WebCodex
+resolves `node` from the prepared shell/profile PATH (or uses the configured
+shell/profile program when it is `node`/`node.exe`). JavaScript bodies are
+written to Runner-owned `.mjs` files and launched as
+`node <temporary.mjs> <args...>` with native argv. `.mjs` fixes ESM semantics
+independently of project `package.json` or temporary-directory metadata.
+
+TypeScript is deliberately a typed-script runtime, not a project compiler. The
+Runner writes the body to a Runner-owned `.mts` file, so the entry module is
+always ESM, and uses Node's native erasable type stripping. Node.js 22.6.0 is
+the minimum supported runtime. Before creating or starting the user script, the
+Runner performs one bounded `node --version` capability probe. Node 22.6 through
+22.17 and Node 23.0 through 23.5 receive the Runner-owned
+`--experimental-strip-types` prefix; Node 22.18+, 23.6+, and later supported
+lines use the default native stripping behavior without that flag. A missing
+Node, an unrecognizable version, or Node older than 22.6 is reported as
+`not_started` / `interpreter_unavailable`, and the user script is never launched.
+If Node accepts the version probe but the eventual script process rejects its
+runtime semantics, the ordinary started-process lifecycle remains authoritative.
+
+The TypeScript contract covers syntax that Node can erase, including type
+annotations, interfaces/type aliases, generics, and ordinary JavaScript features
+such as async/await, ESM, and Node built-ins. WebCodex does not type-check, invoke
+`tsc`, consume `tsconfig.json` as a build configuration, implement path aliases,
+or promise transform-required TypeScript syntax such as enums, parameter
+properties, runtime namespaces, or import aliases. WebCodex also does not use
+`--experimental-transform-types`: that flag is not part of the stable runtime
+contract. On older Node versions that still mark type stripping experimental,
+Node's own `ExperimentalWarning` may appear on stderr. WebCodex does not suppress
+or filter that warning because doing so could also hide warnings emitted by the
+user script.
+
+For rolling upgrades, JavaScript requires the additive
+`structured_script_javascript` capability and TypeScript independently requires
+`structured_script_typescript`. These bits mean the running Runner binary
+understands the corresponding typed-script wire semantics; they do not assert
+that a compatible Node installation is present. Script args remain literal
+native argv values, stdin remains independent, and both languages use the same
+resolved project cwd, timeout/cancellation, Runner policy, and Job lifecycle as
+other typed scripts.
 
 WebCodex does not install or bootstrap npm dependencies, inject `node_modules`
-or `NODE_PATH`, or fall back to Bun, Deno, `tsx`, or TypeScript. Because the
-entry `.mjs` lives in a Runner-owned temporary directory, relative ESM imports
-resolve from that temporary module rather than the project cwd; use Node
-built-ins or explicit project paths/file URLs when importing project code.
-Modern JavaScript, promises, and async code are available according to the
-Runner's installed Node.js runtime.
+or `NODE_PATH`, select a package manager, or fall back to Bun, Deno, `tsx`,
+`npx`, or another runtime. Because the `.mjs`/`.mts` entry lives in a Runner-owned
+temporary directory, relative ESM imports resolve from that temporary module,
+not from the project cwd; use Node built-ins or explicit project paths/file URLs
+when importing project code.
 
 ## Jobs and concurrency
 

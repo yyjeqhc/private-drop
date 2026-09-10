@@ -36,6 +36,7 @@ pub enum RunnerFeature {
     StructuredProcessArgv,
     StructuredScriptPayload,
     StructuredScriptJavascript,
+    StructuredScriptTypescript,
     InternalPosixScript,
     StructuredExecutionJobs,
     DetachedProcessJobs,
@@ -69,7 +70,7 @@ pub enum RunnerFeature {
     ComputerTextInput,
 }
 
-const ALL_RUNNER_FEATURES: [RunnerFeature; 58] = [
+const ALL_RUNNER_FEATURES: [RunnerFeature; 59] = [
     RunnerFeature::Shell,
     RunnerFeature::FileRead,
     RunnerFeature::FileWrite,
@@ -98,6 +99,7 @@ const ALL_RUNNER_FEATURES: [RunnerFeature; 58] = [
     RunnerFeature::StructuredProcessArgv,
     RunnerFeature::StructuredScriptPayload,
     RunnerFeature::StructuredScriptJavascript,
+    RunnerFeature::StructuredScriptTypescript,
     RunnerFeature::InternalPosixScript,
     RunnerFeature::StructuredExecutionJobs,
     RunnerFeature::DetachedProcessJobs,
@@ -186,6 +188,9 @@ impl RunnerFeature {
             Self::StructuredScriptJavascript => {
                 wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT
             }
+            Self::StructuredScriptTypescript => {
+                wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT
+            }
             Self::InternalPosixScript => wire::RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
             Self::StructuredExecutionJobs => wire::RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
             Self::DetachedProcessJobs => wire::RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS,
@@ -262,6 +267,9 @@ impl RunnerFeature {
             wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT => {
                 Self::StructuredScriptJavascript
             }
+            wire::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT => {
+                Self::StructuredScriptTypescript
+            }
             wire::RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT => Self::InternalPosixScript,
             wire::RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS => Self::StructuredExecutionJobs,
             wire::RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS => Self::DetachedProcessJobs,
@@ -328,6 +336,7 @@ impl RunnerFeature {
             Self::Shell
             | Self::Git
             | Self::StructuredScriptJavascript
+            | Self::StructuredScriptTypescript
             | Self::StructuredCargoTestExecutionPolicy
             | Self::ApplyTextEditLineScope
             | Self::ApplyPatch
@@ -401,6 +410,7 @@ impl RunnerFeature {
             Self::StructuredProcessArgv => capabilities.structured_process_argv,
             Self::StructuredScriptPayload => capabilities.structured_script_payload,
             Self::StructuredScriptJavascript => capabilities.structured_script_javascript,
+            Self::StructuredScriptTypescript => capabilities.structured_script_typescript,
             Self::InternalPosixScript => capabilities.internal_posix_script,
             Self::StructuredExecutionJobs => capabilities.structured_execution_jobs,
             Self::DetachedProcessJobs => capabilities.detached_process_jobs,

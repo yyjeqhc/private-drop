@@ -98,6 +98,7 @@ fn validate_context(
             "sh" | "bash"
                 | "powershell"
                 | "javascript"
+                | "typescript"
                 | "direct_argv"
                 | "configured"
                 | "custom"

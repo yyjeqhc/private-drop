@@ -64,12 +64,13 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
 }
 
 #[tokio::test]
-async fn javascript_script_enqueue_requires_additive_runner_capability() {
+async fn script_language_extensions_require_independent_additive_capabilities() {
     let registry = RunnerRegistry::default();
-    let registration = |javascript: bool| {
+    let registration = |javascript: bool, typescript: bool| {
         let mut capabilities =
             crate::test_support::current_runner_capabilities(RunnerCapabilities::default());
         capabilities.structured_script_javascript = javascript;
+        capabilities.structured_script_typescript = typescript;
         current_runner_registration(RunnerRegisterRequest {
             process_started_at: None,
             build: None,
@@ -88,18 +89,20 @@ async fn javascript_script_enqueue_requires_additive_runner_capability() {
             policy: None,
         })
     };
-    registry.register(registration(false)).await.unwrap();
 
-    let javascript = ShellScriptPayload {
-        language: ShellScriptLanguage::Javascript,
-        script: "console.log('hello');\n".to_string(),
+    // Model a mixed-version Runner that already understands JavaScript typed
+    // scripts but predates the additive TypeScript wire variant.
+    registry.register(registration(true, false)).await.unwrap();
+    let typescript = ShellScriptPayload {
+        language: ShellScriptLanguage::Typescript,
+        script: "const value: string = 'hello';\nconsole.log(value);\n".to_string(),
         args: Vec::new(),
     };
     let error = registry
         .enqueue_script(
             "script-cap".to_string(),
             None,
-            javascript.clone(),
+            typescript.clone(),
             None,
             10,
             1,
@@ -107,33 +110,43 @@ async fn javascript_script_enqueue_requires_additive_runner_capability() {
         )
         .await
         .unwrap_err();
-    assert!(error.contains("structured_script_javascript"), "{error}");
+    assert!(error.contains("structured_script_typescript"), "{error}");
 
-    // The additive fence must not disable languages understood by older typed-script Runners.
-    let (bash_request_id, _rx) = registry
-        .enqueue_script(
-            "script-cap".to_string(),
-            None,
-            ShellScriptPayload {
-                language: ShellScriptLanguage::Bash,
-                script: "printf ok\n".to_string(),
-                args: Vec::new(),
-            },
-            None,
-            10,
-            1,
-            "test".to_string(),
-        )
-        .await
-        .unwrap();
-    assert!(!registry.cancel_request(&bash_request_id).await);
+    // TypeScript's new fence must not block JavaScript when the independent JS
+    // capability is present, nor older canonical shell languages.
+    for payload in [
+        ShellScriptPayload {
+            language: ShellScriptLanguage::Javascript,
+            script: "console.log('hello');\n".to_string(),
+            args: Vec::new(),
+        },
+        ShellScriptPayload {
+            language: ShellScriptLanguage::Bash,
+            script: "printf ok\n".to_string(),
+            args: Vec::new(),
+        },
+    ] {
+        let (request_id, _rx) = registry
+            .enqueue_script(
+                "script-cap".to_string(),
+                None,
+                payload,
+                None,
+                10,
+                1,
+                "test".to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(!registry.cancel_request(&request_id).await);
+    }
 
-    registry.register(registration(true)).await.unwrap();
+    registry.register(registration(true, true)).await.unwrap();
     let (request_id, _rx) = registry
         .enqueue_script(
             "script-cap".to_string(),
             None,
-            javascript,
+            typescript,
             None,
             10,
             1,

@@ -1656,6 +1656,17 @@ fn generic_validation_scope_and_complex_script_identity_fail_closed() {
     .unwrap();
     assert!(javascript.identity.starts_with("command:"));
     assert!(javascript.validation_tool.is_none());
+    let typescript = run_script_validation_identity(
+        "typescript",
+        "const value: number = 1; await Promise.resolve(value);",
+        &[],
+        None,
+        Some("."),
+        Some("test"),
+    )
+    .unwrap();
+    assert!(typescript.identity.starts_with("command:"));
+    assert!(typescript.validation_tool.is_none());
 }
 
 #[test]

@@ -163,7 +163,7 @@ pub fn run_script_input_schema() -> Value {
         (
             "language",
             "string",
-            "Required semantic script language. JavaScript is Node.js-backed with fixed .mjs module semantics; the Runner resolves the concrete interpreter, and callers cannot provide a runtime path. Session default_shell never overrides this field.",
+            "Required semantic script language. JavaScript uses Runner-resolved Node.js with fixed .mjs ESM semantics. TypeScript uses Runner-resolved Node.js native erasable type stripping from a fixed .mts ESM file and requires Node.js 22.6.0 or newer. The Runner owns any runtime compatibility flags; callers cannot provide a runtime path or runtime flags. Session default_shell never overrides this field.",
             true,
         ),
         (
@@ -209,7 +209,8 @@ pub fn run_script_input_schema() -> Value {
             false,
         ),
     ]));
-    schema["properties"]["language"]["enum"] = json!(["sh", "bash", "powershell", "javascript"]);
+    schema["properties"]["language"]["enum"] =
+        json!(["sh", "bash", "powershell", "javascript", "typescript"]);
     schema["properties"]["script"]["minLength"] = json!(1);
     schema["properties"]["script"]["maxLength"] = json!(SCRIPT_MAX_BYTES);
     schema["properties"]["args"]["maxItems"] = json!(SCRIPT_ARG_MAX_COUNT);

@@ -63,6 +63,7 @@ async fn register_script_agent(
         structured_process_argv: true,
         structured_script_payload,
         structured_script_javascript: structured_script_payload,
+        structured_script_typescript: structured_script_payload,
         ..Default::default()
     };
     register_agent_with_projects(
@@ -89,6 +90,7 @@ async fn register_script_job_agent(
         structured_process_argv: true,
         structured_script_payload: true,
         structured_script_javascript: true,
+        structured_script_typescript: true,
         structured_execution_jobs: true,
         ..Default::default()
     };
@@ -689,6 +691,176 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
     assert!(probe_patch_agent_request(&runtime, "script-slow-job")
         .await
         .is_none());
+}
+
+#[tokio::test]
+async fn typescript_slow_handoff_keeps_one_execution_and_safe_durable_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(40));
+    let project = register_script_job_agent(&runtime, "typescript-slow-job", temp.path()).await;
+    let session = runtime.sessions.start_session_with_guards(
+        Some(project.clone()),
+        Some("typescript structured script continuation".to_string()),
+        SessionMode::Normal,
+        sessions::SessionGuards::default(),
+    );
+    let unique_body = format!(
+        "interface Secret {{ value: string }}\nconst secret: Secret = {{ value: 'raw-ts-body-{}' }};\nconsole.log(secret.value);\n",
+        uuid::Uuid::new_v4()
+    );
+    let unique_arg = format!("raw-ts-arg-{}", uuid::Uuid::new_v4());
+    let unique_stdin = format!("raw-ts-stdin-{}", uuid::Uuid::new_v4());
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let body = unique_body.clone();
+        let arg = unique_arg.clone();
+        let stdin = unique_stdin.clone();
+        let session_id = session.session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunScript {
+                        project,
+                        language: ShellScriptLanguage::Typescript,
+                        script: body,
+                        args: vec![arg],
+                        stdin: Some(stdin),
+                        session_id: Some(session_id),
+                        timeout_secs: Some(60),
+                        sync_wait_secs: None,
+                        cwd: None,
+                        purpose: Some(ExecutionPurpose::Operation),
+                    },
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+
+    let request = wait_for_patch_agent_request(&runtime, "typescript-slow-job").await;
+    assert_eq!(request.kind, "start_script_job");
+    assert_eq!(request.command, "");
+    assert!(request.process.is_none());
+    let payload = request.script.as_ref().expect("typed TypeScript payload");
+    assert_eq!(payload.language, ShellScriptLanguage::Typescript);
+    assert_eq!(payload.script, unique_body);
+    assert_eq!(payload.args.as_slice(), std::slice::from_ref(&unique_arg));
+    assert_eq!(request.stdin.as_deref(), Some(unique_stdin.as_str()));
+    update_script_job(
+        &runtime,
+        "typescript-slow-job",
+        &request,
+        "running",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let handoff = task.await.unwrap();
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["promoted_to_job"], true);
+    assert_eq!(handoff.output["execution_state"], "running");
+    let job_id = handoff.output["job_id"].as_str().unwrap();
+    assert_eq!(request.job_id.as_deref(), Some(job_id));
+    let job = runtime.runner_registry.get_job(job_id).await.unwrap();
+    assert_eq!(job.kind, "run_script");
+    let metadata = job
+        .structured_execution
+        .as_ref()
+        .expect("safe TypeScript structured metadata");
+    assert_eq!(metadata.execution_source, "run_script");
+    assert_eq!(metadata.language, Some(ShellScriptLanguage::Typescript));
+    assert_eq!(metadata.script_bytes, Some(unique_body.len()));
+    assert_eq!(metadata.arg_count, 1);
+    assert!(metadata.stdin_present);
+    let durable = serde_json::to_string(&job).unwrap();
+    for raw in [&unique_body, &unique_arg, &unique_stdin] {
+        assert!(
+            !durable.contains(raw),
+            "durable Job leaked raw TypeScript input"
+        );
+    }
+    let session_summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(100))
+        .unwrap();
+    assert_eq!(
+        session_summary
+            .events
+            .iter()
+            .filter(|event| event.tool_name == "run_script" && event.kind == "tool_call_started")
+            .count(),
+        1,
+        "TypeScript handoff must not record or launch a second model tool execution"
+    );
+
+    update_script_job(
+        &runtime,
+        "typescript-slow-job",
+        &request,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        Some("done\n"),
+        None,
+        None,
+    )
+    .await;
+    assert!(probe_patch_agent_request(&runtime, "typescript-slow-job")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn typescript_started_runtime_rejection_remains_completed_nonzero() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_script_agent(&runtime, "typescript-runtime-reject", temp.path(), true).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    script_sync_call(
+                        project,
+                        None,
+                        ShellScriptLanguage::Typescript,
+                        "enum RuntimeSyntax { Value }\nconsole.log(RuntimeSyntax.Value);",
+                    ),
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "typescript-runtime-reject").await;
+    assert_eq!(
+        request.script.as_ref().map(|script| script.language),
+        Some(ShellScriptLanguage::Typescript)
+    );
+    complete_script_lifecycle(
+        &runtime,
+        "typescript-runtime-reject",
+        request.request_id,
+        ShellCommandExecutionState::Completed,
+        Some(1),
+        "",
+        "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX\n",
+        Some("runtime rejected transform-required TypeScript syntax"),
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "completed");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["exit_code"], 1);
+    assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
 }
 
 #[tokio::test]

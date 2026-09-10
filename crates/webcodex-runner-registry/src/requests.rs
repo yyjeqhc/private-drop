@@ -938,6 +938,7 @@ impl RunnerRegistry {
         )?;
         let normalized_cwd = cwd.map(|cwd| cwd.trim().to_string());
         let requires_javascript = script.language == ShellScriptLanguage::Javascript;
+        let requires_typescript = script.language == ShellScriptLanguage::Typescript;
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -970,6 +971,16 @@ impl RunnerRegistry {
         {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support {RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT}"
+            ));
+        }
+        if requires_typescript
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::StructuredScriptTypescript)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {client_id} does not support {}",
+                webcodex_core::runner_protocol::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT
             ));
         }
         enqueue_pending_request_locked(

@@ -268,6 +268,9 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // the running binary. Static config must not make an older binary
             // appear to understand the newer language variant.
             structured_script_javascript: false,
+            // TypeScript is another additive running-binary semantic. Generated
+            // static config must not claim that older Runners understand it.
+            structured_script_typescript: false,
             // Internal generated-program execution is a running-binary
             // capability and must fail closed across mixed-version rollout.
             internal_posix_script: false,

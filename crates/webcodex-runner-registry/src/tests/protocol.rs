@@ -473,6 +473,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
                 structured_process_argv: true,
                 structured_script_payload: true,
                 structured_script_javascript: true,
+                structured_script_typescript: true,
                 internal_posix_script: true,
                 structured_execution_jobs: true,
                 detached_process_jobs: true,

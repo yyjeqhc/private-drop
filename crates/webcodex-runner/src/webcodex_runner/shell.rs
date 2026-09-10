@@ -31,6 +31,7 @@ const PROCESS_GROUP_TERMINATION_GRACE: Duration = Duration::from_millis(50);
 const PROCESS_TREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
 const PROCESS_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const PROFILE_PREPARE_PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+const TYPESCRIPT_NODE_VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const RAW_TAIL_CAPTURE_ALLOWANCE: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -565,7 +566,7 @@ fn configured_script_interpreter(
         ShellScriptLanguage::Powershell => {
             matches!(configured_basename.as_str(), "pwsh" | "pwsh.exe")
         }
-        ShellScriptLanguage::Javascript => {
+        ShellScriptLanguage::Javascript | ShellScriptLanguage::Typescript => {
             matches!(configured_basename.as_str(), "node" | "node.exe")
         }
     };
@@ -581,7 +582,9 @@ fn configured_script_interpreter(
             candidates.push("powershell".to_string());
         }
         ShellScriptLanguage::Powershell => candidates.push("pwsh".to_string()),
-        ShellScriptLanguage::Javascript => candidates.push("node".to_string()),
+        ShellScriptLanguage::Javascript | ShellScriptLanguage::Typescript => {
+            candidates.push("node".to_string())
+        }
     }
     candidates.dedup_by(|left, right| {
         if cfg!(windows) {
@@ -600,6 +603,7 @@ fn configured_script_interpreter(
     }
     let interpreter_name = match language {
         ShellScriptLanguage::Javascript => "JavaScript/Node",
+        ShellScriptLanguage::Typescript => "TypeScript/Node",
         _ => language.as_str(),
     };
     Err(format!(
@@ -607,29 +611,128 @@ fn configured_script_interpreter(
     ))
 }
 
-fn build_script_command(
-    interpreter: impl Into<OsString>,
-    language: ShellScriptLanguage,
-    script_path: &Path,
-    args: &[String],
-) -> Command {
-    let mut command = Command::new(interpreter.into());
-    match language {
-        ShellScriptLanguage::Sh | ShellScriptLanguage::Bash | ShellScriptLanguage::Javascript => {
-            command.arg(script_path);
-        }
-        ShellScriptLanguage::Powershell => {
-            command.arg("-NoProfile").arg("-NonInteractive");
-            if cfg!(windows) {
-                // Match the Runner's existing Windows PowerShell policy: a
-                // process-scoped bypass keeps Runner-owned temporary .ps1 files
-                // executable under the stock Restricted machine policy.
-                command.arg("-ExecutionPolicy").arg("Bypass");
-            }
-            command.arg("-File").arg(script_path);
-        }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NodeVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+fn parse_node_version(output: &[u8]) -> Option<NodeVersion> {
+    let version = std::str::from_utf8(output).ok()?.trim();
+    let version = version.strip_prefix('v').unwrap_or(version);
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.split('-').next()?.parse().ok()?;
+    Some(NodeVersion {
+        major,
+        minor,
+        patch,
+    })
+}
+
+fn typescript_node_prefix_args(version: NodeVersion) -> Result<Vec<OsString>, String> {
+    if version.major < 22 || (version.major == 22 && version.minor < 6) {
+        return Err(format!(
+            "interpreter_unavailable: TypeScript requires Node.js 22.6.0 or newer with native type stripping; found Node.js v{}.{}.{}; command was not started",
+            version.major, version.minor, version.patch
+        ));
     }
-    command.args(args);
+    let needs_enable_flag =
+        (version.major == 22 && version.minor < 18) || (version.major == 23 && version.minor < 6);
+    Ok(if needs_enable_flag {
+        vec![OsString::from("--experimental-strip-types")]
+    } else {
+        Vec::new()
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScriptRuntimePlan {
+    program: OsString,
+    prefix_args: Vec<OsString>,
+}
+
+fn fixed_script_prefix_args(language: ShellScriptLanguage) -> Vec<OsString> {
+    if language != ShellScriptLanguage::Powershell {
+        return Vec::new();
+    }
+    let mut args = vec![
+        OsString::from("-NoProfile"),
+        OsString::from("-NonInteractive"),
+    ];
+    if cfg!(windows) {
+        // Match the Runner's existing Windows PowerShell policy: a process-scoped
+        // bypass keeps Runner-owned temporary .ps1 files executable under the
+        // stock Restricted machine policy.
+        args.extend([OsString::from("-ExecutionPolicy"), OsString::from("Bypass")]);
+    }
+    args.push(OsString::from("-File"));
+    args
+}
+
+fn apply_script_environment(
+    command: &mut Command,
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+) -> Result<(), String> {
+    match profile {
+        Some(profile) => {
+            apply_env_snapshot(command, &profile.env_snapshot);
+            Ok(())
+        }
+        None => apply_shell_environment(command, shell),
+    }
+}
+
+fn typescript_node_probe_error(error: String) -> String {
+    if error.contains("stopped during runner shutdown") {
+        "TypeScript runtime probe stopped during runner shutdown; command was not started"
+            .to_string()
+    } else {
+        "interpreter_unavailable: unable to verify Node.js native TypeScript support; command was not started"
+            .to_string()
+    }
+}
+
+fn configured_script_runtime_plan(
+    shell: &ShellConfig,
+    profile: Option<&PreparedShellProfile>,
+    language: ShellScriptLanguage,
+    cwd: &Path,
+    stop_requested: Option<&AtomicBool>,
+) -> Result<ScriptRuntimePlan, String> {
+    let program = configured_script_interpreter(shell, profile, language)?;
+    let mut prefix_args = fixed_script_prefix_args(language);
+    if language == ShellScriptLanguage::Typescript {
+        let mut probe = Command::new(&program);
+        probe.arg("--version").current_dir(cwd);
+        apply_script_environment(&mut probe, shell, profile)?;
+        let probe_result =
+            run_prepare_command(probe, TYPESCRIPT_NODE_VERSION_PROBE_TIMEOUT, stop_requested);
+        let (status, stdout, _stderr) = probe_result.map_err(typescript_node_probe_error)?;
+        if !status.success() {
+            return Err(
+                "interpreter_unavailable: unable to verify Node.js native TypeScript support; command was not started"
+                    .to_string(),
+            );
+        }
+        let version = parse_node_version(&stdout).ok_or_else(|| {
+            "interpreter_unavailable: Node.js returned an unrecognized version while checking native TypeScript support; command was not started"
+                .to_string()
+        })?;
+        prefix_args.extend(typescript_node_prefix_args(version)?);
+    }
+    Ok(ScriptRuntimePlan {
+        program,
+        prefix_args,
+    })
+}
+
+fn build_script_command(plan: &ScriptRuntimePlan, script_path: &Path, args: &[String]) -> Command {
+    let mut command = Command::new(&plan.program);
+    command.args(&plan.prefix_args).arg(script_path).args(args);
     command
 }
 
@@ -2350,22 +2453,29 @@ pub(crate) fn run_script_with_profiles_and_execution_state_with_start_hook(
             })
         }
     };
-    // Resolve the semantic interpreter before creating the payload file. A
-    // missing interpreter is therefore a definite pre-start rejection with
-    // no script side effect and no fallback to the configured shell parser.
-    let interpreter =
-        match configured_script_interpreter(shell, profile.as_deref(), payload.language) {
-            Ok(interpreter) => interpreter,
-            Err(error) => {
-                return ShellCommandResult::not_started(CommandResult {
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(error),
-                })
-            }
-        };
+    // Resolve the semantic runtime plan before creating the payload file. Missing
+    // interpreters and unsupported TypeScript Node versions are therefore
+    // definite pre-start rejections with no user-script side effect. TypeScript
+    // performs only a bounded Runner-owned `node --version` capability probe;
+    // the user's script body is still spawned exactly once.
+    let runtime_plan = match configured_script_runtime_plan(
+        shell,
+        profile.as_deref(),
+        payload.language,
+        &cwd_path,
+        stop_requested,
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            return ShellCommandResult::not_started(CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(error),
+            })
+        }
+    };
     let (temporary_path, original_path, absolute_path) = match create_temporary_script(payload) {
         Ok(temporary) => temporary,
         Err(error) => {
@@ -2378,21 +2488,15 @@ pub(crate) fn run_script_with_profiles_and_execution_state_with_start_hook(
             })
         }
     };
-    let mut command =
-        build_script_command(interpreter, payload.language, &absolute_path, &payload.args);
-    match profile.as_deref() {
-        Some(profile) => apply_env_snapshot(&mut command, &profile.env_snapshot),
-        None => {
-            if let Err(error) = apply_shell_environment(&mut command, shell) {
-                return ShellCommandResult::not_started(CommandResult {
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(error),
-                });
-            }
-        }
+    let mut command = build_script_command(&runtime_plan, &absolute_path, &payload.args);
+    if let Err(error) = apply_script_environment(&mut command, shell, profile.as_deref()) {
+        return ShellCommandResult::not_started(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(error),
+        });
     }
     let mut result = execute_configured_command(
         policy,

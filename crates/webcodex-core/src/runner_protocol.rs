@@ -240,6 +240,11 @@ pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script
 /// remains a separate rolling-upgrade fence. It describes script protocol
 /// semantics, not local Node.js executable availability.
 pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT: &str = "structured_script_javascript";
+/// The Runner understands the additive `typescript` semantic language in typed
+/// `run_script` payloads. Older Runners may understand generic typed scripts or
+/// JavaScript without understanding this newer wire enum variant. This bit
+/// describes protocol semantics, not local Node.js executable/version support.
+pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT: &str = "structured_script_typescript";
 /// Runner-owned WebCodex-generated POSIX programs execute through an explicit
 /// internal runtime instead of the configured interactive shell. Missing on
 /// older Runners is false so Control never sends the dedicated request kind to
@@ -621,6 +626,12 @@ pub struct RunnerCapabilities {
     /// resolved separately at execution time.
     #[serde(default, skip_serializing_if = "is_false")]
     pub structured_script_javascript: bool,
+    /// Additive typed-script support for the canonical `typescript` language.
+    /// Missing on older Runners is false and is never inferred from the generic
+    /// typed-script/JavaScript bits or protocol generation. Node availability
+    /// and native TypeScript support are resolved separately at execution time.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structured_script_typescript: bool,
     /// Dedicated server-generated POSIX script request kind. Missing on older
     /// Runners is false and is never inferred from raw shell or typed public
     /// script support.
@@ -954,6 +965,7 @@ impl Default for RunnerCapabilities {
             structured_process_argv: false,
             structured_script_payload: false,
             structured_script_javascript: false,
+            structured_script_typescript: false,
             internal_posix_script: false,
             structured_execution_jobs: false,
             detached_process_jobs: false,
@@ -1551,6 +1563,7 @@ pub enum ShellScriptLanguage {
     Bash,
     Powershell,
     Javascript,
+    Typescript,
 }
 
 impl ShellScriptLanguage {
@@ -1560,6 +1573,7 @@ impl ShellScriptLanguage {
             Self::Bash => "bash",
             Self::Powershell => "powershell",
             Self::Javascript => "javascript",
+            Self::Typescript => "typescript",
         }
     }
 
@@ -1568,6 +1582,7 @@ impl ShellScriptLanguage {
             Self::Sh | Self::Bash => ".sh",
             Self::Powershell => ".ps1",
             Self::Javascript => ".mjs",
+            Self::Typescript => ".mts",
         }
     }
 }
@@ -3717,6 +3732,7 @@ mod envelope_tests {
                 structured_process_argv: true,
                 structured_script_payload: true,
                 structured_script_javascript: true,
+                structured_script_typescript: true,
                 internal_posix_script: true,
                 structured_execution_jobs: true,
                 detached_process_jobs: true,
@@ -4397,6 +4413,7 @@ mod envelope_tests {
         assert!(capabilities.structured_process_argv);
         assert!(capabilities.structured_script_payload);
         assert!(!capabilities.structured_script_javascript);
+        assert!(!capabilities.structured_script_typescript);
         assert!(capabilities.async_jobs);
         assert!(!capabilities.structured_execution_jobs);
         assert!(!RunnerCapabilities::default().structured_script_payload);
@@ -4412,6 +4429,7 @@ mod envelope_tests {
         assert!(!capabilities.structured_process_argv);
         assert!(!capabilities.structured_script_payload);
         assert!(!capabilities.structured_script_javascript);
+        assert!(!capabilities.structured_script_typescript);
         assert!(!capabilities.structured_execution_jobs);
     }
 
@@ -4501,6 +4519,21 @@ mod envelope_tests {
             ShellScriptLanguage::Javascript
         );
         assert!(serde_json::from_str::<ShellScriptLanguage>("\"js\"").is_err());
+    }
+
+    #[test]
+    fn typescript_script_language_is_canonical_and_uses_mts() {
+        assert_eq!(ShellScriptLanguage::Typescript.as_str(), "typescript");
+        assert_eq!(ShellScriptLanguage::Typescript.file_extension(), ".mts");
+        assert_eq!(
+            serde_json::to_string(&ShellScriptLanguage::Typescript).unwrap(),
+            "\"typescript\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ShellScriptLanguage>("\"typescript\"").unwrap(),
+            ShellScriptLanguage::Typescript
+        );
+        assert!(serde_json::from_str::<ShellScriptLanguage>("\"ts\"").is_err());
     }
 
     #[test]
@@ -4914,6 +4947,7 @@ mod envelope_tests {
                 "structured_process_argv",
                 "structured_script_payload",
                 "structured_script_javascript",
+                "structured_script_typescript",
                 "internal_posix_script",
                 "structured_execution_jobs",
                 "detached_process_jobs",

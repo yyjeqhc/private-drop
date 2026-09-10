@@ -699,6 +699,11 @@ impl RunnerRegistry {
             Some(StructuredJobExecution::Script(script))
                 if script.language == ShellScriptLanguage::Javascript
         );
+        let typescript_script_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::Script(script))
+                if script.language == ShellScriptLanguage::Typescript
+        );
         let structured_stdin = metadata.stdin;
         if validation_steps.len() > 3
             || validation_steps.iter().any(|step| !step.is_canonical())
@@ -964,6 +969,15 @@ impl RunnerRegistry {
         {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support structured_script_javascript"
+            ));
+        }
+        if typescript_script_request
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::StructuredScriptTypescript)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {client_id} does not support structured_script_typescript"
             ));
         }
         if detached_request

@@ -1135,6 +1135,43 @@ fn missing_javascript_interpreter_is_prestart_and_does_not_run_script() {
 }
 
 #[test]
+fn missing_typescript_interpreter_is_prestart_and_does_not_run_script() {
+    let cwd = tempfile::tempdir().unwrap();
+    let marker = cwd.path().join("marker");
+    let project_registry_dir = tempfile::tempdir().unwrap();
+    let mut shell = ShellConfig {
+        program: "custom-shell".to_string(),
+        ..Default::default()
+    };
+    shell.env.insert("PATH".to_string(), String::new());
+    let result = run_script_with_profiles_and_execution_state(
+        1,
+        &unrestricted_policy(),
+        &shell,
+        project_registry_dir.path(),
+        &PreparedShellProfileCache::default(),
+        Some(cwd.path().to_string_lossy().as_ref()),
+        &ShellScriptPayload {
+            language: ShellScriptLanguage::Typescript,
+            script: "const marker: string = 'ran';\nvoid marker;".to_string(),
+            args: Vec::new(),
+        },
+        None,
+        10,
+        None,
+    );
+    assert_eq!(
+        result.execution_state,
+        ShellCommandExecutionState::NotStarted
+    );
+    assert!(result.result.exit_code.is_none());
+    let error = result.result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("interpreter_unavailable"), "{error}");
+    assert!(error.contains("TypeScript/Node"), "{error}");
+    assert!(!marker.exists());
+}
+
+#[test]
 fn javascript_interpreter_resolves_node_from_prepared_profile_path() {
     let temp = tempfile::tempdir().unwrap();
     let node = temp
@@ -1162,6 +1199,32 @@ fn javascript_interpreter_resolves_node_from_prepared_profile_path() {
 }
 
 #[test]
+fn typescript_interpreter_resolves_the_same_node_candidate() {
+    let temp = tempfile::tempdir().unwrap();
+    let node = temp
+        .path()
+        .join(format!("node{}", std::env::consts::EXE_SUFFIX));
+    create_fake_native_executable(&node);
+    let profile = PreparedShellProfile {
+        profile_name: "ts-test".to_string(),
+        program: "bash".to_string(),
+        args: Vec::new(),
+        dialect: ShellDialect::Posix,
+        env_snapshot: std::collections::HashMap::from([(
+            "PATH".to_string(),
+            temp.path().to_string_lossy().into_owned(),
+        )]),
+    };
+    let resolved = configured_script_interpreter(
+        &ShellConfig::default(),
+        Some(&profile),
+        ShellScriptLanguage::Typescript,
+    )
+    .unwrap();
+    assert_eq!(PathBuf::from(resolved), node);
+}
+
+#[test]
 fn javascript_interpreter_accepts_configured_node_executable() {
     let temp = tempfile::tempdir().unwrap();
     let node = temp
@@ -1180,7 +1243,7 @@ fn javascript_interpreter_accepts_configured_node_executable() {
 }
 
 #[test]
-fn javascript_interpreter_does_not_fallback_to_alternate_runtimes() {
+fn node_script_languages_do_not_fallback_to_alternate_runtimes() {
     let temp = tempfile::tempdir().unwrap();
     for runtime in ["bun", "deno", "tsx", "npx", "npm"] {
         create_fake_native_executable(
@@ -1198,11 +1261,15 @@ fn javascript_interpreter_does_not_fallback_to_alternate_runtimes() {
         temp.path().to_string_lossy().into_owned(),
     );
 
-    let error =
-        configured_script_interpreter(&shell, None, ShellScriptLanguage::Javascript).unwrap_err();
-    assert!(error.contains("interpreter_unavailable"), "{error}");
-    assert!(error.contains("JavaScript/Node"), "{error}");
-    assert!(!error.contains(temp.path().to_string_lossy().as_ref()));
+    for (language, runtime_name) in [
+        (ShellScriptLanguage::Javascript, "JavaScript/Node"),
+        (ShellScriptLanguage::Typescript, "TypeScript/Node"),
+    ] {
+        let error = configured_script_interpreter(&shell, None, language).unwrap_err();
+        assert!(error.contains("interpreter_unavailable"), "{error}");
+        assert!(error.contains(runtime_name), "{error}");
+        assert!(!error.contains(temp.path().to_string_lossy().as_ref()));
+    }
 }
 
 #[cfg(unix)]
@@ -1265,7 +1332,11 @@ fn sh_and_bash_plans_pass_a_script_file_without_command_text_mode() {
         (ShellScriptLanguage::Sh, "sh"),
         (ShellScriptLanguage::Bash, "bash"),
     ] {
-        let command = build_script_command(interpreter, language, script_path, &script_args);
+        let plan = ScriptRuntimePlan {
+            program: OsString::from(interpreter),
+            prefix_args: fixed_script_prefix_args(language),
+        };
+        let command = build_script_command(&plan, script_path, &script_args);
         assert_eq!(command.get_program(), OsStr::new(interpreter));
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
@@ -1291,7 +1362,11 @@ fn javascript_plan_uses_mjs_file_and_native_literal_argv() {
         "$(literal)".to_string(),
         "; literal".to_string(),
     ];
-    let command = build_script_command("node", ShellScriptLanguage::Javascript, script_path, &args);
+    let plan = ScriptRuntimePlan {
+        program: OsString::from("node"),
+        prefix_args: fixed_script_prefix_args(ShellScriptLanguage::Javascript),
+    };
+    let command = build_script_command(&plan, script_path, &args);
     assert_eq!(command.get_program(), OsStr::new("node"));
     let actual = command.get_args().collect::<Vec<_>>();
     assert_eq!(
@@ -1309,6 +1384,107 @@ fn javascript_plan_uses_mjs_file_and_native_literal_argv() {
 }
 
 #[test]
+fn typescript_node_versions_select_only_runner_owned_strip_flag_when_required() {
+    assert!(parse_node_version(b"v22.12.0\n").is_some());
+    assert_eq!(
+        typescript_node_probe_error("profile prepare stopped during runner shutdown".to_string()),
+        "TypeScript runtime probe stopped during runner shutdown; command was not started"
+    );
+    assert!(
+        typescript_node_probe_error("profile prepare timed out after 2 seconds".to_string())
+            .starts_with("interpreter_unavailable:"),
+        "a bounded capability-probe failure must remain a pre-start runtime availability failure"
+    );
+    for version in [
+        NodeVersion {
+            major: 22,
+            minor: 6,
+            patch: 0,
+        },
+        NodeVersion {
+            major: 22,
+            minor: 12,
+            patch: 0,
+        },
+        NodeVersion {
+            major: 22,
+            minor: 17,
+            patch: 9,
+        },
+        NodeVersion {
+            major: 23,
+            minor: 5,
+            patch: 0,
+        },
+    ] {
+        assert_eq!(
+            typescript_node_prefix_args(version).unwrap(),
+            vec![OsString::from("--experimental-strip-types")]
+        );
+    }
+    for version in [
+        NodeVersion {
+            major: 22,
+            minor: 18,
+            patch: 0,
+        },
+        NodeVersion {
+            major: 23,
+            minor: 6,
+            patch: 0,
+        },
+        NodeVersion {
+            major: 24,
+            minor: 0,
+            patch: 0,
+        },
+        NodeVersion {
+            major: 26,
+            minor: 0,
+            patch: 0,
+        },
+    ] {
+        assert!(typescript_node_prefix_args(version).unwrap().is_empty());
+    }
+    let error = typescript_node_prefix_args(NodeVersion {
+        major: 22,
+        minor: 5,
+        patch: 9,
+    })
+    .unwrap_err();
+    assert!(error.contains("Node.js 22.6.0 or newer"), "{error}");
+    assert!(error.contains("command was not started"), "{error}");
+    assert!(parse_node_version(b"not-node").is_none());
+}
+
+#[test]
+fn typescript_plan_uses_mts_native_argv_and_runner_owned_prefix() {
+    use std::ffi::OsStr;
+
+    let script_path = Path::new("/runner/scratch/payload.mts");
+    let user_args = vec![
+        "two words".to_string(),
+        "--experimental-transform-types".to_string(),
+    ];
+    let plan = ScriptRuntimePlan {
+        program: OsString::from("node"),
+        prefix_args: vec![OsString::from("--experimental-strip-types")],
+    };
+    let command = build_script_command(&plan, script_path, &user_args);
+    assert_eq!(command.get_program(), OsStr::new("node"));
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        [
+            OsStr::new("--experimental-strip-types"),
+            script_path.as_os_str(),
+            OsStr::new("two words"),
+            OsStr::new("--experimental-transform-types")
+        ]
+    );
+    assert!(!command.get_args().any(|arg| arg == OsStr::new("-e")));
+}
+
+#[test]
 fn powershell_plan_uses_ps1_file_and_never_command_text_mode() {
     use std::ffi::OsStr;
 
@@ -1319,7 +1495,11 @@ fn powershell_plan_uses_ps1_file_and_never_command_text_mode() {
         "$(literal)".to_string(),
         "; literal".to_string(),
     ];
-    let command = build_script_command("pwsh", ShellScriptLanguage::Powershell, script_path, &args);
+    let plan = ScriptRuntimePlan {
+        program: OsString::from("pwsh"),
+        prefix_args: fixed_script_prefix_args(ShellScriptLanguage::Powershell),
+    };
+    let command = build_script_command(&plan, script_path, &args);
     assert_eq!(command.get_program(), OsStr::new("pwsh"));
     let actual = command.get_args().collect::<Vec<_>>();
     let mut expected = vec![OsStr::new("-NoProfile"), OsStr::new("-NonInteractive")];
@@ -1356,6 +1536,64 @@ fn javascript_temp_file_uses_mjs_and_exact_script_bytes() {
     );
     assert_eq!(std::fs::read(&absolute).unwrap(), payload.script.as_bytes());
     temporary_path.close().unwrap();
+}
+
+#[test]
+fn typescript_temp_file_uses_mts_and_exact_script_bytes() {
+    let payload = ShellScriptPayload {
+        language: ShellScriptLanguage::Typescript,
+        script: "interface Item { value: string }\nconst item: Item = { value: 'ok' };\nconsole.log(item.value);\n".to_string(),
+        args: Vec::new(),
+    };
+    let (temporary_path, _original, absolute) = create_temporary_script(&payload).unwrap();
+    assert_eq!(
+        absolute.extension().and_then(|ext| ext.to_str()),
+        Some("mts")
+    );
+    assert_eq!(std::fs::read(&absolute).unwrap(), payload.script.as_bytes());
+    temporary_path.close().unwrap();
+}
+
+#[test]
+#[ignore = "manual real-process smoke: requires compatible Node.js on PATH"]
+fn typescript_runtime_executes_erasable_mts_with_argv_stdin_and_cwd_when_available() {
+    let cwd = tempfile::tempdir().unwrap();
+    let project_registry_dir = tempfile::tempdir().unwrap();
+    let result = run_script_with_profiles_and_execution_state(
+        1,
+        &unrestricted_policy(),
+        &ShellConfig::default(),
+        project_registry_dir.path(),
+        &PreparedShellProfileCache::default(),
+        Some(cwd.path().to_string_lossy().as_ref()),
+        &ShellScriptPayload {
+            language: ShellScriptLanguage::Typescript,
+            script: r#"import { readFileSync } from 'node:fs';
+interface Payload { value: string }
+function identity<T>(value: T): T { return value; }
+const payload: Payload = identity<Payload>({ value: process.argv[2] ?? '' });
+const input: string = readFileSync(0, 'utf8').trim();
+console.log(JSON.stringify({ value: payload.value, input, cwd: process.cwd() }));
+"#
+            .to_string(),
+            args: vec!["two words".to_string()],
+        },
+        Some("stdin-value\n"),
+        30,
+        None,
+    );
+    assert_eq!(
+        result.execution_state,
+        ShellCommandExecutionState::Completed
+    );
+    assert_eq!(result.result.exit_code, Some(0), "{:?}", result.result);
+    let stdout = result.result.stdout.as_deref().unwrap_or_default();
+    assert!(stdout.contains("\"value\":\"two words\""), "{stdout}");
+    assert!(stdout.contains("\"input\":\"stdin-value\""), "{stdout}");
+    assert!(
+        stdout.contains(cwd.path().to_string_lossy().as_ref()),
+        "{stdout}"
+    );
 }
 
 #[test]

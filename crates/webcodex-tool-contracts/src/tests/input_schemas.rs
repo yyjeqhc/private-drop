@@ -282,8 +282,23 @@ fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
     );
     assert_eq!(
         properties["language"]["enum"],
-        json!(["sh", "bash", "powershell", "javascript"])
+        json!(["sh", "bash", "powershell", "javascript", "typescript"])
     );
+    let language_description = properties["language"]["description"]
+        .as_str()
+        .expect("run_script language description");
+    for phrase in [
+        ".mjs ESM",
+        ".mts ESM",
+        "erasable type stripping",
+        "Node.js 22.6.0 or newer",
+        "callers cannot provide a runtime path or runtime flags",
+    ] {
+        assert!(
+            language_description.contains(phrase),
+            "run_script language description is missing {phrase:?}: {language_description}"
+        );
+    }
     assert_eq!(properties["script"]["minLength"], 1);
     assert_eq!(properties["script"]["maxLength"], 512 * 1024);
     assert_eq!(properties["args"]["type"], "array");

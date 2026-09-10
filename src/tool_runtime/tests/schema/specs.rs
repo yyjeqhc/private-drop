@@ -23,7 +23,7 @@ fn supports_model_facing_result_expectation(tool_name: &str) -> bool {
 
 #[test]
 fn run_script_tool_call_parser_accepts_declared_languages() {
-    for language in ["sh", "bash", "powershell", "javascript"] {
+    for language in ["sh", "bash", "powershell", "javascript", "typescript"] {
         let parsed = ToolCall::from_tool_name(
             "run_script",
             json!({
@@ -40,6 +40,11 @@ fn run_script_tool_call_parser_accepts_declared_languages() {
     assert!(ToolCall::from_tool_name(
         "run_script",
         json!({"project": "demo", "language": "cmd", "script": "echo no"})
+    )
+    .is_err());
+    assert!(ToolCall::from_tool_name(
+        "run_script",
+        json!({"project": "demo", "language": "ts", "script": "const x: number = 1"})
     )
     .is_err());
 }

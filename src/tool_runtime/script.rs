@@ -321,10 +321,10 @@ impl ToolRuntime {
                 return process_tool_failure_result(
                     command_rejected_message(
                         &error,
-                        if language == ShellScriptLanguage::Javascript {
-                            "confirm the Runner is connected and advertises structured_script_payload plus structured_script_javascript, then retry only if target state proves no script started."
-                        } else {
-                            "confirm the Runner is connected and advertises structured_script_payload, then retry only if target state proves no script started."
+                        match language {
+                            ShellScriptLanguage::Javascript => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_javascript, then retry only if target state proves no script started.",
+                            ShellScriptLanguage::Typescript => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_typescript, then retry only if target state proves no script started.",
+                            _ => "confirm the Runner is connected and advertises structured_script_payload, then retry only if target state proves no script started.",
                         },
                     ),
                     classify_process_failure(&error),

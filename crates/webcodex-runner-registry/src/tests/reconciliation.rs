@@ -1031,6 +1031,57 @@ async fn javascript_structured_job_start_requires_additive_runner_capability() {
 }
 
 #[tokio::test]
+async fn typescript_structured_job_start_requires_additive_runner_capability() {
+    let registry = RunnerRegistry::default();
+    let mut old_style = register_request(INSTANCE_A, empty_inventory());
+    old_style.capabilities.structured_script_javascript = true;
+    old_style.capabilities.structured_script_typescript = false;
+    registry.register(old_style).await.unwrap();
+    let metadata = || ShellJobStartMetadata {
+        project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+        session_id: Some(SESSION_ID.to_string()),
+        project_cwd: Some("/srv/demo".to_string()),
+        purpose: Some("operation".to_string()),
+        shell: Some("typescript".to_string()),
+        visibility: ShellJobVisibility::HiddenUntilHandoff,
+        structured_execution: Some(StructuredJobExecution::Script(ShellScriptPayload {
+            language: ShellScriptLanguage::Typescript,
+            script: "const value: string = 'ok';\nvoid value;\n".to_string(),
+            args: Vec::new(),
+        })),
+        ..Default::default()
+    };
+
+    let error = registry
+        .start_job_with_metadata(start_request(""), "tester".to_string(), metadata())
+        .await
+        .unwrap_err();
+    assert!(error.contains("structured_script_typescript"), "{error}");
+
+    let mut upgraded = register_request(INSTANCE_A, empty_inventory());
+    upgraded.capabilities.structured_script_javascript = true;
+    upgraded.capabilities.structured_script_typescript = true;
+    registry.register(upgraded).await.unwrap();
+    let job = registry
+        .start_job_with_metadata(start_request(""), "tester".to_string(), metadata())
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: CLIENT_ID.to_string(),
+            runner_instance_id: INSTANCE_A.to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("TypeScript script Job request");
+    assert_eq!(request.job_id.as_deref(), Some(job.job_id.as_str()));
+    assert_eq!(
+        request.script.as_ref().map(|script| script.language),
+        Some(ShellScriptLanguage::Typescript)
+    );
+}
+
+#[tokio::test]
 async fn terminal_structured_script_snapshot_is_recovered_with_safe_metadata_without_redispatch() {
     let registry_a = RunnerRegistry::default();
     register(&registry_a, INSTANCE_A, empty_inventory()).await;
@@ -2500,6 +2551,52 @@ fn job_inventory_accepts_javascript_structured_script_context() {
     )
     .unwrap_err();
     assert!(error.contains("shell is invalid"), "{error}");
+}
+
+#[test]
+fn job_inventory_accepts_typescript_semantic_identity_and_rejects_runtime_identity() {
+    let snapshot = || {
+        let mut typescript = standalone_snapshot("typescript-running", "running");
+        typescript.context.shell = Some("typescript".to_string());
+        typescript.context.command_preview = "typescript script (24 bytes, 1 args)".to_string();
+        typescript.context.structured_execution = Some(
+            crate::runner_protocol::ShellJobStructuredExecutionMetadata {
+                execution_source: "run_script".to_string(),
+                language: Some(ShellScriptLanguage::Typescript),
+                script_bytes: Some(24),
+                arg_count: 1,
+                stdin_present: false,
+                validation_identity: None,
+                validation_tool: None,
+                assertion_name: None,
+            },
+        );
+        typescript
+    };
+    validate_job_inventory(
+        CLIENT_ID,
+        &[project_summary()],
+        &ShellJobInventory {
+            active_complete: true,
+            jobs: vec![snapshot()],
+        },
+    )
+    .unwrap();
+
+    for concrete_runtime in ["node", "tsx"] {
+        let mut invalid = snapshot();
+        invalid.context.shell = Some(concrete_runtime.to_string());
+        let error = validate_job_inventory(
+            CLIENT_ID,
+            &[project_summary()],
+            &ShellJobInventory {
+                active_complete: true,
+                jobs: vec![invalid],
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("shell is invalid"), "{error}");
+    }
 }
 
 #[tokio::test]
