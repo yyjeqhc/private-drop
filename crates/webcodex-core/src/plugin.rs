@@ -19,14 +19,14 @@ pub const PLUGIN_MAX_TOOL_NAME_BYTES: usize = 128;
 pub const PLUGIN_MAX_DESCRIPTION_BYTES: usize = 4 * 1024;
 pub const PLUGIN_MAX_SCHEMA_BYTES: usize = 64 * 1024;
 pub const PLUGIN_MAX_ARGUMENT_BYTES: usize = 64 * 1024;
-pub const PLUGIN_MAX_STRUCTURED_CONTENT_BYTES: usize = 128 * 1024;
-pub const PLUGIN_MAX_TEXT_CONTENT_BYTES: usize = 64 * 1024;
-pub const PLUGIN_MAX_RESULT_BYTES: usize = 256 * 1024;
+pub const PLUGIN_MAX_STRUCTURED_CONTENT_BYTES: usize = 512 * 1024;
+pub const PLUGIN_MAX_TEXT_CONTENT_BYTES: usize = 512 * 1024;
+pub const PLUGIN_MAX_RESULT_BYTES: usize = 512 * 1024;
 pub const PLUGIN_MAX_CONTENT_ITEMS: usize = 32;
 pub const PLUGIN_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub const PLUGIN_MAX_JSON_DEPTH: usize = 16;
 pub const PLUGIN_MAX_JSON_NODES: usize = 4_096;
-pub const PLUGIN_MAX_JSON_STRING_BYTES: usize = 64 * 1024;
+pub const PLUGIN_MAX_JSON_STRING_BYTES: usize = 512 * 1024;
 pub const PLUGIN_MAX_CHECK_DETAIL_BYTES: usize = 512;
 pub const PLUGIN_SCHEMA_MAX_PROPERTIES: usize = 128;
 pub const PLUGIN_SCHEMA_MAX_REQUIRED: usize = 128;
@@ -1408,6 +1408,14 @@ mod tests {
 
     #[test]
     fn schema_and_result_bounds_fail_closed() {
+        assert_eq!(PLUGIN_MAX_ARGUMENT_BYTES, 64 * 1024);
+        assert_eq!(PLUGIN_MAX_SCHEMA_BYTES, 64 * 1024);
+        assert_eq!(PLUGIN_MAX_TEXT_CONTENT_BYTES, 512 * 1024);
+        assert_eq!(PLUGIN_MAX_STRUCTURED_CONTENT_BYTES, 512 * 1024);
+        assert_eq!(PLUGIN_MAX_RESULT_BYTES, 512 * 1024);
+        assert_eq!(PLUGIN_MAX_JSON_STRING_BYTES, 512 * 1024);
+        assert_eq!(PLUGIN_MAX_MESSAGE_BYTES, 1024 * 1024);
+
         let mut oversized_schema_tool = tool();
         oversized_schema_tool.input_schema = json!({
             "type": "object",
@@ -1415,14 +1423,77 @@ mod tests {
         });
         assert!(validate_tools(&[oversized_schema_tool]).is_err());
 
-        let oversized_result = PluginToolResult {
+        let oversized_arguments = json!({"value": "x".repeat(PLUGIN_MAX_ARGUMENT_BYTES)});
+        assert!(validate_json_value(
+            &oversized_arguments,
+            PLUGIN_MAX_ARGUMENT_BYTES,
+            "tool arguments"
+        )
+        .is_err());
+
+        let large_text = PluginToolResult {
+            content: vec![PluginContent::Text {
+                text: "x".repeat(384 * 1024),
+            }],
+            structured_content: None,
+            is_error: false,
+        };
+        validate_tool_result(&large_text).unwrap();
+
+        let large_structured = PluginToolResult {
+            content: vec![],
+            structured_content: Some(json!({"payload": "x".repeat(384 * 1024)})),
+            is_error: false,
+        };
+        validate_tool_result(&large_structured).unwrap();
+
+        let output_schema = json!({
+            "type": "object",
+            "properties": {
+                "payload": {"type": "string", "maxLength": 256 * 1024}
+            },
+            "required": ["payload"],
+            "additionalProperties": false
+        });
+        validate_plugin_structured_output(
+            &output_schema,
+            &json!({"payload": "x".repeat(192 * 1024)}),
+        )
+        .unwrap();
+        assert!(validate_plugin_input_arguments(
+            &output_schema,
+            &json!({"payload": "x".repeat(80 * 1024)}),
+        )
+        .is_err());
+
+        let aggregate_oversized = PluginToolResult {
+            content: vec![PluginContent::Text {
+                text: "x".repeat(300 * 1024),
+            }],
+            structured_content: Some(json!({"payload": "y".repeat(300 * 1024)})),
+            is_error: false,
+        };
+        assert!(validate_tool_result(&aggregate_oversized)
+            .unwrap_err()
+            .contains("aggregate"));
+
+        let oversized_text = PluginToolResult {
             content: vec![PluginContent::Text {
                 text: "x".repeat(PLUGIN_MAX_TEXT_CONTENT_BYTES + 1),
             }],
             structured_content: None,
             is_error: false,
         };
-        assert!(validate_tool_result(&oversized_result).is_err());
+        assert!(validate_tool_result(&oversized_text).is_err());
+
+        let oversized_structured = PluginToolResult {
+            content: vec![],
+            structured_content: Some(json!({
+                "payload": "x".repeat(PLUGIN_MAX_STRUCTURED_CONTENT_BYTES + 1)
+            })),
+            is_error: false,
+        };
+        assert!(validate_tool_result(&oversized_structured).is_err());
     }
 
     #[test]

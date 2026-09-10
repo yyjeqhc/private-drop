@@ -7,7 +7,7 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use tempfile::TempDir;
 use webcodex_core::plugin::{
     PluginContent, PluginGatewayResponsePayload, PluginProviderView, PluginSchemaObservation,
-    PLUGIN_MAX_ARGUMENT_BYTES,
+    PLUGIN_MAX_ARGUMENT_BYTES, PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_MAX_RESULT_BYTES,
 };
 
 static FAKE_PLUGIN: OnceLock<Mutex<Weak<FakeBinary>>> = OnceLock::new();
@@ -323,6 +323,42 @@ fn invalid_input_schema_is_not_started_and_provider_sees_no_call() {
 }
 
 #[test]
+fn large_tool_results_cross_plugin_bridge_with_output_schema_validation() {
+    assert_eq!(PLUGIN_MAX_RESULT_BYTES, 512 * 1024);
+    assert_eq!(PLUGIN_MAX_MESSAGE_BYTES, 1024 * 1024);
+
+    let text_fixture = Fixture::new("large_text_result", 2);
+    let text_response = text_fixture.call();
+    let Some(PluginGatewayResponsePayload::ToolResult { result }) = text_response.payload else {
+        panic!("missing large text result: {:?}", text_response.error);
+    };
+    let [PluginContent::Text { text }] = result.content.as_slice() else {
+        panic!("unexpected large text content");
+    };
+    assert_eq!(text.len(), 192 * 1024);
+    assert!(text_fixture.list().error.is_none());
+
+    let structured_fixture = Fixture::new("large_structured_result", 2);
+    let structured_response = structured_fixture.call();
+    let Some(PluginGatewayResponsePayload::ToolResult { result }) = structured_response.payload
+    else {
+        panic!(
+            "missing large structured result: {:?}",
+            structured_response.error
+        );
+    };
+    assert!(result.content.is_empty());
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["payload"]
+            .as_str()
+            .unwrap()
+            .len(),
+        192 * 1024
+    );
+    assert!(structured_fixture.list().error.is_none());
+}
+
+#[test]
 fn output_schema_violation_is_completed_and_retires_provider() {
     let fixture = Fixture::new("output_schema_invalid", 2);
     let response = fixture.call();
@@ -451,18 +487,26 @@ fn crash_after_effect_send_is_outcome_unknown_and_instance_is_retired() {
 }
 
 #[test]
-fn unsupported_result_is_completed_and_retires_protocol_broken_instance() {
-    let fixture = Fixture::new("bad_result", 2);
-    let response = fixture.call();
-    assert_eq!(response.dispatch_state, PluginDispatchState::Completed);
-    assert_eq!(
-        response.error.as_ref().unwrap().code,
-        "plugin_result_invalid"
-    );
-    assert_eq!(
-        fixture.list().error.as_ref().unwrap().code,
-        "plugin_provider_unavailable"
-    );
+fn unsupported_or_oversized_result_is_completed_and_retires_protocol_broken_instance() {
+    for scenario in ["bad_result", "oversized_result"] {
+        let fixture = Fixture::new(scenario, 2);
+        let response = fixture.call();
+        assert_eq!(
+            response.dispatch_state,
+            PluginDispatchState::Completed,
+            "{scenario}"
+        );
+        assert_eq!(
+            response.error.as_ref().unwrap().code,
+            "plugin_result_invalid",
+            "{scenario}"
+        );
+        assert_eq!(
+            fixture.list().error.as_ref().unwrap().code,
+            "plugin_provider_unavailable",
+            "{scenario}"
+        );
+    }
 }
 
 #[test]

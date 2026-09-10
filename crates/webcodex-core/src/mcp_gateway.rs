@@ -16,14 +16,14 @@ pub const MCP_GATEWAY_MAX_TOOL_NAME_BYTES: usize = 128;
 pub const MCP_GATEWAY_MAX_DESCRIPTION_BYTES: usize = 4 * 1024;
 pub const MCP_GATEWAY_MAX_SCHEMA_BYTES: usize = 64 * 1024;
 pub const MCP_GATEWAY_MAX_ARGUMENT_BYTES: usize = 64 * 1024;
-pub const MCP_GATEWAY_MAX_STRUCTURED_CONTENT_BYTES: usize = 128 * 1024;
-pub const MCP_GATEWAY_MAX_TEXT_CONTENT_BYTES: usize = 64 * 1024;
-pub const MCP_GATEWAY_MAX_RESULT_BYTES: usize = 256 * 1024;
+pub const MCP_GATEWAY_MAX_STRUCTURED_CONTENT_BYTES: usize = 512 * 1024;
+pub const MCP_GATEWAY_MAX_TEXT_CONTENT_BYTES: usize = 512 * 1024;
+pub const MCP_GATEWAY_MAX_RESULT_BYTES: usize = 512 * 1024;
 pub const MCP_GATEWAY_MAX_CONTENT_ITEMS: usize = 32;
 pub const MCP_GATEWAY_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub const MCP_GATEWAY_MAX_JSON_DEPTH: usize = 16;
 pub const MCP_GATEWAY_MAX_JSON_NODES: usize = 4_096;
-pub const MCP_GATEWAY_MAX_JSON_STRING_BYTES: usize = 64 * 1024;
+pub const MCP_GATEWAY_MAX_JSON_STRING_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -549,6 +549,72 @@ mod tests {
         let arguments = json!({"value": "x".repeat(MCP_GATEWAY_MAX_ARGUMENT_BYTES)});
         assert!(
             validate_json_value(&arguments, MCP_GATEWAY_MAX_ARGUMENT_BYTES, "arguments").is_err()
+        );
+    }
+
+    #[test]
+    fn tool_result_bounds_allow_512_kib_outputs_without_expanding_inputs_or_messages() {
+        assert_eq!(MCP_GATEWAY_MAX_ARGUMENT_BYTES, 64 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_SCHEMA_BYTES, 64 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_TEXT_CONTENT_BYTES, 512 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_STRUCTURED_CONTENT_BYTES, 512 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_RESULT_BYTES, 512 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_JSON_STRING_BYTES, 512 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_MESSAGE_BYTES, 1024 * 1024);
+
+        let large_text = McpGatewayToolResult {
+            content: vec![McpGatewayContent::Text {
+                text: "x".repeat(384 * 1024),
+            }],
+            structured_content: None,
+            is_error: false,
+        };
+        validate_tool_result(&large_text).unwrap();
+
+        let large_structured = McpGatewayToolResult {
+            content: vec![],
+            structured_content: Some(json!({"payload": "x".repeat(384 * 1024)})),
+            is_error: false,
+        };
+        validate_tool_result(&large_structured).unwrap();
+
+        let aggregate_oversized = McpGatewayToolResult {
+            content: vec![McpGatewayContent::Text {
+                text: "x".repeat(300 * 1024),
+            }],
+            structured_content: Some(json!({"payload": "y".repeat(300 * 1024)})),
+            is_error: false,
+        };
+        assert!(validate_tool_result(&aggregate_oversized).is_err());
+
+        let oversized_text = McpGatewayToolResult {
+            content: vec![McpGatewayContent::Text {
+                text: "x".repeat(MCP_GATEWAY_MAX_TEXT_CONTENT_BYTES + 1),
+            }],
+            structured_content: None,
+            is_error: false,
+        };
+        assert!(validate_tool_result(&oversized_text).is_err());
+
+        let oversized_structured = McpGatewayToolResult {
+            content: vec![],
+            structured_content: Some(json!({
+                "payload": "x".repeat(MCP_GATEWAY_MAX_STRUCTURED_CONTENT_BYTES + 1)
+            })),
+            is_error: false,
+        };
+        assert!(validate_tool_result(&oversized_structured).is_err());
+
+        let oversized_arguments = json!({"value": "x".repeat(MCP_GATEWAY_MAX_ARGUMENT_BYTES)});
+        assert!(validate_json_value(
+            &oversized_arguments,
+            MCP_GATEWAY_MAX_ARGUMENT_BYTES,
+            "arguments"
+        )
+        .is_err());
+        let oversized_schema = json!({"description": "x".repeat(MCP_GATEWAY_MAX_SCHEMA_BYTES)});
+        assert!(
+            validate_json_value(&oversized_schema, MCP_GATEWAY_MAX_SCHEMA_BYTES, "schema").is_err()
         );
     }
 

@@ -1,6 +1,7 @@
 use super::*;
 use crate::mcp_gateway::{
     McpGatewayContent, McpGatewayResponsePayload, McpGatewaySchemaObservation,
+    MCP_GATEWAY_MAX_MESSAGE_BYTES, MCP_GATEWAY_MAX_RESULT_BYTES,
 };
 use std::env;
 use std::fs;
@@ -181,6 +182,32 @@ fn persistent_provider_initializes_once_and_serves_repeated_calls() {
     assert_eq!(fixture.marker_count("initialize"), 1);
     assert_eq!(fixture.marker_count("initialized"), 1);
     assert_eq!(fixture.marker_count("call"), 2);
+}
+
+#[test]
+fn large_tool_result_crosses_local_mcp_bridge_below_result_and_message_bounds() {
+    assert_eq!(MCP_GATEWAY_MAX_RESULT_BYTES, 512 * 1024);
+    assert_eq!(MCP_GATEWAY_MAX_MESSAGE_BYTES, 1024 * 1024);
+
+    let fixture = Fixture::new("large_result", 3);
+    let provider = fixture.provider();
+    assert!(fixture.list(&provider).error.is_none());
+    let response = fixture.call(&provider);
+    let Some(McpGatewayResponsePayload::ToolResult { result }) = response.payload else {
+        panic!("large tool result missing: {:?}", response.error);
+    };
+    let [McpGatewayContent::Text { text }] = result.content.as_slice() else {
+        panic!("unexpected large result content");
+    };
+    assert_eq!(text.len(), 192 * 1024);
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["payload"]
+            .as_str()
+            .unwrap()
+            .len(),
+        192 * 1024
+    );
+    assert!(fixture.list(&provider).error.is_none());
 }
 
 #[test]

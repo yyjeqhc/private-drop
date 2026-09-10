@@ -228,6 +228,14 @@ fn main() -> io::Result<()> {
                             r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32001,"message":"fixture error"}}}}"#
                         ),
                     )?,
+                    "large_result" => send(
+                        &mut writer,
+                        &format!(
+                            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"content":[{{"type":"text","text":"{}"}}],"structuredContent":{{"payload":"{}"}},"isError":false}}}}"#,
+                            "x".repeat(192 * 1024),
+                            "y".repeat(192 * 1024)
+                        ),
+                    )?,
                     "bad_result" => send(
                         &mut writer,
                         &format!(
@@ -238,7 +246,7 @@ fn main() -> io::Result<()> {
                         &mut writer,
                         &format!(
                             r#"{{"jsonrpc":"2.0","id":{id},"result":{{"content":[{{"type":"text","text":"{}"}}]}}}}"#,
-                            "x".repeat(70 * 1024)
+                            "x".repeat(520 * 1024)
                         ),
                     )?,
                     _ => send(
