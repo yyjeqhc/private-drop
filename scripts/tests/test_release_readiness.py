@@ -280,6 +280,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("needs: changes", contract)
         self.assertIn("if: needs.changes.outputs.needs_frontend == 'true'", contract)
         self.assertIn("if: needs.changes.outputs.needs_desktop_frontend == 'true'", contract)
+        self.assertIn("needs.changes.outputs.needs_plugin_sdk == 'true'", contract)
+        self.assertIn("npm/plugin-sdk/package-lock.json", contract)
+        for command in (
+            "npm ci --prefix npm/plugin-sdk",
+            "npm --prefix npm/plugin-sdk run typecheck",
+            "npm --prefix npm/plugin-sdk run build",
+            "npm --prefix npm/plugin-sdk test",
+            "npm --prefix npm/plugin-sdk run pack:dry-run",
+        ):
+            self.assertIn(command, contract)
         self.assertIn("github.event.before", changes)
         self.assertIn("persist-credentials: false", changes)
         self.assertIn('classifier="scripts/ci_path_risk.py"', changes)
@@ -369,7 +379,12 @@ class WorkflowContractTests(unittest.TestCase):
             "reason",
         ):
             self.assertIn(f"{output}: ${{{{ steps.classify.outputs.{output} }}}}", changes)
-        for rollout_output in ("needs_frontend", "needs_desktop_frontend", "needs_docker"):
+        for rollout_output in (
+            "needs_frontend",
+            "needs_desktop_frontend",
+            "needs_plugin_sdk",
+            "needs_docker",
+        ):
             self.assertIn(f"{rollout_output}: ${{{{ steps.classify.outputs.{rollout_output} == 'true'", changes)
             self.assertIn(f"steps.classify.outputs.{rollout_output} == '' && steps.classify.outputs.needs_full_native == 'true'", changes)
         self.assertNotIn("needs_windows_arm64", workflow)

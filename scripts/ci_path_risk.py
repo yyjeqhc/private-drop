@@ -55,6 +55,7 @@ class Risk:
     needs_docker: bool = False
     needs_frontend: bool = False
     needs_desktop_frontend: bool = False
+    needs_plugin_sdk: bool = False
     needs_full_native: bool = False
     categories: set[str] = field(default_factory=set)
     changed_count: int = 0
@@ -76,6 +77,7 @@ class Risk:
             self.needs_docker = True
             self.needs_frontend = True
             self.needs_desktop_frontend = True
+            self.needs_plugin_sdk = True
         return self
 
     def outputs(self) -> dict[str, str]:
@@ -102,6 +104,7 @@ class Risk:
             "needs_docker": _bool(self.needs_docker),
             "needs_frontend": _bool(self.needs_frontend),
             "needs_desktop_frontend": _bool(self.needs_desktop_frontend),
+            "needs_plugin_sdk": _bool(self.needs_plugin_sdk),
             "needs_desktop_package": _bool(needs_desktop_package),
             "needs_full_native": _bool(self.needs_full_native),
             "categories": categories,
@@ -204,6 +207,10 @@ def _classify_path(risk: Risk, path: str) -> None:
 
     if _is_docs_or_text(path):
         risk.categories.add("docs")
+        return
+    if path.startswith("npm/plugin-sdk/"):
+        risk.needs_plugin_sdk = True
+        risk.categories.add("plugin-sdk")
         return
     if _is_main_frontend(path):
         risk.needs_frontend = True

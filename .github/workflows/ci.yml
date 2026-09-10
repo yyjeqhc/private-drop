@@ -33,10 +33,11 @@ jobs:
       needs_windows_desktop: ${{ steps.classify.outputs.needs_windows_desktop }}
       needs_macos: ${{ steps.classify.outputs.needs_macos }}
       needs_macos_desktop: ${{ steps.classify.outputs.needs_macos_desktop }}
-      # Older trusted PR bases do not expose the newer frontend/container outputs.
+      # Older trusted PR bases do not expose the newer frontend/container/Plugin SDK outputs.
       # A historical full-native result is the safe rollout fallback for those bases.
       needs_frontend: ${{ steps.classify.outputs.needs_frontend == 'true' || (steps.classify.outputs.needs_frontend == '' && steps.classify.outputs.needs_full_native == 'true') }}
       needs_desktop_frontend: ${{ steps.classify.outputs.needs_desktop_frontend == 'true' || (steps.classify.outputs.needs_desktop_frontend == '' && steps.classify.outputs.needs_full_native == 'true') }}
+      needs_plugin_sdk: ${{ steps.classify.outputs.needs_plugin_sdk == 'true' || (steps.classify.outputs.needs_plugin_sdk == '' && steps.classify.outputs.needs_full_native == 'true') }}
       needs_docker: ${{ steps.classify.outputs.needs_docker == 'true' || (steps.classify.outputs.needs_docker == '' && steps.classify.outputs.needs_full_native == 'true') }}
       needs_desktop_package: ${{ steps.classify.outputs.needs_desktop_package }}
       needs_full_native: ${{ steps.classify.outputs.needs_full_native }}
@@ -74,6 +75,7 @@ jobs:
                 needs_macos_desktop \
                 needs_frontend \
                 needs_desktop_frontend \
+                needs_plugin_sdk \
                 needs_docker \
                 needs_desktop_package \
                 needs_full_native; do
@@ -121,13 +123,14 @@ jobs:
         with:
           shared-key: linux-ci
       - uses: actions/setup-node@v4
-        if: needs.changes.outputs.needs_frontend == 'true' || needs.changes.outputs.needs_desktop_frontend == 'true'
+        if: needs.changes.outputs.needs_frontend == 'true' || needs.changes.outputs.needs_desktop_frontend == 'true' || needs.changes.outputs.needs_plugin_sdk == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
             apps/desktop/package-lock.json
+            npm/plugin-sdk/package-lock.json
       - name: Install frontend dependencies
         if: needs.changes.outputs.needs_frontend == 'true'
         run: npm ci --prefix frontend
@@ -146,6 +149,16 @@ jobs:
           npm --prefix apps/desktop run typecheck
           npm --prefix apps/desktop test
           npm --prefix apps/desktop run build
+      - name: Install Plugin SDK dependencies
+        if: needs.changes.outputs.needs_plugin_sdk == 'true'
+        run: npm ci --prefix npm/plugin-sdk
+      - name: Check Plugin SDK contracts
+        if: needs.changes.outputs.needs_plugin_sdk == 'true'
+        run: |
+          npm --prefix npm/plugin-sdk run typecheck
+          npm --prefix npm/plugin-sdk run build
+          npm --prefix npm/plugin-sdk test
+          npm --prefix npm/plugin-sdk run pack:dry-run
       - name: Verify workspace boundaries
         run: |
           bash scripts/workspace_boundary_check.sh --self-test

@@ -30,6 +30,7 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_docker"], "false")
         self.assertEqual(result["needs_frontend"], "false")
         self.assertEqual(result["needs_desktop_frontend"], "false")
+        self.assertEqual(result["needs_plugin_sdk"], "false")
 
     def test_main_frontend_isolated_from_native_and_desktop_frontend(self) -> None:
         result = classify("frontend/src/runtime.ts")
@@ -70,6 +71,17 @@ class PathRiskFixtureTests(unittest.TestCase):
         self.assertEqual(result["needs_frontend"], "false")
         self.assertEqual(result["needs_windows_desktop"], "true")
         self.assertEqual(result["needs_macos_desktop"], "true")
+
+    def test_plugin_sdk_isolated_from_native_frontend_desktop_and_docker(self) -> None:
+        result = classify("npm/plugin-sdk/src/runtime.ts")
+        self.assertEqual(result["needs_plugin_sdk"], "true")
+        self.assertEqual(result["needs_full_native"], "false")
+        self.assertEqual(result["needs_windows"], "false")
+        self.assertEqual(result["needs_macos"], "false")
+        self.assertEqual(result["needs_docker"], "false")
+        self.assertEqual(result["needs_frontend"], "false")
+        self.assertEqual(result["needs_desktop_frontend"], "false")
+        self.assertIn("plugin-sdk", result["categories"])
 
     def test_npm_installer_change_requires_native_windows_package_lane(self) -> None:
         result = classify("npm/webcodex/install.js")
@@ -211,6 +223,7 @@ class InvocationOverrideFixtureTests(unittest.TestCase):
         self.assertIn("override-run-ci", result["reason"])
         self.assertEqual(result["needs_frontend"], "true")
         self.assertEqual(result["needs_desktop_frontend"], "true")
+        self.assertEqual(result["needs_plugin_sdk"], "true")
 
     def test_push_main_uses_path_classifier(self) -> None:
         forced = risk.forced_risk_for_invocation(
