@@ -400,20 +400,31 @@ fn reread_activation_config(
     Ok(snapshot)
 }
 
+fn server_url_is_loopback(server_url: &str) -> bool {
+    url::Url::parse(server_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .is_some_and(|host| {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            host.eq_ignore_ascii_case("localhost")
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
+}
+
 async fn operator_tool_call(
     server_url: &str,
     token: &str,
     path: &str,
     body: Value,
 ) -> Result<OperatorToolResult, String> {
-    let (status, content_type, value) = http_post_json_status(
-        server_url,
-        &ServerHttpOptions::default(),
-        path,
-        Some(token),
-        body,
-    )
-    .await?;
+    let server_http = ServerHttpOptions {
+        no_system_proxy: server_url_is_loopback(server_url),
+        ..ServerHttpOptions::default()
+    };
+    let (status, content_type, value) =
+        http_post_json_status(server_url, &server_http, path, Some(token), body).await?;
     if matches!(status, 404 | 405) {
         return Ok(OperatorToolResult {
             success: false,

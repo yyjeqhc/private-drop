@@ -128,7 +128,7 @@ impl WebCodexAdapter {
         if init.env_file.trim().is_empty() || init.listen.trim().is_empty() {
             return Err(invalid_contract("server init"));
         }
-        self.server_status(None, Some(env_file), None, cancellation)
+        self.server_status_with_deadline(None, Some(env_file), None, cancellation, None, true)
             .await
     }
 
@@ -139,8 +139,15 @@ impl WebCodexAdapter {
         token_file: Option<&Path>,
         cancellation: &CancellationContext,
     ) -> DesktopResult<ServerStatusOutput> {
-        self.server_status_with_deadline(server_url, env_file, token_file, cancellation, None)
-            .await
+        self.server_status_with_deadline(
+            server_url,
+            env_file,
+            token_file,
+            cancellation,
+            None,
+            false,
+        )
+        .await
     }
 
     pub async fn server_status_until(
@@ -157,6 +164,7 @@ impl WebCodexAdapter {
             token_file,
             cancellation,
             Some(deadline),
+            false,
         )
         .await
     }
@@ -168,6 +176,7 @@ impl WebCodexAdapter {
         token_file: Option<&Path>,
         cancellation: &CancellationContext,
         deadline: Option<Deadline>,
+        force_direct: bool,
     ) -> DesktopResult<ServerStatusOutput> {
         let webcodex = match deadline {
             Some(deadline) => self
@@ -186,6 +195,9 @@ impl WebCodexAdapter {
         }
         if let Some(path) = token_file {
             args.extend(["--token-file".into(), path.to_string_lossy().to_string()]);
+        }
+        if force_direct || server_url.is_some_and(server_url_is_loopback) {
+            args.push("--no-system-proxy".into());
         }
         args.push("--json".into());
         let output: ServerStatusOutput = match deadline {
@@ -227,6 +239,7 @@ impl WebCodexAdapter {
             .arg("--config")
             .arg(config)
             .arg("--stop-on-stdin-eof");
+        configure_local_loopback_bypass_environment(&mut command);
         remove_tunnel_credentials(&mut command);
         Ok(command)
     }
@@ -300,26 +313,22 @@ impl WebCodexAdapter {
     ) -> DesktopResult<String> {
         let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
         let username = platform::current_username();
-        let output: PairingCreateOutput = run_json(
-            &webcodex,
-            &[
-                "pairing".into(),
-                "create".into(),
-                "--server-url".into(),
-                server_url.into(),
-                "--env-file".into(),
-                env_file.to_string_lossy().to_string(),
-                "--username".into(),
-                username,
-                "--ttl-secs".into(),
-                "600".into(),
-                "--json".into(),
-            ],
-            None,
-            true,
-            cancellation,
-        )
-        .await?;
+        let mut args = vec![
+            "pairing".into(),
+            "create".into(),
+            "--server-url".into(),
+            server_url.into(),
+            "--env-file".into(),
+            env_file.to_string_lossy().to_string(),
+            "--username".into(),
+            username,
+            "--ttl-secs".into(),
+            "600".into(),
+            "--json".into(),
+        ];
+        args.push("--no-system-proxy".into());
+        let output: PairingCreateOutput =
+            run_json(&webcodex, &args, None, true, cancellation).await?;
         if !output.pairing_code.starts_with("wc_pair_") {
             return Err(invalid_contract("pairing create"));
         }
@@ -353,7 +362,7 @@ impl WebCodexAdapter {
                     "Check local app-data permissions and retry.",
                 )
             })?;
-        let args = vec![
+        let mut args = vec![
             "login".into(),
             server_url.into(),
             "--code-stdin".into(),
@@ -371,6 +380,9 @@ impl WebCodexAdapter {
             project.path.clone(),
             "--json".into(),
         ];
+        if server_url_is_loopback(server_url) {
+            args.push("--no-system-proxy".into());
+        }
         let output: LoginOutput = run_json(
             &webcodex,
             &args,
@@ -431,7 +443,7 @@ impl WebCodexAdapter {
                 .clone(),
             None => self.ensure_binaries(cancellation).await?.webcodex.clone(),
         };
-        let args = [
+        let mut args = vec![
             "runner".into(),
             "status".into(),
             "--config".into(),
@@ -442,6 +454,9 @@ impl WebCodexAdapter {
             identity.user_token_file.to_string_lossy().to_string(),
             "--json".into(),
         ];
+        if server_url_is_loopback(&identity.server_url) {
+            args.push("--no-system-proxy".into());
+        }
         let output: RunnerStatusOutput = match deadline {
             Some(deadline) => {
                 run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
@@ -572,7 +587,7 @@ impl WebCodexAdapter {
         identity: &ProjectRuntimeIdentity,
         cancellation: &CancellationContext,
     ) -> DesktopResult<Option<i64>> {
-        let args = [
+        let mut args = vec![
             "ops".into(),
             "windows".into(),
             "--server-url".into(),
@@ -585,8 +600,10 @@ impl WebCodexAdapter {
             "64".into(),
             "--json".into(),
         ];
-        let output: OpsWindowsOutput =
-            run_json(webcodex, &args, None, false, cancellation).await?;
+        if server_url_is_loopback(&identity.server_url) {
+            args.push("--no-system-proxy".into());
+        }
+        let output: OpsWindowsOutput = run_json(webcodex, &args, None, false, cancellation).await?;
         Ok(latest_chatgpt_activity(&output))
     }
 
@@ -623,7 +640,7 @@ impl WebCodexAdapter {
                 .clone(),
             None => self.ensure_binaries(cancellation).await?.webcodex.clone(),
         };
-        let args = [
+        let mut args = vec![
             "ops".into(),
             "projects".into(),
             "--server-url".into(),
@@ -632,6 +649,9 @@ impl WebCodexAdapter {
             identity.user_token_file.to_string_lossy().to_string(),
             "--json".into(),
         ];
+        if server_url_is_loopback(&identity.server_url) {
+            args.push("--no-system-proxy".into());
+        }
         let output: OpsProjectsOutput = match deadline {
             Some(deadline) => {
                 run_json_until(&webcodex, &args, None, false, cancellation, deadline).await?
@@ -644,6 +664,19 @@ impl WebCodexAdapter {
             .iter()
             .any(|candidate| ops_project_is_ready(candidate, identity)))
     }
+}
+
+fn server_url_is_loopback(server_url: &str) -> bool {
+    Url::parse(server_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .is_some_and(|host| {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            host.eq_ignore_ascii_case("localhost")
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
 }
 
 fn default_allowed_root(canonical: &Path) -> PathBuf {
@@ -767,6 +800,31 @@ pub fn validate_server_url(value: &str) -> DesktopResult<String> {
     Ok(value.to_string())
 }
 
+fn configure_local_loopback_bypass_environment(command: &mut Command) {
+    for key in ["NO_PROXY", "no_proxy"] {
+        let mut entries = std::env::var(key)
+            .ok()
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for loopback in ["127.0.0.1", "localhost", "::1"] {
+            if !entries
+                .iter()
+                .any(|entry| entry.eq_ignore_ascii_case(loopback))
+            {
+                entries.push(loopback.to_string());
+            }
+        }
+        command.env(key, entries.join(","));
+    }
+}
+
 fn configure_tunnel_proxy_environment(command: &mut Command, proxy: Option<&str>) {
     for key in [
         "HTTP_PROXY",
@@ -881,6 +939,14 @@ mod tests {
     }
 
     #[test]
+    fn loopback_server_urls_bypass_system_proxy_only_for_local_origins() {
+        assert!(server_url_is_loopback("http://127.0.0.1:8080"));
+        assert!(server_url_is_loopback("http://localhost:8080"));
+        assert!(server_url_is_loopback("http://[::1]:8080"));
+        assert!(!server_url_is_loopback("https://example.com"));
+    }
+
+    #[test]
     fn quick_share_only_inherits_control_plane_credentials_for_openai_provider() {
         let binaries = ResolvedBinaries {
             directory: PathBuf::from("bin"),
@@ -934,6 +1000,55 @@ mod tests {
             name.to_str() == Some("NO_PROXY")
                 && value.and_then(|value| value.to_str()) == Some("127.0.0.1,localhost,::1")
         }));
+    }
+
+    #[test]
+    fn local_runner_bypasses_loopback_without_overriding_proxy_servers() {
+        let binaries = ResolvedBinaries {
+            directory: PathBuf::from("bin"),
+            webcodex: PathBuf::from("webcodex"),
+            server: PathBuf::from("webcodex-server"),
+            runner: PathBuf::from("webcodex-runner"),
+            version: "0.4.1".to_string(),
+            git_commit: "0123456789abcdef".to_string(),
+            source: super::super::cli::ResolvedBinarySource::Environment,
+        };
+        let adapter = WebCodexAdapter {
+            binaries: Some(binaries),
+            bundled_runtime_dir: None,
+        };
+        let command = adapter
+            .local_runner_command(Path::new("runner.toml"))
+            .unwrap();
+        let env: Vec<_> = command.get_envs().collect();
+        let no_proxy = env
+            .iter()
+            .find(|(name, _)| {
+                name.to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("NO_PROXY"))
+            })
+            .and_then(|(_, value)| *value)
+            .and_then(|value| value.to_str())
+            .expect("local Runner should define a loopback bypass");
+        for loopback in ["127.0.0.1", "localhost", "::1"] {
+            assert!(
+                no_proxy.split(',').any(|entry| entry == loopback),
+                "NO_PROXY={no_proxy}"
+            );
+        }
+        for key in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        ] {
+            assert!(
+                !env.iter().any(|(name, _)| name.to_str() == Some(key)),
+                "Desktop must not override {key}"
+            );
+        }
     }
 
     #[test]
