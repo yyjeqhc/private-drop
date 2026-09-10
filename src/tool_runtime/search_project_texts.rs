@@ -7,8 +7,8 @@ use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::time::Instant;
+use webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES as MAX_SERIALIZED_OUTPUT_BYTES;
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
-use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
 pub(crate) const MAX_SEARCH_PROJECT_TEXTS_QUERIES: usize = 8;
 // Keep search fanout below the query cap: each rg process can independently
@@ -477,7 +477,7 @@ fn mark_final_hard_cap_truncation(output: &mut Value, next_index: usize) {
     root.insert("truncation_reason".to_string(), json!("hard_result_cap"));
 }
 
-/// Enforce the repository-wide 256 KiB ceiling against the actual final
+/// Enforce the explicit 512 KiB model-inspection ceiling against the actual final
 /// serialized ToolResult, including Session/continuity overlays. Search
 /// continuation remains query-granular: whole query items are removed from the
 /// end until the fully decorated result fits, and next_index points at the first
@@ -725,16 +725,17 @@ mod tests {
                 "error": null
             })
         };
+        let completed = vec![
+            item(0, "x".repeat(120 * 1024)),
+            item(1, "y".repeat(120 * 1024)),
+            item(2, "z".repeat(120 * 1024)),
+        ];
         let output = apply_output_budget(
             "agent:oe:demo",
             3,
-            vec![
-                item(0, "x".repeat(120 * 1024)),
-                item(1, "y".repeat(120 * 1024)),
-                item(2, "z".repeat(120 * 1024)),
-            ],
+            completed.clone(),
             &[false, false, false],
-            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+            Some(256 * 1024),
         );
         assert_eq!(output["returned_count"], 2);
         assert_eq!(output["next_index"], 2);
@@ -753,6 +754,16 @@ mod tests {
             "suggested_next_tool": "session_discussion_summary"
         });
         assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_SERIALIZED_OUTPUT_BYTES);
+
+        let expanded = apply_output_budget(
+            "agent:oe:demo",
+            3,
+            completed,
+            &[false, false, false],
+            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+        );
+        assert_eq!(expanded["returned_count"], 3);
+        assert_eq!(expanded["output_truncated"], false);
     }
 
     #[test]
@@ -836,7 +847,7 @@ mod tests {
         let output = apply_output_budget(
             "agent:oe:demo",
             1,
-            vec![matches_item(0, 199, 2_000)],
+            vec![matches_item(0, 199, 3_000)],
             &[false],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
         );
@@ -845,6 +856,42 @@ mod tests {
         assert_eq!(output["next_index"], 0);
         assert_eq!(output["output_truncated"], true);
         assert_eq!(output["truncation_reason"], "hard_result_cap");
+    }
+
+    #[test]
+    fn final_hard_cap_accounts_for_outer_session_overlay_bytes() {
+        let completed = (0..3)
+            .map(|index| default_matches_item(index, 1, 120 * 1024))
+            .collect::<Vec<_>>();
+        let mut result = ToolResult::ok(batch_output(
+            "agent:oe:demo",
+            3,
+            completed,
+            false,
+            None,
+            None,
+        ));
+        result.output["session_recovery"] = json!({
+            "model_facing_events": ["o".repeat(220 * 1024)]
+        });
+        assert!(final_model_result_len(&result.output, &[false; 3]) > MAX_SERIALIZED_OUTPUT_BYTES);
+
+        enforce_final_model_facing_hard_cap(&mut result, &[false; 3]);
+
+        assert_eq!(result.output["output_truncated"], true);
+        assert_eq!(result.output["truncation_reason"], "hard_result_cap");
+        let returned_count = result.output["returned_count"].as_u64().unwrap();
+        let next_index = result.output["next_index"].as_u64().unwrap();
+        assert!(returned_count < 3);
+        assert_eq!(next_index, returned_count);
+        assert_eq!(
+            result.output["session_recovery"]["model_facing_events"][0]
+                .as_str()
+                .unwrap()
+                .len(),
+            220 * 1024
+        );
+        assert!(final_model_result_len(&result.output, &[false; 3]) <= MAX_SERIALIZED_OUTPUT_BYTES);
     }
 
     #[test]

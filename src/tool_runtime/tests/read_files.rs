@@ -1052,7 +1052,7 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
     use crate::tool_runtime::sessions::{
         SessionContextRevisionAck, SessionTransport, ToolCallRecorderMetadata,
     };
-    use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
+    use webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES as MAX_SERIALIZED_OUTPUT_BYTES;
 
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
@@ -1077,7 +1077,12 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
                 .dispatch_with_auth_transport_options_and_metadata(
                     ToolCall::ReadFiles {
                         project,
-                        items: vec![item("a.rs", None, None), item("b.rs", None, None)],
+                        items: vec![
+                            item("a.rs", None, None),
+                            item("b.rs", None, None),
+                            item("c.rs", None, None),
+                            item("d.rs", None, None),
+                        ],
                         session_id: Some(session_id),
                         with_line_numbers: None,
                         max_result_bytes: Some(MAX_SERIALIZED_OUTPUT_BYTES),
@@ -1092,8 +1097,8 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
                 .await
         }
     });
-    let content = "x".repeat(122 * 1024);
-    for _ in 0..2 {
+    let content = "x".repeat(150 * 1024);
+    for _ in 0..4 {
         let request = next_read_request(&runtime, client_id).await;
         complete_read(&runtime, client_id, &request, &content).await;
     }
@@ -1113,7 +1118,7 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
     let serialized_len = serde_json::to_vec(&result).unwrap().len();
     assert!(
         serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
-        "direct Session overlays pushed read_files final response above the 256 KiB hard cap: {serialized_len} bytes"
+        "direct Session overlays pushed read_files final response above the 512 KiB inspection hard cap: {serialized_len} bytes"
     );
 }
 
@@ -1539,7 +1544,7 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
         ToolProtocolCapabilities, ToolTransport,
     };
     use crate::tool_runtime::sessions::SessionContextRevisionAck;
-    use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
+    use webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES as MAX_SERIALIZED_OUTPUT_BYTES;
 
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
@@ -1556,7 +1561,12 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
     let auth = auth_context(None, true);
     let arguments = json!({
         "project": project,
-        "items": [{"path": "a.rs"}, {"path": "b.rs"}],
+        "items": [
+            {"path": "a.rs"},
+            {"path": "b.rs"},
+            {"path": "c.rs"},
+            {"path": "d.rs"}
+        ],
         "max_result_bytes": MAX_SERIALIZED_OUTPUT_BYTES
     });
 
@@ -1592,8 +1602,8 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
                 .await
         }
     });
-    let content = "x".repeat(122 * 1024);
-    for _ in 0..2 {
+    let content = "x".repeat(150 * 1024);
+    for _ in 0..4 {
         let request = next_read_request(&runtime, client_id).await;
         complete_read(&runtime, client_id, &request, &content).await;
     }
@@ -1612,11 +1622,13 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
     );
     assert_eq!(result.output["output_truncated"], true);
     assert_eq!(result.output["truncation_reason"], "hard_result_cap");
-    assert_eq!(result.output["returned_count"], 1);
-    assert_eq!(result.output["next_index"], 1);
+    let returned_count = result.output["returned_count"].as_u64().unwrap();
+    let next_index = result.output["next_index"].as_u64().unwrap();
+    assert!(returned_count < 4);
+    assert_eq!(next_index, returned_count);
     let serialized_len = serde_json::to_vec(&result).unwrap().len();
     assert!(
         serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
-        "outer Session overlays pushed read_files final response above the 256 KiB hard cap: {serialized_len} bytes"
+        "outer Session overlays pushed read_files final response above the 512 KiB inspection hard cap: {serialized_len} bytes"
     );
 }

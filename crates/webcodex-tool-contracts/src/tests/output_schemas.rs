@@ -406,13 +406,13 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
                     "kind": "increase_result_budget",
                     "safe_cursor": false,
                     "next_index": 0,
-                    "suggested_max_result_bytes": 262144,
+                    "suggested_max_result_bytes": 524288,
                     "suggested_call": {
                         "tool": "read_files",
                         "arguments": {
                             "project": "agent:oe:demo",
                             "items": [{"path": "src/0.rs"}],
-                            "max_result_bytes": 262144
+                            "max_result_bytes": 524288
                         }
                     }
                 }

@@ -5,6 +5,8 @@ pub const MIN_SEARCH_PROJECT_TEXTS_RESULT_BYTES: usize = 8 * 1024;
 pub const DEFAULT_SEARCH_PROJECT_TEXTS_RESULT_BYTES: usize = 64 * 1024;
 pub const MIN_READ_FILES_RESULT_BYTES: usize = 8 * 1024;
 pub const DEFAULT_READ_FILES_RESULT_BYTES: usize = 64 * 1024;
+/// Stable model-facing ceiling for explicitly requested broad/deep batch inspection.
+pub const MODEL_INSPECTION_MAX_RESULT_BYTES: usize = 512 * 1024;
 pub const FILE_READ_MAX_SERIALIZED_OUTPUT_BYTES: usize = 256 * 1024;
 pub const FILE_READ_DEFAULT_LIMIT: usize = 2000;
 pub const FILE_READ_MAX_LIMIT: usize = 2000;

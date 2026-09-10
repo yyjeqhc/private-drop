@@ -35,7 +35,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "increase_result_budget",
         "no fake continuation",
         "complete a current partial item",
-        "256 kib",
+        "512 kib",
         "exact resolved project",
         "business session_id",
     ] {

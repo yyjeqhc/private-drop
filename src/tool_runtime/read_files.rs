@@ -6,8 +6,8 @@ use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::time::Instant;
+use webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES as MAX_SERIALIZED_OUTPUT_BYTES;
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
-use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
 pub(crate) const MAX_READ_FILES_ITEMS: usize = 8;
 // A max-size read batch may issue all eight independent read-only requests in
@@ -739,7 +739,7 @@ fn mark_final_hard_cap_truncation(output: &mut Value, next_index: usize) {
     root.insert("truncation_reason".to_string(), json!("hard_result_cap"));
 }
 
-/// Enforce the repository-wide 256 KiB ceiling against the actual final
+/// Enforce the explicit 512 KiB model-inspection ceiling against the actual final
 /// serialized ToolResult, including Session/continuity overlays. The primary
 /// batch budget remains independent; this pass only removes/shortens read body
 /// content when the fully decorated response would otherwise violate the hard
@@ -1053,15 +1053,17 @@ mod tests {
                 "error": null
             })
         };
-        let projection = batch_projection(2, Some(MAX_SERIALIZED_OUTPUT_BYTES));
+        let legacy_budget = 256 * 1024;
+        let projection = batch_projection(2, Some(legacy_budget));
+        let completed = vec![
+            item(0, "x".repeat(140 * 1024)),
+            item(1, "y".repeat(140 * 1024)),
+        ];
         let output = apply_output_budget(
             "agent:oe:demo",
             2,
-            vec![
-                item(0, "x".repeat(140 * 1024)),
-                item(1, "y".repeat(140 * 1024)),
-            ],
-            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+            completed.clone(),
+            Some(legacy_budget),
             &projection,
         );
         assert_eq!(output["returned_count"], 1);
@@ -1069,24 +1071,36 @@ mod tests {
         assert_eq!(output["next_index"], 1);
         assert_eq!(output["items"].as_array().unwrap().len(), 1);
         let serialized = serde_json::to_vec(&ToolResult::ok(output.clone())).unwrap();
-        assert!(serialized.len() <= MAX_SERIALIZED_OUTPUT_BYTES);
+        assert!(serialized.len() <= legacy_budget);
         let mut model = ToolResult::ok(output);
         add_actionable_read_continuations(&projection, &mut model);
         super::super::dispatch::sparsify_complete_read_success("read_files", &mut model);
         let serialized = serde_json::to_vec(&model).unwrap();
         assert!(
-            serialized.len() <= MAX_SERIALIZED_OUTPUT_BYTES,
-            "actionable continuation must remain inside the 256 KiB hard cap: {} bytes",
+            serialized.len() <= legacy_budget,
+            "actionable continuation must remain inside the explicit 256 KiB budget: {} bytes",
             serialized.len()
         );
+
+        let expanded_projection = batch_projection(2, Some(MAX_SERIALIZED_OUTPUT_BYTES));
+        let expanded = apply_output_budget(
+            "agent:oe:demo",
+            2,
+            completed,
+            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+            &expanded_projection,
+        );
+        assert_eq!(expanded["returned_count"], 2);
+        assert_eq!(expanded["output_truncated"], false);
     }
 
     #[test]
     fn omitted_batch_items_have_reusable_sliced_read_files_call() {
+        let legacy_budget = 256 * 1024;
         let first = vec!["x".repeat(140 * 1024)];
         let second = vec!["y".repeat(140 * 1024)];
         let third = vec!["z".to_string()];
-        let mut projection = batch_projection(3, Some(MAX_SERIALIZED_OUTPUT_BYTES));
+        let mut projection = batch_projection(3, Some(legacy_budget));
         if let ReadModelProjection::Batch { session_id, .. } = &mut projection {
             *session_id = Some("wc_sess_batch_recovery".to_string());
         }
@@ -1098,7 +1112,7 @@ mod tests {
                 ranged_item(1, 1, &second),
                 ranged_item(2, 1, &third),
             ],
-            Some(MAX_SERIALIZED_OUTPUT_BYTES),
+            Some(legacy_budget),
             &projection,
         );
         assert_eq!(output["output_truncated"], true);
@@ -1140,7 +1154,7 @@ mod tests {
                 session_id: Some(ref next_session_id),
                 max_result_bytes: Some(bytes),
                 ..
-            } if bytes == MAX_SERIALIZED_OUTPUT_BYTES
+            } if bytes == legacy_budget
                 && next_session_id == "wc_sess_batch_recovery"
                 && items.iter().map(|item| item.path.as_str()).collect::<Vec<_>>()
                     == vec!["src/1.rs", "src/2.rs"]
@@ -1321,9 +1335,9 @@ mod tests {
             "agent:oe:demo",
             3,
             vec![
-                item(0, "x".repeat(120 * 1024)),
-                item(1, "y".repeat(120 * 1024)),
-                item(2, "z".repeat(120 * 1024)),
+                item(0, "x".repeat(180 * 1024)),
+                item(1, "y".repeat(180 * 1024)),
+                item(2, "z".repeat(180 * 1024)),
             ],
             Some(MAX_SERIALIZED_OUTPUT_BYTES),
             &batch_projection(3, Some(MAX_SERIALIZED_OUTPUT_BYTES)),
@@ -1593,6 +1607,19 @@ mod tests {
         assert!(complete_batch_model < complete_batch_canonical);
         assert!(budget_batch_model <= MAX_SERIALIZED_OUTPUT_BYTES);
         assert!(partial_plus_later_model <= DEFAULT_READ_FILES_RESULT_BYTES);
+    }
+
+    #[test]
+    fn inspection_ceiling_is_independent_from_single_file_read_cap() {
+        assert_eq!(MAX_SERIALIZED_OUTPUT_BYTES, 512 * 1024);
+        assert_eq!(
+            webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES,
+            256 * 1024
+        );
+        assert_eq!(
+            webcodex_workspace::file_read_range::MAX_RANGE_CONTENT_BYTES,
+            192 * 1024
+        );
     }
 
     #[test]

@@ -121,6 +121,34 @@ fn search_project_text_schema_declares_bounded_advanced_inputs() {
 }
 
 #[test]
+fn batch_inspection_result_budget_schema_uses_explicit_512_kib_ceiling() {
+    let specs = registered_tool_specs();
+    for name in ["read_files", "search_project_texts"] {
+        let schema = &spec_named(&specs, name).input_schema;
+        let budget = &schema["properties"]["max_result_bytes"];
+        assert_eq!(budget["minimum"], 8 * 1024, "{name}");
+        assert_eq!(budget["default"], 64 * 1024, "{name}");
+        assert_eq!(budget["maximum"], 512 * 1024, "{name}");
+
+        let request = |max_result_bytes| match name {
+            "read_files" => json!({
+                "project": "demo",
+                "items": [{"path": "src/lib.rs"}],
+                "max_result_bytes": max_result_bytes
+            }),
+            _ => json!({
+                "project": "demo",
+                "queries": [{"pattern": "needle"}],
+                "max_result_bytes": max_result_bytes
+            }),
+        };
+        assert!(test_support::validate_schema_instance(&request(256 * 1024), schema).is_ok());
+        assert!(test_support::validate_schema_instance(&request(512 * 1024), schema).is_ok());
+        assert!(test_support::validate_schema_instance(&request(512 * 1024 + 1), schema).is_err());
+    }
+}
+
+#[test]
 fn sync_validation_and_run_shell_timeout_schema_bounds() {
     let specs = registered_tool_specs();
     for (name, default) in [

@@ -644,7 +644,7 @@ fn suggested_read_files_arguments_schema() -> Value {
             "max_result_bytes": {
                 "type": "integer",
                 "minimum": webcodex_core::runtime_contract::MIN_READ_FILES_RESULT_BYTES,
-                "maximum": webcodex_core::runtime_contract::FILE_READ_MAX_SERIALIZED_OUTPUT_BYTES
+                "maximum": webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES
             }
         },
         "required": ["project", "items"]
@@ -677,14 +677,14 @@ fn read_batch_continuation_schema() -> Value {
             {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "Budget refinement used only when the current primary result budget could not return any part of the first remaining item. This is not a cursor; the suggested budget is bounded by the existing 256 KiB hard cap.",
+                "description": "Budget refinement used only when the current primary result budget could not return any part of the first remaining item. This is not a cursor; the suggested budget is bounded by the explicit 512 KiB inspection hard cap.",
                 "properties": {
                     "kind": {"type": "string", "const": "increase_result_budget"},
                     "safe_cursor": {"type": "boolean", "const": false},
                     "next_index": {"type": "integer", "const": 0},
                     "suggested_max_result_bytes": {
                         "type": "integer",
-                        "const": webcodex_core::runtime_contract::FILE_READ_MAX_SERIALIZED_OUTPUT_BYTES
+                        "const": webcodex_core::runtime_contract::MODEL_INSPECTION_MAX_RESULT_BYTES
                     },
                     "suggested_call": suggested_call
                 },
