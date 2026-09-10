@@ -547,7 +547,8 @@ impl DesktopCore {
         let default_project_dir = default_management_project_dir(&data_dir, &resource_dir);
         let config_path = data_dir.join("desktop-state.json");
         let config = load_config(&config_path, &activity)?;
-        let tunnel_config = TunnelConfig::load(&data_dir.join("secrets").join("tunnel-config.json"));
+        let tunnel_config =
+            TunnelConfig::load(&data_dir.join("secrets").join("tunnel-config.json"));
         let mut snapshot = DesktopStateSnapshot::default();
         snapshot.topology = config.topology.clone();
         snapshot.project = project_snapshot(&config);
