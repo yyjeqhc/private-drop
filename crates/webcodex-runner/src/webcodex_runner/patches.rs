@@ -120,6 +120,18 @@ fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
     write_file_atomic_strict(path, content, ".pd-line")
 }
 
+fn write_project_file_atomic(
+    path: &Path,
+    content: &str,
+    overwrite_existing: bool,
+) -> Result<(), String> {
+    if overwrite_existing {
+        write_file_atomic_strict(path, content, ".pd-write")
+    } else {
+        write_new_file_atomic(path, content)
+    }
+}
+
 fn parse_json_payload(request: &RunnerFilePayload) -> Result<serde_json::Value, String> {
     serde_json::from_str(request.content.as_deref().unwrap_or_default())
         .map_err(|e| format!("invalid json: {}", e))
@@ -331,7 +343,7 @@ pub(crate) fn handle_write_project_file_request(
     let changed = current.as_deref() != Some(content);
     if changed {
         if let Err(failure) = apply_write_project_file_change(resolved, content, |path, content| {
-            write_file_atomic_strict(path, content, ".pd-write")
+            write_project_file_atomic(path, content, exists)
         }) {
             return line_edit_stdout(
                 write_project_file_apply_error(serde_json::json!(path), failure),
@@ -958,6 +970,9 @@ fn write_new_file_atomic(path: &Path, content: &str) -> Result<(), String> {
         match std::fs::hard_link(&temporary, path) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&temporary);
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    let _ = dir.sync_all();
+                }
                 return Ok(());
             }
             Err(error) => {
@@ -2021,6 +2036,33 @@ pub(crate) fn handle_apply_text_edits_file_request(
 #[cfg(test)]
 mod write_project_file_effect_tests {
     use super::*;
+
+    #[test]
+    fn file_write_project_file_create_commit_preserves_concurrent_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("new.txt");
+        let existed_at_preflight = std::fs::symlink_metadata(&target).is_ok();
+        assert!(!existed_at_preflight);
+
+        // Another writer creates the target after the request's absence check.
+        std::fs::write(&target, "concurrent content").unwrap();
+        let failure =
+            apply_write_project_file_change(&target, "request content", |path, content| {
+                write_project_file_atomic(path, content, existed_at_preflight)
+            })
+            .unwrap_err();
+
+        assert!(failure.rollback_complete);
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "concurrent content"
+        );
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
+        let output = write_project_file_apply_error(serde_json::json!("new.txt"), failure);
+        assert_eq!(output["created"], false);
+        assert_eq!(output["changed"], false);
+        assert_eq!(output["state_changed"], false);
+    }
 
     #[test]
     fn parent_creation_write_failure_reports_rollback_truth() {
