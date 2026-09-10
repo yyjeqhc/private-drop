@@ -1069,15 +1069,28 @@ fn gateway_error_tool_result(error: &GatewayError) -> ToolResult {
 }
 
 fn gateway_success_result(value: Value) -> Value {
-    let text = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
     json!({
-        "content": [{"type": "text", "text": text}],
+        "content": [{"type": "text", "text": "Plugin metadata available in structuredContent."}],
         "structuredContent": value,
         "isError": false
     })
 }
 
+const GATEWAY_ERROR_FALLBACK_BYTES: usize = 1024;
+
+fn bounded_gateway_error_fallback(message: &str) -> String {
+    if message.len() <= GATEWAY_ERROR_FALLBACK_BYTES {
+        return message.to_string();
+    }
+    let mut end = GATEWAY_ERROR_FALLBACK_BYTES;
+    while end > 0 && !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message[..end].to_string()
+}
+
 fn gateway_error_result(error: GatewayError) -> Value {
+    let text = bounded_gateway_error_fallback(&error.message);
     let dispatch_state = error.dispatch_state.map(dispatch_state_name);
     let mut structured = json!({
         "error": {"code": error.code, "message": error.message}
@@ -1088,7 +1101,6 @@ fn gateway_error_result(error: GatewayError) -> Value {
     if let Some(recovery) = error.recovery {
         structured["recovery"] = Value::String(recovery.to_string());
     }
-    let text = serde_json::to_string(&structured).unwrap_or_else(|_| "{}".to_string());
     json!({
         "content": [{"type": "text", "text": text}],
         "structuredContent": structured,
@@ -1120,6 +1132,88 @@ mod tests {
                 output_schema: None,
                 annotations: None,
             },
+        }
+    }
+
+    #[test]
+    fn webcodex_generated_gateway_results_keep_canonical_data_only_in_structured_content() {
+        let metadata = json!({
+            "runner": "runner-a",
+            "plugins": [{"plugin": "repo-tools", "status": "ready"}]
+        });
+        let rendered = render_gateway_result(Ok(GatewaySuccess::Metadata(metadata.clone())));
+        assert_eq!(rendered["structuredContent"], metadata);
+        assert_eq!(rendered["isError"], false);
+        assert_eq!(
+            rendered["content"][0]["text"],
+            "Plugin metadata available in structuredContent."
+        );
+        assert!(!rendered["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("repo-tools"));
+
+        let message = "é".repeat(GATEWAY_ERROR_FALLBACK_BYTES);
+        let rendered = gateway_error_result(GatewayError {
+            code: "plugin_replaced".to_string(),
+            message: message.clone(),
+            recovery: Some("Re-list the Plugin before retrying."),
+            dispatch_state: Some(PluginDispatchState::OutcomeUnknown),
+        });
+        assert_eq!(rendered["isError"], true);
+        assert_eq!(
+            rendered["structuredContent"]["error"]["code"],
+            "plugin_replaced"
+        );
+        assert_eq!(rendered["structuredContent"]["error"]["message"], message);
+        assert_eq!(
+            rendered["structuredContent"]["dispatchState"],
+            "outcome_unknown"
+        );
+        assert_eq!(
+            rendered["structuredContent"]["recovery"],
+            "Re-list the Plugin before retrying."
+        );
+        let fallback = rendered["content"][0]["text"].as_str().unwrap();
+        assert!(fallback.len() <= GATEWAY_ERROR_FALLBACK_BYTES);
+        assert!(!fallback.contains("plugin_replaced"));
+        assert!(!fallback.contains("Re-list the Plugin"));
+    }
+
+    #[test]
+    fn provider_tool_results_are_passed_through_without_gateway_projection() {
+        let cases = [
+            PluginToolResult {
+                content: vec![PluginContent::Text {
+                    text: "text-only".to_string(),
+                }],
+                structured_content: None,
+                is_error: false,
+            },
+            PluginToolResult {
+                content: vec![],
+                structured_content: Some(json!({"kind": "structured-only"})),
+                is_error: false,
+            },
+            PluginToolResult {
+                content: vec![PluginContent::Text {
+                    text: "dual-text".to_string(),
+                }],
+                structured_content: Some(json!({"kind": "dual"})),
+                is_error: false,
+            },
+            PluginToolResult {
+                content: vec![PluginContent::Text {
+                    text: "provider-error".to_string(),
+                }],
+                structured_content: Some(json!({"code": "PROVIDER_ERROR"})),
+                is_error: true,
+            },
+        ];
+        for result in cases {
+            let expected = serde_json::to_value(&result).unwrap();
+            let rendered = render_gateway_result(Ok(GatewaySuccess::ToolResult(result)));
+            assert_eq!(rendered, expected);
         }
     }
 

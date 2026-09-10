@@ -599,15 +599,28 @@ fn render_gateway_result(result: Result<GatewaySuccess, GatewayError>) -> Value 
 }
 
 fn gateway_success_result(value: Value) -> Value {
-    let text = serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string());
     json!({
-        "content": [{"type": "text", "text": text}],
+        "content": [{"type": "text", "text": "Local MCP metadata available in structuredContent."}],
         "structuredContent": value,
         "isError": false
     })
 }
 
+const GATEWAY_ERROR_FALLBACK_BYTES: usize = 1024;
+
+fn bounded_gateway_error_fallback(message: &str) -> String {
+    if message.len() <= GATEWAY_ERROR_FALLBACK_BYTES {
+        return message.to_string();
+    }
+    let mut end = GATEWAY_ERROR_FALLBACK_BYTES;
+    while end > 0 && !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message[..end].to_string()
+}
+
 fn gateway_error_result(error: GatewayError) -> Value {
+    let text = bounded_gateway_error_fallback(&error.message);
     let dispatch_state = error.dispatch_state.map(dispatch_state_name);
     let mut structured = json!({
         "error": {
@@ -621,7 +634,6 @@ fn gateway_error_result(error: GatewayError) -> Value {
     if let Some(recovery) = error.recovery {
         structured["recovery"] = Value::String(recovery.to_string());
     }
-    let text = serde_json::to_string(&structured).unwrap_or_else(|_| "{}".to_string());
     json!({
         "content": [{"type": "text", "text": text}],
         "structuredContent": structured,
@@ -640,6 +652,88 @@ fn dispatch_state_name(state: McpGatewayDispatchState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webcodex_generated_gateway_results_keep_canonical_data_only_in_structured_content() {
+        let metadata = json!({
+            "server": "repo-tools",
+            "tools": [{"name": "search_symbol"}]
+        });
+        let rendered = render_gateway_result(Ok(GatewaySuccess::Metadata(metadata.clone())));
+        assert_eq!(rendered["structuredContent"], metadata);
+        assert_eq!(rendered["isError"], false);
+        assert_eq!(
+            rendered["content"][0]["text"],
+            "Local MCP metadata available in structuredContent."
+        );
+        assert!(!rendered["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("search_symbol"));
+
+        let message = "é".repeat(GATEWAY_ERROR_FALLBACK_BYTES);
+        let rendered = gateway_error_result(GatewayError {
+            code: "provider_schema_changed".to_string(),
+            message: message.clone(),
+            recovery: Some("Describe the provider tool again before retrying."),
+            dispatch_state: Some(McpGatewayDispatchState::OutcomeUnknown),
+        });
+        assert_eq!(rendered["isError"], true);
+        assert_eq!(
+            rendered["structuredContent"]["error"]["code"],
+            "provider_schema_changed"
+        );
+        assert_eq!(rendered["structuredContent"]["error"]["message"], message);
+        assert_eq!(
+            rendered["structuredContent"]["dispatchState"],
+            "outcome_unknown"
+        );
+        assert_eq!(
+            rendered["structuredContent"]["recovery"],
+            "Describe the provider tool again before retrying."
+        );
+        let fallback = rendered["content"][0]["text"].as_str().unwrap();
+        assert!(fallback.len() <= GATEWAY_ERROR_FALLBACK_BYTES);
+        assert!(!fallback.contains("provider_schema_changed"));
+        assert!(!fallback.contains("Describe the provider tool"));
+    }
+
+    #[test]
+    fn upstream_tool_results_are_passed_through_without_gateway_projection() {
+        let cases = [
+            McpGatewayToolResult {
+                content: vec![McpGatewayContent::Text {
+                    text: "text-only".to_string(),
+                }],
+                structured_content: None,
+                is_error: false,
+            },
+            McpGatewayToolResult {
+                content: vec![],
+                structured_content: Some(json!({"kind": "structured-only"})),
+                is_error: false,
+            },
+            McpGatewayToolResult {
+                content: vec![McpGatewayContent::Text {
+                    text: "dual-text".to_string(),
+                }],
+                structured_content: Some(json!({"kind": "dual"})),
+                is_error: false,
+            },
+            McpGatewayToolResult {
+                content: vec![McpGatewayContent::Text {
+                    text: "provider-error".to_string(),
+                }],
+                structured_content: Some(json!({"code": "PROVIDER_ERROR"})),
+                is_error: true,
+            },
+        ];
+        for result in cases {
+            let expected = serde_json::to_value(&result).unwrap();
+            let rendered = render_gateway_result(Ok(GatewaySuccess::UpstreamToolResult(result)));
+            assert_eq!(rendered, expected);
+        }
+    }
 
     #[test]
     fn fixed_tool_catalog_contract_has_no_runtime_identity_or_revision() {

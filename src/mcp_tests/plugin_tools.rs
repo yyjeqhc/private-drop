@@ -359,6 +359,10 @@ async fn describe_binding_with_provider_set(
         panic!("plugin_tool describe did not complete successfully");
     };
     assert_eq!(result["result"]["isError"], false);
+    assert_eq!(
+        result["result"]["content"][0]["text"],
+        "Plugin metadata available in structuredContent."
+    );
     let binding = result["result"]["structuredContent"]["binding"]
         .as_str()
         .expect("describe must return opaque binding")
@@ -917,6 +921,10 @@ async fn plugin_tool_list_discovers_only_visible_plugin_capable_runners() {
     let McpOutcome::Ok(value) = outcome else {
         panic!("plugin_tool list failed: {outcome:?}");
     };
+    assert_eq!(
+        value["result"]["content"][0]["text"],
+        "Plugin metadata available in structuredContent."
+    );
     let runners = value["result"]["structuredContent"]["runners"]
         .as_array()
         .expect("runner discovery array");
@@ -2193,6 +2201,10 @@ async fn plugin_tool_reload_describe_call_binds_exact_dynamic_provider_and_forge
         panic!("plugin_tool reload did not complete successfully");
     };
     assert_eq!(reload_result["result"]["isError"], false);
+    assert_eq!(
+        reload_result["result"]["content"][0]["text"],
+        "Plugin metadata available in structuredContent."
+    );
     assert!(reload_result["result"]["structuredContent"]
         .get("firstClassRestartRequired")
         .is_none());
