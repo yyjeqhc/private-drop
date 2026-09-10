@@ -19,8 +19,9 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build --silent",
     "test": "npm run build --silent && node --test test/*.test.mjs",
-    "pack:dry-run": "npm run build --silent && npm pack --dry-run"
+    "pack:dry-run": "npm pack --dry-run"
   },
   "engines": {
     "node": ">=18"
