@@ -41,7 +41,7 @@ pub(crate) fn handle_configured_skill_roots_request(
     let start = Instant::now();
     let result = match request {
         ConfiguredSkillRootsRequest::List => discover(config).and_then(|discovery| {
-            let response = ConfiguredSkillRootsListResponse {
+            let mut response = ConfiguredSkillRootsListResponse {
                 format: CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT.to_string(),
                 skills: discovery
                     .skills
@@ -52,10 +52,7 @@ pub(crate) fn handle_configured_skill_roots_request(
                 diagnostics: discovery.diagnostics,
                 discovery_truncated: discovery.discovery_truncated,
             };
-            response
-                .validate()
-                .map_err(|_| "configured_skill_response_invalid".to_string())?;
-            serialize_bounded(&response)
+            serialize_list_bounded(&mut response)
         }),
         ConfiguredSkillRootsRequest::Read {
             skill_id,
@@ -453,6 +450,25 @@ fn push_diagnostic(diagnostics: &mut Vec<String>, code: &str) {
     }
 }
 
+fn serialize_list_bounded(
+    response: &mut ConfiguredSkillRootsListResponse,
+) -> Result<String, String> {
+    loop {
+        response
+            .validate()
+            .map_err(|_| "configured_skill_response_invalid".to_string())?;
+        let output = serde_json::to_string(response)
+            .map_err(|_| "configured_skill_response_invalid".to_string())?;
+        if output.len() <= CONFIGURED_SKILL_ROOTS_RESPONSE_MAX_BYTES {
+            return Ok(output);
+        }
+        if response.skills.pop().is_none() {
+            return Err("configured_skill_response_too_large".to_string());
+        }
+        response.discovery_truncated = true;
+    }
+}
+
 fn serialize_bounded<T: serde::Serialize>(value: &T) -> Result<String, String> {
     let output = serde_json::to_string(value)
         .map_err(|_| "configured_skill_response_invalid".to_string())?;
@@ -580,6 +596,36 @@ mod tests {
                 .skill_id
                 .contains(&second.path().to_string_lossy().as_ref()));
         }
+    }
+
+    #[test]
+    fn list_response_truncates_valid_unicode_descriptors_to_wire_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let description = "界".repeat(webcodex_core::skill_metadata::MAX_SKILL_DESCRIPTION_CHARS);
+        for index in 0..MAX_CONFIGURED_SKILL_PACKAGES {
+            let package = temp.path().join(format!("skill-{index:03}"));
+            fs::create_dir_all(&package).unwrap();
+            fs::write(
+                package.join(SKILL_DEFINITION_FILE),
+                format!("---\nname: skill-{index:03}\ndescription: {description}\n---\nbody\n"),
+            )
+            .unwrap();
+        }
+
+        let result = handle_configured_skill_roots_request(
+            &SkillsConfig {
+                roots: vec![temp.path().to_path_buf()],
+            },
+            ConfiguredSkillRootsRequest::List,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        let stdout = result.stdout.as_deref().unwrap();
+        assert!(stdout.len() <= CONFIGURED_SKILL_ROOTS_RESPONSE_MAX_BYTES);
+        let response: ConfiguredSkillRootsListResponse = serde_json::from_str(stdout).unwrap();
+        response.validate().unwrap();
+        assert!(response.discovery_truncated);
+        assert!(!response.skills.is_empty());
+        assert!(response.skills.len() < MAX_CONFIGURED_SKILL_PACKAGES);
     }
 
     #[test]
