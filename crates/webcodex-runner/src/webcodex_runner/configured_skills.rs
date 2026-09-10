@@ -296,16 +296,17 @@ fn read_resource(
     } else {
         MAX_CONFIGURED_SKILL_RESOURCE_FILE_BYTES
     };
-    let file_bytes = target
-        .metadata()
-        .map_err(|_| "skill_resource_unavailable".to_string())?
-        .len();
-    if file_bytes > max_file_bytes as u64 {
-        return Err("skill_resource_too_large".to_string());
-    }
+    // Enforce the file bound on the bytes actually read, not a metadata
+    // snapshot: configured resources can grow or be replaced between reads.
+    let bytes = read_bounded(&target, max_file_bytes).map_err(|code| match code {
+        "too_large" => "skill_resource_too_large".to_string(),
+        "invalid_utf8" => "skill_resource_unsupported_encoding".to_string(),
+        _ => "skill_resource_unavailable".to_string(),
+    })?;
+    let file_bytes = bytes.len();
     let range = file_read_range::EffectiveRange::new(Some(start_line), Some(limit));
-    let read = file_read_range::read_range_with_budget(
-        &target,
+    let read = file_read_range::read_range_from_with_budget(
+        bytes.as_slice(),
         range,
         MAX_CONFIGURED_SKILL_READ_TEXT_BYTES,
     )
@@ -339,7 +340,7 @@ fn read_resource(
         definition_revision: skill.descriptor.definition_revision,
         path: path.clone(),
         sha256: read.sha256,
-        file_bytes: file_bytes.min(usize::MAX as u64) as usize,
+        file_bytes,
         total_lines: read.total_lines,
         text: read.content,
         start_line: read.start_line,
@@ -479,268 +480,5 @@ fn serialize_bounded<T: serde::Serialize>(value: &T) -> Result<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn write_skill(root: &Path, package: &str, name: &str, body: &str) {
-        let package = root.join(package);
-        fs::create_dir_all(package.join("references")).unwrap();
-        fs::write(
-            package.join(SKILL_DEFINITION_FILE),
-            format!("---\nname: {name}\ndescription: configured test skill\n---\n{body}"),
-        )
-        .unwrap();
-        fs::write(package.join("references/guide.md"), "line one\nline two\n").unwrap();
-    }
-
-    #[test]
-    fn empty_roots_preserve_empty_source() {
-        let result = handle_configured_skill_roots_request(
-            &SkillsConfig::default(),
-            ConfiguredSkillRootsRequest::List,
-        );
-        let response: ConfiguredSkillRootsListResponse =
-            serde_json::from_str(result.stdout.as_deref().unwrap()).unwrap();
-        assert!(response.skills.is_empty());
-        assert!(response.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn live_discovery_and_resource_read_observe_changes() {
-        let temp = tempfile::tempdir().unwrap();
-        write_skill(temp.path(), "demo", "demo", "version one");
-        let config = SkillsConfig {
-            roots: vec![temp.path().to_path_buf()],
-        };
-        let first = discover(&config).unwrap();
-        assert_eq!(first.skills.len(), 1);
-        let id = first.skills[0].descriptor.skill_id.clone();
-        let revision = first.skills[0].descriptor.definition_revision.clone();
-        let listed =
-            handle_configured_skill_roots_request(&config, ConfiguredSkillRootsRequest::List);
-        let listed_text = listed.stdout.as_deref().unwrap();
-        assert!(!listed_text.contains(temp.path().to_string_lossy().as_ref()));
-        let definition =
-            read_resource(&config, &id, SKILL_DEFINITION_FILE, 1, 20, Some(&revision)).unwrap();
-        assert!(definition.text.contains("version one"));
-        let resource =
-            read_resource(&config, &id, "references/guide.md", 1, 20, Some(&revision)).unwrap();
-        assert_eq!(resource.text, "line one\nline two");
-
-        write_skill(temp.path(), "demo", "demo", "version two");
-        let second = discover(&config).unwrap();
-        assert_eq!(second.skills[0].descriptor.skill_id, id);
-        assert_ne!(second.skills[0].descriptor.definition_revision, revision);
-        assert_eq!(
-            read_resource(&config, &id, SKILL_DEFINITION_FILE, 1, 20, Some(&revision)).unwrap_err(),
-            "skill_definition_changed"
-        );
-        let fresh_revision = &second.skills[0].descriptor.definition_revision;
-        let fresh = read_resource(
-            &config,
-            &id,
-            SKILL_DEFINITION_FILE,
-            1,
-            20,
-            Some(fresh_revision),
-        )
-        .unwrap();
-        assert!(fresh.text.contains("version two"));
-        let serialized = serde_json::to_string(&fresh).unwrap();
-        assert!(!serialized.contains(temp.path().to_string_lossy().as_ref()));
-    }
-
-    #[test]
-    fn missing_root_is_a_bounded_path_free_diagnostic_not_an_empty_fallback() {
-        let temp = tempfile::tempdir().unwrap();
-        let missing = temp.path().join("missing-live-skills");
-        let result = handle_configured_skill_roots_request(
-            &SkillsConfig {
-                roots: vec![missing.clone()],
-            },
-            ConfiguredSkillRootsRequest::List,
-        );
-        assert_eq!(result.exit_code, Some(0));
-        let stdout = result.stdout.as_deref().unwrap();
-        assert!(!stdout.contains(missing.to_string_lossy().as_ref()));
-        let response: ConfiguredSkillRootsListResponse = serde_json::from_str(stdout).unwrap();
-        assert!(response.skills.is_empty());
-        assert_eq!(
-            response.diagnostics,
-            vec!["configured_skill_root_not_found".to_string()]
-        );
-    }
-
-    #[test]
-    fn same_package_in_two_roots_has_distinct_opaque_identity() {
-        let first = tempfile::tempdir().unwrap();
-        let second = tempfile::tempdir().unwrap();
-        write_skill(first.path(), "same", "same", "first");
-        write_skill(second.path(), "same", "same", "second");
-        let discovery = discover(&SkillsConfig {
-            roots: vec![first.path().to_path_buf(), second.path().to_path_buf()],
-        })
-        .unwrap();
-        assert_eq!(discovery.skills.len(), 2);
-        assert_ne!(
-            discovery.skills[0].descriptor.skill_id,
-            discovery.skills[1].descriptor.skill_id
-        );
-        for skill in discovery.skills {
-            assert!(!skill
-                .descriptor
-                .skill_id
-                .contains(&first.path().to_string_lossy().as_ref()));
-            assert!(!skill
-                .descriptor
-                .skill_id
-                .contains(&second.path().to_string_lossy().as_ref()));
-        }
-    }
-
-    #[test]
-    fn list_response_truncates_valid_unicode_descriptors_to_wire_budget() {
-        let temp = tempfile::tempdir().unwrap();
-        let description = "界".repeat(webcodex_core::skill_metadata::MAX_SKILL_DESCRIPTION_CHARS);
-        for index in 0..MAX_CONFIGURED_SKILL_PACKAGES {
-            let package = temp.path().join(format!("skill-{index:03}"));
-            fs::create_dir_all(&package).unwrap();
-            fs::write(
-                package.join(SKILL_DEFINITION_FILE),
-                format!("---\nname: skill-{index:03}\ndescription: {description}\n---\nbody\n"),
-            )
-            .unwrap();
-        }
-
-        let result = handle_configured_skill_roots_request(
-            &SkillsConfig {
-                roots: vec![temp.path().to_path_buf()],
-            },
-            ConfiguredSkillRootsRequest::List,
-        );
-        assert_eq!(result.exit_code, Some(0));
-        let stdout = result.stdout.as_deref().unwrap();
-        assert!(stdout.len() <= CONFIGURED_SKILL_ROOTS_RESPONSE_MAX_BYTES);
-        let response: ConfiguredSkillRootsListResponse = serde_json::from_str(stdout).unwrap();
-        response.validate().unwrap();
-        assert!(response.discovery_truncated);
-        assert!(!response.skills.is_empty());
-        assert!(response.skills.len() < MAX_CONFIGURED_SKILL_PACKAGES);
-    }
-
-    #[test]
-    fn configured_root_symlink_is_rejected() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::symlink;
-            let target = tempfile::tempdir().unwrap();
-            write_skill(target.path(), "demo", "demo", "body");
-            let holder = tempfile::tempdir().unwrap();
-            let link = holder.path().join("skills-link");
-            symlink(target.path(), &link).unwrap();
-            let discovery = discover(&SkillsConfig { roots: vec![link] }).unwrap();
-            assert!(discovery.skills.is_empty());
-            assert!(discovery
-                .diagnostics
-                .iter()
-                .any(|code| code == "configured_skill_root_link_not_allowed"));
-        }
-    }
-
-    #[test]
-    fn traversal_and_symlink_escape_are_rejected() {
-        let temp = tempfile::tempdir().unwrap();
-        write_skill(temp.path(), "demo", "demo", "body");
-        let config = SkillsConfig {
-            roots: vec![temp.path().to_path_buf()],
-        };
-        let skill = discover(&config).unwrap().skills.remove(0);
-        assert_eq!(
-            read_resource(
-                &config,
-                &skill.descriptor.skill_id,
-                "../secret",
-                1,
-                20,
-                None
-            )
-            .unwrap_err(),
-            "skill_resource_path_invalid"
-        );
-        assert_eq!(
-            read_resource(
-                &config,
-                &skill.descriptor.skill_id,
-                "/etc/passwd",
-                1,
-                20,
-                None
-            )
-            .unwrap_err(),
-            "skill_resource_path_invalid"
-        );
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::symlink;
-            let outside = tempfile::tempdir().unwrap();
-            fs::write(outside.path().join("secret.md"), "secret").unwrap();
-            symlink(
-                outside.path().join("secret.md"),
-                temp.path().join("demo/references/escape.md"),
-            )
-            .unwrap();
-            assert_eq!(
-                read_resource(
-                    &config,
-                    &skill.descriptor.skill_id,
-                    "references/escape.md",
-                    1,
-                    20,
-                    None,
-                )
-                .unwrap_err(),
-                "skill_resource_path_invalid"
-            );
-        }
-    }
-
-    #[test]
-    fn sensitive_package_names_are_not_discovered() {
-        let temp = tempfile::tempdir().unwrap();
-        write_skill(temp.path(), ".git", "hidden", "must stay hidden");
-        let discovery = discover(&SkillsConfig {
-            roots: vec![temp.path().to_path_buf()],
-        })
-        .unwrap();
-        assert!(discovery.skills.is_empty());
-        assert_eq!(discovery.invalid_count, 1);
-        assert!(discovery
-            .diagnostics
-            .iter()
-            .any(|code| code == "sensitive_skill_definition"));
-    }
-
-    #[test]
-    fn malformed_and_oversized_definitions_are_bounded_diagnostics() {
-        let temp = tempfile::tempdir().unwrap();
-        fs::create_dir_all(temp.path().join("bad")).unwrap();
-        fs::write(temp.path().join("bad/SKILL.md"), "not frontmatter").unwrap();
-        fs::create_dir_all(temp.path().join("huge")).unwrap();
-        fs::write(
-            temp.path().join("huge/SKILL.md"),
-            vec![b'x'; MAX_SKILL_DEFINITION_BYTES + 1],
-        )
-        .unwrap();
-        let discovery = discover(&SkillsConfig {
-            roots: vec![temp.path().to_path_buf()],
-        })
-        .unwrap();
-        assert_eq!(discovery.invalid_count, 2);
-        assert!(discovery.diagnostics.len() <= MAX_CONFIGURED_SKILL_DIAGNOSTICS);
-        assert!(discovery
-            .diagnostics
-            .iter()
-            .any(|code| code == "skill_definition_too_large"));
-    }
-}
+#[path = "configured_skills_tests.rs"]
+mod tests;
