@@ -89,6 +89,23 @@ class PathRiskFixtureTests(unittest.TestCase):
                 self.assertEqual(result["needs_desktop_frontend"], "false")
                 self.assertIn("plugin-sdk", result["categories"])
 
+    def test_safe_delete_dogfood_uses_plugin_sdk_contract_lane(self) -> None:
+        for path in (
+            "plugins/safe-delete/plugin.ts",
+            "plugins/safe-delete/domain.js",
+            "plugins/safe-delete/package-lock.json",
+        ):
+            with self.subTest(path=path):
+                result = classify(path)
+                self.assertEqual(result["needs_plugin_sdk"], "true")
+                self.assertEqual(result["needs_full_native"], "false")
+                self.assertEqual(result["needs_windows"], "false")
+                self.assertEqual(result["needs_macos"], "false")
+                self.assertEqual(result["needs_docker"], "false")
+                self.assertEqual(result["needs_frontend"], "false")
+                self.assertEqual(result["needs_desktop_frontend"], "false")
+                self.assertIn("plugin-sdk-dogfood", result["categories"])
+
     def test_npm_installer_change_requires_native_windows_package_lane(self) -> None:
         result = classify("npm/webcodex/install.js")
         self.assertEqual(result["needs_windows_package"], "true")
