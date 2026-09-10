@@ -55,6 +55,7 @@ pub fn run() {
             commands::update_tunnel_config,
             commands::inspect_project,
             commands::configure_local_setup,
+            commands::activate_local_project,
             commands::configure_remote_setup,
             commands::start_quick_share,
             commands::stop_quick_share,

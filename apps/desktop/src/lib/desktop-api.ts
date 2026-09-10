@@ -29,6 +29,10 @@ export const desktopApi = {
     invoke<DesktopState>("configure_local_setup", {
       request: { projectPath: projectPath ?? null },
     }),
+  activateLocalProject: (projectPath: string) =>
+    invoke<DesktopState>("activate_local_project", {
+      request: { projectPath },
+    }),
   configureRemote: (
     serverUrl: string,
     pairingCode: string,

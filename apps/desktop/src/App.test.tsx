@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   updateTunnelProxy: vi.fn(),
   activity: vi.fn(),
   configureLocal: vi.fn(),
+  activateLocalProject: vi.fn(),
   configureRemote: vi.fn(),
   startQuickShare: vi.fn(),
   stopQuickShare: vi.fn(),
@@ -251,9 +252,9 @@ describe("semantic Desktop UI", () => {
     await screen.findByRole("heading", { level: 2, name: "repo" });
     expect(screen.getByText("查看运行诊断").closest("details")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByRole("button", { name: "选择其他项目" }));
-    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
-    fireEvent.click(screen.getByRole("button", { name: "更改文件夹" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Picker unavailable");
+    expect(screen.getByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "repo" })).toBeInTheDocument();
     expect(api.configureLocal).not.toHaveBeenCalled();
   });
 
@@ -328,35 +329,121 @@ describe("semantic Desktop UI", () => {
     expect(screen.getByRole("main")).toHaveFocus();
   });
 
-  it("opens dashboard shortcuts and moves keyboard focus into the destination", async () => {
-    api.getState.mockResolvedValue(readyState);
+  it("switches a local project in place while preserving an active Tunnel", async () => {
+    const tunneledState: DesktopState = {
+      ...readyState,
+      topology: { ...readyState.topology!, exposure: { kind: "open_ai_tunnel" } },
+      regular_tunnel: {
+        provider: "openai",
+        status: "ready",
+        clipboard_state: "copied",
+        clipboard_contains: "tunnel_id",
+        ready_for_chatgpt: true,
+      },
+      preferred_connection: "open_ai_tunnel",
+    };
+    const projectC = {
+      path: "C:\\work\\next",
+      allowed_root: "C:\\work\\next",
+      is_git_repository: true,
+      runtime_project_id: "agent:desktop:next",
+    };
+    const switched: DesktopState = { ...tunneledState, project: projectC };
+    api.getState.mockResolvedValue(tunneledState);
+    api.observeChatgptActivity.mockResolvedValue(tunneledState);
+    api.activateLocalProject.mockResolvedValue(switched);
+    vi.mocked(open).mockResolvedValue(projectC.path);
+
     renderApp();
     fireEvent.click(await screen.findByRole("button", { name: /查看项目/ }));
     expect(screen.getByRole("heading", { level: 1, name: "此电脑上的项目" })).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveFocus();
     fireEvent.click(screen.getByRole("button", { name: "选择其他项目" }));
-    expect(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /返回运行概览/ }));
-    fireEvent.click(screen.getByRole("button", { name: "首页" }));
-    fireEvent.click(screen.getByRole("button", { name: /管理连接/ }));
-    expect(screen.getByRole("heading", { level: 1, name: "ChatGPT 连接" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "首页" }));
-    fireEvent.click(screen.getByRole("button", { name: /查看活动/ }));
-    expect(screen.getByRole("button", { name: "活动" })).toHaveAttribute("aria-current", "page");
-    await waitFor(() => expect(api.activity).toHaveBeenCalled());
+
+    await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledWith(projectC.path));
     expect(api.configureLocal).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getAllByText(projectC.path)).toHaveLength(2));
+    expect(screen.queryByRole("button", { name: /在此电脑使用 WebCodex/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Tunnel 已就绪，等待 ChatGPT")).toBeInTheDocument();
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
   });
 
-  it("takes Add project to setup and returns without reconfiguring the runtime", async () => {
-    api.getState.mockResolvedValue({ ...readyState, project: null });
+  it("uses full setup when no saved local project identity exists", async () => {
+    const noProject: DesktopState = { ...readyState, project: null };
+    api.getState.mockResolvedValue(noProject);
+    api.observeChatgptActivity.mockResolvedValue(noProject);
+
     renderApp();
     fireEvent.click(await screen.findByRole("button", { name: "项目" }));
     fireEvent.click(screen.getByRole("button", { name: /添加项目/ }));
+
     expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "首页" })).toHaveAttribute("aria-current", "page");
-    fireEvent.click(screen.getByRole("button", { name: /返回运行概览/ }));
-    expect(screen.getByRole("heading", { name: "WebCodex" })).toBeInTheDocument();
+    expect(api.activateLocalProject).not.toHaveBeenCalled();
     expect(api.configureLocal).not.toHaveBeenCalled();
+  });
+
+  it("falls back to bounded local setup for a legacy Runner without restarting Tunnel", async () => {
+    const tunneledState: DesktopState = {
+      ...readyState,
+      topology: { ...readyState.topology!, exposure: { kind: "open_ai_tunnel" } },
+      regular_tunnel: {
+        provider: "openai",
+        status: "ready",
+        clipboard_state: "copied",
+        clipboard_contains: "tunnel_id",
+        ready_for_chatgpt: true,
+      },
+      preferred_connection: "open_ai_tunnel",
+    };
+    const projectC = { ...readyState.project!, path: "C:\\work\\legacy", allowed_root: "C:\\work\\legacy" };
+    const switched: DesktopState = { ...tunneledState, project: projectC };
+    api.getState.mockResolvedValue(tunneledState);
+    api.observeChatgptActivity.mockResolvedValue(tunneledState);
+    api.activateLocalProject.mockRejectedValue({
+      code: "project_activation_restart_required",
+      message: "Runner restart required",
+      next_action: "Refresh this Runner.",
+    });
+    api.configureLocal.mockResolvedValue(switched);
+    vi.mocked(open).mockResolvedValue(projectC.path);
+
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: /查看项目/ }));
+    fireEvent.click(screen.getByRole("button", { name: "选择其他项目" }));
+
+    await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledWith(projectC.path));
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith(projectC.path));
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    expect(screen.getByText("Tunnel 已就绪，等待 ChatGPT")).toBeInTheDocument();
+  });
+
+  it("does not start a duplicate Tunnel when local setup runs while one is already active", async () => {
+    const tunneledState: DesktopState = {
+      ...readyState,
+      topology: { ...readyState.topology!, exposure: { kind: "open_ai_tunnel" } },
+      regular_tunnel: {
+        provider: "openai",
+        status: "ready",
+        clipboard_state: "copied",
+        clipboard_contains: "tunnel_id",
+        ready_for_chatgpt: true,
+      },
+      preferred_connection: "open_ai_tunnel",
+    };
+    api.getState.mockResolvedValue(tunneledState);
+    api.observeChatgptActivity.mockResolvedValue(tunneledState);
+    api.configureLocal.mockResolvedValue(tunneledState);
+
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    fireEvent.click(screen.getByRole("button", { name: "更改运行方式" }));
+    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    expect(screen.queryByRole("checkbox", { name: "配置完成后连接 ChatGPT" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
+
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith(tunneledState.project!.path));
+    expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
   });
 
   it("navigates by accessible role/name and marks the current page", async () => {

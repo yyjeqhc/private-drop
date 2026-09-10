@@ -14,6 +14,7 @@ interface DashboardProps {
   onRefresh: () => void;
   onResumeRuntime: () => void;
   onConnectChatGpt: () => void;
+  onChooseProject: () => void;
   onChangeSetup: () => void;
   onNavigate: (page: "projects" | "connection" | "activity") => void;
   onStopQuickShare: () => void;
@@ -26,6 +27,7 @@ export function Dashboard({
   onRefresh,
   onResumeRuntime,
   onConnectChatGpt,
+  onChooseProject,
   onChangeSetup,
   onNavigate,
   onStopQuickShare,
@@ -102,7 +104,7 @@ export function Dashboard({
           <h2>{state.project?.path.split(/[\\/]/).filter(Boolean).pop() ?? t("home.noProject")}</h2>
           <p>{state.project?.path ?? t("setup.projectRequired")}</p>
         </div>
-        <button className="secondary-button" onClick={onChangeSetup} disabled={operationBusy || refreshing}>
+        <button className="secondary-button" onClick={onChooseProject} disabled={operationBusy || refreshing}>
           {state.project ? t("project.change") : t("project.add")}
         </button>
       </article>

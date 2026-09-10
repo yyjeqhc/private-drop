@@ -248,6 +248,20 @@ impl AppState {
             .await
     }
 
+    pub async fn activate_local_project(
+        &self,
+        project_path: &str,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::LocalProjectActivate, true)
+            .await?;
+        let result = core
+            .activate_local_project(project_path, &cancellation)
+            .await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
+    }
+
     pub async fn configure_remote_setup(
         &self,
         server_url: &str,
@@ -928,6 +942,99 @@ impl DesktopCore {
         };
         self.config.tunnel_proxy = TunnelProxyConfig { mode, custom_url };
         self.save_config().await?;
+        self.get_state().await
+    }
+
+    pub async fn activate_local_project(
+        &mut self,
+        project_path: &str,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        cancellation.check()?;
+        let local_full = self.config.topology.as_ref().is_some_and(|topology| {
+            topology.experience == Experience::Full
+                && matches!(topology.server, ServerTopology::Local)
+        });
+        if !local_full || self.snapshot.quick_share.is_some() {
+            return Err(DesktopError::new(
+                "unsupported_topology",
+                "Projects can only be activated in place on a local Full Runtime",
+                "Use the full runtime setup flow before activating another project.",
+            ));
+        }
+        if !self.snapshot.readiness.runtime_ready {
+            return Err(DesktopError::new(
+                "runtime_not_ready",
+                "The local Full Runtime is not ready for an in-place project activation",
+                "Restore the local runtime, then choose the project again.",
+            ));
+        }
+
+        let project = self.adapter.inspect_project(project_path).await?;
+        cancellation.check()?;
+        let identity = identity_from_config(&self.config).ok_or_else(|| {
+            DesktopError::new(
+                "runtime_not_ready",
+                "The saved local Runner identity is incomplete",
+                "Restore or reconfigure the local runtime before activating another project.",
+            )
+        })?;
+        let runner_client_id = stored_runner_client_id(&self.config).ok_or_else(|| {
+            DesktopError::new(
+                "runner_offline",
+                "The saved local Runner client identity is unavailable",
+                "Restore or reconfigure the local runtime before activating another project.",
+            )
+        })?;
+        let runner = self
+            .adapter
+            .observe_runner_connection(&identity, Some(&runner_client_id), cancellation)
+            .await?;
+        cancellation.check()?;
+        if !runner.online {
+            return Err(DesktopError::new(
+                "runner_offline",
+                "The current local Runner is not online",
+                "Restore the local runtime, then choose the project again.",
+            ));
+        }
+
+        let identity = self
+            .adapter
+            .activate_project(&identity, &runner_client_id, &project, cancellation)
+            .await?;
+        self.wait_for_project(&identity, cancellation).await?;
+        cancellation.check()?;
+
+        let previous_config = self.config.clone();
+        let previous_snapshot = self.snapshot.clone();
+        let mut committed_project = project;
+        committed_project.runtime_project_id = Some(identity.runtime_project_id.clone());
+        let runtime = self.config.runtime.as_mut().ok_or_else(|| {
+            DesktopError::new(
+                "runtime_not_ready",
+                "The local runtime disappeared during project activation",
+                "Restore the local runtime, then choose the project again.",
+            )
+        })?;
+        runtime.project_id = Some(identity.project_id);
+        runtime.runtime_project_id = Some(identity.runtime_project_id);
+        self.config.project = Some(committed_project.clone());
+        if let Err(error) = self.save_config().await {
+            self.config = previous_config;
+            self.snapshot = previous_snapshot;
+            self.publish_snapshot();
+            return Err(error);
+        }
+
+        self.snapshot.project = Some(committed_project);
+        self.snapshot.chatgpt_activity = None;
+        self.snapshot.readiness = aggregate_readiness(
+            self.snapshot.readiness.server.clone(),
+            self.snapshot.readiness.runner.clone(),
+            self.snapshot.readiness.exposure.clone(),
+            ProjectReadiness::Ready,
+        );
         self.get_state().await
     }
 
@@ -3912,7 +4019,7 @@ mod tests {
             .await
             .expect("inspect second project fixture");
         let switched = match core
-            .configure_local_setup(Some(&second_project.to_string_lossy()), &cancellation)
+            .activate_local_project(&second_project.to_string_lossy(), &cancellation)
             .await
         {
             Ok(snapshot) => snapshot,
@@ -3987,7 +4094,7 @@ mod tests {
 
         let project_b_runtime_id = switched_identity.runtime_project_id.clone();
         let repeated = core
-            .configure_local_setup(Some(&second_project.to_string_lossy()), &cancellation)
+            .activate_local_project(&second_project.to_string_lossy(), &cancellation)
             .await
             .expect("reselecting Project B is idempotent");
         assert_eq!(repeated.readiness.project, ProjectReadiness::Ready);

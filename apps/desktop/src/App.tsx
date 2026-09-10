@@ -1,6 +1,7 @@
 import brandIcon from "./assets/brand.png";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "./lib/desktop-api";
 import type {
   ActivityEntry,
@@ -242,6 +243,48 @@ export default function App() {
     }
   };
 
+  const chooseLocalProject = async () => {
+    if (!state || state.current_operation) return;
+    const topology = state.topology;
+    if (
+      !topology ||
+      topology.experience !== "full" ||
+      topology.server.kind !== "local" ||
+      !state.project ||
+      !state.readiness.runtime_ready
+    ) {
+      openSetup();
+      return;
+    }
+    setError(null);
+    try {
+      const selection = await open({
+        directory: true,
+        multiple: false,
+        title: t("setup.chooseProject"),
+      });
+      if (typeof selection !== "string") return;
+      try {
+        commitState(await desktopApi.activateLocalProject(selection));
+      } catch (value) {
+        const normalized = normalizeDesktopError(value);
+        if (
+          normalized.code !== "project_activation_capability_unavailable" &&
+          normalized.code !== "project_activation_restart_required"
+        ) {
+          throw normalized;
+        }
+        // Older Runners may need the existing bounded Local Setup fallback to
+        // refresh only the Desktop-owned Runner. Keep the user's already-running
+        // Tunnel untouched and do not require a second confirmation click.
+        commitState(await desktopApi.configureLocal(selection));
+      }
+      setShowSetup(false);
+    } catch (value) {
+      setError(normalizeDesktopError(value));
+    }
+  };
+
   const refresh = async () => {
     setRefreshing(true);
     try {
@@ -405,6 +448,7 @@ export default function App() {
             onRefresh={() => void refresh()}
             onResumeRuntime={() => void resumeRuntime()}
             onConnectChatGpt={() => void runStateOperation(desktopApi.startRegularTunnel)}
+            onChooseProject={() => void chooseLocalProject()}
             onChangeSetup={openSetup}
             onNavigate={setNavigation}
             onStopQuickShare={() => void runStateOperation(desktopApi.stopQuickShare)}
@@ -412,7 +456,7 @@ export default function App() {
           />
         ))}
         {navigation === "projects" && (
-          <ProjectsPanel state={state} onConfigure={openSetup} />
+          <ProjectsPanel state={state} onChooseProject={() => void chooseLocalProject()} />
         )}
         {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
@@ -446,6 +490,7 @@ function operationLabel(
 ) {
   switch (kind) {
     case "local_setup": return t("operation.localSetup");
+    case "local_project_activate": return t("operation.localProjectActivate");
     case "remote_setup": return t("operation.remoteSetup");
     case "quick_share_start": return t("operation.quickShareStart");
     case "quick_share_stop": return t("operation.quickShareStop");

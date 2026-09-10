@@ -178,6 +178,18 @@ pub async fn configure_local_setup(
 }
 
 #[tauri::command]
+pub async fn activate_local_project(
+    request: ProjectRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(
+        &app,
+        state.activate_local_project(&request.project_path).await,
+    )
+}
+
+#[tauri::command]
 pub async fn configure_remote_setup(
     request: RemoteSetupRequest,
     app: AppHandle,

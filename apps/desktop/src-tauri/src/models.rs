@@ -255,6 +255,7 @@ pub struct RegularTunnelState {
 #[serde(rename_all = "snake_case")]
 pub enum DesktopOperationKind {
     LocalSetup,
+    LocalProjectActivate,
     RemoteSetup,
     QuickShareStart,
     QuickShareStop,
@@ -271,6 +272,7 @@ impl DesktopOperationKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::LocalSetup => "local_setup",
+            Self::LocalProjectActivate => "local_project_activate",
             Self::RemoteSetup => "remote_setup",
             Self::QuickShareStart => "quick_share_start",
             Self::QuickShareStop => "quick_share_stop",

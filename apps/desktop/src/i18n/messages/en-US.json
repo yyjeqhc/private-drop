@@ -47,6 +47,7 @@
   "operation.cancel": "Stop current operation",
   "operation.cancelNote": "Stopping the current operation does not automatically repeat steps whose outcome is still unconfirmed.",
   "operation.localSetup": "Setting up WebCodex on this computer",
+  "operation.localProjectActivate": "Activating project",
   "operation.remoteSetup": "Connecting to the existing WebCodex Server",
   "operation.quickShareStart": "Starting Quick Share",
   "operation.quickShareStop": "Stopping Quick Share",

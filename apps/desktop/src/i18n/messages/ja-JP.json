@@ -47,6 +47,7 @@
   "operation.cancel": "現在の操作を停止",
   "operation.cancelNote": "操作を停止しても、結果が未確認の手順は自動的に繰り返されません。",
   "operation.localSetup": "このコンピューターに WebCodex を設定中",
+  "operation.localProjectActivate": "プロジェクトを有効化しています",
   "operation.remoteSetup": "既存の WebCodex Server に接続中",
   "operation.quickShareStart": "Quick Share を起動中",
   "operation.quickShareStop": "Quick Share を停止中",

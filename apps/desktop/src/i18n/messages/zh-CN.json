@@ -47,6 +47,7 @@
   "operation.cancel": "停止当前操作",
   "operation.cancelNote": "停止当前操作不会自动重复执行尚未确认的步骤。",
   "operation.localSetup": "正在配置本机 WebCodex",
+  "operation.localProjectActivate": "正在激活项目",
   "operation.remoteSetup": "正在连接现有 WebCodex Server",
   "operation.quickShareStart": "正在启动 Quick Share",
   "operation.quickShareStop": "正在停止 Quick Share",

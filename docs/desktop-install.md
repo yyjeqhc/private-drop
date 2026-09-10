@@ -122,7 +122,7 @@ This is an intentional authority boundary: the default Desktop project does not 
 
 For local pairing, Desktop derives a Server-compatible username from your OS username: names the Server already accepts are kept as-is; otherwise ASCII letters are lowercased, each run of unsupported characters becomes a single `-`, the name's own `-` characters are preserved, leading and trailing generated separators are removed, and the result is limited to 64 characters. Names with nothing left use `desktop`. This local pairing name is not an OS login identity; existing saved enrollment is reused on restart.
 
-Home puts overall readiness and the next action first, with direct shortcuts to Projects, Connection, and Activity. In Projects, use **Choose another project** when a default project already exists, or **Add project** when none is configured. Choose a runtime mode and workspace in setup before applying the change. **Back to overview** exits setup; entering or leaving setup alone does not change the runtime.
+Home puts overall readiness and the next action first, with direct shortcuts to Projects, Connection, and Activity. After a local Full Runtime is configured, **Choose another project** or **Add project** on Projects opens the folder picker and applies the selected exact project immediately. The full setup flow is reserved for first use or changing runtime topology.
 
 After setup, expand **View runtime diagnostics** on Home and confirm all three items:
 
@@ -132,7 +132,7 @@ After setup, expand **View runtime diagnostics** on Home and confirm all three i
 
 If you see **Project not ready** / `project_not_loaded`, normal Desktop users do **not** need to inspect a project registry. Use the **Reload project** action in the error card. Desktop retries the same project and, when required, restarts only the Runner process it owns within a bounded readiness window.
 
-When the runtime is already running and you choose another project, do not manually stop the whole runtime first. Select the new project and apply the change. Desktop keeps the local Service running, replaces its own old Runner when required, and waits for the new project to become ready. A failed transition must not leave the old project falsely displayed as ready.
+When the runtime is already running and you choose another project, do not manually stop the runtime or OpenAI Secure Tunnel first. Desktop extends the Runner policy with the exact selected root, hot-activates it when the Runner supports config reload, persists the new current project after readiness, and keeps the existing local Service and Tunnel. Only a legacy or incompatible Desktop-owned Runner is replaced. A failed transition must not leave the old project falsely displayed as ready.
 
 **Success looks like:** Service, Runner, and Project are all Ready, and the displayed project path is exact.
 

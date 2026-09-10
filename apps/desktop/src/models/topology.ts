@@ -132,6 +132,7 @@ export interface TunnelProxySnapshot {
 
 export type DesktopOperationKind =
   | "local_setup"
+  | "local_project_activate"
   | "remote_setup"
   | "quick_share_start"
   | "quick_share_stop"

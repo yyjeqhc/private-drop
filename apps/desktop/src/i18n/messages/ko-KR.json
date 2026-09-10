@@ -47,6 +47,7 @@
   "operation.cancel": "현재 작업 중지",
   "operation.cancelNote": "작업을 중지해도 결과가 확인되지 않은 단계는 자동으로 반복되지 않습니다.",
   "operation.localSetup": "이 컴퓨터에서 WebCodex 설정 중",
+  "operation.localProjectActivate": "프로젝트 활성화 중",
   "operation.remoteSetup": "기존 WebCodex Server에 연결 중",
   "operation.quickShareStart": "Quick Share 시작 중",
   "operation.quickShareStop": "Quick Share 중지 중",

@@ -23,12 +23,12 @@ For temporary use of one project, choose Quick Share and a connection provider. 
 
 Home prioritizes overall readiness, the next action, and your current project. Restore the runtime when stopped; start a secure tunnel once the local runtime and Tunnel configuration are ready.
 
-- **Current project** shows its name and full path. Choose another project to enter setup. Opening setup does not change the runtime; applying it does.
+- **Current project** shows its name and full path. In a configured local Full Runtime, **Choose another project** or **Add project** opens the folder picker and applies that exact project immediately; there is no second setup confirmation.
 - **Three steps** distinguish project readiness, connection preparation, and verified use.
 - **View runtime diagnostics** expands the detailed Service, Runner, project, and connection states.
 - **View projects / Manage connection / View activity** open the corresponding pages.
 
-You do not need to stop the runtime before changing projects. Desktop keeps its Service, replaces its own Runner when needed, and verifies the selected project. Do not broaden allowed directories to work around a project loading failure.
+You do not need to stop the runtime or OpenAI Secure Tunnel before changing projects. Desktop adds the selected exact project root to the Runner policy, hot-activates it on a compatible Runner, persists the current selection, and keeps the existing Service and Tunnel. Only a legacy or incompatible Runner may need its Desktop-owned Runner process refreshed. Do not broaden allowed directories to work around a project loading failure.
 
 ## Connections and recovery
 
