@@ -192,6 +192,13 @@ pub fn valid_lower_sha256(value: &str) -> bool {
 
 pub fn normalize_configured_skill_resource_path(path: &str) -> Result<String, &'static str> {
     let trimmed = path.trim();
+    #[cfg(windows)]
+    if trimmed.contains(':') {
+        // A colon beyond a drive prefix is an NTFS alternate data stream
+        // selector. Configured Skill resources are ordinary package files; do
+        // not let an opaque resource path reach directory-invisible streams.
+        return Err("invalid configured Skill resource path");
+    }
     if trimmed.is_empty()
         || trimmed.chars().count() > MAX_SKILL_RESOURCE_PATH_CHARS
         || trimmed.chars().any(char::is_control)
@@ -263,5 +270,12 @@ mod tests {
         ] {
             assert!(normalize_configured_skill_resource_path(invalid).is_err());
         }
+        #[cfg(windows)]
+        assert!(normalize_configured_skill_resource_path("references/guide.md:secret").is_err());
+        #[cfg(not(windows))]
+        assert_eq!(
+            normalize_configured_skill_resource_path("references/guide.md:stream").unwrap(),
+            "references/guide.md:stream"
+        );
     }
 }
