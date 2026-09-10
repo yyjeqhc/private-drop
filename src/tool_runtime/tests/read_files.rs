@@ -63,7 +63,7 @@ fn read_files_input_schema_enforces_batch_and_item_bounds() {
     );
     assert_eq!(
         schema["properties"]["max_result_bytes"]["maximum"],
-        256 * 1024
+        512 * 1024
     );
     assert!(schema["properties"]["max_result_bytes"]["description"]
         .as_str()
@@ -77,7 +77,7 @@ fn read_files_input_schema_enforces_batch_and_item_bounds() {
     assert!(!validates(&json!({
         "project": "demo",
         "items": [{"path": "a.rs"}],
-        "max_result_bytes": 256 * 1024 + 1
+        "max_result_bytes": 512 * 1024 + 1
     })));
     assert!(!validates(&json!({
         "project": "demo",

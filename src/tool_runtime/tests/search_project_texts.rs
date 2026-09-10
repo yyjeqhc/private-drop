@@ -529,7 +529,7 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
     );
     assert_eq!(
         schema["properties"]["max_result_bytes"]["maximum"],
-        256 * 1024
+        512 * 1024
     );
     let budget_description = schema["properties"]["max_result_bytes"]["description"]
         .as_str()
@@ -552,7 +552,7 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
     assert!(!validates(&json!({
         "project": "demo",
         "queries": [{"pattern": "needle"}],
-        "max_result_bytes": 256 * 1024 + 1
+        "max_result_bytes": 512 * 1024 + 1
     })));
     assert!(
         schema["properties"].get("session_id").is_some(),
