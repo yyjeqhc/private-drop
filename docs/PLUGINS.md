@@ -263,6 +263,9 @@ See [`../npm/plugin-sdk/README.md`](../npm/plugin-sdk/README.md) and the TypeScr
 zero-dependency [`native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs)
 remains the protocol reference and does not depend on the SDK.
 
+For the architectural boundary, development-stage compatibility policy, and staged
+authoring roadmap, see [`architecture/native-tool-plugins.md`](architecture/native-tool-plugins.md).
+
 ## WebCodex Plugin Protocol v1
 
 The native protocol is newline-delimited JSON-RPC 2.0 framing with the protocol

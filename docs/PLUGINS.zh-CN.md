@@ -232,6 +232,9 @@ TypeScript 示例见 [`echo-plugin.ts`](../npm/plugin-sdk/examples/echo-plugin.t
 依赖的 raw [`native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs) 继续作为 protocol
 reference 保留。
 
+Plugin 的架构边界、开发阶段兼容策略和后续 authoring roadmap 见
+[`architecture/native-tool-plugins.md`](architecture/native-tool-plugins.md)。
+
 ## WebCodex Plugin Protocol v1
 
 Native protocol 使用 newline-delimited JSON-RPC 2.0 framing，protocol version 是
