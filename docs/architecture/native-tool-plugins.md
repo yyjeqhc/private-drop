@@ -129,78 +129,98 @@ When the project later declares an SDK/CLI/package surface stable, that decision
 should add an explicit compatibility policy at that boundary rather than carrying
 pre-stability migration code indefinitely.
 
-## Next phase: Plugin authoring CLI
+## Phase 1: Plugin authoring/operator CLI
 
-The next implementation phase should reduce the manual author loop without
-creating another Plugin runtime. The target experience is conceptually:
+The first CLI phase reduces the manual author loop without creating another Plugin
+runtime. Its canonical public surface is intentionally limited to:
 
 ```text
-webcodex plugin init ./my-plugin
-    -> edit/build/test locally
-    -> configure the provider on an exact Runner
+webcodex plugin list [--runner <runner> [--plugin <provider>]]
+webcodex plugin describe --runner <runner> --plugin <provider> --tool <tool>
 webcodex plugin check --runner <runner> --plugin <provider>
-    -> fix bounded admission diagnostics
 webcodex plugin reload --runner <runner>
-webcodex plugin list/describe ...
-    -> verify the committed catalog
-    -> exercise the tool through the normal model/operator path
 ```
 
-Exact command spelling can follow the current CLI conventions during
-implementation, but the architectural split should remain as follows.
-
-### `plugin init`: local authoring only
-
-`init` should be a deterministic scaffold generator. It may create a minimal
-TypeScript Plugin project containing, for example:
+The normal author loop is:
 
 ```text
-package.json
-tsconfig.json
-src/plugin.ts
-README.md
+edit/build Plugin
+    -> webcodex plugin check --runner special --plugin safe-delete
+    -> fix bounded Runner admission diagnostics until ready
+    -> webcodex plugin reload --runner special
+    -> webcodex plugin list --runner special --plugin safe-delete
+    -> webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
 ```
 
-The generated Plugin should use the current SDK, build to ordinary ESM JavaScript,
-and contain one small example tool plus a documented `runner.toml` provider
-snippet. It should not edit a Runner config automatically, start a provider, make
-network calls, install packages implicitly, or execute repository code as part of
-project discovery.
+`list` and `describe` mirror the existing `plugin_tool` inspection semantics and
+require `plugin:inspect`. `check` and `reload` mirror the existing management
+semantics and require `plugin:manage`. The CLI does not widen credentials;
+`--oauth-local-plugins` continues to mean only `plugin:inspect + plugin:invoke` and
+never supplies `plugin:manage`.
 
-Template generation is convenience, not authority. A raw protocol Plugin remains
-a fully supported peer of an SDK-authored Plugin.
+### Thin adapter boundary
 
-### `plugin check/reload`: thin adapters over current authority
-
-Authoring CLI management commands should call the existing WebCodex management
-path rather than reimplementing Plugin admission in the CLI or SDK.
-
-Conceptually:
+Every network command goes through the existing authenticated Server runtime path:
 
 ```text
-webcodex plugin check
-    -> authenticated Server request
-    -> existing plugin_tool/check semantics
-    -> exact Runner
-    -> disposable Runner-owned candidate
-
-webcodex plugin reload
-    -> authenticated Server request
-    -> existing plugin_tool/reload semantics
-    -> exact Runner
-    -> atomic candidate-set replacement
+webcodex plugin ...
+    -> POST /api/tools/call
+    -> {"tool":"plugin_tool","params":{...canonical action arguments...}}
+    -> existing Server permission/audit gateway
+    -> exact caller-selected Runner
 ```
 
-The CLI must not directly spawn the configured provider as a substitute for
-Runner `check`, because doing so would use a different environment, process-tree,
-bounds, and admission path. It also must not silently widen credentials. Management
-operations continue to require the existing `plugin:manage` authority; inspect and
-invoke scopes remain distinct.
+The CLI reuses the existing Server HTTP client, proxy behavior, bearer-token
+resolution, and token redaction. It does not connect directly to Runner transport,
+read `runner.toml` to resolve executables, spawn Plugin processes, validate Plugin
+schemas, inspect provider stderr, create bindings itself, or implement provider
+lifecycle. `describe` consumes the one canonical describe result rather than
+performing an extra list, and bindings are displayed only as opaque observations;
+they are not cached or treated as authorization credentials.
 
-The CLI should reuse existing WebCodex HTTP/auth/profile primitives and provide a
-bounded human-readable view plus machine-readable JSON where current CLI
-conventions support it. Runner-generated diagnostic codes remain canonical; the
-CLI should not parse raw provider stderr into a new public error contract.
+`reload` remains an exact-Runner **complete provider-set** operation. There is no
+per-provider reload flag: the Runner rereads its own `runner.toml`, prepares every
+candidate, and atomically replaces the committed set only if all candidates are
+admitted. `check` likewise remains Runner-owned disposable admission and never
+commits its candidate.
+
+The CLI performs exactly one Server request per command and adds no hidden retry.
+This matters especially for `check` and `reload`: after an HTTP timeout, connection
+reset, malformed post-send response, or lost response, the CLI cannot prove the
+request was not processed. It therefore reports that the outcome may be unknown
+and instructs the operator to observe current Plugin state before retrying rather
+than inventing retry authority.
+
+Machine output (`--json`) is the canonical `plugin_tool` output object with no
+parallel Plugin domain model. Human output is a bounded rendering of the same safe
+fields. A completed `check` exits successfully only when `ready=true`; a known
+`ready=false` result is non-zero. Reload succeeds only when the canonical
+`failures` array is empty. HTTP/auth/runtime failures remain non-zero without
+flattening canonical failure codes or exposing credentials.
+
+There is intentionally no `webcodex plugin call` in this phase. Effectful
+invocation, binding/retry behavior, and `OutcomeUnknown` remain on the normal
+model/operator `plugin_tool describe -> call` path.
+
+### `plugin init` is deferred until SDK distribution is real
+
+A public `webcodex plugin init` is **not** part of Phase 1. Today
+`@yyjeqhc/webcodex-plugin-sdk` is a repository development package used by
+first-party dogfood through a local `file:` dependency. It has no established npm
+publication/versioning contract, and normal WebCodex binary/npm distribution does
+not carry reusable SDK template/package assets. Generating a project that appears
+standalone but depends on the current source checkout or a build-machine absolute
+path would therefore be misleading.
+
+Do not paper over that boundary with embedded SDK source, per-project vendoring,
+an npm workspace, automatic pack/install, temporary `--sdk-path`, or generated
+absolute paths. Once the SDK has a truthful repeatable external dependency source,
+`plugin init` can be added as a deterministic local scaffold generator. At that
+point it may create a minimal TypeScript/ESM project and documented `runner.toml`
+snippet, but it still must not install packages implicitly, edit Runner config,
+register/reload a provider, create credentials, or execute generated code.
+
+A raw protocol Plugin remains a fully supported peer of an SDK-authored Plugin.
 
 ### Why this phase matters
 
@@ -221,9 +241,9 @@ less JSON/tool-call ceremony
 - no second Plugin runtime
 ```
 
-This is the highest-value next step because the SDK has already proved it can
-carry a real effectful Plugin; the remaining obvious cost is the author/operator
-workflow around that Plugin.
+This phase addresses the highest-value remaining authoring cost after the SDK
+proved it can carry a real effectful Plugin: repeated operator ceremony around the
+same authoritative runtime path.
 
 ## Follow-up phases
 
@@ -239,12 +259,14 @@ shows a concrete need. A future `dev` convenience command should only compose
 existing build/check/reload primitives; it must not invent a separate hot-reload
 runtime.
 
-### Phase 3: package/distribution contract
+### Phase 3: SDK distribution contract and `plugin init`
 
-After the SDK and authoring loop have real consumers, decide the publication and
-versioning contract for the SDK and any scaffolding templates. At that point the
-project can define which package names, generated layouts, Node versions, and CLI
-flags become compatibility commitments.
+After the SDK and authoring loop have real consumers, establish the publication
+and versioning contract for the SDK first. Only once a generated project has a
+truthful, repeatable dependency source should `webcodex plugin init` become a
+public command and scaffolding templates become a compatibility surface. At that
+point the project can define which package names, generated layouts, Node versions,
+and CLI flags become compatibility commitments.
 
 Do not make WebCodex product releases depend on SDK version equality unless a
 concrete distribution requirement appears. Native Plugin protocol versioning and
@@ -262,7 +284,7 @@ Memory, orchestration, or integrations, is also a separate architectural layer.
 It may consume canonical WebCodex primitives, but Native Tool Plugins should not
 silently evolve into that runtime.
 
-## Explicit non-goals for the next phase
+## Explicit non-goals for the authoring workflow
 
 The authoring CLI should not introduce:
 
@@ -279,27 +301,31 @@ The authoring CLI should not introduce:
 - automatic npm/pnpm/yarn dependency installation;
 - compatibility shims for unpublished development layouts.
 
-## Acceptance criteria for the authoring CLI phase
+## Acceptance criteria for the Phase 1 authoring CLI
 
-The phase is complete when all of the following are true:
+Phase 1 is complete when all of the following are true:
 
-1. A new TypeScript Plugin can be scaffolded without hand-writing protocol
-   boilerplate.
-2. The generated Plugin builds to ordinary JavaScript and passes SDK tests without
-   requiring the Runner to understand TypeScript.
-3. An operator can perform authoritative check and reload for one exact Runner
-   without manually constructing `plugin_tool` JSON.
-4. Failed admission preserves the bounded Runner diagnostic and does not replace
-   the currently committed provider set.
-5. A successful reload produces the same frozen catalog and binding behavior as
-   direct `plugin_tool` use.
-6. CLI credentials do not gain Plugin management scope implicitly.
-7. No CLI/SDK code becomes a second provider supervisor, schema authority, or
-   effect-lifecycle owner.
-8. `safe-delete` can use the workflow without reintroducing legacy entrypoint or
+1. An operator can list visible Plugin Runners, inspect committed providers/tools,
+   and describe one exact tool without manually constructing `plugin_tool` JSON.
+2. Authoritative check and reload target one exact caller-provided Runner through
+   the existing authenticated Server `/api/tools/call` path.
+3. Failed admission preserves the bounded Runner diagnostic and does not replace
+   the currently committed provider set; reload remains whole-set atomic.
+4. A successful reload produces the same frozen catalog and binding behavior as
+   direct `plugin_tool` use, and describe does not secretly re-list the provider.
+5. CLI credentials do not gain Plugin management scope implicitly; inspect and
+   manage remain distinct.
+6. Check/reload transport ambiguity never becomes automatic retry authority.
+7. JSON output preserves canonical Plugin gateway fields while human output is
+   bounded and never projects raw provider stderr or credentials.
+8. No CLI/SDK code becomes a second provider supervisor, schema authority, or
+   effect-lifecycle owner, and no `plugin call` surface is introduced.
+9. `safe-delete` can use the workflow without reintroducing legacy entrypoint or
    source compatibility shims.
-9. Default CI remains deterministic and path-aware; authoring-only changes do not
-   trigger unrelated Desktop/native/release lanes.
+10. Default CI remains deterministic and path-aware; authoring-only changes do not
+    trigger unrelated Desktop/native/release lanes.
+11. `plugin init` remains absent until the SDK has a truthful external distribution
+    contract; its later acceptance criteria belong to the distribution phase.
 
 Once these conditions hold, the project will have a coherent extension path:
 Runner-authoritative executable Plugins, a typed authoring SDK, a real first-party

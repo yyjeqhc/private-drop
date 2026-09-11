@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use webcodex_admin::ServerHttpOptions;
 
-use super::{
-    http_post_json_status, read_env_file_value, read_optional_token, validate_user_api_token,
-};
+use super::{call_runtime_tool_status, http_post_json_status, resolve_user_api_token};
 
 const DEFAULT_EXPECTED_TOOL_COUNT: u64 = 66;
 pub(crate) const DEFAULT_RUNNER_REQUEST_TIMEOUT_MS: u64 = 5_000;
@@ -359,35 +357,7 @@ fn render_ops_command_output(
 }
 
 fn resolve_ops_token(opts: &OpsCommonOptions) -> Result<Option<String>, String> {
-    if let Some(token) = &opts.token {
-        let token = token.trim().to_string();
-        if token.is_empty() {
-            return Err("--token cannot be empty".to_string());
-        }
-        validate_user_api_token(&token)?;
-        return Ok(Some(token));
-    }
-    if let Some(token) = read_optional_token(&opts.token_file, "--token-file")? {
-        validate_user_api_token(&token)?;
-        return Ok(Some(token));
-    }
-    if let Some(path) = &opts.env_file {
-        if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
-            let token = token.trim().to_string();
-            if !token.is_empty() {
-                validate_user_api_token(&token)?;
-                return Ok(Some(token));
-            }
-        }
-    }
-    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
-        let token = token.trim().to_string();
-        if !token.is_empty() {
-            validate_user_api_token(&token)?;
-            return Ok(Some(token));
-        }
-    }
-    Ok(None)
+    resolve_user_api_token(&opts.token, &opts.token_file, &opts.env_file)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -561,15 +531,17 @@ async fn call_runtime_tool(
     tool: &str,
     params: Value,
 ) -> Result<Option<Value>, OpsHttpFailure> {
-    fetch_ops_json_output(
-        server_url,
-        server_http,
-        "/api/tools/call",
-        token,
-        json!({"tool": tool, "params": params}),
-    )
-    .await
-    .map(Some)
+    match call_runtime_tool_status(server_url, server_http, token, tool, params).await {
+        Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
+            Ok(Some(output_payload(value)))
+        }
+        Ok((status, content_type, value)) => Err(OpsHttpFailure::from_response(
+            status,
+            content_type,
+            value.is_some(),
+        )),
+        Err(error) => Err(OpsHttpFailure::from_transport_error(error)),
+    }
 }
 
 fn output_payload(value: Value) -> Value {

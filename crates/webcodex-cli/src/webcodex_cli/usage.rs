@@ -26,6 +26,7 @@ Account:\n\
   logout                        Remove this device's credentials\n\n\
 Advanced / operator:\n\
   ops                           Read-only operator workflow checks\n\
+  plugin                        Inspect, check, and reload Native Tool Plugins\n\
   users                         Manage users\n\
   tokens                        Manage personal API credentials\n\
   runner-tokens                 Manage Runner transport credentials\n\n\
@@ -263,6 +264,93 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
        --strict                Exit 2 when the ops report status is FAIL\n\
        -h, --help              Print help and exit\n\n\
      This command calls only read-only status/project/workspace inspection APIs.\n"
+}
+
+pub(crate) fn plugin_usage() -> &'static str {
+    "Usage: webcodex plugin <COMMAND>\n\n\
+Native Tool Plugin authoring/operator commands. These are thin authenticated adapters\n\
+over the canonical Server plugin_tool runtime; the CLI never starts Plugin executables\n\
+or implements Runner admission/lifecycle itself.\n\n\
+Commands:\n\
+  list        List visible Plugin-capable Runners, committed providers, or provider tools\n\
+  describe    Describe one exact provider-local tool and return its opaque binding observation\n\
+  check       Ask one exact Runner to perform the disposable Plugin admission preflight\n\
+  reload      Ask one exact Runner to atomically replace its complete configured provider set\n\n\
+Use `webcodex plugin <COMMAND> --help` for command-specific options.\n\
+list/describe require plugin:inspect. check/reload require plugin:manage.\n\
+--oauth-local-plugins grants plugin:inspect + plugin:invoke only; it never grants plugin:manage.\n\
+There is intentionally no plugin call command in this authoring phase. plugin init is deferred\n\
+until @yyjeqhc/webcodex-plugin-sdk has a real external distribution contract.\n"
+}
+
+fn plugin_common_usage() -> &'static str {
+    "  --server-url URL         WebCodex Server URL [default: http://127.0.0.1:8080]\n\
+  --proxy http://HOST:PORT  Explicit proxy override for this Server request\n\
+  --no-system-proxy         Ignore proxy environment and connect directly\n\
+  --env-file PATH           Read WEBCODEX_TOKEN from env file\n\
+  --token-file PATH         Read bearer token from file\n\
+  --token TOKEN             Bearer token input; never printed\n\
+  --json                    Print the canonical plugin_tool output object as JSON\n\
+  -h, --help                Print help and exit\n"
+}
+
+pub(crate) fn plugin_list_usage() -> String {
+    format!(
+        "Usage: webcodex plugin list [--runner RUNNER [--plugin PLUGIN]] [OPTIONS]\n\n\
+Mirror plugin_tool action=list without starting, checking, or reloading providers.\n\
+Without --runner, list caller-visible Plugin-capable Runners. With --runner, list\n\
+that exact Runner's committed providers. With --runner + --plugin, list the provider's\n\
+current frozen tool catalog. Requires plugin:inspect.\n\n\
+Identity options:\n\
+  --runner RUNNER            Exact caller-visible Runner client_id\n\
+  --plugin PLUGIN            Exact provider id; requires --runner\n\n\
+Common options:\n{}",
+        plugin_common_usage()
+    )
+}
+
+pub(crate) fn plugin_describe_usage() -> String {
+    format!(
+        "Usage: webcodex plugin describe --runner RUNNER --plugin PLUGIN --tool TOOL [OPTIONS]\n\n\
+Mirror plugin_tool action=describe for one exact Runner/provider/tool. The Server returns\n\
+the current tool metadata and an opaque binding observation; the CLI does not cache it or\n\
+treat it as authorization. Requires plugin:inspect and does not perform an extra list.\n\n\
+Identity options:\n\
+  --runner RUNNER            Exact caller-visible Runner client_id (required)\n\
+  --plugin PLUGIN            Exact provider id (required)\n\
+  --tool TOOL                Exact provider-local tool name (required)\n\n\
+Common options:\n{}",
+        plugin_common_usage()
+    )
+}
+
+pub(crate) fn plugin_check_usage() -> String {
+    format!(
+        "Usage: webcodex plugin check --runner RUNNER --plugin PLUGIN [OPTIONS]\n\n\
+Mirror plugin_tool action=check. The exact Runner resolves its real provider configuration,\n\
+starts a disposable candidate, performs initialize/tools-list admission, and disposes it.\n\
+The candidate is never committed, but startup itself may have side effects. Requires\n\
+plugin:manage. The CLI does not spawn or validate the Plugin itself and never auto-retries.\n\n\
+Identity options:\n\
+  --runner RUNNER            Exact caller-visible Runner client_id (required)\n\
+  --plugin PLUGIN            Exact provider id (required)\n\n\
+Common options:\n{}",
+        plugin_common_usage()
+    )
+}
+
+pub(crate) fn plugin_reload_usage() -> String {
+    format!(
+        "Usage: webcodex plugin reload --runner RUNNER [OPTIONS]\n\n\
+Mirror plugin_tool action=reload for one exact Runner. The Runner rereads runner.toml,\n\
+prepares every configured provider candidate, and atomically replaces the complete provider\n\
+set only when all candidates are admitted; otherwise the committed set is unchanged.\n\
+There is no per-provider reload option. Requires plugin:manage and never auto-retries.\n\n\
+Identity options:\n\
+  --runner RUNNER            Exact caller-visible Runner client_id (required)\n\n\
+Common options:\n{}",
+        plugin_common_usage()
+    )
 }
 
 pub(crate) fn server_usage() -> &'static str {

@@ -229,6 +229,86 @@ restart-only fields without starting disposable Plugin processes. Use
 `plugin_tool check(runner, plugin)` when you need executable resolution plus the
 Plugin `initialize -> tools/list` protocol/admission preflight.
 
+## Plugin authoring/operator CLI
+
+`webcodex plugin` is the operator-friendly adapter over the same canonical
+`plugin_tool` path. It does not add a Plugin endpoint, Runtime, supervisor, or
+admission implementation. All four network commands issue one authenticated
+`POST /api/tools/call` with `tool="plugin_tool"` and the corresponding canonical
+`params`:
+
+```text
+webcodex plugin list
+    -> {"action":"list"}
+webcodex plugin list --runner special
+    -> {"action":"list","runner":"special"}
+webcodex plugin list --runner special --plugin safe-delete
+    -> {"action":"list","runner":"special","plugin":"safe-delete"}
+webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
+    -> {"action":"describe","runner":"special","plugin":"safe-delete","tool":"safe_delete"}
+webcodex plugin check --runner special --plugin safe-delete
+    -> {"action":"check","runner":"special","plugin":"safe-delete"}
+webcodex plugin reload --runner special
+    -> {"action":"reload","runner":"special"}
+```
+
+A practical author loop is therefore:
+
+```text
+edit/build Plugin
+    -> webcodex plugin check --runner special --plugin safe-delete
+    -> webcodex plugin reload --runner special
+    -> webcodex plugin list --runner special --plugin safe-delete
+    -> webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
+```
+
+The identity and lifecycle rules are unchanged. Runner ids are exact; the CLI does
+not fuzzy-match or infer one from a provider/project. `list` never checks/reloads a
+provider, and `describe` consumes the canonical describe response without an extra
+list. `check` still starts and disposes the Runner-owned candidate without commit.
+`reload` still rereads that exact Runner's `runner.toml` and atomically replaces the
+**complete** configured provider set; there is intentionally no `reload --plugin`.
+Bindings returned by describe are printed as opaque observations and are never
+cached or promoted into credentials. Bindings created before a successful reload
+still fail closed when their provider instance is retired.
+
+Network options follow the existing CLI Server conventions: `--server-url`,
+`--proxy`, `--no-system-proxy`, `--env-file`, `--token-file`, `--token`, and
+`--json`. Bearer-token precedence is explicit token, token file,
+`WEBCODEX_TOKEN` from the selected env file, then process `WEBCODEX_TOKEN`.
+Runner transport tokens are rejected for this user/API path. `list`/`describe`
+require `plugin:inspect`; `check`/`reload` require an explicitly granted
+`plugin:manage`. The existing `--oauth-local-plugins` setup option still grants
+only `plugin:inspect + plugin:invoke` and **does not** grant management authority.
+A 401/403 is a normal CLI failure; the CLI never mints, upgrades, or mutates a
+credential to make the request pass.
+
+`--json` prints the canonical `plugin_tool` output object rather than a second CLI
+Plugin schema. Human output renders only bounded canonical fields. A completed
+`check` exits 0 only for `ready=true`; `ready=false` exits non-zero while retaining
+its phase/code/detail/diagnostic. Reload exits 0 only when its canonical `failures`
+array is empty; known rejection is non-zero.
+
+The CLI never auto-retries `check` or `reload`. Once a request has begun, an HTTP
+timeout, connection reset, malformed post-send response, or lost response cannot
+prove the management operation did not reach the Server/Runner. The CLI therefore
+reports that the outcome may be unknown and directs the operator to observe current
+Plugin state before retrying. This is intentionally conservative even for `check`,
+because arbitrary Plugin startup/initialize/list behavior may itself have side
+effects.
+
+There is deliberately no `webcodex plugin call` in this authoring phase. The raw
+`plugin_tool describe -> call` contract remains the canonical invocation path with
+its existing binding, effect, retry, and `OutcomeUnknown` semantics.
+
+`webcodex plugin init` is also deferred for now. The TypeScript SDK is currently a
+repository-local development package used by first-party dogfood; it does not yet
+have a published/repeatable external distribution contract, and WebCodex binary/npm
+distribution does not bundle it as scaffoldable assets. The CLI will not generate
+a deceptively standalone project that depends on the current repository checkout,
+a build-machine path, vendored SDK source, or temporary `--sdk-path`. See the
+architecture roadmap for the distribution prerequisite.
+
 ## TypeScript Plugin SDK
 
 `@yyjeqhc/webcodex-plugin-sdk` is an optional TypeScript authoring layer for Native

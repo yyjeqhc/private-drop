@@ -128,10 +128,10 @@ pub(crate) async fn http_post_json_status(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown")
         .to_string();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {}", e))?;
+    let text = resp.text().await.map_err(|e| {
+        let error = format!("failed to read response: {}", e);
+        token.map_or_else(|| error.clone(), |token| error.replace(token, "[redacted]"))
+    })?;
     let json = if content_type
         .split(';')
         .next()
@@ -142,6 +142,23 @@ pub(crate) async fn http_post_json_status(
         None
     };
     Ok((status, content_type, json))
+}
+
+pub(crate) async fn call_runtime_tool_status(
+    server_url: &str,
+    server_http: &ServerHttpOptions,
+    token: Option<&str>,
+    tool: &str,
+    params: Value,
+) -> Result<(u16, String, Option<Value>), String> {
+    http_post_json_status(
+        server_url,
+        server_http,
+        "/api/tools/call",
+        token,
+        json!({"tool": tool, "params": params}),
+    )
+    .await
 }
 
 #[derive(Debug, Clone)]

@@ -202,6 +202,74 @@ reload` 则提供更窄、只需要 `plugin:manage` 的专门入口。Plugin man
 需要检查 executable resolution 以及 Plugin `initialize -> tools/list` protocol/admission 时，
 使用 `plugin_tool check(runner, plugin)`。
 
+## Plugin authoring/operator CLI
+
+`webcodex plugin` 是同一条 canonical `plugin_tool` 链路的 operator-friendly adapter；它不会
+新增 Plugin endpoint、Runtime、supervisor 或 admission implementation。四个网络命令都只向
+现有 `POST /api/tools/call` 发一次 authenticated request，外层固定为
+`tool="plugin_tool"`，`params` 严格映射已有 action：
+
+```text
+webcodex plugin list
+    -> {"action":"list"}
+webcodex plugin list --runner special
+    -> {"action":"list","runner":"special"}
+webcodex plugin list --runner special --plugin safe-delete
+    -> {"action":"list","runner":"special","plugin":"safe-delete"}
+webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
+    -> {"action":"describe","runner":"special","plugin":"safe-delete","tool":"safe_delete"}
+webcodex plugin check --runner special --plugin safe-delete
+    -> {"action":"check","runner":"special","plugin":"safe-delete"}
+webcodex plugin reload --runner special
+    -> {"action":"reload","runner":"special"}
+```
+
+实际 author loop 可以直接写成：
+
+```text
+编辑/构建 Plugin
+    -> webcodex plugin check --runner special --plugin safe-delete
+    -> webcodex plugin reload --runner special
+    -> webcodex plugin list --runner special --plugin safe-delete
+    -> webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
+```
+
+identity/lifecycle 语义没有变化。Runner id 必须精确提供，CLI 不做 fuzzy match，也不会从
+provider/project 推断 Runner。`list` 不会偷偷 check/reload；`describe` 直接消费 canonical
+describe response，不额外 list。`check` 仍由 Runner 启动并销毁 disposable candidate，且不
+commit。`reload` 仍由 exact Runner 重新读取自己的 `runner.toml`，准备**完整 provider set**，
+只有全部 admission 成功才原子替换；因此刻意不存在 `reload --plugin`。describe 返回的
+binding 只作为 opaque observation 输出，不缓存、不提升为 credential；reload retire provider
+后，旧 binding 仍按原 contract fail closed。
+
+网络参数沿用现有 CLI Server conventions：`--server-url`、`--proxy`、
+`--no-system-proxy`、`--env-file`、`--token-file`、`--token`、`--json`。Bearer token
+优先级依次为显式 `--token`、token file、指定 env file 中的 `WEBCODEX_TOKEN`、当前进程
+`WEBCODEX_TOKEN`；Runner transport token 会在 user/API 路径前被拒绝。`list`/`describe`
+要求 `plugin:inspect`；`check`/`reload` 必须由用户显式提供具有 `plugin:manage` 的 credential。
+现有 `--oauth-local-plugins` 仍然只表示 `plugin:inspect + plugin:invoke`，**不会**授予 manage。
+401/403 会正常 non-zero 失败；CLI 不会为了通过请求自动 mint、升级或修改 credential。
+
+`--json` 直接打印 canonical `plugin_tool` output object，不再设计第二套 CLI Plugin JSON
+模型；human output 只渲染有界 canonical fields。`check` 只有在 `ready=true` 时 exit 0；
+`ready=false` non-zero，但仍保留 phase/code/detail/diagnostic。reload 只有 canonical
+`failures` 为空时 exit 0；known rejection non-zero。
+
+CLI 不会自动 retry `check` 或 `reload`。请求开始后如果遇到 HTTP timeout、connection reset、
+post-send malformed response 或 response lost，CLI 无法证明 management operation 没有到达
+Server/Runner，因此会保守报告 outcome may be unknown，并要求先观察当前 Plugin state 再决定
+是否 retry。`check` 也遵循这一点，因为 arbitrary Plugin startup/initialize/list 本身仍可能
+有外部副作用。
+
+本阶段刻意没有 `webcodex plugin call`。raw `plugin_tool describe -> call` 仍是 canonical
+invocation path，并继续拥有原有 binding、effect、retry 和 `OutcomeUnknown` 语义。
+
+当前也暂缓 `webcodex plugin init`。TypeScript SDK 目前仍是仓库内 first-party dogfood 使用的
+development package；尚未建立 published/repeatable external distribution contract，而且正常
+WebCodex binary/npm distribution 也不携带可 scaffold 的 SDK assets。CLI 不会生成一个表面
+standalone、实际依赖当前源码 checkout、build-machine path、vendored SDK 或临时 `--sdk-path`
+的项目。distribution 前置条件见 architecture roadmap。
+
 ## TypeScript Plugin SDK
 
 `@yyjeqhc/webcodex-plugin-sdk` 是 Native Tool Plugin 的可选 TypeScript authoring layer：

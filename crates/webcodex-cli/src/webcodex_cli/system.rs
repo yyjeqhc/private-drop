@@ -1,3 +1,4 @@
+use super::env::read_env_file_value;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn write_text_file(
@@ -599,6 +600,42 @@ pub(crate) fn validate_user_api_token(token: &str) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+pub(crate) fn resolve_user_api_token(
+    token: &Option<String>,
+    token_file: &Option<PathBuf>,
+    env_file: &Option<PathBuf>,
+) -> Result<Option<String>, String> {
+    if let Some(token) = token {
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err("--token cannot be empty".to_string());
+        }
+        validate_user_api_token(&token)?;
+        return Ok(Some(token));
+    }
+    if let Some(token) = read_optional_token(token_file, "--token-file")? {
+        validate_user_api_token(&token)?;
+        return Ok(Some(token));
+    }
+    if let Some(path) = env_file {
+        if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                validate_user_api_token(&token)?;
+                return Ok(Some(token));
+            }
+        }
+    }
+    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            validate_user_api_token(&token)?;
+            return Ok(Some(token));
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn read_optional_user_api_token(
