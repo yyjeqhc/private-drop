@@ -5,7 +5,7 @@
 //! - A complete Connector configuration (`WEBCODEX_CONNECTOR_SURFACE=task-v1`)
 //!   selects the separate `project_connector` contract.
 //! - Without Connector configuration, an unset `WEBCODEX_MCP_MODEL_SURFACE`
-//!   selects `Runtime(LocalCoding)`. Explicit `local-coding-v1`,
+//!   selects `Runtime(AdaptiveRuntime)`. Explicit `local-coding-v1`,
 //!   `adaptive-runtime-v1`, and `full-operator-v1` values select the corresponding
 //!   runtime `ModelSurface`.
 //! - Setting Connector configuration and `WEBCODEX_MCP_MODEL_SURFACE` together,
@@ -170,7 +170,7 @@ pub(crate) fn resolve_runtime_exposure(
             "{MCP_MODEL_SURFACE_ENV}='{value}' cannot be combined with WEBCODEX_CONNECTOR_SURFACE; the Connector surface is authoritative"
         )),
         (Some(_), None) => Ok(RuntimeExposure::ProjectConnector),
-        (None, None) => Ok(RuntimeExposure::Runtime(ModelSurface::LocalCoding)),
+        (None, None) => Ok(RuntimeExposure::Runtime(ModelSurface::AdaptiveRuntime)),
         (None, Some(MCP_MODEL_SURFACE_LOCAL_CODING_V1)) => {
             Ok(RuntimeExposure::Runtime(ModelSurface::LocalCoding))
         }
@@ -257,6 +257,24 @@ mod tests {
                 "{} must be model-visible",
                 spec.name
             );
+        }
+    }
+
+    #[test]
+    fn adaptive_runtime_routes_every_local_coding_compatibility_tool() {
+        for tool_name in LOCAL_CODING_TOOL_NAMES {
+            let (availability, via) =
+                ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(tool_name);
+            assert_ne!(
+                availability, TOOL_SURFACE_AVAILABILITY_UNAVAILABLE,
+                "AdaptiveRuntime must preserve Local Coding capability {tool_name}"
+            );
+            if availability == TOOL_SURFACE_AVAILABILITY_DIRECT {
+                assert_eq!(via, None, "direct tool {tool_name} must not name a gateway");
+            } else {
+                assert_eq!(availability, TOOL_SURFACE_AVAILABILITY_GATEWAY);
+                assert_eq!(via, Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
+            }
         }
     }
 
@@ -506,12 +524,12 @@ mod tests {
     }
 
     #[test]
-    fn default_surface_is_local_coding_without_connector_or_env() {
+    fn default_surface_is_adaptive_runtime_without_connector_or_env() {
         let mut env = crate::test_support::TestEnvGuard::new();
         env.remove(MCP_MODEL_SURFACE_ENV);
         assert_eq!(
             resolve_runtime_exposure(None),
-            Ok(RuntimeExposure::Runtime(ModelSurface::LocalCoding))
+            Ok(RuntimeExposure::Runtime(ModelSurface::AdaptiveRuntime))
         );
     }
 

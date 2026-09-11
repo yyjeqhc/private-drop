@@ -279,7 +279,7 @@ async fn apply_patch_stays_full_local_direct_and_moves_to_adaptive_gateway() {
 }
 
 #[tokio::test]
-async fn local_coding_default_initialize_and_discovery_report_local_coding() {
+async fn adaptive_runtime_default_initialize_and_discovery_report_adaptive() {
     // Preserve the unset-env integration path, but confine process env state
     // to synchronous runtime construction.
     let runtime = test_runtime_from_model_surface_env(None);
@@ -289,14 +289,40 @@ async fn local_coding_default_initialize_and_discovery_report_local_coding() {
         None,
     )
     .await;
-    let value = match outcome {
-        McpOutcome::Ok(v) => v,
-        other => panic!("expected Ok, got {:?}", other),
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("default initialize must succeed");
     };
     assert_eq!(
         value["result"]["serverInfo"]["runtimeExposure"],
-        crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+        crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
     );
+
+    let auth = model_surface_direct_auth();
+    let listed = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(62)),
+            mcp_2026_params(json!({})),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(listed) = listed else {
+        panic!("default adaptive tools/list must succeed");
+    };
+    let names = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    let mut expected = crate::model_surface::adaptive_runtime_direct_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
+    expected.push(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string());
+    assert_eq!(names, expected);
 }
 
 #[tokio::test]
@@ -1737,19 +1763,29 @@ async fn explicit_full_operator_v1_reports_full_operator_surface() {
 
 #[tokio::test]
 async fn selected_surface_is_immutable_after_environment_changes() {
-    let local = test_runtime_from_model_surface_env(None);
-    let local_auth = model_surface_direct_auth();
-    // Prove the already-built runtime stays local_coding while the process env
-    // actively requests the opposite surface; restore it before any await.
+    let adaptive = test_runtime_from_model_surface_env(None);
+    let adaptive_auth = model_surface_direct_auth();
+    // Prove the already-built runtime stays adaptive_runtime while the process
+    // env actively requests the opposite surface; restore it before any await.
     with_model_surface_env(
         Some(crate::model_surface::MCP_MODEL_SURFACE_FULL_OPERATOR_V1),
-        || assert_eq!(local.model_surface(), Some(ModelSurface::LocalCoding)),
+        || {
+            assert_eq!(
+                adaptive.model_surface(),
+                Some(ModelSurface::AdaptiveRuntime)
+            )
+        },
     );
     for method in ["initialize", "tools/list"] {
+        let params = if method == "tools/list" {
+            mcp_2026_params(json!({}))
+        } else {
+            json!({})
+        };
         let outcome = handle_mcp_request(
-            &local,
-            rpc(method, Some(json!(80)), json!({})),
-            Some(&local_auth),
+            &adaptive,
+            rpc(method, Some(json!(80)), params),
+            Some(&adaptive_auth),
         )
         .await;
         let McpOutcome::Ok(value) = outcome else {
@@ -1758,23 +1794,25 @@ async fn selected_surface_is_immutable_after_environment_changes() {
         if method == "initialize" {
             assert_eq!(
                 value["result"]["serverInfo"]["runtimeExposure"],
-                crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+                crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
             );
         } else {
-            let names: Vec<&str> = value["result"]["tools"]
+            let names = value["result"]["tools"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|tool| tool["name"].as_str().unwrap())
-                .collect();
-            assert_eq!(
-                names,
-                crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES
-            );
+                .map(|tool| tool["name"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            let mut expected = crate::model_surface::adaptive_runtime_direct_tool_specs()
+                .into_iter()
+                .map(|spec| spec.name)
+                .collect::<Vec<_>>();
+            expected.push(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string());
+            assert_eq!(names, expected);
         }
     }
     let denied = handle_mcp_request(
-        &local,
+        &adaptive,
         rpc(
             "tools/call",
             Some(json!(81)),
@@ -1784,10 +1822,10 @@ async fn selected_surface_is_immutable_after_environment_changes() {
     )
     .await;
     assert!(matches!(denied, McpOutcome::BadRequest(_)));
-    let status = local.runtime_status(None).await;
+    let status = adaptive.runtime_status(None).await;
     assert_eq!(
         status.output["runtime_exposure"],
-        crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+        crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
     );
 
     let full = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);

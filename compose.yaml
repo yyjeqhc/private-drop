@@ -10,7 +10,7 @@ services:
       WEBCODEX_ADDR: 0.0.0.0:8080
       WEBCODEX_DATA: /var/lib/webcodex
       WEBCODEX_PUBLIC_URL: ${WEBCODEX_PUBLIC_URL:?set WEBCODEX_PUBLIC_URL in .env}
-      WEBCODEX_MCP_MODEL_SURFACE: ${WEBCODEX_MCP_MODEL_SURFACE:-local-coding-v1}
+      WEBCODEX_MCP_MODEL_SURFACE: ${WEBCODEX_MCP_MODEL_SURFACE:-adaptive-runtime-v1}
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       # Only the existing reverse proxy on this host should reach WebCodex.

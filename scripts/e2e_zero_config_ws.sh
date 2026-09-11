@@ -561,25 +561,25 @@ fi
 # ----------------------------------------------------------------------------
 
 # The runtime exposure is startup-selected and immutable. Without Connector
-# configuration, Runtime(ModelSurface) defaults to the focused local_coding
-# coding loop. adaptive-runtime-v1 exposes a smaller typed core plus one long-tail
-# runtime gateway, while full-operator-v1 exposes the complete operator tool set.
+# configuration, Runtime(ModelSurface) defaults to adaptive_runtime: a smaller
+# typed core plus one long-tail runtime gateway. local-coding-v1 remains the
+# explicit fixed compatibility surface, while full-operator-v1 exposes the complete operator tool set.
 # No runtime surface re-exposes removed legacy edit tools or ModelHidden tools
 # (job_tail) via MCP tools/list.
 MODEL_SURFACE_ENV="${WEBCODEX_MCP_MODEL_SURFACE:-}"
 case "$MODEL_SURFACE_ENV" in
-    "" | "local-coding-v1")
-        EXPECTED_SURFACE="local_coding"
-        ;;
-    "adaptive-runtime-v1")
+    "" | "adaptive-runtime-v1")
         EXPECTED_SURFACE="adaptive_runtime"
+        ;;
+    "local-coding-v1")
+        EXPECTED_SURFACE="local_coding"
         ;;
     "full-operator-v1")
         EXPECTED_SURFACE="full_operator_runtime"
         ;;
     *)
         fail "unsupported WEBCODEX_MCP_MODEL_SURFACE=$MODEL_SURFACE_ENV"
-        EXPECTED_SURFACE="local_coding"
+        EXPECTED_SURFACE="adaptive_runtime"
         ;;
 esac
 log "expected runtime exposure: $EXPECTED_SURFACE"
