@@ -249,7 +249,17 @@ test("cross-package rename marks both source and destination packages affected",
   try {
     fs.writeFileSync(path.join(root, "crates", "a", "rename-me.txt"), "fixture\n");
     git(root, ["add", "crates/a/rename-me.txt"]);
-    git(root, ["-c", "commit.gpgSign=false", "commit", "-qm", "rename fixture"]);
+    git(root, [
+      "-c",
+      "user.name=WebCodex Test",
+      "-c",
+      "user.email=webcodex-test@example.invalid",
+      "-c",
+      "commit.gpgSign=false",
+      "commit",
+      "-qm",
+      "rename fixture",
+    ]);
     git(root, ["mv", "crates/a/rename-me.txt", "crates/b/moved-from-a.txt"]);
     const result = await callRepoContext(root);
     assert.equal(result.isError, false);
