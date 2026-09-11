@@ -348,7 +348,7 @@ fn plugin_init_creates_exact_public_sdk_scaffold_without_executing_dependencies(
         .unwrap();
     assert_eq!(
         rendered_entrypoint,
-        destination.join("dist/plugin.js").to_str().unwrap()
+        destination.join("dist").join("plugin.js").to_str().unwrap()
     );
     let root_entries = std::fs::read_dir(&destination)
         .unwrap()
