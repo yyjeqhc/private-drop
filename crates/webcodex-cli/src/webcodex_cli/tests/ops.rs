@@ -667,15 +667,17 @@ fn spawn_ops_route_server(
 }
 
 // Route fixtures may intentionally exercise the unauthenticated 401 contract.
-// Serialize them with the process-env credential test and remove any ambient
-// token for the duration, while still preserving explicit per-command tokens.
+// Serialize them with process-env credential tests and remove both ambient
+// user/API credential aliases while preserving explicit per-command tokens.
 #[allow(clippy::await_holding_lock)]
 async fn run_ops_with_routes(
     command: OpsCommand,
     routes: Vec<(&'static str, OpsHttpResponse)>,
 ) -> String {
     let _env_guard = env_test_guard();
-    let _env = EnvGuard::new().remove("WEBCODEX_TOKEN");
+    let _env = EnvGuard::new()
+        .remove("WEBCODEX_TOKEN")
+        .remove("WEBCODEX_PAT");
     let (server_url, stop_tx, handle) = spawn_ops_route_server(routes);
     let command = match command {
         OpsCommand::Status(mut opts) => {
