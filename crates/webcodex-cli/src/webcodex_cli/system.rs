@@ -620,19 +620,23 @@ pub(crate) fn resolve_user_api_token(
         return Ok(Some(token));
     }
     if let Some(path) = env_file {
-        if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
+        for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT"] {
+            if let Some(token) = read_env_file_value(path, key)? {
+                let token = token.trim().to_string();
+                if !token.is_empty() {
+                    validate_user_api_token(&token)?;
+                    return Ok(Some(token));
+                }
+            }
+        }
+    }
+    for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT"] {
+        if let Ok(token) = std::env::var(key) {
             let token = token.trim().to_string();
             if !token.is_empty() {
                 validate_user_api_token(&token)?;
                 return Ok(Some(token));
             }
-        }
-    }
-    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
-        let token = token.trim().to_string();
-        if !token.is_empty() {
-            validate_user_api_token(&token)?;
-            return Ok(Some(token));
         }
     }
     Ok(None)
@@ -666,6 +670,85 @@ mod tests {
     fn user_api_token_validation_accepts_user_tokens() {
         validate_user_api_token("wc_pat_user_api_token_0123456789").unwrap();
         validate_user_api_token("shared-key-without-managed-prefix").unwrap();
+    }
+
+    #[test]
+    fn user_api_token_resolution_preserves_explicit_and_file_precedence() {
+        use super::super::test_support::{env_test_guard, EnvGuard};
+
+        let _guard = env_test_guard();
+        let _env = EnvGuard::new()
+            .set("WEBCODEX_TOKEN", "process-token")
+            .set("WEBCODEX_PAT", "process-pat");
+        let temp = tempfile::tempdir().unwrap();
+        let token_file = temp.path().join("user-token");
+        let env_file = temp.path().join("webcodex.env");
+        std::fs::write(&token_file, "file-token\n").unwrap();
+        std::fs::write(
+            &env_file,
+            "WEBCODEX_TOKEN=env-token\nWEBCODEX_PAT=env-pat\n",
+        )
+        .unwrap();
+
+        let explicit = Some("explicit-token".to_string());
+        let selected = resolve_user_api_token(
+            &explicit,
+            &Some(token_file.clone()),
+            &Some(env_file.clone()),
+        )
+        .unwrap();
+        assert!(selected.as_deref() == Some("explicit-token"));
+
+        let selected = resolve_user_api_token(&None, &Some(token_file), &Some(env_file)).unwrap();
+        assert!(selected.as_deref() == Some("file-token"));
+    }
+
+    #[test]
+    fn user_api_token_resolution_uses_pat_only_as_env_fallback() {
+        use super::super::test_support::{env_test_guard, EnvGuard};
+
+        let _guard = env_test_guard();
+        let _env = EnvGuard::new()
+            .set("WEBCODEX_TOKEN", "process-token")
+            .set("WEBCODEX_PAT", "process-pat");
+        let temp = tempfile::tempdir().unwrap();
+        let env_file = temp.path().join("webcodex.env");
+
+        std::fs::write(
+            &env_file,
+            "WEBCODEX_TOKEN=env-token\nWEBCODEX_PAT=env-pat\n",
+        )
+        .unwrap();
+        let selected = resolve_user_api_token(&None, &None, &Some(env_file.clone())).unwrap();
+        assert!(selected.as_deref() == Some("env-token"));
+
+        std::fs::write(&env_file, "WEBCODEX_PAT=env-pat\n").unwrap();
+        let selected = resolve_user_api_token(&None, &None, &Some(env_file)).unwrap();
+        assert!(selected.as_deref() == Some("env-pat"));
+
+        let selected = resolve_user_api_token(&None, &None, &None).unwrap();
+        assert!(selected.as_deref() == Some("process-token"));
+        std::env::remove_var("WEBCODEX_TOKEN");
+        let selected = resolve_user_api_token(&None, &None, &None).unwrap();
+        assert!(selected.as_deref() == Some("process-pat"));
+    }
+
+    #[test]
+    fn user_api_token_resolution_rejects_runner_token_from_pat_without_echoing_it() {
+        use super::super::test_support::{env_test_guard, EnvGuard};
+
+        let _guard = env_test_guard();
+        let _env = EnvGuard::new()
+            .remove("WEBCODEX_TOKEN")
+            .remove("WEBCODEX_PAT");
+        let temp = tempfile::tempdir().unwrap();
+        let env_file = temp.path().join("webcodex.env");
+        let secret = "wc_agent_pat_alias_must_not_echo_0123456789";
+        std::fs::write(&env_file, format!("WEBCODEX_PAT={secret}\n")).unwrap();
+
+        let error = resolve_user_api_token(&None, &None, &Some(env_file)).unwrap_err();
+        assert!(error.contains("Runner transport token"));
+        assert!(!error.contains(secret));
     }
 
     #[test]

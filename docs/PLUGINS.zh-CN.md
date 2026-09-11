@@ -239,14 +239,27 @@ webcodex plugin init ./MyPlugin --id my-plugin
 安装依赖、执行生成代码、修改 `runner.toml`、注册 provider、reload Runner 或创建 credential。
 目标目录只能不存在或是空的 ordinary directory；任何已有用户数据都不会被覆盖。
 
+scaffold 创建成功后，human output 还会打印一个可以复制的 `[[plugins.providers]]` block，
+其中 `args` 指向这次生成项目真实的 absolute `dist/plugin.js`。路径值通过 TOML serializer
+生成，而不是字符串拼接，因此空格、Windows 反斜杠、引号及其它 TOML-sensitive character
+都会正确 escape。这仍然只是 onboarding guidance：operator 必须在目标 Runner 主机上把该
+block 复制到这个 Runner 启动时绑定的 `runner.toml`。portable scaffold README 继续保留
+absolute-path placeholder，不会永久写入作者机器的真实路径。如果不确定本机 Runner 实际
+使用哪个配置，应在 Runner 主机上检查对应 profile/service，例如
+`webcodex runner status --profile <profile>`；Server 不会为此发现或返回 Runner-local config
+path / executable path。
+
 实际 author loop 可以直接写成：
 
 ```text
-编辑/构建 Plugin
-    -> webcodex plugin check --runner special --plugin safe-delete
-    -> webcodex plugin reload --runner special
-    -> webcodex plugin list --runner special --plugin safe-delete
-    -> webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
+webcodex plugin init ./my-plugin
+    -> npm install
+    -> npm run build
+    -> 把输出的 provider block 复制到 Runner-local startup config
+    -> webcodex plugin check --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
+    -> webcodex plugin reload --runner special --token-file /path/to/plugin-authoring-pat
+    -> webcodex plugin list --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
+    -> webcodex plugin describe --runner special --plugin my-plugin --tool echo --token-file /path/to/plugin-authoring-pat
 ```
 
 identity/lifecycle 语义没有变化。Runner id 必须精确提供，CLI 不做 fuzzy match，也不会从
@@ -258,12 +271,20 @@ binding 只作为 opaque observation 输出，不缓存、不提升为 credentia
 后，旧 binding 仍按原 contract fail closed。
 
 网络参数沿用现有 CLI Server conventions：`--server-url`、`--proxy`、
-`--no-system-proxy`、`--env-file`、`--token-file`、`--token`、`--json`。Bearer token
-优先级依次为显式 `--token`、token file、指定 env file 中的 `WEBCODEX_TOKEN`、当前进程
-`WEBCODEX_TOKEN`；Runner transport token 会在 user/API 路径前被拒绝。`list`/`describe`
-要求 `plugin:inspect`；`check`/`reload` 必须由用户显式提供具有 `plugin:manage` 的 credential。
-现有 `--oauth-local-plugins` 仍然只表示 `plugin:inspect + plugin:invoke`，**不会**授予 manage。
-401/403 会正常 non-zero 失败；CLI 不会为了通过请求自动 mint、升级或修改 credential。
+`--no-system-proxy`、`--env-file`、`--token-file`、`--token`、`--json`。Plugin authoring
+长期使用时优先推荐显式 token file，例如 `--token-file /path/to/plugin-authoring-pat`。共享
+user/API resolver 保持向后兼容的优先级：显式 `--token`；`--token-file`；指定 env file 中的
+`WEBCODEX_TOKEN`，再 `WEBCODEX_PAT`；当前进程 `WEBCODEX_TOKEN`，再 `WEBCODEX_PAT`。
+`WEBCODEX_PAT` 只是 additive user/API CLI input alias，不改变 Server bootstrap
+`WEBCODEX_TOKEN` 的配置语义；两个环境变量同时存在时仍优先原有 `WEBCODEX_TOKEN`。如果需要
+专用 authoring PAT，复用已有 `webcodex tokens create-local` / Server token management flow，
+不要建立 Plugin-specific credential path。
+
+Runner transport token 会在发起 user/API HTTP request 前被拒绝。`list` / `describe` 要求
+`plugin:inspect`；canonical `plugin_tool` call 要求 `plugin:invoke`；`check` / `reload` 必须由
+用户显式提供具有 `plugin:manage` 的 credential。现有 `--oauth-local-plugins` 仍然只表示
+`plugin:inspect + plugin:invoke`，**不会**授予 manage。401/403 会正常 non-zero 失败；CLI
+不会为了通过请求自动 mint、升级或修改 credential。
 
 `--json` 直接打印 canonical `plugin_tool` output object，不再设计第二套 CLI Plugin JSON
 模型；human output 只渲染有界 canonical fields。`check` 只有在 `ready=true` 时 exit 0；

@@ -1687,7 +1687,7 @@ fn validate_acp_config(config: &AcpConfig) -> Result<(), String> {
                 || super::shell::is_sensitive_env_key(source)
             {
                 return Err(format!(
-                    "ACP agent '{}' env_from_env may not map WebCodex transport credentials",
+                    "ACP agent '{}' env_from_env may not map WebCodex-sensitive environment variables",
                     agent.id
                 ));
             }
@@ -1924,6 +1924,56 @@ fn validate_plugin_config(config: &PluginConfig, shell: &ShellConfig) -> Result<
 }
 
 #[cfg(test)]
+mod acp_config_tests {
+    use super::*;
+
+    fn agent() -> AcpAgentConfig {
+        AcpAgentConfig {
+            id: "agent".to_string(),
+            name: "Agent".to_string(),
+            executable: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            args: Vec::new(),
+            env_from_env: BTreeMap::new(),
+            allowed_config_options: Vec::new(),
+        }
+    }
+
+    fn validate(agent: AcpAgentConfig) -> Result<(), String> {
+        validate_acp_config(&AcpConfig {
+            agents: vec![agent],
+            ..AcpConfig::default()
+        })
+    }
+
+    #[test]
+    fn acp_env_mapping_rejects_webcodex_pat() {
+        for (destination, source) in [("WEBCODEX_PAT", "SOURCE"), ("DEST", "WEBCODEX_PAT")] {
+            let mut sensitive = agent();
+            sensitive
+                .env_from_env
+                .insert(destination.to_string(), source.to_string());
+            assert!(validate(sensitive)
+                .unwrap_err()
+                .contains("WebCodex-sensitive"));
+        }
+
+        #[cfg(windows)]
+        {
+            let mut mixed_case = agent();
+            mixed_case
+                .env_from_env
+                .insert("DEST".to_string(), "WebCodex_Pat".to_string());
+            assert!(validate(mixed_case)
+                .unwrap_err()
+                .contains("WebCodex-sensitive"));
+        }
+    }
+}
+
+#[cfg(test)]
 mod plugin_config_tests {
     use super::*;
 
@@ -2055,6 +2105,8 @@ mod mcp_gateway_config_tests {
     fn mcp_gateway_execution_context_rejects_sensitive_and_platform_duplicate_names() {
         for (destination, source) in [
             ("WEBCODEX_TOKEN", "SOURCE"),
+            ("WEBCODEX_PAT", "SOURCE"),
+            ("DEST", "WEBCODEX_PAT"),
             ("DEST", "WEBCODEX_AGENT_TOKEN"),
             ("WEBCODEX_USER_TOKEN", "SOURCE"),
             ("DEST", "AUTHORIZATION"),
@@ -2064,6 +2116,17 @@ mod mcp_gateway_config_tests {
                 .env_from_env
                 .insert(destination.to_string(), source.to_string());
             assert!(validate(sensitive)
+                .unwrap_err()
+                .contains("WebCodex-sensitive"));
+        }
+
+        #[cfg(windows)]
+        {
+            let mut mixed_case_pat = provider();
+            mixed_case_pat
+                .env_from_env
+                .insert("DEST".to_string(), "WebCodex_Pat".to_string());
+            assert!(validate(mixed_case_pat)
                 .unwrap_err()
                 .contains("WebCodex-sensitive"));
         }

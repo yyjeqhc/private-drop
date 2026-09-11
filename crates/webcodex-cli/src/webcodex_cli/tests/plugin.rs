@@ -1,7 +1,8 @@
 use super::support::*;
 use crate::webcodex_cli::plugin::{parse_plugin_command, run_plugin_command, PluginCommand};
 use crate::webcodex_cli::plugin_init::{
-    parse_plugin_init, run_plugin_init, PluginInitOptions, PLUGIN_INIT_SDK_VERSION,
+    parse_plugin_init, render_provider_configuration, run_plugin_init, PluginInitOptions,
+    PLUGIN_INIT_SDK_VERSION,
 };
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -319,6 +320,36 @@ fn plugin_init_creates_exact_public_sdk_scaffold_without_executing_dependencies(
 
     assert!(output.contains("Provider id: echo-plugin"), "{output}");
     assert!(output.contains("@yyjeqhc/webcodex-plugin-sdk@0.1.0"));
+    assert!(output.contains("Runner provider block"), "{output}");
+    assert!(output.contains("Next steps:"), "{output}");
+    assert!(output.contains("npm install"), "{output}");
+    assert!(output.contains("npm run build"), "{output}");
+    assert!(
+        output.contains("webcodex runner status --profile <profile>"),
+        "{output}"
+    );
+    assert!(
+        output.contains("--token-file /path/to/plugin-authoring-pat"),
+        "{output}"
+    );
+    assert!(output.contains("WEBCODEX_PAT"), "{output}");
+    let snippet = output
+        .split_once(
+            "Runner provider block (copy into the target Runner's startup-bound runner.toml):\n",
+        )
+        .unwrap()
+        .1
+        .split_once("\nNext steps:")
+        .unwrap()
+        .0;
+    let parsed_snippet: toml::Value = toml::from_str(snippet).unwrap();
+    let rendered_entrypoint = parsed_snippet["plugins"]["providers"][0]["args"][0]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        rendered_entrypoint,
+        destination.join("dist/plugin.js").to_str().unwrap()
+    );
     let root_entries = std::fs::read_dir(&destination)
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
@@ -386,9 +417,30 @@ fn plugin_init_creates_exact_public_sdk_scaffold_without_executing_dependencies(
     assert!(readme.contains("/absolute/path/to/PLUGIN_DIRECTORY/dist/plugin.js"));
     assert!(readme.contains("webcodex plugin check --runner <runner> --plugin echo-plugin"));
     assert!(readme.contains("--tool echo"));
+    assert!(readme.contains("--token-file /path/to/plugin-authoring-pat"));
+    assert!(readme.contains("WEBCODEX_PAT"));
+    assert!(!readme.contains(destination.to_string_lossy().as_ref()));
     assert!(!destination.join("node_modules").exists());
     assert!(!destination.join("package-lock.json").exists());
     assert!(!destination.join("dist").exists());
+}
+
+#[test]
+fn plugin_init_provider_snippet_uses_toml_escaping_for_cross_platform_paths() {
+    for entrypoint in [
+        "/opt/Web Codex/plugins/example/dist/plugin.js",
+        "/tmp/plugin-\"quoted\"-#1/dist/plugin.js",
+        r#"C:\Program Files\WebCodex\plugin "quoted"\dist\plugin.js"#,
+    ] {
+        let snippet = render_provider_configuration("example-plugin", entrypoint).unwrap();
+        assert!(snippet.starts_with("[[plugins.providers]]\n"));
+        let parsed: toml::Value = toml::from_str(&snippet).unwrap();
+        let provider = &parsed["plugins"]["providers"][0];
+        assert_eq!(provider["id"].as_str(), Some("example-plugin"));
+        assert_eq!(provider["command"].as_str(), Some("node"));
+        assert_eq!(provider["args"][0].as_str(), Some(entrypoint));
+        assert_eq!(provider["timeout_secs"].as_integer(), Some(30));
+    }
 }
 
 #[test]
@@ -522,6 +574,18 @@ fn plugin_command_help_documents_exact_identity_and_reload_scope() {
                 "help for {args:?} missing {needle:?}: {help}"
             );
         }
+    }
+    let credential_help = cli_exit(["plugin", "check", "--help"]).unwrap();
+    for needle in [
+        "WEBCODEX_TOKEN",
+        "WEBCODEX_PAT",
+        "Credential precedence",
+        "--token-file /path/to/plugin-authoring-pat",
+    ] {
+        assert!(
+            credential_help.contains(needle),
+            "Plugin credential help missing {needle:?}: {credential_help}"
+        );
     }
 }
 

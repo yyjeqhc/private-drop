@@ -160,11 +160,13 @@ pub(crate) fn ops_usage() -> &'static str {
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
        -h, --help              Print help and exit\n\n\
+     User/API credential precedence: --token, --token-file, selected --env-file\n\
+     WEBCODEX_TOKEN then WEBCODEX_PAT, process WEBCODEX_TOKEN then WEBCODEX_PAT.\n\n\
      These commands are read-only. They do not run jobs, start shell commands,\n\
      create sessions, write files, or print token/env values.\n"
 }
@@ -176,7 +178,7 @@ pub(crate) fn ops_status_usage() -> &'static str {
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -191,7 +193,7 @@ pub(crate) fn ops_runners_usage() -> &'static str {
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -208,7 +210,7 @@ pub(crate) fn ops_runner_usage() -> &'static str {
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -224,7 +226,7 @@ pub(crate) fn ops_projects_usage() -> &'static str {
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -241,7 +243,7 @@ pub(crate) fn ops_windows_usage() -> &'static str {
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -257,7 +259,7 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
        --server-url URL        WebCodex server URL [default: http://127.0.0.1:8080]\n\
        --proxy http://HOST:PORT Explicit proxy override for Server requests\n\
        --no-system-proxy       Ignore proxy environment and connect directly\n\
-       --env-file PATH         Read WEBCODEX_TOKEN from env file\n\
+       --env-file PATH         Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
        --token-file PATH       Read bearer token from file\n\
        --token TOKEN           Bearer token input; never printed\n\
        --json                  Print machine-readable output\n\
@@ -294,18 +296,24 @@ Options:\n\
                             is used only if it already passes canonical provider-id validation.\n\
   -h, --help                Print help and exit\n\n\
 The destination must be absent or an empty ordinary directory. Existing files, symlinks, and\n\
-non-empty directories are rejected; plugin init never overwrites user data.\n"
+non-empty directories are rejected; plugin init never overwrites user data. On success it prints\n\
+a copy-ready Runner provider block using the generated project's absolute dist/plugin.js path,\n\
+but it never edits Runner configuration or performs any network/authentication action.\n"
 }
 
 fn plugin_common_usage() -> &'static str {
     "  --server-url URL         WebCodex Server URL [default: http://127.0.0.1:8080]\n\
   --proxy http://HOST:PORT  Explicit proxy override for this Server request\n\
   --no-system-proxy         Ignore proxy environment and connect directly\n\
-  --env-file PATH           Read WEBCODEX_TOKEN from env file\n\
-  --token-file PATH         Read bearer token from file\n\
+  --env-file PATH           Read user/API credential from WEBCODEX_TOKEN, then WEBCODEX_PAT\n\
+  --token-file PATH         Read bearer token from file (recommended for Plugin authoring)\n\
   --token TOKEN             Bearer token input; never printed\n\
   --json                    Print the canonical plugin_tool output object as JSON\n\
-  -h, --help                Print help and exit\n"
+  -h, --help                Print help and exit\n\n\
+Credential precedence: --token, --token-file, selected --env-file WEBCODEX_TOKEN then\n\
+WEBCODEX_PAT, process WEBCODEX_TOKEN then WEBCODEX_PAT. WEBCODEX_PAT is only an additive\n\
+user/API CLI alias; existing WEBCODEX_TOKEN behavior remains preferred. For repeat Plugin\n\
+authoring prefer --token-file /path/to/plugin-authoring-pat.\n"
 }
 
 pub(crate) fn plugin_list_usage() -> String {

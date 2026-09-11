@@ -269,14 +269,29 @@ does not install packages, execute generated code, edit `runner.toml`, register 
 provider, reload a Runner, or create credentials. The destination must be absent or
 an empty ordinary directory, and existing data is never overwritten.
 
+After creating the scaffold, the human output also prints a copy-ready
+`[[plugins.providers]]` block whose `args` points at the generated project's real
+absolute `dist/plugin.js` path. The value is TOML-serialized rather than interpolated,
+so spaces, Windows backslashes, quotes, and other TOML-sensitive characters are
+escaped correctly. This is guidance only: the operator still copies the block into
+the target Runner's startup-bound `runner.toml` on that Runner host. The portable
+scaffold README keeps an absolute-path placeholder and never records the author's
+machine path. If the active local config is unclear, inspect the Runner profile or
+service selection on the Runner host, for example with
+`webcodex runner status --profile <profile>`; the Server never discovers or returns
+Runner-local config/executable paths for this workflow.
+
 A practical author loop is therefore:
 
 ```text
-edit/build Plugin
-    -> webcodex plugin check --runner special --plugin safe-delete
-    -> webcodex plugin reload --runner special
-    -> webcodex plugin list --runner special --plugin safe-delete
-    -> webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
+webcodex plugin init ./my-plugin
+    -> npm install
+    -> npm run build
+    -> copy the printed provider block into the Runner-local startup config
+    -> webcodex plugin check --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
+    -> webcodex plugin reload --runner special --token-file /path/to/plugin-authoring-pat
+    -> webcodex plugin list --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
+    -> webcodex plugin describe --runner special --plugin my-plugin --tool echo --token-file /path/to/plugin-authoring-pat
 ```
 
 The identity and lifecycle rules are unchanged. Runner ids are exact; the CLI does
@@ -291,13 +306,22 @@ still fail closed when their provider instance is retired.
 
 Network options follow the existing CLI Server conventions: `--server-url`,
 `--proxy`, `--no-system-proxy`, `--env-file`, `--token-file`, `--token`, and
-`--json`. Bearer-token precedence is explicit token, token file,
-`WEBCODEX_TOKEN` from the selected env file, then process `WEBCODEX_TOKEN`.
-Runner transport tokens are rejected for this user/API path. `list`/`describe`
-require `plugin:inspect`; `check`/`reload` require an explicitly granted
-`plugin:manage`. The existing `--oauth-local-plugins` setup option still grants
-only `plugin:inspect + plugin:invoke` and **does not** grant management authority.
-A 401/403 is a normal CLI failure; the CLI never mints, upgrades, or mutates a
+`--json`. For Plugin authoring, prefer a dedicated explicit token file such as
+`--token-file /path/to/plugin-authoring-pat`. The shared user/API resolver keeps its
+backward-compatible precedence: explicit `--token`; `--token-file`; selected
+`--env-file` `WEBCODEX_TOKEN`, then `WEBCODEX_PAT`; process `WEBCODEX_TOKEN`, then
+`WEBCODEX_PAT`. `WEBCODEX_PAT` is only an additive user/API CLI input alias; it does
+not redefine the Server bootstrap meaning of `WEBCODEX_TOKEN`, and when both names
+exist the legacy `WEBCODEX_TOKEN` input still wins. If a separate authoring PAT is
+needed, use the existing `webcodex tokens create-local` / Server token-management
+flow rather than a Plugin-specific credential path.
+
+Runner transport tokens are rejected before the user/API HTTP request. `list` and
+`describe` require `plugin:inspect`; canonical `plugin_tool` invocation requires
+`plugin:invoke`; `check` and `reload` require an explicitly granted `plugin:manage`.
+The existing `--oauth-local-plugins` setup option still grants only
+`plugin:inspect + plugin:invoke` and **does not** grant management authority. A
+401/403 is a normal CLI failure; the CLI never mints, upgrades, or mutates a
 credential to make the request pass.
 
 `--json` prints the canonical `plugin_tool` output object rather than a second CLI

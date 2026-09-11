@@ -40,6 +40,7 @@ fn shell_job_filters_sensitive_env_case_insensitive() {
     // environment; Windows removal must be case-insensitive like the OS.
     for spelling in [
         "WEBCODEX_TOKEN",
+        "WebCodex_Pat",
         "WebCodex_User_Token",
         "Authorization",
         "webcodex_agent_token",
@@ -61,7 +62,12 @@ fn shell_job_filters_sensitive_env_case_insensitive() {
     // A configured shell env must not be able to re-insert a secret after the
     // inherited environment was scrubbed. Exercise canonical and mixed-case
     // spellings because Windows environment names are case-insensitive.
-    for spelling in ["WEBCODEX_TOKEN", "WebCodex_User_Token", "authorization"] {
+    for spelling in [
+        "WEBCODEX_TOKEN",
+        "webcodex_pat",
+        "WebCodex_User_Token",
+        "authorization",
+    ] {
         let shell = ShellConfig {
             env: HashMap::from([(spelling.to_string(), "configured-secret".to_string())]),
             ..ShellConfig::default()

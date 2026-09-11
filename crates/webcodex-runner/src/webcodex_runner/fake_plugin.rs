@@ -37,7 +37,9 @@ fn main() -> io::Result<()> {
         )?;
         append(
             marker,
-            if env::var_os("WEBCODEX_AGENT_TOKEN").is_none() {
+            if env::var_os("WEBCODEX_AGENT_TOKEN").is_none()
+                && env::var_os("WEBCODEX_PAT").is_none()
+            {
                 "sensitive-env-cleared\n"
             } else {
                 "sensitive-env-leaked\n"

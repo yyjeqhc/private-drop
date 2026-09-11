@@ -100,8 +100,9 @@ fn resolve_dialect(program: &str, explicit: Option<ShellDialect>) -> ShellDialec
         .unwrap_or_else(platform_default_dialect)
 }
 
-const SENSITIVE_ENV_KEYS: [&str; 4] = [
+const SENSITIVE_ENV_KEYS: [&str; 5] = [
     "WEBCODEX_TOKEN",
+    "WEBCODEX_PAT",
     "WEBCODEX_AGENT_TOKEN",
     "WEBCODEX_USER_TOKEN",
     "AUTHORIZATION",
@@ -118,8 +119,8 @@ pub(crate) fn env_keys_equal(left: &str, right: &str) -> bool {
 }
 
 /// Sensitive environment keys must never reach child processes. Windows
-/// environment names are case-insensitive, so a mixed-case spelling such as
-/// `WebCodex_Token` must be filtered too; Unix stays case-sensitive.
+/// environment names are case-insensitive, so mixed-case spellings such as
+/// `WebCodex_Token` and `WebCodex_Pat` must be filtered too; Unix stays case-sensitive.
 pub(crate) fn is_sensitive_env_key(key: &str) -> bool {
     SENSITIVE_ENV_KEYS
         .iter()
