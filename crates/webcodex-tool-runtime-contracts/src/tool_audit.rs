@@ -3,6 +3,7 @@
 #[cfg(test)]
 use super::tool_call::ComputerSnapshotRegion;
 use super::tool_call::ToolCall;
+#[cfg(feature = "workspace-checkpoints")]
 use super::tool_inputs::{is_checkpoint_kind, is_checkpoint_validation_status};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -4161,6 +4162,7 @@ impl ToolCall {
                     "dry_run": dry_run,
                 })
             }
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointCreate {
                 project,
                 title,
@@ -4204,10 +4206,12 @@ impl ToolCall {
                     "validation_status": validation_status,
                 })
             }
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointList { project, limit, .. } => serde_json::json!({
                 "project": project,
                 "limit": limit,
             }),
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointShow {
                 project,
                 checkpoint_id,
@@ -4218,6 +4222,7 @@ impl ToolCall {
                 "checkpoint_id": checkpoint_id,
                 "include_diff_stat": include_diff_stat,
             }),
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointRestore {
                 project,
                 checkpoint_id,
@@ -4228,6 +4233,7 @@ impl ToolCall {
                 "checkpoint_id": checkpoint_id,
                 "confirm": confirm,
             }),
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointDelete {
                 project,
                 checkpoint_id,

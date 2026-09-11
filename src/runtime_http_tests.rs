@@ -1000,6 +1000,7 @@ fn extract_tool_call_collects_flattened_write_project_file_fields() {
 }
 
 #[test]
+#[cfg(feature = "workspace-checkpoints")]
 fn extract_tool_call_collects_flattened_checkpoint_restore_fields() {
     // GPT Action flattened call for workspace_checkpoint_restore: the
     // recorder metadata (recording_session_id) must be stripped from

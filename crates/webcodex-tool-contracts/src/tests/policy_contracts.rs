@@ -168,6 +168,7 @@ fn tool_definitions_are_session_evidence_policy_ssot() {
         runtime_tool_session_evidence_policy("__unknown_session_evidence_tool__"),
         ToolSessionEvidencePolicy::NONE
     );
+    #[cfg(feature = "workspace-checkpoints")]
     assert_eq!(
         lookup_tool_definition("workspace_checkpoint_create")
             .unwrap()
@@ -572,6 +573,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("computer_save_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),
         ("apply_patch", PERMISSION_RISK_PATCH),
         ("apply_unified_diff", PERMISSION_RISK_PATCH),
+        #[cfg(feature = "workspace-checkpoints")]
         ("workspace_checkpoint_restore", PERMISSION_RISK_PATCH),
         ("write_project_file", PERMISSION_RISK_WRITE),
         ("apply_text_edits", PERMISSION_RISK_WRITE),
@@ -890,26 +892,31 @@ fn required_runner_capability_matches_metadata_risk_table() {
             ToolRisk::Read,
             RunnerCapabilityRequirement::GitOrShell,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_create",
             ToolRisk::CheckpointManage,
             RunnerCapabilityRequirement::FileRead,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_restore",
             ToolRisk::ProjectWrite,
             RunnerCapabilityRequirement::FileWrite,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_list",
             ToolRisk::Read,
             RunnerCapabilityRequirement::OwnerOnly,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_show",
             ToolRisk::Read,
             RunnerCapabilityRequirement::OwnerOnly,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_delete",
             ToolRisk::ProjectWrite,
@@ -1019,4 +1026,22 @@ fn assert_agent_capability_lookup_rejects_non_runtime_name(name: &str) {
         result.is_err(),
         "{name} must not resolve Runner capability through metadata fallback"
     );
+}
+
+#[cfg(not(feature = "workspace-checkpoints"))]
+#[test]
+fn workspace_checkpoints_disabled_registry_and_discovery() {
+    assert!(registered_tool_specs()
+        .iter()
+        .all(|spec| !spec.name.starts_with("workspace_checkpoint_")));
+    assert!(crate::tool_catalog::TOOL_DISCOVERY_GROUPS
+        .iter()
+        .all(|group| group.name != "checkpoint"
+            && group
+                .tools
+                .iter()
+                .all(|name| !name.starts_with("workspace_checkpoint_"))));
+    for suffix in ["create", "list", "show", "restore", "delete"] {
+        assert!(lookup_tool_definition(&format!("workspace_checkpoint_{suffix}")).is_none());
+    }
 }

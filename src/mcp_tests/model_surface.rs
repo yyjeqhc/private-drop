@@ -1743,11 +1743,18 @@ async fn full_operator_tools_list_projects_destructive_hints_for_non_additive_mu
     };
     let tools = value["result"]["tools"].as_array().unwrap();
 
+    #[cfg(not(feature = "workspace-checkpoints"))]
+    assert!(tools.iter().all(|tool| !tool["name"]
+        .as_str()
+        .unwrap()
+        .starts_with("workspace_checkpoint_")));
+
     for name in [
         "apply_patch",
         "apply_text_edits",
         "apply_unified_diff",
         "write_project_file",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_restore",
         "save_project_artifact",
         "import_conversation_files_to_project",
@@ -1784,6 +1791,7 @@ async fn full_operator_tools_list_projects_destructive_hints_for_non_additive_mu
     }
 
     for name in [
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_create",
         "artifact_upload_begin",
         "artifact_upload_chunk",

@@ -160,6 +160,15 @@ Runtime Console -----------------------> canonical Server HTTP/kernel paths abov
 - `tool_runtime` — protocol-independent tool parsing, dispatch, project
   resolution, registry metadata, sessions, handoff, hygiene, files, Git,
   patches, validation, shell, Jobs, artifacts, and checkpoints.
+  Workspace Git/worktree snapshots (`workspace_checkpoint_*`) are opt-in:
+  build Server and Runner with `--features workspace-checkpoints`. The root
+  feature forwards to tool contracts, runtime contracts, and workspace; Runner
+  forwards separately to workspace. Default builds omit the implementation,
+  tools, schemas, and checkpoint handoff projection. `include_checkpoints`
+  remains accepted and is ignored when disabled; dormant Runner checkpoint
+  wire operations fail closed. Workflow Session context revisions, ACK,
+  recovery, collaboration, validation evidence, and Jobs remain always active.
+  The shared workspace path policy stays compiled for `project_overview`.
 - `auth` / `oauth_http` / `db` — authentication, OAuth endpoints, and
   persistence.
 - `webcodex-runner` crates — the Runner binary: config, transport, project

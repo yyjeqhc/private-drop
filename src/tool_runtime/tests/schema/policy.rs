@@ -256,26 +256,31 @@ fn required_runner_capability_matches_metadata_risk_table() {
             ToolRisk::Read,
             RunnerCapabilityRequirement::GitOrShell,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_create",
             ToolRisk::CheckpointManage,
             RunnerCapabilityRequirement::FileRead,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_restore",
             ToolRisk::ProjectWrite,
             RunnerCapabilityRequirement::FileWrite,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_list",
             ToolRisk::Read,
             RunnerCapabilityRequirement::OwnerOnly,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_show",
             ToolRisk::Read,
             RunnerCapabilityRequirement::OwnerOnly,
         ),
+        #[cfg(feature = "workspace-checkpoints")]
         (
             "workspace_checkpoint_delete",
             ToolRisk::ProjectWrite,

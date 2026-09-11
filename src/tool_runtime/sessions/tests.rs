@@ -146,6 +146,7 @@ fn session_tool_classification_uses_definition_policy() {
         ("show_changes", "read_only"),
         ("start_session", "workflow_manage"),
         ("close_session", "session_collaborate"),
+        #[cfg(feature = "workspace-checkpoints")]
         ("workspace_checkpoint_create", "checkpoint_manage"),
         ("coding_agent_cancel", "run_control"),
         ("write_project_file", "project_write"),
@@ -253,6 +254,7 @@ fn apply_unified_diff_finished_event_records_trusted_result_changed_paths() {
 }
 
 #[test]
+#[cfg(feature = "workspace-checkpoints")]
 fn checkpoint_restore_finished_event_records_trusted_result_changed_paths() {
     let store = SessionStore::default();
     let session = store.start_session(
@@ -3667,18 +3669,11 @@ fn stale_session_recovery_preserves_consequential_git_workspace_evidence() {
     let checkpoint = record_model_facing_result(
         &store,
         &session.session_id,
-        "workspace_checkpoint_create",
+        "apply_patch",
         SessionContextRevisionAck::Revision(1),
         true,
         json!({
-            "checkpoint_id": "wc_ckpt_demo",
-            "head": "pre-commit",
-            "branch": "feature",
-            "complete": true,
-            "tracked_diff_bytes": 4096,
-            "staged_diff_bytes": 0,
-            "untracked_file_count": 0,
-            "status_summary": {"modified": 21},
+            "changed_paths": ["src/lib.rs"],
             "state_changed": true
         }),
     );
@@ -3743,14 +3738,7 @@ fn stale_session_recovery_preserves_consequential_git_workspace_evidence() {
         vec![2, 3, 4]
     );
     assert!(resumed.recovery_events.iter().any(|event| {
-        event.tool_name == "workspace_checkpoint_create"
-            && event
-                .context_result_summary
-                .as_ref()
-                .is_some_and(|summary| {
-                    summary["status_summary"]["modified"] == 21
-                        && summary["checkpoint_id"] == "wc_ckpt_demo"
-                })
+        event.tool_name == "apply_patch" && event.changed_paths == vec!["src/lib.rs".to_string()]
     }));
     assert!(resumed
         .recovery_events

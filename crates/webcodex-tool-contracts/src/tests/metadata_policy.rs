@@ -94,6 +94,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "apply_text_edits",
         "apply_unified_diff",
         "write_project_file",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_restore",
         "save_project_artifact",
         "import_conversation_files_to_project",
@@ -129,6 +130,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
     }
 
     for name in [
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_create",
         "git_commit_paths",
         "artifact_upload_begin",

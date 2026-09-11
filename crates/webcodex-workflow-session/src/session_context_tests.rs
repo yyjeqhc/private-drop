@@ -2,9 +2,12 @@ use crate::*;
 use serde_json::{json, Value};
 
 fn session_tool_contract(tool_name: &str) -> SessionToolContract {
+    // These protocol unit tests supply checkpoint eligibility explicitly.
+    // show_changes supplies an always-compiled bounded context projection;
+    // its production eligibility remains owned by ToolDefinition.
     let advances_context_checkpoint = matches!(
         tool_name,
-        "apply_text_edits" | "run_process" | "workspace_checkpoint_create"
+        "apply_text_edits" | "run_process" | "show_changes"
     );
     SessionToolContract {
         risk_class: if advances_context_checkpoint {
@@ -294,13 +297,13 @@ fn non_capable_model_facing_result_advances_cross_surface_recovery_watermark() {
     let non_capable = record_model_facing_result(
         &store,
         &session.session_id,
-        "workspace_checkpoint_create",
+        "show_changes",
         SessionContextRevisionAck::Unsupported,
         true,
         json!({
-            "checkpoint_id": "wc_ckpt_cross_surface",
+            "head": "cross-surface-head",
             "branch": "feature",
-            "status_summary": {"modified": 3},
+            "counts": {"modified": 3},
             "state_changed": true
         }),
     );
@@ -331,10 +334,10 @@ fn non_capable_model_facing_result_advances_cross_surface_recovery_watermark() {
         vec![2]
     );
     let checkpoint = &resumed.recovery_events[0];
-    assert_eq!(checkpoint.tool_name, "workspace_checkpoint_create");
+    assert_eq!(checkpoint.tool_name, "show_changes");
     let consequence = checkpoint.context_result_summary.as_ref().unwrap();
-    assert_eq!(consequence["checkpoint_id"], "wc_ckpt_cross_surface");
-    assert_eq!(consequence["status_summary"]["modified"], 3);
+    assert_eq!(consequence["head"], "cross-surface-head");
+    assert_eq!(consequence["counts"]["modified"], 3);
 }
 
 #[test]
@@ -674,13 +677,13 @@ fn session_context_revision_restore_revalidates_bounded_context_result_summary()
     let recorded = record_model_facing_result(
         &store,
         &session.session_id,
-        "workspace_checkpoint_create",
+        "show_changes",
         SessionContextRevisionAck::Unacknowledged,
         true,
         json!({
-            "checkpoint_id": "wc_ckpt_demo",
+            "head": "demo-head",
             "branch": "b".repeat(500),
-            "status_summary": {
+            "counts": {
                 "modified": 21,
                 "token": "wc_pat_must_not_survive"
             }
@@ -694,8 +697,8 @@ fn session_context_revision_restore_revalidates_bounded_context_result_summary()
         .find(|event| event.context_revision == Some(1))
         .and_then(|event| event.context_result_summary.as_ref())
         .unwrap();
-    assert_eq!(live_summary["status_summary"]["modified"], 21);
-    assert_eq!(live_summary["status_summary"]["token"], "[redacted]");
+    assert_eq!(live_summary["counts"]["modified"], 21);
+    assert_eq!(live_summary["counts"]["token"], "[redacted]");
     let live_branch = live_summary["branch"].as_str().unwrap();
     assert!(live_branch.chars().count() <= 123);
     assert!(live_branch.ends_with("..."));
@@ -709,9 +712,9 @@ fn session_context_revision_restore_revalidates_bounded_context_result_summary()
         .find(|event| event["context_revision"] == 1)
         .unwrap();
     finished["context_result_summary"] = json!({
-        "checkpoint_id": "wc_ckpt_demo",
+        "head": "demo-head",
         "branch": "x".repeat(500),
-        "status_summary": {
+        "counts": {
             "modified": 21,
             "token": "wc_pat_corrupt_ledger_secret"
         },
@@ -729,8 +732,8 @@ fn session_context_revision_restore_revalidates_bounded_context_result_summary()
         .and_then(|event| event.context_result_summary.as_ref())
         .unwrap();
     assert!(context.get("arbitrary_untrusted_body").is_none());
-    assert_eq!(context["status_summary"]["modified"], 21);
-    assert_eq!(context["status_summary"]["token"], "[redacted]");
+    assert_eq!(context["counts"]["modified"], 21);
+    assert_eq!(context["counts"]["token"], "[redacted]");
     let restored_branch = context["branch"].as_str().unwrap();
     assert!(restored_branch.chars().count() <= 123);
     assert!(restored_branch.ends_with("..."));

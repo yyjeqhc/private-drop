@@ -1568,6 +1568,7 @@ impl ToolRuntime {
                 self.dispatch_handoff_tool(call, auth).await
             }
 
+            #[cfg(feature = "workspace-checkpoints")]
             call @ (ToolCall::WorkspaceCheckpointCreate { .. }
             | ToolCall::WorkspaceCheckpointList { .. }
             | ToolCall::WorkspaceCheckpointShow { .. }

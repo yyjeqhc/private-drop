@@ -49,7 +49,9 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "git_review_summary",
             "git_diff_hunks",
             "git_log",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_show",
             "computer_list_targets",
             "computer_list_windows",
@@ -126,7 +128,9 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "show_changes",
             "git_restore_paths",
             "discard_untracked",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_restore",
         ],
     },
@@ -140,7 +144,9 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "workspace_hygiene_check",
             "git_log",
             "git_status",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_show",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
         ],
     },
@@ -238,10 +244,15 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "complete_session_message",
             "session_discussion_summary",
             "session_handoff_summary",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_show",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_restore",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_delete",
             "list_projects",
             "list_runners",
@@ -267,9 +278,11 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "delete_project_files",
             "git_restore_paths",
             "discard_untracked",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_delete",
         ],
     },
+    #[cfg(feature = "workspace-checkpoints")]
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_CHECKPOINT,
         tools: &[

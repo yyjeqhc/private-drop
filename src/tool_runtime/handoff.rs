@@ -40,6 +40,7 @@ const MAX_RECENT_FAILED_TOOLS: usize = 10;
 const MAX_RECENT_PROGRESS: usize = 10;
 const MAX_RECENT_DECISIONS: usize = 10;
 const MAX_OPEN_ITEMS: usize = 20;
+#[cfg(feature = "workspace-checkpoints")]
 const MAX_RECENT_CHECKPOINTS: usize = 10;
 const HANDOFF_MESSAGE_CHARS: usize = 240;
 
@@ -68,6 +69,8 @@ impl ToolRuntime {
             .min(MAX_HANDOFF_LIMIT);
         let include_workspace = include_workspace.unwrap_or(true);
         let include_checkpoints = include_checkpoints.unwrap_or(true);
+        #[cfg(not(feature = "workspace-checkpoints"))]
+        let _ = include_checkpoints;
         let include_validation = include_validation.unwrap_or(true);
 
         let authorized_target = match self
@@ -273,6 +276,7 @@ impl ToolRuntime {
         }
 
         // --- optional checkpoint candidates ---
+        #[cfg(feature = "workspace-checkpoints")]
         if has_project && include_checkpoints {
             let project = project.clone().unwrap_or_default();
             let checkpoints = self.handoff_checkpoint_summary(&project, limit).await;
@@ -464,6 +468,7 @@ impl ToolRuntime {
     /// `workspace_checkpoint_list` path. Returns the latest
     /// `last_known_good` checkpoint (preferring `validation_status == passed`)
     /// and a bounded recent list. Never returns validation.commands or diffs.
+    #[cfg(feature = "workspace-checkpoints")]
     async fn handoff_checkpoint_summary(&self, project: &str, limit: usize) -> Value {
         let list_result = self
             .workspace_checkpoint_list(project.to_string(), Some(limit))

@@ -35,10 +35,9 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
         "read_file" => (true, false, false, SessionPathHint::SinglePath),
         "session_summary" => (true, false, false, SessionPathHint::None),
         "run_shell" => (false, true, true, SessionPathHint::None),
-        "write_project_file"
-        | "post_session_message"
-        | "workspace_checkpoint_create"
-        | "close_session" => (false, true, false, SessionPathHint::None),
+        "write_project_file" | "post_session_message" | "memory_set" | "close_session" => {
+            (false, true, false, SessionPathHint::None)
+        }
         other => panic!("unexpected synthetic lifecycle tool contract: {other}"),
     };
     SessionToolContract {
@@ -771,8 +770,8 @@ fn closed_session_denies_mutation_tools_allows_query() {
     assert!(store
         .lifecycle_denial(
             &session.session_id,
-            "workspace_checkpoint_create",
-            session_tool_contract("workspace_checkpoint_create")
+            "memory_set",
+            session_tool_contract("memory_set")
         )
         .is_some());
 

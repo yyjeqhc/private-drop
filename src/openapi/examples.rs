@@ -4,7 +4,7 @@ use crate::route_metadata::OpenApiExampleSet;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 
 pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> {
-    match example_set {
+    let examples = match example_set {
         OpenApiExampleSet::None => None,
         OpenApiExampleSet::RegisterProject => Some(json!({
             "basic": {
@@ -279,16 +279,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                     ]
                 }
             },
-            "checkpointRestore": {
-                "summary": "Restore a checkpoint via flattened GPT Action fields",
-                "value": {
-                    "tool": "workspace_checkpoint_restore",
-                    "project": "webcodex",
-                    "checkpoint_id": "wc_ckpt_abc",
-                    "confirm": true,
-                    TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
-                }
-            },
             "applyTextEdits": {
                 "summary": "Transactional file edit via flattened GPT Action fields",
                 "value": {
@@ -319,5 +309,22 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                 }
             }
         })),
-    }
+    };
+    #[cfg(feature = "workspace-checkpoints")]
+    let examples = examples.map(|mut examples| {
+        if matches!(example_set, OpenApiExampleSet::CallRuntimeTool) {
+            examples["checkpointRestore"] = json!({
+                "summary": "Restore a checkpoint via flattened GPT Action fields",
+                "value": {
+                    "tool": "workspace_checkpoint_restore",
+                    "project": "webcodex",
+                    "checkpoint_id": "wc_ckpt_abc",
+                    "confirm": true,
+                    TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
+                }
+            });
+        }
+        examples
+    });
+    examples
 }

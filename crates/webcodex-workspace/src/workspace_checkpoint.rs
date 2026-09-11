@@ -1,3 +1,4 @@
+use crate::path_policy::sensitive_path;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -816,56 +817,6 @@ fn invalid_rel_path(path: &str) -> bool {
         return true;
     }
     path.replace('\\', "/").split('/').any(|part| part == "..")
-}
-
-pub fn sensitive_path(path: &str) -> bool {
-    let parts = path
-        .replace('\\', "/")
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-        .map(|part| part.to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    for part in parts {
-        if matches!(
-            part.as_str(),
-            ".git"
-                | "target"
-                | "node_modules"
-                | "project-registry"
-                | "projects.d"
-                | "runner.toml"
-                | "agent.toml"
-                | "webcodex.env"
-                | ".env"
-                | ".npmrc"
-                | ".netrc"
-                | "secrets"
-                | "secret"
-                | "tokens"
-                | "token"
-                | "credentials"
-                | "credential"
-                | "passwords"
-                | "password"
-        ) {
-            return true;
-        }
-        if part.starts_with(".env")
-            || part.starts_with("runner.toml")
-            || part.starts_with("agent.toml")
-            || part.starts_with("webcodex.env")
-        {
-            return true;
-        }
-        if part == "id_rsa"
-            || part == "id_ed25519"
-            || part.ends_with(".pem")
-            || part.ends_with(".key")
-        {
-            return true;
-        }
-    }
-    false
 }
 
 fn skipped(path: String, reason: &str, byte_count: Option<usize>) -> Value {

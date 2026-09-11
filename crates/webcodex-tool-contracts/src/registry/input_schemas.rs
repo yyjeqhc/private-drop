@@ -1,5 +1,6 @@
 mod agent_tasks;
 mod artifacts;
+#[cfg(feature = "workspace-checkpoints")]
 mod checkpoints;
 mod cleanup;
 mod coding;
@@ -39,6 +40,7 @@ pub use artifacts::{
     read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
     save_project_artifact_input_schema,
 };
+#[cfg(feature = "workspace-checkpoints")]
 pub use checkpoints::{
     checkpoint_create_input_schema, checkpoint_delete_input_schema, checkpoint_labels_schema,
     checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,

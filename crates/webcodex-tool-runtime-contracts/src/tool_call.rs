@@ -4,9 +4,10 @@
 //! name, and the project/session accessors used by dispatch guards and audit
 //! logging.
 
+#[cfg(feature = "workspace-checkpoints")]
+use super::tool_inputs::CheckpointValidationInput;
 use super::tool_inputs::{
-    default_true, ApplyFileChangeInput, CheckpointValidationInput, ExecutionPurpose,
-    ExecutionShell, SessionMode,
+    default_true, ApplyFileChangeInput, ExecutionPurpose, ExecutionShell, SessionMode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -653,6 +654,7 @@ pub enum ToolCall {
 
     /// Create a bounded last-known-good workspace checkpoint outside the
     /// project worktree.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointCreate {
         project: String,
         #[serde(default)]
@@ -672,6 +674,7 @@ pub enum ToolCall {
     },
 
     /// List checkpoint metadata for a project without returning diffs.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointList {
         project: String,
         #[serde(default)]
@@ -682,6 +685,7 @@ pub enum ToolCall {
 
     /// Show bounded checkpoint metadata and file lists without full diff
     /// content.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointShow {
         project: String,
         checkpoint_id: String,
@@ -692,6 +696,7 @@ pub enum ToolCall {
     },
 
     /// Restore a workspace checkpoint after explicit confirmation.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointRestore {
         project: String,
         checkpoint_id: String,
@@ -701,6 +706,7 @@ pub enum ToolCall {
     },
 
     /// Delete a persisted checkpoint file after explicit confirmation.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointDelete {
         project: String,
         checkpoint_id: String,
@@ -2672,10 +2678,15 @@ impl ToolCall {
             Self::CompleteSessionMessage { .. } => "complete_session_message",
             Self::SessionDiscussionSummary { .. } => "session_discussion_summary",
             Self::SessionHandoffSummary { .. } => "session_handoff_summary",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointCreate { .. } => "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointList { .. } => "workspace_checkpoint_list",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointShow { .. } => "workspace_checkpoint_show",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointRestore { .. } => "workspace_checkpoint_restore",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointDelete { .. } => "workspace_checkpoint_delete",
             Self::RunProcess { .. } => "run_process",
             Self::RunDetachedProcess { .. } => "run_detached_process",
@@ -2852,11 +2863,6 @@ impl ToolCall {
             | Self::ArtifactUploadFinish { session_id, .. }
             | Self::ArtifactUploadAbort { session_id, .. }
             | Self::ApplyTextEdits { session_id, .. }
-            | Self::WorkspaceCheckpointCreate { session_id, .. }
-            | Self::WorkspaceCheckpointList { session_id, .. }
-            | Self::WorkspaceCheckpointShow { session_id, .. }
-            | Self::WorkspaceCheckpointRestore { session_id, .. }
-            | Self::WorkspaceCheckpointDelete { session_id, .. }
             | Self::WorkspaceHygieneCheck { session_id, .. }
             | Self::LspStatus { session_id, .. }
             | Self::DocumentSymbols { session_id, .. }
@@ -2865,6 +2871,12 @@ impl ToolCall {
             | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => session_id.as_deref(),
+            #[cfg(feature = "workspace-checkpoints")]
+            Self::WorkspaceCheckpointCreate { session_id, .. }
+            | Self::WorkspaceCheckpointList { session_id, .. }
+            | Self::WorkspaceCheckpointShow { session_id, .. }
+            | Self::WorkspaceCheckpointRestore { session_id, .. }
+            | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
             Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
             Self::ImportConversationFilesToProject { session_id, .. } => session_id.as_deref(),
             Self::CallHierarchy { session_id, .. } => session_id.as_deref(),
@@ -2983,11 +2995,6 @@ impl ToolCall {
             | Self::ArtifactUploadFinish { project, .. }
             | Self::ArtifactUploadAbort { project, .. }
             | Self::ApplyTextEdits { project, .. }
-            | Self::WorkspaceCheckpointCreate { project, .. }
-            | Self::WorkspaceCheckpointList { project, .. }
-            | Self::WorkspaceCheckpointShow { project, .. }
-            | Self::WorkspaceCheckpointRestore { project, .. }
-            | Self::WorkspaceCheckpointDelete { project, .. }
             | Self::WorkspaceHygieneCheck { project, .. }
             | Self::LspStatus { project, .. }
             | Self::DocumentSymbols { project, .. }
@@ -2996,6 +3003,12 @@ impl ToolCall {
             | Self::WorkspaceSymbols { project, .. }
             | Self::GotoDefinition { project, .. }
             | Self::FindReferences { project, .. } => Some(project.as_str()),
+            #[cfg(feature = "workspace-checkpoints")]
+            Self::WorkspaceCheckpointCreate { project, .. }
+            | Self::WorkspaceCheckpointList { project, .. }
+            | Self::WorkspaceCheckpointShow { project, .. }
+            | Self::WorkspaceCheckpointRestore { project, .. }
+            | Self::WorkspaceCheckpointDelete { project, .. } => Some(project.as_str()),
             Self::CallHierarchy { project, .. } => Some(project.as_str()),
             Self::WorkOnProject { project, .. } if !project.trim().is_empty() => {
                 Some(project.as_str())

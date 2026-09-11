@@ -624,10 +624,12 @@ mod tests {
                 "workspace_symbols",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
+            #[cfg(feature = "workspace-checkpoints")]
             (
                 "workspace_checkpoint_create",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
+            #[cfg(feature = "workspace-checkpoints")]
             (
                 "workspace_checkpoint_restore",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
@@ -716,7 +718,9 @@ mod tests {
             "resolve_session_message",
             "complete_session_message",
             "session_discussion_summary",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_restore",
             "show_changes",
             "document_diagnostics",

@@ -1319,6 +1319,7 @@ fn openapi_flattened_sync_wait_keeps_shared_bounded_contract() {
 }
 
 #[test]
+#[cfg(feature = "workspace-checkpoints")]
 fn openapi_call_runtime_tool_declares_checkpoint_flattened_fields() {
     // Regression: GPT Action wrapper rejected checkpoint note,
     // include_untracked, checkpoint_id, confirm, and include_diff_stat
@@ -1834,4 +1835,16 @@ fn openapi_exposes_get_runtime_status_action() {
     assert!(description.contains("observability"));
     assert!(description.contains("stale_count"));
     assert!(!description.contains("offline_count"));
+}
+
+#[cfg(not(feature = "workspace-checkpoints"))]
+#[test]
+fn workspace_checkpoints_disabled_openapi_surface() {
+    let spec = build_openapi_spec();
+    assert!(!spec.to_string().contains("workspace_checkpoint_"));
+    let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .unwrap();
+    assert!(!properties.contains_key("checkpoint_id"));
+    assert!(!properties.contains_key("include_diff_stat"));
 }

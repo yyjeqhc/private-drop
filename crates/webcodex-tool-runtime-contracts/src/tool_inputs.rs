@@ -60,14 +60,17 @@ impl StartupDetail {
     }
 }
 
+#[cfg(feature = "workspace-checkpoints")]
 pub use webcodex_core::runtime_contract::{
     CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES,
 };
 
+#[cfg(feature = "workspace-checkpoints")]
 pub fn is_checkpoint_kind(value: &str) -> bool {
     CHECKPOINT_KIND_VALUES.contains(&value)
 }
 
+#[cfg(feature = "workspace-checkpoints")]
 pub fn is_checkpoint_validation_status(value: &str) -> bool {
     CHECKPOINT_VALIDATION_STATUS_VALUES.contains(&value)
 }
@@ -79,6 +82,7 @@ pub use webcodex_core::apply_edits_shared::{
     ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
 };
 
+#[cfg(feature = "workspace-checkpoints")]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CheckpointValidationInput {
     #[serde(default)]

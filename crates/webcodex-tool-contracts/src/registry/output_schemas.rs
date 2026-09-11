@@ -2,6 +2,7 @@ use serde_json::Value;
 
 mod agent_tasks;
 mod artifacts;
+#[cfg(feature = "workspace-checkpoints")]
 mod checkpoints;
 mod coding_agents;
 mod coding_tasks;
@@ -53,6 +54,7 @@ pub fn output_schema_for_tool(name: &str) -> Value {
     if let Some(schema) = coding_tasks::output_schema_for_tool(name) {
         return schema;
     }
+    #[cfg(feature = "workspace-checkpoints")]
     if let Some(schema) = checkpoints::output_schema_for_tool(name) {
         return schema;
     }

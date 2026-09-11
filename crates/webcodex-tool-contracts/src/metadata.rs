@@ -306,6 +306,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "workspace-checkpoints")]
     fn checkpoint_metadata_separates_effect_from_existing_authority() {
         let create = lookup_tool_metadata("workspace_checkpoint_create").unwrap();
         assert_eq!(create.provider_id, TOOL_PROVIDER_NATIVE);
@@ -371,7 +372,9 @@ mod tests {
             "artifact_upload_abort",
             "git_restore_paths",
             "discard_untracked",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_restore",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_delete",
             "register_project",
             "unregister_project",

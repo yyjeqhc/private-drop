@@ -399,6 +399,7 @@ async fn failure_history_read_only_failure_is_non_actionable_in_handoff() {
 }
 
 #[tokio::test]
+#[cfg(feature = "workspace-checkpoints")]
 async fn failure_history_checkpoint_create_proven_no_change_is_non_actionable_in_handoff() {
     let runtime = test_runtime();
     let session = runtime
@@ -3245,6 +3246,7 @@ async fn session_handoff_summary_non_git_project_does_not_fail_whole_tool() {
 // =========================================================================
 
 #[tokio::test]
+#[cfg(feature = "workspace-checkpoints")]
 async fn session_handoff_summary_includes_latest_last_known_good_checkpoint() {
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
@@ -3578,6 +3580,7 @@ fn post_session_message(runtime: &ToolRuntime, session_id: &str, kind: &str, mes
         .unwrap();
 }
 
+#[cfg(feature = "workspace-checkpoints")]
 fn handoff_checkpoint_create_call(
     project: String,
     title: Option<&str>,
@@ -3597,6 +3600,7 @@ fn handoff_checkpoint_create_call(
     }
 }
 
+#[cfg(feature = "workspace-checkpoints")]
 fn handoff_checkpoint_validation(
     status: Option<&str>,
     commands: &[&str],
@@ -4300,4 +4304,37 @@ fn session_event_omitted_optional_fields_still_deserialize() {
         !event.diff_review_like,
         "legacy ledger rows without diff_review_like must default to false"
     );
+}
+
+#[cfg(not(feature = "workspace-checkpoints"))]
+#[tokio::test]
+async fn workspace_checkpoints_disabled_handoff_ignores_requested_projection() {
+    let runtime = test_runtime();
+    let root = tempfile::tempdir().unwrap();
+    let project =
+        register_runner_project_at_path(&runtime, "no-checkpoints", "project", root.path()).await;
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    post_session_message(
+        &runtime,
+        &session.session_id,
+        "todo",
+        "Keep collaboration active",
+    );
+    for include_checkpoints in [None, Some(true), Some(false)] {
+        let result = runtime
+            .dispatch(ToolCall::SessionHandoffSummary {
+                session_id: session.session_id.clone(),
+                project: Some(project.clone()),
+                include_workspace: Some(false),
+                include_checkpoints,
+                include_validation: Some(true),
+                summary_only: false,
+                limit: None,
+            })
+            .await;
+        assert!(result.success, "{result:?}");
+        assert!(result.output.get("checkpoints").is_none());
+        assert_eq!(result.output["counts"]["open_todos"], 1);
+        assert!(result.output.get("validation").is_some());
+    }
 }

@@ -231,6 +231,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         TOOL_DISCOVERY_GROUP_JOBS,
         TOOL_DISCOVERY_GROUP_RUNTIME,
         TOOL_DISCOVERY_GROUP_CLEANUP,
+        #[cfg(feature = "workspace-checkpoints")]
         TOOL_DISCOVERY_GROUP_CHECKPOINT,
     ] {
         assert!(

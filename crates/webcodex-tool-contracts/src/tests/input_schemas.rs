@@ -539,10 +539,15 @@ fn tool_specs_covers_expected_tool_set() {
         "git_log",
         "show_changes",
         "workspace_hygiene_check",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_create",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_list",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_show",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_restore",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_delete",
         "apply_patch",
         "apply_unified_diff",

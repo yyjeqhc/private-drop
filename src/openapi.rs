@@ -389,56 +389,11 @@ fn schemas() -> Value {
                 },
                 "kind": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. For message-board tools, one of note, proposal, question, answer, decision, risk, progress, guidance, todo. For workspace_checkpoint_create, one of snapshot, baseline, before_refactor, after_refactor, last_known_good, rollback_candidate. Used only when `params` is absent or null."
-                },
-                "labels": {
-                    "type": "array",
-                    "items": {"type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9._-]+$"},
-                    "maxItems": 20,
-                    "description": "Flattened workspace_checkpoint_create labels. Used only when `params` is absent or null."
-                },
-                "validation": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Flattened workspace_checkpoint_create validation metadata. The runtime records this metadata only and does not run commands.",
-                    "properties": {
-                        "status": {
-                            "type": "string",
-                            "enum": ["unknown", "not_run", "passed", "failed"]
-                        },
-                        "commands": {
-                            "type": "array",
-                            "items": {"type": "string", "maxLength": 200},
-                            "maxItems": 20
-                        },
-                        "summary": {
-                            "anyOf": [
-                                {"type": "string"},
-                                {"type": "null"}
-                            ],
-                            "maxLength": 500
-                        }
-                    }
-                },
-                "note": {
-                    "type": "string",
-                    "description": "Flattened workspace_checkpoint_create optional note (not used by restore). Used only when `params` is absent or null."
-                },
-                "include_untracked": {
-                    "type": "boolean",
-                    "description": "Flattened workspace_checkpoint_create flag to capture small non-secret UTF-8 untracked files (default false). Used only when `params` is absent or null."
-                },
-                "checkpoint_id": {
-                    "type": "string",
-                    "description": "Flattened workspace_checkpoint_show/restore/delete wc_ckpt_* id. Used only when `params` is absent or null."
+                    "description": "Flattened tool-specific argument. For message-board tools, one of note, proposal, question, answer, decision, risk, progress, guidance, todo. Used only when `params` is absent or null."
                 },
                 "confirm": {
                     "type": "boolean",
-                    "description": "Flattened confirmation flag for workspace_checkpoint_restore/delete and stop_job; must be true to proceed. Used only when `params` is absent or null."
-                },
-                "include_diff_stat": {
-                    "type": "boolean",
-                    "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` is absent or null."
+                    "description": "Flattened tool-specific confirmation flag; must be true when the selected tool requires confirmation. Used only when `params` is absent or null."
                 },
                 // Keep the flattened GPT Action shape composition-free. The canonical MCP/local-coding
                 // ToolSpec carries the strict per-kind oneOf contract; this import-facing projection uses
@@ -601,7 +556,7 @@ fn schemas() -> Value {
                 },
                 "include_checkpoints": {
                     "type": "boolean",
-                    "description": "Flattened session_handoff_summary flag. Include bounded checkpoint candidates when project is provided. Used only when params and arguments are absent."
+                    "description": "Flattened session_handoff_summary flag. Include bounded workspace checkpoint candidates when project is provided and the workspace-checkpoints build feature is enabled; otherwise accepted and ignored. Used only when params is absent or null."
                 },
                 "features": {
                     "type": "string",
