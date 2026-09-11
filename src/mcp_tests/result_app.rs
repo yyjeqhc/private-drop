@@ -1002,6 +1002,11 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
     ] {
         assert!(html.contains(expected), "missing {expected}");
     }
+    assert_eq!(
+        html.matches("if (!receivedToolResult)").count(),
+        2,
+        "late initialize success and failure must not overwrite an already rendered tool result"
+    );
     for forbidden in [
         "innerHTML",
         "eval(",

@@ -358,8 +358,10 @@
         summaryEl.textContent = "MCP Apps initialized" + (protocol ? " · " + protocol : "") + " · waiting for a supported result";
       }
     } catch (error) {
-      stateEl.textContent = "init failed";
-      summaryEl.textContent = "ui/initialize failed: " + boundedString(String(error && error.message ? error.message : error));
+      if (!receivedToolResult) {
+        stateEl.textContent = "init failed";
+        summaryEl.textContent = "ui/initialize failed: " + boundedString(String(error && error.message ? error.message : error));
+      }
     }
   }
 
