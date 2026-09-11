@@ -5,8 +5,11 @@ use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::path::Path;
 use std::time::Duration;
+use webcodex_core::runtime_contract::{
+    DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES, MAX_GIT_DIFF_HUNKS_PAGE_BYTES,
+    MIN_GIT_DIFF_HUNKS_PAGE_BYTES, MODEL_INSPECTION_MAX_RESULT_BYTES,
+};
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
-use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
 use super::git_committed::{
     committed_git_discovery_prefix, committed_git_isolated_view_setup, normalize_exact_commit_id,
@@ -38,7 +41,6 @@ pub(crate) use webcodex_core::runtime_contract::GIT_DIFF_HUNKS_CONTINUATION_MAX_
 const GIT_DIFF_HUNKS_CONTINUATION_PREFIX: &str = "wcdh1.";
 const GIT_DIFF_HUNKS_CONTINUATION_VERSION: u8 = 1;
 const GIT_DIFF_HUNKS_COMMITTED_CONTINUATION_VERSION: u8 = 2;
-pub(crate) const GIT_DIFF_HUNKS_PAGE_BYTES: usize = 32 * 1024;
 const GIT_DIFF_HUNKS_STDERR_BYTES: usize = 8 * 1024;
 const GIT_DIFF_HUNKS_BLOCK_TRAILER_BYTES: usize = 30;
 const GIT_DIFF_HUNKS_BLOCK_MAGIC: &[u8; 6] = b"WCDH1:";
@@ -55,13 +57,14 @@ const SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT: usize = 200;
 /// Maximum number of changed-file records `show_changes` emits on the
 /// production side. The total count stays exact (all entries are counted); only
 /// the returned records are bounded so a multi-thousand-file status never
-/// overflows the transport tail-retention window.
+/// overflows ordinary Runner result-retention headroom.
 pub(crate) const SHOW_CHANGES_MAX_STATUS_FILES: usize = 200;
 /// Production-side stdout budget for the whole `show_changes` command. The
 /// command is constructed so its worst-case raw stdout stays under this value,
-/// which is itself well under the Runner/Shell transport default of 256 KiB
-/// with room for protocol framing and error text. Bounding happens in the
-/// command itself, never by relying on the transport tail.
+/// which is itself below the ordinary Runner per-stream result-retention default
+/// of 256 KiB, with room for protocol framing and error text. That retention
+/// bound is not the polling/WebSocket/QUIC wire ceiling. Bounding happens in the
+/// command itself, never by relying on retained-tail truncation.
 pub(crate) const SHOW_CHANGES_OUTPUT_BUDGET_BYTES: usize = 192 * 1024;
 /// Reserved protocol space inside the output budget. The observation/result
 /// metadata frames and the diff metadata frame must always remain complete even
@@ -97,11 +100,11 @@ const SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_LINES: usize = 40;
 
 // The per-segment byte budgets are each independently bounded in the
 // production script; their sum plus the fixed protocol reserve must fit within
-// the transport output budget, so the script's raw stdout is provably at or
+// the command output budget, so the script's raw stdout is provably at or
 // under `SHOW_CHANGES_OUTPUT_BUDGET_BYTES` whenever every segment's metadata
 // frame is present. This compile-time check pins that invariant: changing any
 // segment budget (or the reserve) without shrinking the sum below the budget
-// fails to build, rather than silently overflowing transport.
+// fails to build, rather than silently overflowing its producer budget.
 const _: () = assert!(
     SHOW_CHANGES_STATUS_BYTES
         + SHOW_CHANGES_HEAD_BYTES
@@ -119,6 +122,12 @@ pub(crate) fn git_diff_summary_command() -> String {
         "git status --porcelain; printf '\\n{sentinel}\\n'; git diff --stat",
         sentinel = DIFF_SUMMARY_SENTINEL,
     )
+}
+
+fn normalize_git_diff_hunks_page_bytes(max_page_bytes: Option<usize>) -> usize {
+    max_page_bytes
+        .unwrap_or(DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES)
+        .clamp(MIN_GIT_DIFF_HUNKS_PAGE_BYTES, MAX_GIT_DIFF_HUNKS_PAGE_BYTES)
 }
 
 pub(crate) fn normalize_git_log_limit(limit: Option<usize>) -> usize {
@@ -2127,6 +2136,7 @@ fn set_show_changes_verdict(output: &mut Value) {
             "paths": suggested_paths,
             "max_hunks": DEFAULT_MAX_HUNKS,
             "max_hunk_lines": suggested_max_hunk_lines,
+            "max_page_bytes": DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES,
         });
         output["diff_review_handoff"] = json!({
             "tool": "git_diff_hunks",
@@ -2519,11 +2529,18 @@ fn is_git_object_hex(value: &str) -> bool {
     is_lower_hex(value, 40) || is_lower_hex(value, 64)
 }
 
-fn git_diff_hunks_scope_digest(resolved_project: &str, paths: &[String], cached: bool) -> String {
+fn git_diff_hunks_scope_digest(
+    resolved_project: &str,
+    paths: &[String],
+    cached: bool,
+    max_hunks: usize,
+    max_hunk_lines: usize,
+    max_page_bytes: usize,
+) -> String {
     let mut normalized_paths = paths.to_vec();
     normalized_paths.sort();
     let mut hasher = Sha256::new();
-    hasher.update(b"webcodex.git-diff-hunks.scope.v1\0");
+    hasher.update(b"webcodex.git-diff-hunks.scope.v2\0");
     hasher.update(resolved_project.as_bytes());
     hasher.update([0]);
     if cached {
@@ -2531,6 +2548,9 @@ fn git_diff_hunks_scope_digest(resolved_project: &str, paths: &[String], cached:
     } else {
         hasher.update(b"worktree");
     }
+    hasher.update((max_hunks as u64).to_be_bytes());
+    hasher.update((max_hunk_lines as u64).to_be_bytes());
+    hasher.update((max_page_bytes as u64).to_be_bytes());
     for path in normalized_paths {
         hasher.update([0]);
         hasher.update((path.len() as u64).to_be_bytes());
@@ -2545,11 +2565,12 @@ fn git_diff_hunks_committed_scope_digest(
     scope: &CommittedGitScope,
     max_hunks: usize,
     max_hunk_lines: usize,
+    max_page_bytes: usize,
 ) -> String {
     let mut normalized_paths = paths.to_vec();
     normalized_paths.sort();
     let mut hasher = Sha256::new();
-    hasher.update(b"webcodex.git-diff-hunks.scope.committed.v1\0");
+    hasher.update(b"webcodex.git-diff-hunks.scope.committed.v2\0");
     for value in [
         resolved_project,
         scope.requested_base.as_str(),
@@ -2562,7 +2583,7 @@ fn git_diff_hunks_committed_scope_digest(
     }
     hasher.update((max_hunks as u64).to_be_bytes());
     hasher.update((max_hunk_lines as u64).to_be_bytes());
-    hasher.update((GIT_DIFF_HUNKS_PAGE_BYTES as u64).to_be_bytes());
+    hasher.update((max_page_bytes as u64).to_be_bytes());
     for path in normalized_paths {
         hasher.update((path.len() as u64).to_be_bytes());
         hasher.update(path.as_bytes());
@@ -2768,6 +2789,7 @@ fn git_diff_hunks_call_arguments(
     committed_scope: Option<&CommittedGitScope>,
     max_hunks: usize,
     max_hunk_lines: usize,
+    max_page_bytes: usize,
     continuation: Option<&str>,
 ) -> Value {
     let mut arguments = serde_json::Map::new();
@@ -2775,6 +2797,7 @@ fn git_diff_hunks_call_arguments(
     arguments.insert("paths".to_string(), json!(paths));
     arguments.insert("max_hunks".to_string(), json!(max_hunks));
     arguments.insert("max_hunk_lines".to_string(), json!(max_hunk_lines));
+    arguments.insert("max_page_bytes".to_string(), json!(max_page_bytes));
     if let Some(scope) = committed_scope {
         arguments.insert("base_commit".to_string(), json!(scope.requested_base));
         arguments.insert("head_commit".to_string(), json!(scope.requested_head));
@@ -2829,6 +2852,7 @@ fn git_diff_hunks_recovery_value(
     committed_scope: Option<&CommittedGitScope>,
     max_hunks: usize,
     max_hunk_lines: usize,
+    max_page_bytes: usize,
     files: &[Value],
     page_hunk_limit: bool,
     hunk_line_limit: bool,
@@ -2860,6 +2884,7 @@ fn git_diff_hunks_recovery_value(
                 committed_scope,
                 max_hunks,
                 max_hunk_lines,
+                max_page_bytes,
                 Some(continuation),
             ),
         })
@@ -2876,8 +2901,8 @@ fn git_diff_hunks_recovery_value(
     // The producer drains each returned hunk to its boundary even when its
     // model-facing body is line-bounded. These bounded index lists therefore
     // prove whether *all* omitted returned hunks fit both the 400-line ceiling
-    // and a fresh path-scoped 32 KiB page. Never infer future byte fit from the
-    // already-emitted prefix alone.
+    // and a fresh path-scoped page using the same producer byte budget. Never
+    // infer future byte fit from the already-emitted prefix alone.
     let omitted_lines_fit_line_ceiling = !truncated_hunks.is_empty()
         && truncated_hunks
             .iter()
@@ -2922,6 +2947,7 @@ fn git_diff_hunks_recovery_value(
                 committed_scope,
                 max_hunks,
                 MAX_MAX_HUNK_LINES,
+                max_page_bytes,
                 None,
             ),
         })
@@ -3109,6 +3135,7 @@ fn git_diff_hunks_page_command(
     start_position: usize,
     max_hunks: usize,
     max_hunk_lines: usize,
+    max_page_bytes: usize,
     expected_fence: Option<&str>,
     committed_scope: Option<&CommittedGitScope>,
 ) -> Result<String, String> {
@@ -3285,7 +3312,7 @@ exit 1
 "#;
     Ok(script
         .replace("__PRELUDE__", &prelude)
-        .replace("__PAGE_BUDGET__", &GIT_DIFF_HUNKS_PAGE_BYTES.to_string())
+        .replace("__PAGE_BUDGET__", &max_page_bytes.to_string())
         .replace("__MAX_HUNKS__", &max_hunks.to_string())
         .replace("__MAX_HUNK_LINES__", &max_hunk_lines.to_string())
         .replace(
@@ -3370,7 +3397,10 @@ fn parse_hunk_indices(meta: &str, key: &str, returned_hunks: usize) -> Option<Ve
     Some(indices)
 }
 
-fn parse_framed_git_diff_hunks_stdout(stdout: &str) -> Option<GitDiffHunksPageWire> {
+fn parse_framed_git_diff_hunks_stdout(
+    stdout: &str,
+    max_page_bytes: usize,
+) -> Option<GitDiffHunksPageWire> {
     let mut cursor = stdout.len();
     let (obs_data, obs_meta, start) = parse_git_diff_hunks_wire_block(stdout, cursor, b'O')?;
     if !obs_data.is_empty() {
@@ -3378,7 +3408,7 @@ fn parse_framed_git_diff_hunks_stdout(stdout: &str) -> Option<GitDiffHunksPageWi
     }
     cursor = start;
     let (diff, page_meta, start) = parse_git_diff_hunks_wire_block(stdout, cursor, b'P')?;
-    if start != 0 || diff.len() > GIT_DIFF_HUNKS_PAGE_BYTES {
+    if start != 0 || diff.len() > max_page_bytes {
         return None;
     }
     let obs_meta = strip_wire_lf(obs_meta)?;
@@ -4070,12 +4100,39 @@ impl ToolRuntime {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn git_diff_hunks_continued_with_range(
         &self,
         project: String,
         paths: Option<Vec<String>>,
         max_hunks: Option<usize>,
         max_hunk_lines: Option<usize>,
+        cached: Option<bool>,
+        base_commit: Option<String>,
+        head_commit: Option<String>,
+        continuation: Option<String>,
+    ) -> ToolResult {
+        self.git_diff_hunks_continued_with_range_and_page_bytes(
+            project,
+            paths,
+            max_hunks,
+            max_hunk_lines,
+            None,
+            cached,
+            base_commit,
+            head_commit,
+            continuation,
+        )
+        .await
+    }
+
+    pub(crate) async fn git_diff_hunks_continued_with_range_and_page_bytes(
+        &self,
+        project: String,
+        paths: Option<Vec<String>>,
+        max_hunks: Option<usize>,
+        max_hunk_lines: Option<usize>,
+        max_page_bytes: Option<usize>,
         cached: Option<bool>,
         base_commit: Option<String>,
         head_commit: Option<String>,
@@ -4121,6 +4178,7 @@ impl ToolRuntime {
             .filter(|n| *n > 0)
             .unwrap_or(DEFAULT_MAX_HUNK_LINES)
             .min(MAX_MAX_HUNK_LINES);
+        let max_page_bytes = normalize_git_diff_hunks_page_bytes(max_page_bytes);
         let cached = cached.unwrap_or(false);
         if continuation
             .as_ref()
@@ -4166,8 +4224,16 @@ impl ToolRuntime {
                 committed_scope,
                 max_hunks,
                 max_hunk_lines,
+                max_page_bytes,
             ),
-            None => git_diff_hunks_scope_digest(&resolved.resolved_id, &paths, cached),
+            None => git_diff_hunks_scope_digest(
+                &resolved.resolved_id,
+                &paths,
+                cached,
+                max_hunks,
+                max_hunk_lines,
+                max_page_bytes,
+            ),
         };
         let mut command_paths = paths.clone();
         command_paths.sort();
@@ -4216,6 +4282,7 @@ impl ToolRuntime {
             start_position,
             max_hunks,
             max_hunk_lines,
+            max_page_bytes,
             expected_fence,
             committed_scope.as_ref(),
         ) {
@@ -4248,7 +4315,7 @@ impl ToolRuntime {
             }
         };
         let stderr = bounded_git_diff_hunks_stderr(&output.stderr);
-        let Some(wire) = parse_framed_git_diff_hunks_stdout(&output.stdout) else {
+        let Some(wire) = parse_framed_git_diff_hunks_stdout(&output.stdout, max_page_bytes) else {
             return git_diff_hunks_failure(
                 &project,
                 &paths,
@@ -4313,7 +4380,7 @@ impl ToolRuntime {
         if output.error.is_some()
             || output.exit_code != Some(0)
             || wire.page_filter_exit != 0
-            || wire.page_bytes > GIT_DIFF_HUNKS_PAGE_BYTES
+            || wire.page_bytes > max_page_bytes
         {
             return git_diff_hunks_failure(
                 &project,
@@ -4429,6 +4496,7 @@ impl ToolRuntime {
             committed_scope.as_ref(),
             max_hunks,
             max_hunk_lines,
+            max_page_bytes,
             &files,
             wire.page_hunk_limit,
             wire.hunk_line_limit,
@@ -4442,6 +4510,7 @@ impl ToolRuntime {
             "project": project,
             "paths": paths,
             "cached": cached,
+            "max_page_bytes": max_page_bytes,
             "files": files,
             "hunk_count": parsed_hunks,
             "truncated": !truncation_reasons.is_empty(),
@@ -4466,7 +4535,7 @@ impl ToolRuntime {
         if serde_json::to_vec(&result)
             .map(|bytes| {
                 bytes.len()
-                    <= MAX_SERIALIZED_OUTPUT_BYTES
+                    <= MODEL_INSPECTION_MAX_RESULT_BYTES
                         .saturating_sub(MODEL_RESULT_ENVELOPE_RESERVE_BYTES)
             })
             .unwrap_or(false)

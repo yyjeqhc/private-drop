@@ -78,6 +78,32 @@ fn assert_all_objects_strict(schema: &Value, path: &str, open_boundaries: &[&str
 }
 
 #[test]
+fn git_diff_hunks_output_schema_keeps_page_and_model_budgets_distinct() {
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "git_diff_hunks");
+    let output = &spec.output_schema["properties"]["output"]["properties"];
+    assert!(output["max_page_bytes"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("producer-page"));
+    let recovery = &output["recovery"]["properties"]["continuation"]["properties"]["next_call"]
+        ["anyOf"][0]["properties"]["arguments"];
+    assert_eq!(
+        recovery["properties"]["max_page_bytes"]["minimum"],
+        16 * 1024
+    );
+    assert_eq!(
+        recovery["properties"]["max_page_bytes"]["maximum"],
+        192 * 1024
+    );
+    assert!(recovery["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "max_page_bytes"));
+}
+
+#[test]
 fn continuation_feedback_output_schemas_are_synchronized() {
     let specs = registered_tool_specs();
     for name in ["finish_coding_task", "session_handoff_summary"] {

@@ -40,16 +40,18 @@ impl ToolRuntime {
                 paths,
                 max_hunks,
                 max_hunk_lines,
+                max_page_bytes,
                 cached,
                 base_commit,
                 head_commit,
                 continuation,
             } => {
-                self.git_diff_hunks_continued_with_range(
+                self.git_diff_hunks_continued_with_range_and_page_bytes(
                     project,
                     paths,
                     max_hunks,
                     max_hunk_lines,
+                    max_page_bytes,
                     cached,
                     base_commit,
                     head_commit,

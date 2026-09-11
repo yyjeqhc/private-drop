@@ -149,6 +149,31 @@ fn batch_inspection_result_budget_schema_uses_explicit_512_kib_ceiling() {
 }
 
 #[test]
+fn git_diff_hunks_page_budget_schema_is_producer_scoped_and_bounded() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "git_diff_hunks").input_schema;
+    let page = &schema["properties"]["max_page_bytes"];
+    assert_eq!(page["minimum"], 16 * 1024);
+    assert_eq!(page["default"], 64 * 1024);
+    assert_eq!(page["maximum"], 192 * 1024);
+    let description = page["description"].as_str().unwrap().to_ascii_lowercase();
+    assert!(description.contains("producer page"));
+    assert!(description.contains("final serialized model result"));
+    for bytes in [16 * 1024, 64 * 1024, 192 * 1024] {
+        assert!(test_support::validate_schema_instance(
+            &json!({"project":"demo","max_page_bytes":bytes}),
+            schema,
+        )
+        .is_ok());
+    }
+    assert!(test_support::validate_schema_instance(
+        &json!({"project":"demo","max_page_bytes":192 * 1024 + 1}),
+        schema,
+    )
+    .is_err());
+}
+
+#[test]
 fn sync_validation_and_run_shell_timeout_schema_bounds() {
     let specs = registered_tool_specs();
     for (name, default) in [

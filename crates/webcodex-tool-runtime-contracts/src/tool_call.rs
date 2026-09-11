@@ -946,6 +946,8 @@ pub enum ToolCall {
         #[serde(default)]
         max_hunk_lines: Option<usize>,
         #[serde(default)]
+        max_page_bytes: Option<usize>,
+        #[serde(default)]
         cached: Option<bool>,
         #[serde(default)]
         base_commit: Option<String>,
@@ -2423,6 +2425,7 @@ fn reject_unknown_git_diff_hunks_fields(arguments: &Value) -> Result<(), String>
         "paths",
         "max_hunks",
         "max_hunk_lines",
+        "max_page_bytes",
         "cached",
         "base_commit",
         "head_commit",

@@ -11,7 +11,12 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
+use webcodex_core::runtime_contract::{
+    DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES, MAX_GIT_DIFF_HUNKS_PAGE_BYTES,
+    MIN_GIT_DIFF_HUNKS_PAGE_BYTES, MODEL_INSPECTION_MAX_RESULT_BYTES,
+};
+
+const ORDINARY_RUNNER_RESULT_RETENTION_COMPAT_BYTES: usize = 256 * 1024;
 
 async fn register_structured_git_agent_at_path(
     runtime: &ToolRuntime,
@@ -599,6 +604,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
             "paths":["src/runtime_http.rs"],
             "max_hunks":20,
             "max_hunk_lines":120,
+            "max_page_bytes":98304,
             "cached":true,
             "continuation":"opaque-continuation"
         }),
@@ -609,6 +615,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         ToolCall::GitDiffHunks {
             project,
             cached: Some(true),
+            max_page_bytes: Some(98304),
             continuation: Some(continuation),
             ..
         } if project == "agent:oe:webcodex" && continuation == "opaque-continuation"
@@ -622,6 +629,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         "paths",
         "max_hunks",
         "max_hunk_lines",
+        "max_page_bytes",
         "cached",
         "base_commit",
         "head_commit",
@@ -632,6 +640,18 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
     assert_eq!(
         props["continuation"]["maxLength"],
         GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES
+    );
+    assert_eq!(
+        props["max_page_bytes"]["minimum"],
+        MIN_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
+    assert_eq!(
+        props["max_page_bytes"]["default"],
+        DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
+    assert_eq!(
+        props["max_page_bytes"]["maximum"],
+        MAX_GIT_DIFF_HUNKS_PAGE_BYTES
     );
     for field in ["base_commit", "head_commit"] {
         assert_eq!(props[field]["minLength"], 40);
@@ -674,6 +694,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         "paths",
         "cached",
         "files",
+        "max_page_bytes",
         "hunk_count",
         "truncated",
         "truncation_reasons",
@@ -711,6 +732,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
         "paths": ["src/runtime_http.rs", "src/tool_runtime/git.rs"],
         "max_hunks": 7,
         "max_hunk_lines": 33,
+        "max_page_bytes": 96 * 1024,
         "cached": true,
         "continuation": continuation,
     });
@@ -726,6 +748,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
     );
     assert_eq!(raw_summary["max_hunks"], 7);
     assert_eq!(raw_summary["max_hunk_lines"], 33);
+    assert_eq!(raw_summary["max_page_bytes"], 96 * 1024);
     assert_eq!(raw_summary["cached"], true);
     assert_eq!(raw_summary["continuation_present"], true);
     assert!(raw_summary.get("continuation").is_none());
@@ -739,6 +762,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
     assert_eq!(typed_summary["paths"], raw_summary["paths"]);
     assert_eq!(typed_summary["max_hunks"], 7);
     assert_eq!(typed_summary["max_hunk_lines"], 33);
+    assert_eq!(typed_summary["max_page_bytes"], 96 * 1024);
     assert_eq!(typed_summary["cached"], true);
     assert!(typed_summary.get("continuation").is_none());
     assert!(!serde_json::to_string(&typed_summary)
@@ -751,6 +775,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
     assert_eq!(defensive["paths"], raw_summary["paths"]);
     assert_eq!(defensive["max_hunks"], 7);
     assert_eq!(defensive["max_hunk_lines"], 33);
+    assert_eq!(defensive["max_page_bytes"], 96 * 1024);
     assert_eq!(defensive["cached"], true);
     assert!(defensive.get("continuation").is_none());
     assert!(!serde_json::to_string(&defensive)
@@ -778,6 +803,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
     assert_eq!(input_summary["paths"], raw_summary["paths"]);
     assert_eq!(input_summary["max_hunks"], 7);
     assert_eq!(input_summary["max_hunk_lines"], 33);
+    assert_eq!(input_summary["max_page_bytes"], 96 * 1024);
     assert_eq!(input_summary["cached"], true);
     assert!(input_summary.get("continuation").is_none());
     assert!(!serde_json::to_string(input_summary)
@@ -891,17 +917,47 @@ async fn run_runner_git_diff_hunks_page(
     cached: bool,
     continuation: Option<String>,
 ) -> (ToolResult, usize, String) {
+    run_runner_git_diff_hunks_page_with_budget(
+        runtime,
+        client_id,
+        project,
+        repo,
+        paths,
+        max_hunks,
+        max_hunk_lines,
+        None,
+        cached,
+        continuation,
+    )
+    .await
+}
+
+async fn run_runner_git_diff_hunks_page_with_budget(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    repo: &Path,
+    paths: Option<Vec<String>>,
+    max_hunks: usize,
+    max_hunk_lines: usize,
+    max_page_bytes: Option<usize>,
+    cached: bool,
+    continuation: Option<String>,
+) -> (ToolResult, usize, String) {
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.to_string();
         async move {
             runtime
-                .git_diff_hunks_continued(
+                .git_diff_hunks_continued_with_range_and_page_bytes(
                     project,
                     paths,
                     Some(max_hunks),
                     Some(max_hunk_lines),
+                    max_page_bytes,
                     Some(cached),
+                    None,
+                    None,
                     continuation,
                 )
                 .await
@@ -952,6 +1008,7 @@ async fn run_parser_ready_worktree_git_diff_hunks_call(
         max_hunk_lines,
         cached,
         base_commit,
+        max_page_bytes,
         head_commit,
         continuation,
         ..
@@ -960,7 +1017,7 @@ async fn run_parser_ready_worktree_git_diff_hunks_call(
         panic!("recovery next_call must target git_diff_hunks");
     };
     assert!(base_commit.is_none() && head_commit.is_none());
-    let (result, _, _) = run_runner_git_diff_hunks_page(
+    let (result, _, _) = run_runner_git_diff_hunks_page_with_budget(
         runtime,
         client_id,
         &project,
@@ -968,6 +1025,7 @@ async fn run_parser_ready_worktree_git_diff_hunks_call(
         paths,
         max_hunks.expect("recovery call must preserve max_hunks"),
         max_hunk_lines.expect("recovery call must preserve max_hunk_lines"),
+        max_page_bytes,
         cached.unwrap_or(false),
         continuation,
     )
@@ -987,16 +1045,46 @@ async fn run_runner_git_diff_hunks_committed_page(
     head_commit: String,
     continuation: Option<String>,
 ) -> (ToolResult, usize, Vec<String>) {
+    run_runner_git_diff_hunks_committed_page_with_budget(
+        runtime,
+        client_id,
+        project,
+        repo,
+        paths,
+        max_hunks,
+        max_hunk_lines,
+        None,
+        base_commit,
+        head_commit,
+        continuation,
+    )
+    .await
+}
+
+async fn run_runner_git_diff_hunks_committed_page_with_budget(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    repo: &Path,
+    paths: Option<Vec<String>>,
+    max_hunks: usize,
+    max_hunk_lines: usize,
+    max_page_bytes: Option<usize>,
+    base_commit: String,
+    head_commit: String,
+    continuation: Option<String>,
+) -> (ToolResult, usize, Vec<String>) {
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.to_string();
         async move {
             runtime
-                .git_diff_hunks_continued_with_range(
+                .git_diff_hunks_continued_with_range_and_page_bytes(
                     project,
                     paths,
                     Some(max_hunks),
                     Some(max_hunk_lines),
+                    max_page_bytes,
                     None,
                     Some(base_commit),
                     Some(head_commit),
@@ -1689,6 +1777,36 @@ async fn git_diff_hunks_committed_continuation_binds_range_paths_mode_and_state(
     assert_eq!(recovery["arguments"]["continuation"], token);
     assert!(recovery["arguments"].get("cached").is_none());
     assert_git_diff_hunks_recovery_call_parses(recovery);
+    assert_eq!(
+        recovery["arguments"]["max_page_bytes"],
+        DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
+    let (page_budget_mismatch, _, mismatch_scripts) =
+        run_runner_git_diff_hunks_committed_page_with_budget(
+            &runtime,
+            "committed-continuation",
+            &project,
+            tmp.path(),
+            paths.clone(),
+            1,
+            120,
+            Some(MIN_GIT_DIFF_HUNKS_PAGE_BYTES),
+            base.clone(),
+            head.clone(),
+            Some(token.clone()),
+        )
+        .await;
+    assert!(!page_budget_mismatch.success);
+    assert_eq!(
+        page_budget_mismatch.output["reason_code"],
+        "continuation_mismatch"
+    );
+    assert_eq!(
+        mismatch_scripts.len(),
+        1,
+        "committed page-budget mismatch may resolve range scope but must stop before the page producer"
+    );
+
     let first_diff = first.output["files"][0]["hunks"][0]["diff"]
         .as_str()
         .unwrap()
@@ -2162,7 +2280,7 @@ async fn git_diff_hunks_stable_multi_page_traversal_has_no_duplicate_or_missing_
 }
 
 #[tokio::test]
-async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_capture() {
+async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_result_retention() {
     let repo = tempfile::tempdir().unwrap();
     init_git_repo(repo.path());
     let original = (0..2500)
@@ -2182,8 +2300,8 @@ async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_captur
         run_command_full_capture("git diff --unified=80", repo.path(), 30);
     assert_eq!(raw_exit, 0, "raw git diff failed: {raw_stderr}");
     assert!(
-        raw_diff.len() > MAX_SERIALIZED_OUTPUT_BYTES,
-        "fixture did not exceed transport-sized retention: {} bytes",
+        raw_diff.len() > ORDINARY_RUNNER_RESULT_RETENTION_COMPAT_BYTES,
+        "fixture did not exceed ordinary Runner result-retention compatibility floor: {} bytes",
         raw_diff.len()
     );
 
@@ -2203,9 +2321,13 @@ async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_captur
     )
     .await;
     assert!(result.success, "{:?}", result.error);
+    assert_eq!(
+        result.output["max_page_bytes"],
+        DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
     assert!(
-        runner_stdout_bytes <= GIT_DIFF_HUNKS_PAGE_BYTES + 4096,
-        "producer sent {runner_stdout_bytes} bytes through ordinary transport"
+        runner_stdout_bytes <= DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES + 4096,
+        "producer sent {runner_stdout_bytes} bytes beyond default page-retention headroom"
     );
     assert_eq!(result.output["files"][0]["path"], "large-0.txt");
     assert_eq!(result.output["has_more"], true);
@@ -2234,6 +2356,10 @@ async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_captur
     assert_eq!(recovery["arguments"]["paths"], json!([]));
     assert_eq!(recovery["arguments"]["max_hunk_lines"], 12);
     assert_eq!(
+        recovery["arguments"]["max_page_bytes"],
+        DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
+    assert_eq!(
         recovery["continuation"]["next_call"]["arguments"]["max_hunk_lines"],
         12
     );
@@ -2243,8 +2369,109 @@ async fn git_diff_hunks_large_raw_diff_is_bounded_before_runner_transport_captur
     );
     assert_git_diff_hunks_recovery_call_parses(recovery);
     assert!(
-        serde_json::to_vec(&result).unwrap().len() <= MAX_SERIALIZED_OUTPUT_BYTES,
-        "serialized result exceeded model envelope"
+        serde_json::to_vec(&result).unwrap().len() <= MODEL_INSPECTION_MAX_RESULT_BYTES,
+        "serialized result exceeded explicit model-inspection ceiling"
+    );
+}
+
+#[tokio::test]
+async fn git_diff_hunks_page_budget_is_configurable_bounded_and_scope_bound() {
+    let repo = tempfile::tempdir().unwrap();
+    init_git_repo(repo.path());
+    for file in 0..40 {
+        let body = (0..30)
+            .map(|line| format!("base-{file:02}-{line:02}-{}\n", "x".repeat(72)))
+            .collect::<String>();
+        fs::write(repo.path().join(format!("page-{file:02}.txt")), body).unwrap();
+    }
+    git_test_command_ok(repo.path(), "git add -- . && git commit -m page-baseline");
+    for file in 0..40 {
+        let body = (0..30)
+            .map(|line| format!("changed-{file:02}-{line:02}-{}\n", "y".repeat(72)))
+            .collect::<String>();
+        fs::write(repo.path().join(format!("page-{file:02}.txt")), body).unwrap();
+    }
+
+    let runtime = test_runtime();
+    let client_id = "diff-hunks-page-budget";
+    let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
+    let (small, small_stdout_bytes, _) = run_runner_git_diff_hunks_page_with_budget(
+        &runtime,
+        client_id,
+        &project,
+        repo.path(),
+        None,
+        100,
+        100,
+        Some(MIN_GIT_DIFF_HUNKS_PAGE_BYTES),
+        false,
+        None,
+    )
+    .await;
+    assert!(small.success, "{:?}", small.error);
+    assert_eq!(
+        small.output["max_page_bytes"],
+        MIN_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
+    assert!(small_stdout_bytes <= MIN_GIT_DIFF_HUNKS_PAGE_BYTES + 4096);
+    assert_eq!(small.output["has_more"], true);
+    let token = small.output["next_continuation"]
+        .as_str()
+        .expect("small producer page must continue")
+        .to_string();
+    assert_eq!(
+        small.output["recovery"]["arguments"]["max_page_bytes"],
+        MIN_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
+
+    let mismatch = runtime
+        .git_diff_hunks_continued_with_range_and_page_bytes(
+            project.clone(),
+            None,
+            Some(100),
+            Some(100),
+            Some(DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES),
+            Some(false),
+            None,
+            None,
+            Some(token),
+        )
+        .await;
+    assert!(!mismatch.success);
+    assert_eq!(mismatch.output["reason_code"], "continuation_mismatch");
+    assert!(
+        probe_patch_agent_request(&runtime, client_id)
+            .await
+            .is_none(),
+        "page-budget scope mismatch must stop before producer dispatch"
+    );
+
+    let (large, large_stdout_bytes, _) = run_runner_git_diff_hunks_page_with_budget(
+        &runtime,
+        client_id,
+        &project,
+        repo.path(),
+        None,
+        100,
+        100,
+        Some(MAX_GIT_DIFF_HUNKS_PAGE_BYTES + 64 * 1024),
+        false,
+        None,
+    )
+    .await;
+    assert!(large.success, "{:?}", large.error);
+    assert_eq!(
+        large.output["max_page_bytes"],
+        MAX_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
+    assert!(large_stdout_bytes <= MAX_GIT_DIFF_HUNKS_PAGE_BYTES + 4096);
+    assert!(
+        large.output["hunk_count"].as_u64().unwrap() > small.output["hunk_count"].as_u64().unwrap(),
+        "larger producer page should return more complete hunk records"
+    );
+    assert!(
+        serde_json::to_vec(&large).unwrap().len() <= MODEL_INSPECTION_MAX_RESULT_BYTES,
+        "producer page and final model-facing ceiling must remain independently bounded"
     );
 }
 
@@ -2493,7 +2720,7 @@ async fn git_diff_hunks_binary_records_advance_across_byte_bounded_pages() {
         .await;
         assert!(page.success, "{:?}", page.error);
         assert_eq!(page.output["hunk_count"], 0);
-        assert!(runner_stdout_bytes <= GIT_DIFF_HUNKS_PAGE_BYTES + 4096);
+        assert!(runner_stdout_bytes <= DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES + 4096);
         for file in page.output["files"].as_array().unwrap() {
             assert_ne!(file.get("continued").and_then(Value::as_bool), Some(true));
             returned.push(file["path"].as_str().unwrap().to_string());
@@ -2805,7 +3032,10 @@ async fn git_diff_hunks_line_recovery_requires_proven_future_byte_fit() {
     let runtime = test_runtime();
     let client_id = "diff-hunks-future-byte-ceiling";
     let project = register_runner_project_at_path(&runtime, client_id, "repo", repo.path()).await;
-    let (page, _, _) = run_runner_git_diff_hunks_page(
+    // This test is specifically about a future recovery being blocked by a
+    // constrained producer byte page; do not depend on the product default.
+    let constrained_page_bytes = 32 * 1024;
+    let (page, _, _) = run_runner_git_diff_hunks_page_with_budget(
         &runtime,
         client_id,
         &project,
@@ -2813,12 +3043,14 @@ async fn git_diff_hunks_line_recovery_requires_proven_future_byte_fit() {
         None,
         10,
         5,
+        Some(constrained_page_bytes),
         false,
         None,
     )
     .await;
 
     assert!(page.success, "{:?}", page.error);
+    assert_eq!(page.output["max_page_bytes"], constrained_page_bytes);
     let reasons = page.output["truncation_reasons"].as_array().unwrap();
     assert!(reasons.iter().any(|reason| reason == "hunk_line_limit"));
     assert!(!reasons.iter().any(|reason| reason == "page_byte_budget"));
@@ -3250,13 +3482,14 @@ fn long_leaf_name(i: usize) -> String {
 }
 
 #[test]
-fn show_changes_status_output_over_256k_keeps_branch_header_observable() {
+fn show_changes_status_over_retention_floor_keeps_branch_header_observable() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
     // A *real* >256 KiB status: ~1200 tracked files with long (~237-byte)
     // names in a single flat directory, committed and then modified. The full
-    // status legitimately exceeds the transport cap, not just the count limit.
+    // status legitimately exceeds the ordinary Runner result-retention
+    // compatibility floor, not just the count limit.
     let dir = tmp.path().join("d");
     std::fs::create_dir_all(&dir).unwrap();
     let total = 1200usize;
@@ -3285,8 +3518,8 @@ fn show_changes_status_output_over_256k_keeps_branch_header_observable() {
     );
     let raw_status_bytes = raw_stdout.len();
     assert!(
-        raw_status_bytes > 256 * 1024,
-        "raw status must exceed 256 KiB to cover the transport cap; got {raw_status_bytes} bytes"
+        raw_status_bytes > ORDINARY_RUNNER_RESULT_RETENTION_COMPAT_BYTES,
+        "raw status must exceed the ordinary Runner result-retention compatibility floor; got {raw_status_bytes} bytes"
     );
     // The bounded show_changes command must stay within the production budget.
     // Its output is also larger than the pipe buffer, so use full capture.
@@ -3302,21 +3535,23 @@ fn show_changes_status_output_over_256k_keeps_branch_header_observable() {
         "bounded stdout must stay within the production budget; got {bounded_stdout_bytes} bytes (budget {})",
         SHOW_CHANGES_OUTPUT_BUDGET_BYTES
     );
-    // Simulate the Runner/Shell transport's 256 KiB tail retention: since the
-    // bounded output already fits the budget (< 256 KiB), the tail keeps the
-    // whole stream verbatim with no truncation marker.
-    let transported = simulate_transport_tail(&stdout, 256 * 1024);
-    assert_eq!(
-        transported, stdout,
-        "bounded output must be unchanged by the transport tail"
+    // Simulate the ordinary Runner per-stream result-retention compatibility
+    // floor. This is not a polling/WebSocket/QUIC wire-body or frame ceiling.
+    let retained = simulate_runner_result_retention_tail(
+        &stdout,
+        ORDINARY_RUNNER_RESULT_RETENTION_COMPAT_BYTES,
     );
-    let frames = split_show_changes_stdout(&transported, false);
+    assert_eq!(
+        retained, stdout,
+        "bounded output must be unchanged by ordinary Runner result retention"
+    );
+    let frames = split_show_changes_stdout(&retained, false);
     assert!(
         frames
             .status
             .lines()
             .any(|line| parse_status_header(line).is_some()),
-        "branch header must survive transport tail retention: {transported}"
+        "branch header must survive ordinary Runner result retention: {retained}"
     );
     let observation =
         parse_show_changes_status_observation(&frames.status, &frames.status_result, "");
@@ -3488,7 +3723,7 @@ fn show_changes_bash_utf8_locale_counts_multibyte_status_in_bytes() {
     );
     assert_eq!(raw_exit, 0, "raw status failed: {raw_stderr}");
     assert!(
-        raw_status.len() > 256 * 1024,
+        raw_status.len() > ORDINARY_RUNNER_RESULT_RETENTION_COMPAT_BYTES,
         "raw status bytes={}",
         raw_status.len()
     );
@@ -3503,7 +3738,11 @@ fn show_changes_bash_utf8_locale_counts_multibyte_status_in_bytes() {
         stdout.len()
     );
     assert_eq!(
-        simulate_transport_tail(&stdout, 256 * 1024).as_bytes(),
+        simulate_runner_result_retention_tail(
+            &stdout,
+            ORDINARY_RUNNER_RESULT_RETENTION_COMPAT_BYTES,
+        )
+        .as_bytes(),
         stdout.as_bytes()
     );
 
@@ -3784,6 +4023,10 @@ fn show_changes_diff_respects_max_hunks() {
         output["diff_review_handoff"]["suggested_call"]["max_hunks"],
         30
     );
+    assert_eq!(
+        output["diff_review_handoff"]["suggested_call"]["max_page_bytes"],
+        DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES
+    );
     let recovery = &output["diff_review_handoff"]["recovery"];
     assert_eq!(recovery["kind"], "page");
     assert_eq!(recovery["tool"], "git_diff_hunks");
@@ -3962,7 +4205,7 @@ async fn show_changes_untracked_preview_truncation_does_not_create_diff_handoff(
 }
 
 #[test]
-fn show_changes_large_diff_does_not_depend_on_transport_tail() {
+fn show_changes_large_diff_does_not_depend_on_runner_retained_tail() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     let big = (0..50).map(|i| format!("line{i}\n")).collect::<String>();
@@ -4053,7 +4296,14 @@ fn show_changes_schema_covers_truncation_and_transport_fields() {
     assert_eq!(suggested["properties"]["cached"]["const"], false);
     assert_eq!(
         suggested["required"],
-        json!(["project", "cached", "paths", "max_hunks", "max_hunk_lines"])
+        json!([
+            "project",
+            "cached",
+            "paths",
+            "max_hunks",
+            "max_hunk_lines",
+            "max_page_bytes"
+        ])
     );
 }
 
@@ -6179,11 +6429,10 @@ fn bounded_show_changes_output(
     )
 }
 
-/// Mirror the Runner/Shell transport's 256 KiB tail-retention behavior: when
-/// output exceeds `max_bytes`, keep only the last `max_bytes` and prefix it
-/// with the transport's truncation marker. Used to prove the production-side
-/// bounding keeps the protocol frame intact past the transport cap.
-fn simulate_transport_tail(stdout: &str, max_bytes: usize) -> String {
+/// Mirror the ordinary Runner per-stream result-retention tail behavior used by
+/// the current 256 KiB compatibility floor. This is intentionally not a model
+/// result ceiling or a polling/WebSocket/QUIC wire/body/frame bound.
+fn simulate_runner_result_retention_tail(stdout: &str, max_bytes: usize) -> String {
     if stdout.len() <= max_bytes {
         return stdout.to_string();
     }

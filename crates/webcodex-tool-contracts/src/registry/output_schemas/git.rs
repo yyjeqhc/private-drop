@@ -14,12 +14,17 @@ fn git_diff_hunks_recovery_arguments_schema() -> Value {
             "paths": {"type": "array", "items": {"type": "string"}},
             "max_hunks": {"type": "integer"},
             "max_hunk_lines": {"type": "integer"},
+            "max_page_bytes": {
+                "type": "integer",
+                "minimum": webcodex_core::runtime_contract::MIN_GIT_DIFF_HUNKS_PAGE_BYTES,
+                "maximum": webcodex_core::runtime_contract::MAX_GIT_DIFF_HUNKS_PAGE_BYTES
+            },
             "cached": {"type": "boolean"},
             "base_commit": {"type": "string"},
             "head_commit": {"type": "string"},
             "continuation": {"type": "string"}
         },
-        "required": ["project", "paths", "max_hunks", "max_hunk_lines"]
+        "required": ["project", "paths", "max_hunks", "max_hunk_lines", "max_page_bytes"]
     })
 }
 
@@ -114,9 +119,13 @@ fn show_changes_handoff_arguments_schema() -> Value {
             "cached": {"type": "boolean", "const": false},
             "paths": {"type": "array", "items": {"type": "string"}},
             "max_hunks": {"type": "integer"},
-            "max_hunk_lines": {"type": "integer"}
+            "max_hunk_lines": {"type": "integer"},
+            "max_page_bytes": {
+                "type": "integer",
+                "const": webcodex_core::runtime_contract::DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES
+            }
         },
-        "required": ["project", "cached", "paths", "max_hunks", "max_hunk_lines"]
+        "required": ["project", "cached", "paths", "max_hunks", "max_hunk_lines", "max_page_bytes"]
     })
 }
 
@@ -219,6 +228,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             ("cached", schema_type("boolean", "Whether the staged diff is inspected.")),
+            (
+                "max_page_bytes",
+                schema_type("integer", "Effective raw producer-page byte budget. This is not the final serialized model-facing result budget."),
+            ),
             (
                 "scope",
                 json!({
