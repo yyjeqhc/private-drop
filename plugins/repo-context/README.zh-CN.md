@@ -16,7 +16,7 @@ Plugin 不返回 Git diff、完整 manifest、raw `cargo metadata`、provider �
 
 Git 通过 `execFile` 和 literal argv 执行，固定 `shell: false`、`windowsHide: true`，并设置 timeout 与 bounded buffer。它只做本地只读的 `rev-parse` 和 porcelain `status`，不会 fetch，也不会修改 repository。
 
-Cargo 使用 `cargo metadata --offline --no-deps --format-version 1`，其中 `--offline` 明确保证本实验不访问网络。如果 Cargo 不存在、provider cwd 不是 Cargo workspace、metadata malformed、timeout 或失败，Git context 仍会返回，Cargo 部分则通过 bounded warning 表示 unavailable。
+Cargo 使用 `cargo metadata --frozen --no-deps --format-version 1`，其中 `--frozen` 同时明确保证本实验不访问网络、也不生成或更新 lockfile。如果 Cargo 不存在、provider cwd 不是 Cargo workspace、metadata malformed、timeout 或失败，Git context 仍会返回，Cargo 部分则通过 bounded warning 表示 unavailable。
 
 ## 安装、构建与测试
 

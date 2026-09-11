@@ -56,6 +56,14 @@ function initWorkspace() {
   );
   writePackage(root, "crates/a", "pkg-a");
   writePackage(root, "crates/b", "pkg-b");
+  const lock = spawnSync("cargo", ["generate-lockfile", "--offline"], {
+    cwd: root,
+    encoding: "utf8",
+    shell: false,
+    windowsHide: true,
+  });
+  assert.equal(lock.error, undefined, lock.error?.message);
+  assert.equal(lock.status, 0, `cargo generate-lockfile failed: ${lock.stderr}`);
   git(root, ["add", "."]);
   git(root, [
     "-c",
@@ -132,7 +140,10 @@ function fakeGitAndCargo(cwd, cargoResult, status = "") {
       if (args.includes("status")) return { ok: true, stdout: status };
       return { ok: false, kind: "failed" };
     }
-    if (executable === "cargo") return cargoResult;
+    if (executable === "cargo") {
+      assert.deepEqual(args, ["metadata", "--frozen", "--no-deps", "--format-version", "1"]);
+      return cargoResult;
+    }
     throw new Error(`unexpected executable ${executable} in ${cwd}`);
   };
 }

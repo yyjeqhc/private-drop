@@ -16,7 +16,7 @@ The Plugin never returns a Git diff, complete manifests, raw `cargo metadata`, a
 
 Git uses `execFile` with literal argv, `shell: false`, `windowsHide: true`, timeouts, and bounded buffers. It uses only local read-only observations (`rev-parse` and porcelain `status`) and never fetches or mutates the repository.
 
-Cargo uses `cargo metadata --offline --no-deps --format-version 1`. `--offline` makes the no-network experiment boundary explicit. If Cargo is missing, the root is not a Cargo workspace, metadata is malformed, or the command times out/fails, Git context is still returned and the Cargo portion becomes unavailable with a bounded warning.
+Cargo uses `cargo metadata --frozen --no-deps --format-version 1`. `--frozen` makes both the no-network and no-lockfile-update read-only experiment boundaries explicit. If Cargo is missing, the root is not a Cargo workspace, metadata is malformed, or the command times out/fails, Git context is still returned and the Cargo portion becomes unavailable with a bounded warning.
 
 ## Install, build, and test
 

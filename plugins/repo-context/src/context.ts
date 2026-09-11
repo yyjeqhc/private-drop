@@ -343,7 +343,7 @@ async function observeCargo(cwd: string, run: CommandRunner, warnings: string[])
   }
   const result = await run(
     "cargo",
-    ["metadata", "--offline", "--no-deps", "--format-version", "1"],
+    ["metadata", "--frozen", "--no-deps", "--format-version", "1"],
     { cwd, timeoutMs: CARGO_TIMEOUT_MS, maxBuffer: CARGO_MAX_BUFFER },
   );
   if (!result.ok) {
