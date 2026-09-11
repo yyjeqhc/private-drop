@@ -4,9 +4,10 @@
 //! name, and the project/session accessors used by dispatch guards and audit
 //! logging.
 
+#[cfg(feature = "workspace-checkpoints")]
+use super::tool_inputs::CheckpointValidationInput;
 use super::tool_inputs::{
-    default_true, ApplyFileChangeInput, CheckpointValidationInput, ExecutionPurpose,
-    ExecutionShell, SessionMode,
+    default_true, ApplyFileChangeInput, ExecutionPurpose, ExecutionShell, SessionMode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -653,6 +654,7 @@ pub enum ToolCall {
 
     /// Create a bounded last-known-good workspace checkpoint outside the
     /// project worktree.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointCreate {
         project: String,
         #[serde(default)]
@@ -672,6 +674,7 @@ pub enum ToolCall {
     },
 
     /// List checkpoint metadata for a project without returning diffs.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointList {
         project: String,
         #[serde(default)]
@@ -682,6 +685,7 @@ pub enum ToolCall {
 
     /// Show bounded checkpoint metadata and file lists without full diff
     /// content.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointShow {
         project: String,
         checkpoint_id: String,
@@ -692,6 +696,7 @@ pub enum ToolCall {
     },
 
     /// Restore a workspace checkpoint after explicit confirmation.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointRestore {
         project: String,
         checkpoint_id: String,
@@ -701,6 +706,7 @@ pub enum ToolCall {
     },
 
     /// Delete a persisted checkpoint file after explicit confirmation.
+    #[cfg(feature = "workspace-checkpoints")]
     WorkspaceCheckpointDelete {
         project: String,
         checkpoint_id: String,
@@ -914,15 +920,6 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
-    /// Run `git diff` on a project.
-    GitDiff {
-        project: String,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        args: Option<Vec<String>>,
-    },
-
     /// Return bounded structured recent git commit history.
     GitLog {
         project: String,
@@ -1052,20 +1049,6 @@ pub enum ToolCall {
         timeout_secs: Option<u64>,
         #[serde(default)]
         sync_wait_secs: Option<u64>,
-    },
-
-    /// Read a file from a project.
-    ReadFile {
-        project: String,
-        path: String,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        start_line: Option<usize>,
-        #[serde(default)]
-        limit: Option<usize>,
-        #[serde(default)]
-        with_line_numbers: Option<bool>,
     },
 
     /// Read up to eight UTF-8 files or file ranges under one bounded call.
@@ -1497,30 +1480,6 @@ pub enum ToolCall {
         confirm: bool,
     },
 
-    /// Query the status of a running/finished job.
-    JobStatus {
-        job_id: String,
-        #[serde(default)]
-        include_command_preview: bool,
-    },
-
-    /// Retrieve stdout/stderr log of a job. When `after_observation_token` and
-    /// `wait_secs` are both supplied, this is a single bounded wait (up to
-    /// `wait_secs`, 1..=60) until the current opaque Job observation token
-    /// differs or the Job becomes terminal; it is never a subscription or
-    /// streaming connection.
-    JobLog {
-        job_id: String,
-        #[serde(default)]
-        offset: Option<usize>,
-        #[serde(default)]
-        tail_lines: Option<usize>,
-        #[serde(default)]
-        after_observation_token: Option<String>,
-        #[serde(default)]
-        wait_secs: Option<u64>,
-    },
-
     /// Observe up to eight existing Jobs using one shared bounded wait. Each
     /// item reuses the canonical single-Job observation-token and projection
     /// path; item failures are isolated and no Job is launched or modified.
@@ -1588,35 +1547,6 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
-    /// Search text inside a project (bounded matches, rg-first with grep
-    /// fallback). Each match carries a project-relative path, 1-based line
-    /// number, preview line, and bounded context arrays. Sensitive/build
-    /// directories are excluded by default.
-    SearchProjectText {
-        project: String,
-        pattern: String,
-        #[serde(default)]
-        pattern_mode: Option<SearchPatternMode>,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        path: Option<String>,
-        #[serde(default)]
-        limit: Option<usize>,
-        #[serde(default)]
-        context_before: Option<usize>,
-        #[serde(default)]
-        context_after: Option<usize>,
-        #[serde(default)]
-        include_globs: Option<Vec<String>>,
-        #[serde(default)]
-        exclude_globs: Option<Vec<String>>,
-        #[serde(default)]
-        result_mode: Option<SearchResultMode>,
-        #[serde(default)]
-        timeout_secs: Option<i64>,
-    },
-
     /// Run up to eight independent bounded project-text searches under one
     /// project authorization and outer Session event.
     SearchProjectTexts {
@@ -1627,15 +1557,6 @@ pub enum ToolCall {
         session_id: Option<String>,
         #[serde(default)]
         max_result_bytes: Option<usize>,
-    },
-
-    /// Read-only git diff summary for a project: `git status --porcelain`,
-    /// `git diff --stat`, and a parsed changed-file list. Does not modify the
-    /// worktree. Routed to the owning Runner.
-    GitDiffSummary {
-        project: String,
-        #[serde(default)]
-        session_id: Option<String>,
     },
 
     /// Read-only model-facing git worktree summary for a project. Reports
@@ -2757,10 +2678,15 @@ impl ToolCall {
             Self::CompleteSessionMessage { .. } => "complete_session_message",
             Self::SessionDiscussionSummary { .. } => "session_discussion_summary",
             Self::SessionHandoffSummary { .. } => "session_handoff_summary",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointCreate { .. } => "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointList { .. } => "workspace_checkpoint_list",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointShow { .. } => "workspace_checkpoint_show",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointRestore { .. } => "workspace_checkpoint_restore",
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointDelete { .. } => "workspace_checkpoint_delete",
             Self::RunProcess { .. } => "run_process",
             Self::RunDetachedProcess { .. } => "run_detached_process",
@@ -2780,7 +2706,6 @@ impl ToolCall {
             Self::DiscardUntracked { .. } => "discard_untracked",
             Self::GitCommitPaths { .. } => "git_commit_paths",
             Self::GitStatus { .. } => "git_status",
-            Self::GitDiff { .. } => "git_diff",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
             Self::GitReviewSummary { .. } => "git_review_summary",
             Self::GitLog { .. } => "git_log",
@@ -2788,7 +2713,6 @@ impl ToolCall {
             Self::CargoCheck { .. } => "cargo_check",
             Self::CargoTest { .. } => "cargo_test",
             Self::GoTest { .. } => "go_test",
-            Self::ReadFile { .. } => "read_file",
             Self::ReadFiles { .. } => "read_files",
             Self::SkillList { .. } => "skill_list",
             Self::SkillReadFile { .. } => "skill_read_file",
@@ -2826,15 +2750,11 @@ impl ToolCall {
             Self::MemoryScopePurge { .. } => "memory_scope_purge",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
-            Self::JobStatus { .. } => "job_status",
-            Self::JobLog { .. } => "job_log",
             Self::ObserveJobs { .. } => "observe_jobs",
             Self::ListProjectFiles { .. } => "list_project_files",
             Self::ListProjectTrackedFiles { .. } => "list_project_tracked_files",
             Self::ProjectOverview { .. } => "project_overview",
-            Self::SearchProjectText { .. } => "search_project_text",
             Self::SearchProjectTexts { .. } => "search_project_texts",
-            Self::GitDiffSummary { .. } => "git_diff_summary",
             Self::ShowChanges { .. } => "show_changes",
             Self::WorkspaceHygieneCheck { .. } => "workspace_hygiene_check",
             Self::ListJobs { .. } => "list_jobs",
@@ -2907,7 +2827,6 @@ impl ToolCall {
             | Self::DiscardUntracked { session_id, .. }
             | Self::GitCommitPaths { session_id, .. }
             | Self::GitStatus { session_id, .. }
-            | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
             | Self::GitReviewSummary { session_id, .. }
             | Self::GitLog { session_id, .. }
@@ -2915,7 +2834,6 @@ impl ToolCall {
             | Self::CargoCheck { session_id, .. }
             | Self::CargoTest { session_id, .. }
             | Self::GoTest { session_id, .. }
-            | Self::ReadFile { session_id, .. }
             | Self::ReadFiles { session_id, .. }
             | Self::SkillList { session_id, .. }
             | Self::SkillReadFile { session_id, .. }
@@ -2932,9 +2850,7 @@ impl ToolCall {
             | Self::ListProjectFiles { session_id, .. }
             | Self::ListProjectTrackedFiles { session_id, .. }
             | Self::ProjectOverview { session_id, .. }
-            | Self::SearchProjectText { session_id, .. }
             | Self::SearchProjectTexts { session_id, .. }
-            | Self::GitDiffSummary { session_id, .. }
             | Self::ShowChanges { session_id, .. }
             | Self::WriteProjectFile { session_id, .. }
             | Self::SaveProjectArtifact { session_id, .. }
@@ -2947,11 +2863,6 @@ impl ToolCall {
             | Self::ArtifactUploadFinish { session_id, .. }
             | Self::ArtifactUploadAbort { session_id, .. }
             | Self::ApplyTextEdits { session_id, .. }
-            | Self::WorkspaceCheckpointCreate { session_id, .. }
-            | Self::WorkspaceCheckpointList { session_id, .. }
-            | Self::WorkspaceCheckpointShow { session_id, .. }
-            | Self::WorkspaceCheckpointRestore { session_id, .. }
-            | Self::WorkspaceCheckpointDelete { session_id, .. }
             | Self::WorkspaceHygieneCheck { session_id, .. }
             | Self::LspStatus { session_id, .. }
             | Self::DocumentSymbols { session_id, .. }
@@ -2960,6 +2871,12 @@ impl ToolCall {
             | Self::WorkspaceSymbols { session_id, .. }
             | Self::GotoDefinition { session_id, .. }
             | Self::FindReferences { session_id, .. } => session_id.as_deref(),
+            #[cfg(feature = "workspace-checkpoints")]
+            Self::WorkspaceCheckpointCreate { session_id, .. }
+            | Self::WorkspaceCheckpointList { session_id, .. }
+            | Self::WorkspaceCheckpointShow { session_id, .. }
+            | Self::WorkspaceCheckpointRestore { session_id, .. }
+            | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
             Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
             Self::ImportConversationFilesToProject { session_id, .. } => session_id.as_deref(),
             Self::CallHierarchy { session_id, .. } => session_id.as_deref(),
@@ -3041,7 +2958,6 @@ impl ToolCall {
             | Self::DiscardUntracked { project, .. }
             | Self::GitCommitPaths { project, .. }
             | Self::GitStatus { project, .. }
-            | Self::GitDiff { project, .. }
             | Self::GitDiffHunks { project, .. }
             | Self::GitReviewSummary { project, .. }
             | Self::GitLog { project, .. }
@@ -3049,7 +2965,6 @@ impl ToolCall {
             | Self::CargoCheck { project, .. }
             | Self::CargoTest { project, .. }
             | Self::GoTest { project, .. }
-            | Self::ReadFile { project, .. }
             | Self::ReadFiles { project, .. }
             | Self::SkillList { project, .. }
             | Self::SkillReadFile { project, .. }
@@ -3066,9 +2981,7 @@ impl ToolCall {
             | Self::ListProjectFiles { project, .. }
             | Self::ListProjectTrackedFiles { project, .. }
             | Self::ProjectOverview { project, .. }
-            | Self::SearchProjectText { project, .. }
             | Self::SearchProjectTexts { project, .. }
-            | Self::GitDiffSummary { project, .. }
             | Self::ShowChanges { project, .. }
             | Self::WriteProjectFile { project, .. }
             | Self::SaveProjectArtifact { project, .. }
@@ -3082,11 +2995,6 @@ impl ToolCall {
             | Self::ArtifactUploadFinish { project, .. }
             | Self::ArtifactUploadAbort { project, .. }
             | Self::ApplyTextEdits { project, .. }
-            | Self::WorkspaceCheckpointCreate { project, .. }
-            | Self::WorkspaceCheckpointList { project, .. }
-            | Self::WorkspaceCheckpointShow { project, .. }
-            | Self::WorkspaceCheckpointRestore { project, .. }
-            | Self::WorkspaceCheckpointDelete { project, .. }
             | Self::WorkspaceHygieneCheck { project, .. }
             | Self::LspStatus { project, .. }
             | Self::DocumentSymbols { project, .. }
@@ -3095,6 +3003,12 @@ impl ToolCall {
             | Self::WorkspaceSymbols { project, .. }
             | Self::GotoDefinition { project, .. }
             | Self::FindReferences { project, .. } => Some(project.as_str()),
+            #[cfg(feature = "workspace-checkpoints")]
+            Self::WorkspaceCheckpointCreate { project, .. }
+            | Self::WorkspaceCheckpointList { project, .. }
+            | Self::WorkspaceCheckpointShow { project, .. }
+            | Self::WorkspaceCheckpointRestore { project, .. }
+            | Self::WorkspaceCheckpointDelete { project, .. } => Some(project.as_str()),
             Self::CallHierarchy { project, .. } => Some(project.as_str()),
             Self::WorkOnProject { project, .. } if !project.trim().is_empty() => {
                 Some(project.as_str())

@@ -180,6 +180,8 @@ mod structured_delete;
 #[cfg(unix)]
 #[path = "main_tests/structured_write_paths.rs"]
 mod structured_write_paths;
+#[path = "main_tests/workspace_checkpoints.rs"]
+mod workspace_checkpoints;
 #[path = "main_tests/write_project_file.rs"]
 mod write_project_file;
 

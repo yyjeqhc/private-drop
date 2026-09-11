@@ -393,8 +393,8 @@ async fn oauth2_adaptive_gateway_preserves_canonical_target_scope_errors() {
         json!({
             "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
             "arguments": {
-                "tool": "read_file",
-                "arguments": {"project": "demo", "path": "README.md"}
+                "tool": "read_files",
+                "arguments": {"project": "demo", "items": [{"path": "README.md"}]}
             }
         }),
     )
@@ -617,13 +617,13 @@ async fn oauth2_mcp_unknown_method_keeps_legacy_fail_closed_but_modern_returns_4
 }
 
 #[tokio::test]
-async fn oauth2_mcp_tool_call_requires_project_read_for_read_file() {
+async fn oauth2_mcp_tool_call_requires_project_read_for_read_files() {
     let (_tmp, service, token) = oauth_mcp_service("project:read");
     let (status, body, _) = oauth_mcp_request(
         &service,
         &token,
         "tools/call",
-        json!({"name": "read_file", "arguments": {"project": "demo", "path": "README.md"}}),
+        json!({"name": "read_files", "arguments": {"project": "demo", "items": [{"path": "README.md"}]}}),
     )
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
@@ -633,7 +633,7 @@ async fn oauth2_mcp_tool_call_requires_project_read_for_read_file() {
         &service,
         &token,
         "tools/call",
-        json!({"name": "read_file", "arguments": {"project": "demo", "path": "README.md"}}),
+        json!({"name": "read_files", "arguments": {"project": "demo", "items": [{"path": "README.md"}]}}),
     )
     .await;
     assert_mcp_oauth_scope_rejected(

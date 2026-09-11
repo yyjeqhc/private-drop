@@ -241,15 +241,15 @@ wait_for_project "$MANAGED_PAT" "agent:managed-runner:project-m" \
     || die "managed project did not become visible"
 log "same-key and managed projects registered"
 
-READ_RESPONSE="$(post "$SHARED_KEY_A" /api/projects/read_file \
-    '{"project":"agent:shared-runner:project-a","path":"README.md"}')"
+READ_RESPONSE="$(post "$SHARED_KEY_A" /api/tools/call \
+    '{"tool":"read_files","params":{"project":"agent:shared-runner:project-a","items":[{"path":"README.md"}]}}')"
 [ "$(printf '%s' "$READ_RESPONSE" | json_field success)" = "True" ] \
-    || die "same-key read_file failed"
+    || die "same-key read_files failed"
 printf '%s' "$READ_RESPONSE" | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
-raise SystemExit(0 if "transport smoke" in data.get("output", {}).get("text", "") else 1)
-' || die "same-key read_file returned unexpected content"
+raise SystemExit(0 if "transport smoke" in data.get("output", {}).get("items", [{}])[0].get("output", {}).get("text", "") else 1)
+' || die "same-key read_files returned unexpected content"
 
 KEY_B_PROJECTS="$(post "$SHARED_KEY_B" /api/projects/list '{}')"
 [ "$(printf '%s' "$KEY_B_PROJECTS" | json_field output.count)" = "0" ] \

@@ -289,12 +289,11 @@ summarize the project, review the result, and finish. Do not edit files.
 
 ## 读取与搜索边界
 
-- `read_file` 是有界流式范围读取：`start_line`（默认 1）、`limit`（默认 2000，
-  最大 2000），返回范围加上完整文件 SHA-256 与行元数据，以及用于继续的
-  `next_start_line`。
-- `read_files` 批量执行最多 8 次单文件读取，条目结果相互独立。
-- `search_project_text` 是默认搜索工具（优先 ripgrep，工作量与字节均有界）；
-  `search_project_texts` 批量执行最多 8 个查询。
+- `read_files` 是 canonical 有界范围读取工具，一次支持 1 到 8 个文件；单条目 batch
+  就是单范围读取路径。每个成功条目返回完整文件 SHA-256 与有界行元数据；partial
+  条目返回可直接执行的单条目 `read_files` continuation，且读取并非 snapshot-stable。
+- `search_project_texts` 是 canonical 有界搜索面，一次支持 1 到 8 个独立查询（优先
+  ripgrep，并保留现有有界 fallback）；单查询直接使用 one-query batch。
 
 只有已识别的 backend 明确报告搜索正常完成且无匹配时，空搜索结果才是肯定的
 “无匹配”证据。backend 标识缺失或畸形、完成状态缺失、状态与输出不一致、

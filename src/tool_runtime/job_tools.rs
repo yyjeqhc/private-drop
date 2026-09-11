@@ -43,30 +43,6 @@ impl ToolRuntime {
                 self.stop_job_model_facing(project, job_id, session_id, confirm, auth)
                     .await
             }
-            ToolCall::JobStatus {
-                job_id,
-                include_command_preview,
-            } => {
-                self.job_status_for_auth(job_id, include_command_preview, auth)
-                    .await
-            }
-            ToolCall::JobLog {
-                job_id,
-                offset,
-                tail_lines,
-                after_observation_token,
-                wait_secs,
-            } => {
-                self.job_log_for_auth(
-                    job_id,
-                    offset,
-                    tail_lines,
-                    auth,
-                    after_observation_token,
-                    wait_secs,
-                )
-                .await
-            }
             ToolCall::ObserveJobs {
                 items,
                 tail_lines,

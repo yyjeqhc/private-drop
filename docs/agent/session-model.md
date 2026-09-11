@@ -490,8 +490,7 @@ a `finish_coding_task` verdict.
   `event_range.complete = false` — the projection never masquerades a truncated
   retained window as `session_start` with `complete = true`.
 - **Exploration workset:** `attempt.exploration` projects only successful,
-  structured evidence from focused `read_file`, `read_files`,
-  `search_project_text`, `search_project_texts`, and
+  structured evidence from focused `read_files`, `search_project_texts`, and
   typed LSP navigation calls. The existing ledger retains only a bounded set
   of validated project-relative paths; it never retains search patterns or
   previews, file contents, symbol/hover/diagnostic bodies, arbitrary result

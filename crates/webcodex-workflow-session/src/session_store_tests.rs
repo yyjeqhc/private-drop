@@ -72,13 +72,12 @@ fn input_summary_redacts_sensitive_keys() {
     store.record_tool_call_started(
         Some(&summary.session_id),
         SessionTransport::Api,
-        "read_file",
+        "runtime_status",
         &json!({
-            "project": "demo",
             "token": "super-secret-token",
             "command": "curl -H 'Authorization: Bearer wc_pat_never_store'"
         }),
-        session_tool_contract("read_file"),
+        session_tool_contract("runtime_status"),
     );
     let summary = store.summary(&summary.session_id, Some(10)).unwrap();
     assert_eq!(

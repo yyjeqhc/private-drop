@@ -49,7 +49,9 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "git_review_summary",
             "git_diff_hunks",
             "git_log",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_show",
             "computer_list_targets",
             "computer_list_windows",
@@ -126,7 +128,9 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "show_changes",
             "git_restore_paths",
             "discard_untracked",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_restore",
         ],
     },
@@ -140,7 +144,9 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "workspace_hygiene_check",
             "git_log",
             "git_status",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_show",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
         ],
     },
@@ -217,8 +223,6 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "run_detached_process",
             "run_job",
             "stop_job",
-            "job_status",
-            "job_log",
             "observe_jobs",
             "list_jobs",
         ],
@@ -240,10 +244,15 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "complete_session_message",
             "session_discussion_summary",
             "session_handoff_summary",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_show",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_restore",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_delete",
             "list_projects",
             "list_runners",
@@ -269,9 +278,11 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "delete_project_files",
             "git_restore_paths",
             "discard_untracked",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_delete",
         ],
     },
+    #[cfg(feature = "workspace-checkpoints")]
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_CHECKPOINT,
         tools: &[
@@ -335,7 +346,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         name: "inspect",
         summary: "Inspect: on Adaptive Runtime prefer search_project_texts/read_files even for one query/range. Use run_process for native argv, run_shell for a short tightly related shell chain, run_script for program-like shell content, then show_changes to review.",
         manifest_purpose:
-            "Prefer batch-capable search_project_texts/read_files for Adaptive inspection even with one item. Singular search_project_text/read_file remain exact compatibility primitives discoverable by tool_name, not ordinary peer choices. Use run_process for one native argv call, run_shell only for shell semantics or one tightly related observation goal, and run_script for loops/conditionals/functions/traps/multi-stage logic before reviewing the worktree.",
+            "Use search_project_texts/read_files for inspection even with one query or range. Use run_process for one native argv call, run_shell only for shell semantics or one tightly related observation goal, and run_script for loops/conditionals/functions/traps/multi-stage logic before reviewing the worktree.",
         tools: &[
             "search_project_texts",
             "read_files",
@@ -348,7 +359,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: after read_file/read_files, apply_text_edits with current SHA is the default for ordinary model-generated edits, even when many lines change. Use apply_patch only when contextual/large multi-hunk patch form is materially clearer; external diffs use apply_unified_diff.",
+            "Edit: after read_files, apply_text_edits with current SHA is the default for ordinary model-generated edits, even when many lines change. Use apply_patch only when contextual/large multi-hunk patch form is materially clearer; external diffs use apply_unified_diff.",
         manifest_purpose:
             "Read current files first; SHA-guarded apply_text_edits is the canonical default even when many lines change. Use apply_patch only when contextual or multi-hunk form is materially clearer. Repetitive patch targets need stable unique containing function/impl/type/test/module context. On matching_mode_rejected, do not weaken the guard or switch to first_match: reread and prefer apply_text_edits if exact edits are easy. If patch form remains clearer, consume bounded read_files recovery and preserve the requested guard: unique retries use matching_mode=unique with unique context; exact_unique retries remain matching_mode=exact_unique and never downgrade the stale-context/concurrency fence. context_mismatch requires bounded reread and regeneration from current source, never blind retry. External raw diffs use apply_unified_diff; whole-file writes are only for intentional rewrites.",
         tools: &[
@@ -475,9 +486,7 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "project_overview",
     "list_project_tracked_files",
     "list_project_files",
-    "search_project_text",
     "search_project_texts",
-    "read_file",
     "read_files",
     // LSP navigation
     "lsp_status",
@@ -498,8 +507,6 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "run_shell",
     "run_job",
     "observe_jobs",
-    "job_status",
-    "job_log",
     "list_jobs",
     "stop_job",
     // validation
@@ -512,7 +519,6 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "git_status",
     "git_log",
     "git_review_summary",
-    "git_diff",
     "git_diff_hunks",
     "show_changes",
     "workspace_hygiene_check",

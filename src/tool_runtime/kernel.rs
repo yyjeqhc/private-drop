@@ -1163,7 +1163,7 @@ mod tests {
         let outcome = runtime
             .call_tool_with_context(
                 ToolCallRequest {
-                    tool_name: "read_file".to_string(),
+                    tool_name: "read_files".to_string(),
                     arguments: json!({"project": "demo"}),
                 },
                 ToolCallContext {
@@ -1237,13 +1237,13 @@ mod tests {
             .unwrap();
         let arguments = json!({
             "project": "demo",
-            "path": "README.md"
+            "items": [{"path": "README.md"}]
         });
 
         let outcome = runtime
             .call_tool_with_invocation_metadata(
                 ToolCallRequest {
-                    tool_name: "read_file".to_string(),
+                    tool_name: "read_files".to_string(),
                     arguments,
                 },
                 ToolCallContext {
@@ -1296,7 +1296,7 @@ mod tests {
     fn session_message_resolution_reuses_dedicated_resolve_scope() {
         let project_read_only = oauth(&["project:read"]);
         assert_eq!(
-            check_runtime_tool_scope(Some(&project_read_only), "read_file"),
+            check_runtime_tool_scope(Some(&project_read_only), "read_files"),
             Ok(()),
             "main project read authority must remain independent"
         );
@@ -1705,7 +1705,7 @@ mod tests {
         let mut pat = AuthContext::new(crate::auth::AuthKind::ApiToken);
         pat.scopes = vec![crate::auth::SCOPE_RUNTIME_READ.to_string()];
         assert_eq!(
-            check_runtime_tool_scope(Some(&pat), "read_file"),
+            check_runtime_tool_scope(Some(&pat), "read_files"),
             Err(ToolCallErrorStatus::InsufficientScope {
                 required_scope: Some(crate::auth::SCOPE_PROJECT_READ),
                 description: "missing required scope: project:read".to_string(),
@@ -1717,7 +1717,10 @@ mod tests {
         );
 
         let shared = crate::auth::shared_key_context("kernel-scope-matrix");
-        assert_eq!(check_runtime_tool_scope(Some(&shared), "read_file"), Ok(()));
+        assert_eq!(
+            check_runtime_tool_scope(Some(&shared), "read_files"),
+            Ok(())
+        );
         assert_eq!(
             check_runtime_tool_scope(Some(&shared), "computer_snapshot"),
             Ok(())
@@ -1735,8 +1738,8 @@ mod tests {
         let outcome = runtime
             .call_tool_with_context(
                 ToolCallRequest {
-                    tool_name: "read_file".to_string(),
-                    arguments: json!({"project": "demo", "path": "README.md"}),
+                    tool_name: "read_files".to_string(),
+                    arguments: json!({"project": "demo", "items": [{"path": "README.md"}]}),
                 },
                 ToolCallContext {
                     transport: ToolTransport::Api,

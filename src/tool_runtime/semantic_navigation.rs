@@ -36,8 +36,8 @@ const SEMANTIC_NAVIGATION_PREFERRED_FLOW: [&str; 6] = [
     "goto_definition",
     "find_references",
     "hover",
-    "read_file",
-    "search_project_text",
+    "read_files",
+    "search_project_texts",
 ];
 const RUST_SEMANTIC_NAVIGATION_LIMITATIONS: [&str; 5] = [
     "rust_only",

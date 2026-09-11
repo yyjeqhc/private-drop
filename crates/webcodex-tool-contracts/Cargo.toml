@@ -5,7 +5,9 @@ license.workspace = true
 edition.workspace = true
 
 [features]
+default = []
 root-test-support = []
+workspace-checkpoints = []
 
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }

@@ -1,4 +1,5 @@
 use super::activity::{ActivityRecorder, NoopActivityRecorder};
+#[cfg(feature = "workspace-checkpoints")]
 use super::checkpoint;
 use super::observations::RuntimeObservations;
 use super::permissions::PermissionEvaluator;
@@ -110,6 +111,7 @@ pub struct ToolRuntime {
     pub(crate) coding_agent_runs: Arc<super::coding_agent::CodingAgentServerState>,
     pub runtime_info: Arc<RuntimeInfo>,
     runtime_exposure: crate::model_surface::RuntimeExposure,
+    #[cfg(feature = "workspace-checkpoints")]
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
     pub(crate) sessions: sessions::SessionStore,
     pub(crate) session_shells: SessionShellRegistry,
@@ -188,6 +190,7 @@ impl ToolRuntime {
             runtime_exposure: crate::model_surface::RuntimeExposure::Runtime(
                 crate::model_surface::ModelSurface::LocalCoding,
             ),
+            #[cfg(feature = "workspace-checkpoints")]
             checkpoint_store: checkpoint::CheckpointStore::default(),
             sessions: sessions::SessionStore::default(),
             session_shells: SessionShellRegistry::default(),

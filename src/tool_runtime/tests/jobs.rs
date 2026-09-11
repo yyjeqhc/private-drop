@@ -346,7 +346,7 @@ fn project_execution_output_schemas_do_not_advertise_server_local_executor() {
         "run_script",
         "run_shell",
         "run_job",
-        "job_log",
+        "job_tail",
         "cargo_fmt",
         "cargo_check",
         "cargo_test",
@@ -454,13 +454,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
     assert!(finished.failure_kind.is_none());
 
     let status = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id: job_id.clone(),
-                include_command_preview: false,
-            },
-            Some(&auth),
-        )
+        .job_status_for_auth(job_id.clone(), false, Some(&auth))
         .await;
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["job_id"], job_id);
@@ -1388,13 +1382,7 @@ async fn model_facing_stop_job_stops_agent_job_with_same_session() {
     assert_eq!(result.output["permission"]["status"], "auto_approved");
     assert_eq!(result.output["permission"]["risk"], "job");
     let status = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id,
-                include_command_preview: false,
-            },
-            Some(&auth),
-        )
+        .job_status_for_auth(job_id, false, Some(&auth))
         .await;
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["status"], "stopped");
@@ -1455,13 +1443,7 @@ async fn model_facing_stop_job_reports_requested_and_already_stop_requested() {
     assert_eq!(result.output["stop_effect"], "requested");
 
     let status = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id: job_id.clone(),
-                include_command_preview: false,
-            },
-            Some(&auth),
-        )
+        .job_status_for_auth(job_id.clone(), false, Some(&auth))
         .await;
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["status"], "stop_requested");
@@ -1744,15 +1726,13 @@ async fn agent_job_log_invalid_token_is_fix_input_not_unknown_job() {
     let job_id = start_agent_runtime_job(&runtime, "client-token", "proj-token", &auth).await;
 
     let result = runtime
-        .dispatch_with_auth(
-            ToolCall::JobLog {
-                job_id,
-                offset: None,
-                tail_lines: None,
-                after_observation_token: Some("bad".to_string()),
-                wait_secs: Some(1),
-            },
+        .job_log_for_auth(
+            job_id,
+            None,
+            None,
             Some(&auth),
+            Some("bad".to_string()),
+            Some(1),
         )
         .await;
 
@@ -1794,13 +1774,7 @@ async fn managed_user_job_inventory_and_counts_do_not_cross_owner() {
     assert!(!alice_list.output.to_string().contains(&bob_job));
 
     let hidden_bob_job = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id: bob_job.clone(),
-                include_command_preview: false,
-            },
-            Some(&alice),
-        )
+        .job_status_for_auth(bob_job.clone(), false, Some(&alice))
         .await;
     assert_unknown_job(hidden_bob_job);
 
@@ -1936,49 +1910,22 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group_body() {
 
     assert_unknown_job(
         runtime
-            .dispatch_with_auth(
-                ToolCall::JobStatus {
-                    job_id: job_b.clone(),
-                    include_command_preview: false,
-                },
-                Some(&shared_a),
-            )
+            .job_status_for_auth(job_b.clone(), false, Some(&shared_a))
             .await,
     );
     assert_unknown_job(
         runtime
-            .dispatch_with_auth(
-                ToolCall::JobStatus {
-                    job_id: job_a.clone(),
-                    include_command_preview: false,
-                },
-                Some(&bridge_b),
-            )
+            .job_status_for_auth(job_a.clone(), false, Some(&bridge_b))
             .await,
     );
     assert_unknown_job(
         runtime
-            .dispatch_with_auth(
-                ToolCall::JobStatus {
-                    job_id: job_b.clone(),
-                    include_command_preview: false,
-                },
-                Some(&bridge_a),
-            )
+            .job_status_for_auth(job_b.clone(), false, Some(&bridge_a))
             .await,
     );
     assert_unknown_job(
         runtime
-            .dispatch_with_auth(
-                ToolCall::JobLog {
-                    job_id: job_b.clone(),
-                    offset: None,
-                    tail_lines: None,
-                    after_observation_token: None,
-                    wait_secs: None,
-                },
-                Some(&shared_a),
-            )
+            .job_log_for_auth(job_b.clone(), None, None, Some(&shared_a), None, None)
             .await,
     );
     assert_unknown_job(
@@ -1996,26 +1943,14 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group_body() {
     );
 
     let status_b = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id: job_b.clone(),
-                include_command_preview: false,
-            },
-            Some(&shared_b),
-        )
+        .job_status_for_auth(job_b.clone(), false, Some(&shared_b))
         .await;
     assert!(status_b.success, "{:?}", status_b.error);
     assert_eq!(status_b.output["job_id"], job_b);
     assert!(status_b.output.get("command_preview").is_none());
 
     let status_b_debug = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id: job_b.clone(),
-                include_command_preview: true,
-            },
-            Some(&shared_b),
-        )
+        .job_status_for_auth(job_b.clone(), true, Some(&shared_b))
         .await;
     assert!(status_b_debug.success, "{:?}", status_b_debug.error);
     assert!(status_b_debug.output["command_preview"]
@@ -2024,16 +1959,7 @@ async fn shared_key_runtime_job_tools_filter_agent_jobs_by_auth_group_body() {
         .contains("echo client-b"));
 
     let log_b = runtime
-        .dispatch_with_auth(
-            ToolCall::JobLog {
-                job_id: job_b.clone(),
-                offset: None,
-                tail_lines: None,
-                after_observation_token: None,
-                wait_secs: None,
-            },
-            Some(&shared_b),
-        )
+        .job_log_for_auth(job_b.clone(), None, None, Some(&shared_b), None, None)
         .await;
     assert!(log_b.success, "{:?}", log_b.error);
     assert_eq!(log_b.output["stdout_tail"], "b-out\n");
@@ -2261,13 +2187,7 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
     }
 
     let status = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id: job_a1_running,
-                include_command_preview: false,
-            },
-            Some(&auth_a),
-        )
+        .job_status_for_auth(job_a1_running, false, Some(&auth_a))
         .await;
     assert_eq!(status.output["status"], "running");
 }
@@ -2518,15 +2438,13 @@ async fn job_log_wait_rejects_invalid_wait_secs_before_execution() {
     let runtime = test_runtime();
     for invalid in [0u64, 61u64] {
         let result = runtime
-            .dispatch_with_auth(
-                ToolCall::JobLog {
-                    job_id: "11111111-2222-3333-4444-555555555555".to_string(),
-                    offset: None,
-                    tail_lines: None,
-                    after_observation_token: Some("bad".to_string()),
-                    wait_secs: Some(invalid),
-                },
+            .job_log_for_auth(
+                "11111111-2222-3333-4444-555555555555".to_string(),
                 None,
+                None,
+                None,
+                Some("bad".to_string()),
+                Some(invalid),
             )
             .await;
         assert!(!result.success);
@@ -2540,31 +2458,16 @@ async fn job_log_wait_rejects_invalid_wait_secs_before_execution() {
 }
 
 #[test]
-fn job_log_parses_opaque_observation_token_and_rejects_non_string_values() {
+fn retired_job_log_parser_rejects_former_inputs() {
     let token =
         crate::job_observation::JobObservationToken::new_legacy("abc", "0123456789abcdef", 7)
             .unwrap()
             .encode();
-    let parsed = ToolCall::from_tool_name(
-        "job_log",
+    for args in [
         json!({"job_id": "abc", "after_observation_token": token, "wait_secs": 5}),
-    )
-    .unwrap();
-    match parsed {
-        ToolCall::JobLog {
-            after_observation_token,
-            wait_secs,
-            ..
-        } => {
-            assert_eq!(after_observation_token.as_deref(), Some(token.as_str()));
-            assert_eq!(wait_secs, Some(5));
-        }
-        other => panic!("expected JobLog, got {other:?}"),
-    }
-
-    let result = ToolCall::from_tool_name(
-        "job_log",
         json!({"job_id": "abc", "after_observation_token": 1, "wait_secs": 5}),
-    );
-    assert!(result.is_err());
+    ] {
+        let error = ToolCall::from_tool_name("job_log", args).unwrap_err();
+        assert!(error.contains("unknown tool"), "{error}");
+    }
 }

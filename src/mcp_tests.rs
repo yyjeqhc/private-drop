@@ -41,6 +41,21 @@ fn test_runtime_with_surface(model_surface: ModelSurface) -> ToolRuntime {
     test_runtime_with_exposure(RuntimeExposure::Runtime(model_surface))
 }
 
+fn test_runtime_with_surface_and_public_url(
+    model_surface: ModelSurface,
+    public_url: &str,
+) -> ToolRuntime {
+    let runtime_info = crate::tool_runtime::RuntimeInfo {
+        configured_public_url: Some(public_url.to_string()),
+        ..Default::default()
+    };
+    ToolRuntime::new(
+        std::sync::Arc::new(crate::runner_http::RunnerRegistry::default()),
+        std::sync::Arc::new(runtime_info),
+    )
+    .with_runtime_exposure(RuntimeExposure::Runtime(model_surface))
+}
+
 fn start_authorized_test_session(
     runtime: &ToolRuntime,
     auth: &crate::auth::AuthContext,

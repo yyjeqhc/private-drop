@@ -1053,14 +1053,13 @@ fn looks_like_absolute_path(value: &str) -> bool {
 
 fn semantic_kind(event: &SessionEvent) -> &'static str {
     match event.tool_name.as_str() {
-        "read_file"
-        | "read_files"
+        "read_files"
         | "list_project_files"
         | "list_project_tracked_files"
         | "project_overview"
         | "read_project_artifact"
         | "read_project_artifact_metadata" => "Read",
-        "search_project_text" | "search_project_texts" => "Searched",
+        "search_project_texts" => "Searched",
         "lsp_status"
         | "document_symbols"
         | "document_diagnostics"
@@ -1077,8 +1076,8 @@ fn semantic_kind(event: &SessionEvent) -> &'static str {
         | "discard_untracked"
         | "workspace_checkpoint_restore" => "Edited",
         "git_status"
-        | "git_diff"
         | "git_diff_hunks"
+        | "git_review_summary"
         | "git_log"
         | "show_changes"
         | "workspace_hygiene_check"
@@ -1092,8 +1091,6 @@ fn semantic_kind(event: &SessionEvent) -> &'static str {
         | "session_shell_exec"
         | "session_shell_status"
         | "close_session_shell"
-        | "job_status"
-        | "job_log"
         | "observe_jobs"
         | "stop_job" => "Ran",
         _ if event.write_like => "Edited",

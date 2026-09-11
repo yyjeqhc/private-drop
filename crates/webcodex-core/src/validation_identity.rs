@@ -69,6 +69,24 @@ pub fn assertion_validation_identity(assertion_name: &str) -> String {
     )
 }
 
+fn canonicalize_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(canonicalize_json_value).collect())
+        }
+        Value::Object(object) => {
+            let mut entries = object.into_iter().collect::<Vec<_>>();
+            entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+            let mut canonical = serde_json::Map::new();
+            for (key, value) in entries {
+                canonical.insert(key, canonicalize_json_value(value));
+            }
+            Value::Object(canonical)
+        }
+        scalar => scalar,
+    }
+}
+
 pub fn structured_validation_target_identity(
     kind: ToolValidationIdentityKind,
     arguments: &Value,
@@ -145,7 +163,12 @@ pub fn structured_validation_target_identity(
         }
         ToolValidationIdentityKind::None => return None,
     };
-    let encoded = serde_json::to_vec(&semantic).ok()?;
+    // `serde_json::Map` switches from sorted-map semantics to insertion-order
+    // semantics when any workspace dependency enables `preserve_order`.
+    // Validation identities are durable evidence keys, so Cargo feature
+    // unification must not change them. Canonicalize object-key order before
+    // hashing while preserving the existing sorted-key identity contract.
+    let encoded = serde_json::to_vec(&canonicalize_json_value(semantic)).ok()?;
     let digest = format!("{:x}", Sha256::digest(encoded));
     Some(format!(
         "{STRUCTURED_VALIDATION_TARGET_PREFIX}{}",
@@ -262,6 +285,22 @@ mod tests {
                 &serde_json::json!({})
             ),
             None
+        );
+    }
+
+    #[test]
+    fn canonical_validation_identity_json_is_feature_order_independent() {
+        let mut inner = serde_json::Map::new();
+        inner.insert("d".to_string(), serde_json::json!(4));
+        inner.insert("c".to_string(), serde_json::json!(3));
+        let mut outer = serde_json::Map::new();
+        outer.insert("z".to_string(), serde_json::json!(1));
+        outer.insert("a".to_string(), Value::Object(inner));
+
+        let canonical = canonicalize_json_value(Value::Object(outer));
+        assert_eq!(
+            serde_json::to_string(&canonical).unwrap(),
+            r#"{"a":{"c":3,"d":4},"z":1}"#
         );
     }
 

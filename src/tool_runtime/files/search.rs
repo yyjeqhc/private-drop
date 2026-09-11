@@ -1551,63 +1551,6 @@ fn empty_search_project_text_output(project: &str, options: &SearchOptions) -> T
 /// Maximum accepted size for `write_project_file` `content`.
 
 impl ToolRuntime {
-    /// `search_project_text`: bounded rg-first text search with grep fallback.
-    /// Excludes sensitive/build paths by default. Each match carries a
-    /// project-relative path, 1-based line number, preview line, and bounded
-    /// context arrays.
-    pub(crate) async fn search_project_text(
-        &self,
-        project: String,
-        pattern: String,
-        pattern_mode: Option<SearchPatternMode>,
-        path: Option<String>,
-        limit: Option<usize>,
-        context_before: Option<usize>,
-        context_after: Option<usize>,
-        include_globs: Option<Vec<String>>,
-        exclude_globs: Option<Vec<String>>,
-        result_mode: Option<SearchResultMode>,
-        timeout_secs: Option<i64>,
-    ) -> ToolResult {
-        let request = SearchRequest {
-            pattern,
-            path,
-            limit,
-            context_before,
-            context_after,
-            include_globs,
-            exclude_globs,
-            result_mode,
-            timeout_secs,
-        };
-        // Preserve the single-query validation-before-resolution ordering.
-        let options = match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
-            Ok(options) => options,
-            Err(error) => return error.into_tool_result(),
-        };
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => return ToolResult::err(e),
-        };
-        self.search_one_resolved_project_text(&proj, &project, options, None)
-            .await
-    }
-
-    pub(crate) async fn search_project_text_resolved(
-        &self,
-        resolved: &ResolvedProject,
-        output_project: &str,
-        request: SearchRequest,
-        pattern_mode: Option<SearchPatternMode>,
-    ) -> ToolResult {
-        let options = match SearchOptions::normalize_with_pattern_mode(request, pattern_mode) {
-            Ok(options) => options,
-            Err(error) => return error.into_tool_result(),
-        };
-        self.search_one_resolved_project_text(&resolved.config, output_project, options, None)
-            .await
-    }
-
     pub(crate) async fn search_one_resolved_project_text(
         &self,
         proj: &ProjectConfig,

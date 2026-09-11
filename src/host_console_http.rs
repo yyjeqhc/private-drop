@@ -619,13 +619,13 @@ mod tests {
         let start = sessions.record_tool_call_started(
             Some(&visible.session_id),
             crate::tool_runtime::sessions::SessionTransport::Api,
-            "read_file",
+            "read_files",
             &serde_json::json!({
                 "project": project,
-                "path": "src/lib.rs",
+                "items": [{"path": "src/lib.rs"}],
                 "authorization": "Bearer SHOULD_NOT_LEAK"
             }),
-            crate::tool_runtime::sessions::session_tool_contract("read_file"),
+            crate::tool_runtime::sessions::session_tool_contract("read_files"),
         );
         sessions.record_tool_call_finished(
             start,

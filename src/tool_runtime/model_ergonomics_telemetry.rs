@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn pre_result_failure_counts_invocation_without_fabricating_tool_result_bytes() {
-        let record = completion("read_file", 2).record_for_pre_result_failure("invalid_arguments");
+        let record = completion("read_files", 2).record_for_pre_result_failure("invalid_arguments");
         assert!(!record.success);
         assert_eq!(record.error_kind.as_deref(), Some("invalid_arguments"));
         assert_eq!(record.serialized_result_bytes, None);
@@ -718,7 +718,7 @@ mod tests {
         let serialized = serde_json::to_string(&record).unwrap();
         assert!(!serialized.contains(private));
 
-        for tool in ["read_file", "tool_manifest"] {
+        for tool in ["read_files", "tool_manifest"] {
             let record = completion(tool, 0)
                 .record_for_tool_result(&ToolResult::ok(json!({"changed": true})))
                 .unwrap();
@@ -740,7 +740,7 @@ mod tests {
     #[test]
     fn protocol_telemetry_distinguishes_unsupported_missing_exact_and_recovery_states() {
         let unsupported = ModelErgonomicsTimer::start_with_protocol(
-            "read_file",
+            "read_files",
             &json!({}),
             SessionContextRevisionAck::Unsupported,
         )
@@ -753,7 +753,7 @@ mod tests {
         assert_eq!(unsupported.context_continuity_status, None);
 
         let missing = ModelErgonomicsTimer::start_with_protocol(
-            "read_file",
+            "read_files",
             &json!({}),
             SessionContextRevisionAck::Unacknowledged,
         )
@@ -770,7 +770,7 @@ mod tests {
         assert_eq!(missing.session_recovery_event_count, Some(0));
 
         let exact = ModelErgonomicsTimer::start_with_protocol(
-            "read_file",
+            "read_files",
             &json!({}),
             SessionContextRevisionAck::Revision(1),
         )
@@ -782,7 +782,7 @@ mod tests {
         assert_eq!(exact.context_continuity_status.as_deref(), Some("exact"));
 
         let behind = ModelErgonomicsTimer::start_with_protocol(
-            "read_file",
+            "read_files",
             &json!({}),
             SessionContextRevisionAck::Revision(1),
         )
@@ -791,7 +791,7 @@ mod tests {
         .record_for_tool_result(&ToolResult::ok(json!({
             "session_context_revision": 3,
             "session_continuity": {"status": "behind", "history_lost": false},
-            "session_recovery": {"model_facing_events": [{"tool_name": "read_file"}], "truncated": false, "history_lost": false}
+            "session_recovery": {"model_facing_events": [{"tool_name": "read_files"}], "truncated": false, "history_lost": false}
         })))
         .unwrap();
         assert_eq!(behind.context_ack_present, Some(true));
@@ -800,7 +800,7 @@ mod tests {
         assert_eq!(behind.session_history_lost, Some(false));
 
         let invalid = ModelErgonomicsTimer::start_with_protocol(
-            "read_file",
+            "read_files",
             &json!({}),
             SessionContextRevisionAck::Invalid,
         )

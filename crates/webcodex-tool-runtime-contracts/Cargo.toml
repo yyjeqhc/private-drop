@@ -4,6 +4,10 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+workspace-checkpoints = ["webcodex-tool-contracts/workspace-checkpoints"]
+
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
 webcodex-tool-contracts = { path = "../webcodex-tool-contracts" }

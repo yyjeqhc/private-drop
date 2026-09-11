@@ -228,9 +228,7 @@ fn build_projects_router(
                 .push(Router::with_path("projects/list").post(projects_list))
                 .push(Router::with_path("projects/register").post(projects_register))
                 .push(Router::with_path("projects/create").post(projects_create))
-                .push(Router::with_path("projects/read_file").post(projects_read_file))
                 .push(Router::with_path("projects/git_status").post(projects_git_status))
-                .push(Router::with_path("projects/git_diff").post(projects_git_diff))
                 .push(
                     Router::with_path("projects/apply_unified_diff")
                         .post(projects_apply_unified_diff),
@@ -246,10 +244,6 @@ fn build_projects_router(
                 )
                 .push(Router::with_path("projects/run_job").post(projects_run_job))
                 .push(Router::with_path("projects/list_files").post(projects_list_files))
-                .push(Router::with_path("projects/search_text").post(projects_search_text))
-                .push(
-                    Router::with_path("projects/git_diff_summary").post(projects_git_diff_summary),
-                )
                 .push(Router::with_path("jobs/list").post(jobs_list))
                 .push(Router::with_path("jobs/stop").post(job_stop))
                 .push(Router::with_path("jobs/tail").post(job_tail))
@@ -445,12 +439,7 @@ async fn all_project_endpoints_require_bearer_auth() {
 
     let endpoints: Vec<(&str, Value)> = vec![
         ("/api/projects/list", json!({})),
-        (
-            "/api/projects/read_file",
-            json!({"project": "demo", "path": "README.md"}),
-        ),
         ("/api/projects/git_status", json!({"project": "demo"})),
-        ("/api/projects/git_diff", json!({"project": "demo"})),
         (
             "/api/projects/apply_unified_diff",
             json!({"project": "demo", "diff": "diff"}),
@@ -1011,6 +1000,7 @@ fn extract_tool_call_collects_flattened_write_project_file_fields() {
 }
 
 #[test]
+#[cfg(feature = "workspace-checkpoints")]
 fn extract_tool_call_collects_flattened_checkpoint_restore_fields() {
     // GPT Action flattened call for workspace_checkpoint_restore: the
     // recorder metadata (recording_session_id) must be stripped from
@@ -1096,9 +1086,16 @@ async fn http_tools_list_returns_names_and_count() {
     let names = body["names"].as_array().unwrap();
     assert!(!names.is_empty(), "names must not be empty");
     assert!(names.iter().any(|n| n == "list_tools"));
-    assert!(names.iter().any(|n| n == "git_diff_summary"));
     assert!(names.iter().any(|n| n == "git_log"));
     assert!(names.iter().any(|n| n == "show_changes"));
+    assert!(names.iter().any(|n| n == "git_diff_hunks"));
+    assert!(names.iter().any(|n| n == "observe_jobs"));
+    for retired in ["git_diff", "git_diff_summary", "job_status", "job_log"] {
+        assert!(
+            !names.iter().any(|name| name == retired),
+            "retired tool {retired} must stay absent from /api/tools/list"
+        );
+    }
     assert_eq!(body["count"], names.len());
     for tool in body["tools"].as_array().unwrap() {
         assert!(tool["inputSchema"].is_object());
@@ -1393,7 +1390,7 @@ async fn api_tools_call_accepts_hidden_testing_metadata_and_records_expectation(
             TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_id,
             "job_id": "missing-job",
             "expected_failure": true,
-            "expected_failure_kind": "job_not_found",
+            "expected_failure_kind": "invalid_arguments",
             "assertion_name": "api hidden metadata compatibility"
         }))
         .send(&service)
@@ -1413,9 +1410,9 @@ async fn api_tools_call_accepts_hidden_testing_metadata_and_records_expectation(
     assert_eq!(event["tool_name"], "job_status");
     assert_eq!(event["status"], "failed");
     assert_eq!(event["expected_failure"], true);
-    assert_eq!(event["expected_failure_kind"], "job_not_found");
+    assert_eq!(event["expected_failure_kind"], "invalid_arguments");
     assert_eq!(event["assertion_name"], "api hidden metadata compatibility");
-    assert_eq!(event["actual_failure_kind"], "job_not_found");
+    assert_eq!(event["actual_failure_kind"], "invalid_arguments");
     assert_eq!(
         event["failure_expectation_result"],
         "matched_expected_failure"
@@ -1658,7 +1655,7 @@ async fn http_tools_call_rejects_arguments_even_when_params_are_present() {
     let (status, body) = http_tool_call(
         &service,
         json!({
-            "tool": "git_diff_summary",
+            "tool": "show_changes",
             "params": {"project": "agent:canonical:p"},
             "arguments": {"project": "agent:retired:p"},
         }),
@@ -1678,7 +1675,7 @@ async fn http_tools_call_generic_path_dispatches_representative_project_tools() 
     // extraction -> ToolCall -> ToolRuntime -> HTTP ToolResult path.
     let (_tmp, service) = phase2_service();
     for (tool, params) in [
-        ("git_diff_summary", json!({"project": "agent:nope:nope"})),
+        ("git_status", json!({"project": "agent:nope:nope"})),
         (
             "write_project_file",
             json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
@@ -1877,8 +1874,8 @@ async fn oauth2_tools_call_scope_matrix() {
             crate::auth::SCOPE_RUNTIME_READ,
         ),
         (
-            "read_file",
-            json!({"project": "demo", "path": "README.md"}),
+            "read_files",
+            json!({"project": "demo", "items": [{"path": "README.md"}]}),
             project_read,
             runtime_read,
             crate::auth::SCOPE_PROJECT_READ,
@@ -2039,8 +2036,8 @@ async fn bridge_oauth2_tools_call_still_requires_project_read_and_job_run_scopes
     let (status, body, challenge) = oauth_tools_call(
         &service,
         &token,
-        "read_file",
-        json!({"project": "demo", "path": "README.md"}),
+        "read_files",
+        json!({"project": "demo", "items": [{"path": "README.md"}]}),
     )
     .await;
     assert_oauth_scope_rejected(
@@ -2101,7 +2098,7 @@ async fn http_tools_list_includes_phase4_edit_tools() {
     assert!(names.iter().any(|n| n == "write_project_file"));
     assert_eq!(body["count"], names.len());
     let tools = body["tools"].as_array().unwrap();
-    for name in ["read_file", "run_shell", "write_project_file"] {
+    for name in ["read_files", "run_shell", "write_project_file"] {
         let tool = tools
             .iter()
             .find(|tool| tool["name"] == name)

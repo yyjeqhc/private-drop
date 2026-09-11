@@ -78,13 +78,16 @@ async fn read_file_accepts_unique_short_id() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::ReadFile {
+                    ToolCall::ReadFiles {
                         project: "other-repo".to_string(),
-                        path: "README.md".to_string(),
+                        items: vec![crate::tool_runtime::ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: None,
+                        }],
                         session_id: None,
-                        start_line: None,
-                        limit: None,
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&bootstrap),
                 )
@@ -112,7 +115,7 @@ async fn read_file_accepts_unique_short_id() {
 }
 
 #[tokio::test]
-async fn read_file_short_id_continuation_binds_resolved_project_across_registry_churn() {
+async fn read_files_short_id_continuation_binds_resolved_project_across_registry_churn() {
     let runtime = runtime_with_resolver_projects().await;
     let auth = auth_context(None, true);
     let first = tokio::spawn({
@@ -121,13 +124,16 @@ async fn read_file_short_id_continuation_binds_resolved_project_across_registry_
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::ReadFile {
+                    ToolCall::ReadFiles {
                         project: "other-repo".to_string(),
-                        path: "README.md".to_string(),
+                        items: vec![crate::tool_runtime::ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: Some(1),
+                            limit: Some(1),
+                        }],
                         session_id: None,
-                        start_line: Some(1),
-                        limit: Some(1),
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -152,7 +158,7 @@ async fn read_file_short_id_continuation_binds_resolved_project_across_registry_
         .unwrap();
     let first = first.await.unwrap();
     assert!(first.success, "{:?}", first.error);
-    let suggested = &first.output["continuation"]["suggested_call"];
+    let suggested = &first.output["items"][0]["continuation"]["suggested_call"];
     assert_eq!(
         suggested["arguments"]["project"],
         "agent:workstation:other-repo"
@@ -225,7 +231,7 @@ async fn read_file_short_id_continuation_binds_resolved_project_across_registry_
         .unwrap();
     let second = second.await.unwrap();
     assert!(second.success, "{:?}", second.error);
-    assert_eq!(second.output["text"], "two");
+    assert_eq!(second.output["items"][0]["output"]["text"], "two");
 }
 
 #[tokio::test]
@@ -326,13 +332,16 @@ async fn ambiguous_short_id_returns_candidates_for_project_tools() {
     let bootstrap = auth_context(None, true);
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ReadFile {
+            ToolCall::ReadFiles {
                 project: "my-repo".to_string(),
-                path: "README.md".to_string(),
+                items: vec![crate::tool_runtime::ReadFilesItem {
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                }],
                 session_id: None,
-                start_line: None,
-                limit: None,
                 with_line_numbers: None,
+                max_result_bytes: None,
             },
             Some(&bootstrap),
         )
@@ -352,13 +361,16 @@ async fn full_id_remains_compatible_for_project_tools() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::ReadFile {
+                    ToolCall::ReadFiles {
                         project: "agent:workstation:other-repo".to_string(),
-                        path: "README.md".to_string(),
+                        items: vec![crate::tool_runtime::ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: None,
+                        }],
                         session_id: None,
-                        start_line: None,
-                        limit: None,
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&bootstrap),
                 )

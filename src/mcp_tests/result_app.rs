@@ -28,14 +28,12 @@ const RESULT_APP_TOOLS: [&str; 8] = [
     "show_changes",
     "git_review_summary",
 ];
-const UNBOUND_RESULT_APP_TOOLS: [&str; 11] = [
+const UNBOUND_RESULT_APP_TOOLS: [&str; 9] = [
     "cargo_fmt",
     "run_shell",
     "run_process",
     "run_job",
     "finish_coding_task",
-    "git_diff_summary",
-    "git_diff",
     "git_diff_hunks",
     "git_status",
     "git_commit_paths",
@@ -153,7 +151,14 @@ fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
 
 #[tokio::test]
 async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capability() {
-    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    const PUBLIC_URL: &str = "https://self-host.example";
+    let runtime =
+        test_runtime_with_surface_and_public_url(ModelSurface::FullOperatorRuntime, PUBLIC_URL);
+    assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/result/v2");
+    assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v1"));
+    assert!(mcp_result_app_resource_meta(None)["ui"]
+        .get("domain")
+        .is_none());
     let ui_tools = handle_mcp_request(
         &runtime,
         rpc(
@@ -225,6 +230,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
         json!({
             "ui": {
                 "prefersBorder": true,
+                "domain": PUBLIC_URL,
                 "csp": {"connectDomains": [], "resourceDomains": []}
             }
         })
@@ -252,6 +258,31 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
         MCP_UI_RESOURCE_MIME_TYPE
     );
     assert_eq!(read["result"]["contents"][0]["text"], MCP_RESULT_APP_HTML);
+    assert_eq!(
+        read["result"]["contents"][0]["_meta"]["ui"]["domain"],
+        PUBLIC_URL
+    );
+    for legacy_uri in MCP_RESULT_UI_RESOURCE_LEGACY_URIS {
+        let legacy = handle_mcp_request(
+            &runtime,
+            rpc(
+                "resources/read",
+                Some(json!(32041)),
+                mcp_2026_params(json!({"uri": legacy_uri})),
+            ),
+            None,
+        )
+        .await;
+        let McpOutcome::Ok(legacy) = legacy else {
+            panic!("legacy Result App resource must remain readable: {legacy_uri}");
+        };
+        assert_eq!(legacy["result"]["contents"][0]["uri"], *legacy_uri);
+        assert_eq!(legacy["result"]["contents"][0]["text"], MCP_RESULT_APP_HTML);
+        assert_eq!(
+            legacy["result"]["contents"][0]["_meta"]["ui"]["domain"],
+            PUBLIC_URL
+        );
+    }
 
     let no_ui_resources = handle_mcp_request(
         &runtime,

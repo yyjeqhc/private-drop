@@ -5,162 +5,6 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 // =========================================================================
-// readProjectFile
-// =========================================================================
-
-#[tokio::test]
-async fn http_projects_read_file_rejects_server_configured_project() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    std::fs::write(tmp_proj.path().join("README.md"), "line1\nline2\n").unwrap();
-    let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/projects/read_file")
-        .bearer_auth("secret")
-        .json(&json!({"project": "demo", "path": "README.md"}))
-        .send(&service)
-        .await;
-    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert!(body["error"].as_str().unwrap().contains("unknown_project"));
-}
-
-#[tokio::test]
-async fn http_projects_read_file_rejects_unknown_project() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/projects/read_file")
-        .bearer_auth("secret")
-        .json(&json!({"project": "nope", "path": "README.md"}))
-        .send(&service)
-        .await;
-    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert!(body["error"].as_str().unwrap().contains("nope"));
-}
-
-#[tokio::test]
-async fn dedicated_read_project_file_with_session_id_records_event() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let caps = crate::runner_protocol::RunnerCapabilities {
-        file_read: true,
-        ..Default::default()
-    };
-    let (runtime, registry) =
-        super::register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({
-            "tool": "start_session",
-            "params": {"project": "agent:importer:demo", "title": "dedicated read"}
-        }))
-        .send(&service)
-        .await;
-    assert_eq!(super::effective_status(&resp), StatusCode::OK);
-    let start_body: Value = resp.take_json().await.unwrap();
-    let session_id = start_body["output"]["session_id"].as_str().unwrap();
-
-    let request = async {
-        TestClient::post("http://localhost/api/projects/read_file")
-            .bearer_auth("secret")
-            .json(&json!({
-                "project": "agent:importer:demo",
-                "path": "README.md",
-                "session_id": session_id,
-                "limit": 1
-            }))
-            .send(&service)
-            .await
-    };
-    let file_output = json!({
-        "format": "webcodex.file_read_range.v1",
-        "content": "secret read body",
-        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "total_lines": 1,
-        "start_line": 1,
-        "limit": 1
-    })
-    .to_string();
-    let complete = super::complete_one_agent_request(registry.clone(), &file_output, "", 0);
-    let (mut resp, _) = tokio::join!(request, complete);
-    assert_eq!(super::effective_status(&resp), StatusCode::OK);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], true);
-    assert!(body["output"].get("session_recorded").is_none());
-    assert!(body["output"].get("session_event_id").is_none());
-    assert!(body["output"].get("session_id").is_none());
-
-    let mut resp = TestClient::post("http://localhost/api/tools/call")
-        .bearer_auth("secret")
-        .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
-        .send(&service)
-        .await;
-    let summary: Value = resp.take_json().await.unwrap();
-    assert_eq!(summary["output"]["counts"]["tool_calls"], 1);
-    assert!(summary["output"]["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|event| event["tool_name"] == "read_file" && event["status"] == "succeeded"));
-    let serialized = serde_json::to_string(&summary["output"]["events"]).unwrap();
-    assert!(
-        !serialized.contains("secret read body"),
-        "session event leaked read_file content: {serialized}"
-    );
-}
-
-#[tokio::test]
-async fn dedicated_read_project_file_without_session_id_succeeds() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let caps = crate::runner_protocol::RunnerCapabilities {
-        file_read: true,
-        ..Default::default()
-    };
-    let (runtime, registry) =
-        super::register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let request = async {
-        TestClient::post("http://localhost/api/projects/read_file")
-            .bearer_auth("secret")
-            .json(&json!({"project": "agent:importer:demo", "path": "README.md"}))
-            .send(&service)
-            .await
-    };
-    let file_output = json!({
-        "format": "webcodex.file_read_range.v1",
-        "content": "hello",
-        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "total_lines": 1,
-        "start_line": 1,
-        "limit": 2000
-    })
-    .to_string();
-    let complete = super::complete_one_agent_request(registry.clone(), &file_output, "", 0);
-    let (mut resp, _) = tokio::join!(request, complete);
-    assert_eq!(super::effective_status(&resp), StatusCode::OK);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], true);
-    assert_eq!(body["output"]["text"], "hello");
-    assert!(body["output"].get("format").is_none());
-    assert!(body["output"].get("session_recorded").is_none());
-}
-
-// =========================================================================
 // getProjectGitStatus
 // =========================================================================
 
@@ -192,35 +36,6 @@ async fn http_projects_git_status_rejects_server_configured_project() {
 }
 
 // =========================================================================
-// getProjectGitDiff
-// =========================================================================
-
-#[tokio::test]
-async fn http_projects_git_diff_rejects_server_configured_project() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let root = tmp_proj.path();
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(root)
-        .output()
-        .expect("git init");
-    let runtime = Arc::new(super::runtime_with_local_project(root, "demo"));
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/projects/git_diff")
-        .bearer_auth("secret")
-        .json(&json!({"project": "demo"}))
-        .send(&service)
-        .await;
-    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert!(body["error"].as_str().unwrap().contains("unknown_project"));
-}
-
-// =========================================================================
 // Phase A read-only console REST wrappers (wiring + auth gate)
 // =========================================================================
 
@@ -233,14 +48,7 @@ async fn http_console_routes_require_bearer_auth() {
     let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
     let service = Service::new(super::build_projects_router(config, db, runtime));
 
-    for (path, body) in [
-        ("/api/projects/list_files", json!({"project": "demo"})),
-        (
-            "/api/projects/search_text",
-            json!({"project": "demo", "pattern": "fn"}),
-        ),
-        ("/api/projects/git_diff_summary", json!({"project": "demo"})),
-    ] {
+    for (path, body) in [("/api/projects/list_files", json!({"project": "demo"}))] {
         let resp = TestClient::post(format!("http://localhost{}", path))
             .json(&body)
             .send(&service)
@@ -255,7 +63,7 @@ async fn http_console_routes_require_bearer_auth() {
 }
 
 #[tokio::test]
-async fn retired_edit_compatibility_routes_are_unreachable() {
+async fn retired_project_compatibility_routes_are_unreachable() {
     let (_tmp, service) = super::phase2_service();
     for path in [
         "/api/projects/replace_in_file",
@@ -263,6 +71,10 @@ async fn retired_edit_compatibility_routes_are_unreachable() {
         "/api/projects/apply_patch",
         "/api/projects/apply_patch_checked",
         "/api/projects/validate_patch",
+        "/api/projects/read_file",
+        "/api/projects/search_text",
+        "/api/projects/git_diff",
+        "/api/projects/git_diff_summary",
     ] {
         let resp = TestClient::post(format!("http://localhost{path}"))
             .bearer_auth("secret")

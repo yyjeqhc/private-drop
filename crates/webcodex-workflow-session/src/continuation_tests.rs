@@ -80,23 +80,35 @@ fn record_read(store: &SessionStore, session_id: &str, path: &str, output: Value
     let start = store.record_tool_call_started(
         Some(session_id),
         SessionTransport::Api,
-        "read_file",
-        &json!({"project": PROJECT, "path": path}),
-        synthetic_contract(true, false, SessionPathHint::SinglePath),
+        "read_files",
+        &json!({"project": PROJECT, "items": [{"path": path}]}),
+        synthetic_contract(true, false, SessionPathHint::None),
     );
-    store.record_tool_call_finished(start, true, &output, None, None);
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({"items": [{"index": 0, "success": true, "output": output}]}),
+        None,
+        None,
+    );
 }
 
 fn record_search(store: &SessionStore, session_id: &str, paths: &[&str]) {
     let start = store.record_tool_call_started(
         Some(session_id),
         SessionTransport::Api,
-        "search_project_text",
-        &json!({"project": PROJECT, "pattern": "secret-pattern"}),
+        "search_project_texts",
+        &json!({"project": PROJECT, "queries": [{"pattern": "secret-pattern"}]}),
         synthetic_contract(true, false, SessionPathHint::None),
     );
     store.record_tool_call_finished(start, true, &json!({
-        "matches": paths.iter().enumerate().map(|(i, path)| json!({"path": path, "line": i + 1, "preview": "raw preview"})).collect::<Vec<_>>()
+        "items": [{
+            "index": 0,
+            "success": true,
+            "output": {
+                "matches": paths.iter().enumerate().map(|(i, path)| json!({"path": path, "line": i + 1, "preview": "raw preview"})).collect::<Vec<_>>()
+            }
+        }]
     }), None, None);
 }
 

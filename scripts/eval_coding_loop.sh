@@ -1054,7 +1054,7 @@ EOF
 # Coding Loop Eval
 
 This disposable project is used by the WebCodex coding-loop eval harness.
-It contains the phrase coding-loop eval so search_project_text has a stable match.
+It contains the phrase coding-loop eval so search_project_texts has a stable match.
 EOF
         cat >.gitignore <<'EOF'
 /target/
@@ -1164,21 +1164,25 @@ import sys
 print(json.dumps({
     "project": sys.argv[1],
     "session_id": sys.argv[2],
-    "pattern": "coding-loop eval",
-    "path": ".",
-    "limit": 10,
+    "queries": [{
+        "pattern": "coding-loop eval",
+        "path": ".",
+        "limit": 10,
+    }],
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "search_project_text" "$params"
-    assert_success "search_project_text succeeds" "$LAST_BODY"
+    call_tool "search_project_texts" "$params"
+    assert_success "search_project_texts succeeds" "$LAST_BODY"
     if python3 - "$LAST_BODY" <<'PY'
 import json
 import sys
 
 data = json.loads(sys.argv[1])
 out = data.get("output") or {}
-matches = out.get("matches")
+items = out.get("items") or []
+item = items[0] if items and isinstance(items[0], dict) else {}
+matches = (item.get("output") or {}).get("matches")
 ok = (
     data.get("success") is True
     and isinstance(matches, list)
@@ -1195,9 +1199,9 @@ ok = (
 sys.exit(0 if ok else 1)
 PY
     then
-        case_ok "search_project_text returns structured match records"
+        case_ok "search_project_texts returns structured match records"
     else
-        case_fail "search_project_text structured match records missing"
+        case_fail "search_project_texts structured match records missing"
     fi
 
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
@@ -1207,15 +1211,17 @@ import sys
 print(json.dumps({
     "project": sys.argv[1],
     "session_id": sys.argv[2],
-    "path": "README.md",
-    "start_line": 1,
-    "limit": 6,
+    "items": [{
+        "path": "README.md",
+        "start_line": 1,
+        "limit": 6,
+    }],
     "with_line_numbers": True,
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "read_file" "$params"
-    assert_success "read_file succeeds" "$LAST_BODY"
+    call_tool "read_files" "$params"
+    assert_success "read_files succeeds" "$LAST_BODY"
 
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
 import json
@@ -1263,33 +1269,38 @@ import sys
 print(json.dumps({
     "project": sys.argv[1],
     "session_id": sys.argv[2],
-    "path": "src/lib.rs",
-    "start_line": 1,
-    "limit": 8,
+    "items": [{
+        "path": "src/lib.rs",
+        "start_line": 1,
+        "limit": 8,
+    }],
     "with_line_numbers": True,
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "read_file" "$params"
-    assert_success "read_file with line numbers succeeds" "$LAST_BODY"
+    call_tool "read_files" "$params"
+    assert_success "read_files with line numbers succeeds" "$LAST_BODY"
     if python3 - "$LAST_BODY" <<'PY'
 import json
 import sys
 
 data = json.loads(sys.argv[1])
 out = data.get("output") or {}
+items = out.get("items") or []
+item = items[0] if items and isinstance(items[0], dict) else {}
+read_out = item.get("output") or {}
 ok = (
     data.get("success") is True
-    and out.get("format") == "numbered"
-    and isinstance(out.get("text"), str)
-    and "1 | pub fn greeting" in out.get("text", "")
+    and read_out.get("format") == "numbered"
+    and isinstance(read_out.get("text"), str)
+    and "1 | pub fn greeting" in read_out.get("text", "")
 )
 sys.exit(0 if ok else 1)
 PY
     then
-        case_ok "read_file returned stable line-number metadata"
+        case_ok "read_files returned stable line-number metadata"
     else
-        case_fail "read_file line-number metadata missing"
+        case_fail "read_files line-number metadata missing"
     fi
 
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" "$TEST_REPO/src/lib.rs" <<'PY'
@@ -1429,21 +1440,25 @@ import sys
 print(json.dumps({
     "project": sys.argv[1],
     "session_id": sys.argv[2],
-    "path": "src/lib.rs",
-    "start_line": 1,
-    "limit": 4,
+    "items": [{
+        "path": "src/lib.rs",
+        "start_line": 1,
+        "limit": 4,
+    }],
     "with_line_numbers": True,
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "read_file" "$params"
-    assert_success "read_file after failed edit succeeds" "$LAST_BODY"
+    call_tool "read_files" "$params"
+    assert_success "read_files after failed edit succeeds" "$LAST_BODY"
     if python3 - "$LAST_BODY" <<'PY'
 import json
 import sys
 
 data = json.loads(sys.argv[1])
-text = (data.get("output") or {}).get("text", "")
+items = (data.get("output") or {}).get("items") or []
+item = items[0] if items and isinstance(items[0], dict) else {}
+text = (item.get("output") or {}).get("text", "")
 ok = data.get("success") is True and '"hello"' in text and "should not apply" not in text
 sys.exit(0 if ok else 1)
 PY

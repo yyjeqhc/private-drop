@@ -161,7 +161,7 @@ fn workspace_hygiene_check_openapi_operation_count_unchanged() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 22, "operation count must stay 22");
+    assert_eq!(count, 16, "operation count must stay 16");
 }
 
 // =========================================================================

@@ -384,7 +384,7 @@ pub fn session_handoff_summary_input_schema() -> Value {
             },
             "project": {
                 "type": "string",
-                "description": "Optional runtime project id. When provided, the handoff includes a bounded workspace summary and checkpoint candidates."
+                "description": "Optional runtime project id. When provided, the handoff includes a bounded workspace summary."
             },
             "include_workspace": {
                 "type": "boolean",
@@ -392,7 +392,7 @@ pub fn session_handoff_summary_input_schema() -> Value {
             },
             "include_checkpoints": {
                 "type": "boolean",
-                "description": "Include bounded checkpoint candidates, especially the latest last_known_good. Defaults to true. Only effective when project is provided."
+                "description": "Include bounded checkpoint candidates, especially the latest last_known_good. Defaults to true. Only effective when project is provided and the workspace-checkpoints build feature is enabled; otherwise accepted and ignored."
             },
             "include_validation": {
                 "type": "boolean",

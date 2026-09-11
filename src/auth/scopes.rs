@@ -324,7 +324,7 @@ mod tests {
             ("POST", "/api/connector/checks/run", SCOPE_JOB_RUN),
             ("POST", "/api/connector/task/cancel", SCOPE_JOB_RUN),
             ("POST", "/api/connector/task/finish", SCOPE_PROJECT_WRITE),
-            ("POST", "/api/projects/read_file", SCOPE_PROJECT_READ),
+            ("POST", "/api/projects/git_status", SCOPE_PROJECT_READ),
             ("POST", "/api/runtime-console/projects", SCOPE_PROJECT_READ),
             (
                 "POST",
@@ -399,7 +399,7 @@ mod tests {
         }
         for (label, auth) in [("pat", &pat), ("oauth", &oauth)] {
             assert_eq!(
-                enforce_route_scope(auth, "POST", "/api/projects/read_file"),
+                enforce_route_scope(auth, "POST", "/api/projects/git_status"),
                 Err((
                     Some(SCOPE_PROJECT_READ),
                     "missing required scope: project:read".to_string()
@@ -418,7 +418,7 @@ mod tests {
             );
         }
         assert!(
-            enforce_route_scope(&shared, "POST", "/api/projects/read_file").is_ok(),
+            enforce_route_scope(&shared, "POST", "/api/projects/git_status").is_ok(),
             "direct shared key should use its declared project:read scope"
         );
         assert!(
@@ -608,10 +608,6 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
-                "read_file",
-                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
-            ),
-            (
                 "read_files",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
@@ -628,10 +624,12 @@ mod tests {
                 "workspace_symbols",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
+            #[cfg(feature = "workspace-checkpoints")]
             (
                 "workspace_checkpoint_create",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
+            #[cfg(feature = "workspace-checkpoints")]
             (
                 "workspace_checkpoint_restore",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
@@ -720,13 +718,14 @@ mod tests {
             "resolve_session_message",
             "complete_session_message",
             "session_discussion_summary",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_create",
+            #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_restore",
             "show_changes",
             "document_diagnostics",
             "hover",
             "workspace_symbols",
-            "read_file",
             "read_files",
             "write_project_file",
             "artifact_upload_begin",

@@ -4,7 +4,7 @@ use crate::route_metadata::OpenApiExampleSet;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 
 pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> {
-    match example_set {
+    let examples = match example_set {
         OpenApiExampleSet::None => None,
         OpenApiExampleSet::RegisterProject => Some(json!({
             "basic": {
@@ -46,29 +46,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                 }
             }
         })),
-        OpenApiExampleSet::JobStatus => Some(json!({
-            "byJobId": {
-                "summary": "Poll a job by id",
-                "value": {
-                    "job_id": "11111111-2222-3333-4444-555555555555"
-                }
-            }
-        })),
-        OpenApiExampleSet::JobLog => Some(json!({
-            "byJobId": {
-                "summary": "Read the tail of a job log",
-                "value": {
-                    "job_id": "11111111-2222-3333-4444-555555555555"
-                }
-            },
-            "withTailLines": {
-                "summary": "Read the last N stdout lines",
-                "value": {
-                    "job_id": "11111111-2222-3333-4444-555555555555",
-                    "tail_lines": 200
-                }
-            }
-        })),
         OpenApiExampleSet::ListJobs => Some(json!({
             "all": {
                 "summary": "List recent jobs",
@@ -98,51 +75,9 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                 }
             }
         })),
-        OpenApiExampleSet::ReadProjectFile => Some(json!({
-            "readme": {
-                "summary": "Read a project README",
-                "value": {
-                    "project": "webcodex",
-                    "path": "README.md"
-                }
-            },
-            "paginated": {
-                "summary": "Read a slice of a source file",
-                "value": {
-                    "project": "webcodex",
-                    "path": "src/main.rs",
-                    "start_line": 1,
-                    "limit": 100,
-                    "with_line_numbers": true
-                }
-            }
-        })),
         OpenApiExampleSet::GitStatus => Some(json!({
             "byProject": {
                 "summary": "Check git status of a project",
-                "value": {
-                    "project": "webcodex"
-                }
-            }
-        })),
-        OpenApiExampleSet::GitDiff => Some(json!({
-            "byProject": {
-                "summary": "Full diff of a project",
-                "value": {
-                    "project": "webcodex"
-                }
-            },
-            "withStat": {
-                "summary": "Diffstat of a project",
-                "value": {
-                    "project": "webcodex",
-                    "args": ["--stat"]
-                }
-            }
-        })),
-        OpenApiExampleSet::GitDiffSummary => Some(json!({
-            "byProject": {
-                "summary": "Diff summary of a project",
                 "value": {
                     "project": "webcodex"
                 }
@@ -161,18 +96,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                     "project": "webcodex",
                     "path": "src",
                     "limit": 100
-                }
-            }
-        })),
-        OpenApiExampleSet::SearchProjectText => Some(json!({
-            "byPattern": {
-                "summary": "Search for a pattern",
-                "value": {
-                    "project": "webcodex",
-                    "pattern": "fn main",
-                    "limit": 20,
-                    "context_before": 2,
-                    "context_after": 4
                 }
             }
         })),
@@ -321,15 +244,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                     "session_event_limit": 30
                 }
             },
-            "readFile": {
-                "summary": "Call read_file via flattened GPT Action fields",
-                "value": {
-                    "tool": "read_file",
-                    "project": "webcodex",
-                    "path": "README.md",
-                    "with_line_numbers": true
-                }
-            },
             "readFiles": {
                 "summary": "Read several files with one bounded call",
                 "value": {
@@ -365,16 +279,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                     ]
                 }
             },
-            "checkpointRestore": {
-                "summary": "Restore a checkpoint via flattened GPT Action fields",
-                "value": {
-                    "tool": "workspace_checkpoint_restore",
-                    "project": "webcodex",
-                    "checkpoint_id": "wc_ckpt_abc",
-                    "confirm": true,
-                    TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
-                }
-            },
             "applyTextEdits": {
                 "summary": "Transactional file edit via flattened GPT Action fields",
                 "value": {
@@ -394,7 +298,7 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
             "paramsEnvelope": {
                 "summary": "Canonical direct/non-Action params envelope",
                 "value": {
-                    "tool": "git_diff_summary",
+                    "tool": "show_changes",
                     "params": {"project": "webcodex"}
                 }
             },
@@ -405,5 +309,22 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                 }
             }
         })),
-    }
+    };
+    #[cfg(feature = "workspace-checkpoints")]
+    let examples = examples.map(|mut examples| {
+        if matches!(example_set, OpenApiExampleSet::CallRuntimeTool) {
+            examples["checkpointRestore"] = json!({
+                "summary": "Restore a checkpoint via flattened GPT Action fields",
+                "value": {
+                    "tool": "workspace_checkpoint_restore",
+                    "project": "webcodex",
+                    "checkpoint_id": "wc_ckpt_abc",
+                    "confirm": true,
+                    TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_record"
+                }
+            });
+        }
+        examples
+    });
+    examples
 }

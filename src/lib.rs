@@ -65,7 +65,7 @@ pub(crate) use webcodex_core::{
 };
 pub(crate) use webcodex_runner_config as runner_config;
 pub(crate) use webcodex_workspace::project_overview;
-#[cfg(test)]
+#[cfg(all(test, feature = "workspace-checkpoints"))]
 pub(crate) use webcodex_workspace::workspace_checkpoint;
 
 pub(crate) use auth::{get_db, json_error, AuthMiddleware};
@@ -282,10 +282,14 @@ only for local/trusted-network demos."
             .with_window_activity_database(db.clone())
             .with_memory_database(db.clone())
             .with_communication_database(db.clone())
-            .with_checkpoint_state_dir(runtime_state_dir.clone())
             .with_session_ledger(config.session_ledger_path())
             .with_persistent_coding_agent_observation_state(&runtime_state_dir)
             .map_err(std::io::Error::other)?;
+    #[cfg(feature = "workspace-checkpoints")]
+    {
+        tool_runtime_builder =
+            tool_runtime_builder.with_checkpoint_state_dir(runtime_state_dir.clone());
+    }
     if let Some(activity_store) = db::WorkspaceActivityStore::from_env(db.clone()) {
         tool_runtime_builder =
             tool_runtime_builder.with_activity_recorder(Arc::new(activity_store));
@@ -379,14 +383,6 @@ only for local/trusted-network demos."
                 .post(runtime_http::import_conversation_files_to_project),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::JobsStatus))
-                .post(runtime_http::job_status),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::JobsLog))
-                .post(runtime_http::job_log),
-        )
-        .push(
             Router::with_path(route_metadata::api_path(RouteId::JobsStop))
                 .post(runtime_http::job_stop),
         )
@@ -427,28 +423,12 @@ only for local/trusted-network demos."
                 .post(runtime_http::projects_resolve_or_register),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsReadFile))
-                .post(runtime_http::projects_read_file),
-        )
-        .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsGitStatus))
                 .post(runtime_http::projects_git_status),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitDiff))
-                .post(runtime_http::projects_git_diff),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitDiffSummary))
-                .post(runtime_http::projects_git_diff_summary),
-        )
-        .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsListFiles))
                 .post(runtime_http::projects_list_files),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsSearchText))
-                .post(runtime_http::projects_search_text),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsApplyUnifiedDiff))

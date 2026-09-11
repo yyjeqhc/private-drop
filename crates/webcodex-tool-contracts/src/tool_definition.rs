@@ -7,6 +7,7 @@
 
 mod agent_tasks;
 mod artifacts;
+#[cfg(feature = "workspace-checkpoints")]
 mod checkpoints;
 mod coding_agents;
 mod communication;
@@ -990,6 +991,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     memory::DEFINITIONS,
     skills::DEFINITIONS,
     hygiene::DEFINITIONS,
+    #[cfg(feature = "workspace-checkpoints")]
     checkpoints::DEFINITIONS,
     coding_agents::DEFINITIONS,
     computer::DEFINITIONS,

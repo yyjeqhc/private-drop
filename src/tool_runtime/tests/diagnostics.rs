@@ -34,7 +34,7 @@ fn context(auth: Option<&crate::auth::AuthContext>) -> ToolCallContext<'_> {
 
 fn missing_job_request() -> ToolCallRequest {
     ToolCallRequest {
-        tool_name: "job_status".to_string(),
+        tool_name: "job_tail".to_string(),
         arguments: json!({"job_id": "missing-trace-ref-job"}),
     }
 }

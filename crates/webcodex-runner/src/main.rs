@@ -25,7 +25,9 @@ use webcodex_core::{
     runner_operation, runner_protocol, validation_bridge,
 };
 use webcodex_runner_config as runner_config;
-use webcodex_workspace::{project_overview, workspace_checkpoint};
+use webcodex_workspace::project_overview;
+#[cfg(feature = "workspace-checkpoints")]
+use webcodex_workspace::workspace_checkpoint;
 
 use runner_protocol::{
     validation_infrastructure_failure_code, RunnerCapabilities, RunnerJobUpdateRequest,
@@ -54,6 +56,8 @@ use webcodex_runner::detached_job::{
     handoff_detached_job, snapshot_from_detached_record, DetachedHandoffOutcome, DetachedJobStore,
     DetachedLaunchSpec, DetachedStartRequest,
 };
+#[cfg(all(test, feature = "workspace-checkpoints"))]
+use webcodex_runner::is_checkpoint_request_kind;
 use webcodex_runner::output_text::{OutputTextDecoder, OutputTextSource};
 #[cfg(test)]
 use webcodex_runner::QuicClientConfig;
@@ -72,19 +76,22 @@ use webcodex_runner::{
     configured_shell_job_command, configured_validation_job_command, cwd_allowed,
     default_config_path, dispatch_request_with_outcome, err_cmd, handle_apply_patch_file_request,
     handle_apply_text_edits_file_request, handle_artifact_file_operation,
-    handle_basic_file_request, handle_checkpoint_file_request, handle_write_project_file_request,
-    hostname, load_config, max_concurrent_jobs, ok_cmd, prepare_detached_process_launch,
-    project_registry_dir, resolve_prepared_shell_profile, resolve_requested_path, run_runner,
-    validate_client_profile, validate_structured_edit_runner_path, CommandResult, HotRunnerConfig,
-    HttpSendConfig, PreparedShellProfile, PreparedShellProfileCache, ReloadableRunnerConfig,
-    RunnerConfig, RunnerDispatchOutcome, RunnerPolicy, RunnerProjectCache, RunnerSink, ShellConfig,
+    handle_basic_file_request, handle_write_project_file_request, hostname, load_config,
+    max_concurrent_jobs, ok_cmd, prepare_detached_process_launch, project_registry_dir,
+    resolve_prepared_shell_profile, resolve_requested_path, run_runner, validate_client_profile,
+    validate_structured_edit_runner_path, CommandResult, HotRunnerConfig, HttpSendConfig,
+    PreparedShellProfile, PreparedShellProfileCache, ReloadableRunnerConfig, RunnerConfig,
+    RunnerDispatchOutcome, RunnerPolicy, RunnerProjectCache, RunnerSink, ShellConfig,
     SubmitResultError,
 };
 #[cfg(test)]
 use webcodex_runner::{
     dispatch_request, is_artifact_request_kind, is_basic_file_request_kind,
-    is_checkpoint_request_kind, is_structured_edit_request_kind,
+    is_structured_edit_request_kind,
 };
+
+#[cfg(feature = "workspace-checkpoints")]
+use webcodex_runner::handle_checkpoint_file_request;
 use webcodex_runner::{is_transport_failure, SshConfig, SshConnectionPool};
 use webcodex_runner::{
     run_process_with_profiles_and_execution_state_with_start_hook,
@@ -2350,10 +2357,13 @@ fn register(
 
 #[cfg(test)]
 fn is_file_request_kind(kind: &str) -> bool {
+    #[cfg(feature = "workspace-checkpoints")]
+    if is_checkpoint_request_kind(kind) {
+        return true;
+    }
     is_basic_file_request_kind(kind)
         || is_structured_edit_request_kind(kind)
         || is_artifact_request_kind(kind)
-        || is_checkpoint_request_kind(kind)
 }
 
 fn handle_file_operation(policy: &RunnerPolicy, operation: &RunnerFileOperation) -> CommandResult {
@@ -2408,8 +2418,21 @@ fn handle_file_operation(policy: &RunnerPolicy, operation: &RunnerFileOperation)
         | RunnerFileOperation::ArtifactUploadAbort(_) => {
             handle_artifact_file_operation(operation, &resolved, start)
         }
+        #[cfg(feature = "workspace-checkpoints")]
         RunnerFileOperation::CheckpointCreate(_) | RunnerFileOperation::CheckpointRestore(_) => {
             handle_checkpoint_file_request(operation, &resolved, start)
+        }
+        #[cfg(not(feature = "workspace-checkpoints"))]
+        RunnerFileOperation::CheckpointCreate(_) | RunnerFileOperation::CheckpointRestore(_) => {
+            CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(
+                    "workspace checkpoints are unsupported in this Runner build".to_string(),
+                ),
+            }
         }
         RunnerFileOperation::Read(_)
         | RunnerFileOperation::Write(_)

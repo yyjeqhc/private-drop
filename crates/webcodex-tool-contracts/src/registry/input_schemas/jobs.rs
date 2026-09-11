@@ -464,53 +464,6 @@ pub fn stop_job_input_schema() -> Value {
     ]))
 }
 
-pub fn job_status_input_schema() -> Value {
-    object_schema(vec![
-        ("job_id", "string", "Job id.", true),
-        (
-            "include_command_preview",
-            "boolean",
-            "Optional debug flag. Defaults to false; when true, includes bounded command_preview metadata. stdout/stderr bodies are never included.",
-            false,
-        ),
-    ])
-}
-
-pub fn job_log_input_schema() -> Value {
-    let mut schema = object_schema(vec![
-        ("job_id", "string", "Job id.", true),
-        (
-            "offset",
-            "integer",
-            "Optional 1-based cursor returned by a previous call. Reads the next bounded segment.",
-            false,
-        ),
-        (
-            "tail_lines",
-            "integer",
-            "Optional number of trailing lines per stream. Defaults to 200 and is capped at 500.",
-            false,
-        ),
-        (
-            "after_observation_token",
-            "string",
-            "Opaque token from the latest Job observation. Return it unchanged; it carries bounded lifecycle and automatic log-delta state. It is bound to one job_id, not execution identity or retry authority. A Server epoch change causes an immediate conservative log reset when that Job still exists.",
-            false,
-        ),
-        (
-            "wait_secs",
-            "integer",
-            "Optional bounded wait in seconds (1..=60). When both after_observation_token and wait_secs are supplied, this is a single bounded wait, not a subscription or streaming connection.",
-            false,
-        ),
-    ]);
-    schema["properties"]["after_observation_token"]["maxLength"] =
-        json!(webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN);
-    schema["properties"]["wait_secs"]["minimum"] = json!(1);
-    schema["properties"]["wait_secs"]["maximum"] = json!(60);
-    schema
-}
-
 pub fn observe_jobs_input_schema() -> Value {
     json!({
         "type": "object",

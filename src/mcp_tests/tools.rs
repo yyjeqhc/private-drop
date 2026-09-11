@@ -1693,7 +1693,7 @@ async fn session_tools_exposed_in_registry_and_mcp() {
         validation_summary["inputSchema"]["additionalProperties"],
         false
     );
-    for name in ["read_file", "run_shell", "write_project_file"] {
+    for name in ["read_files", "run_shell", "write_project_file"] {
         let tool = tools
             .iter()
             .find(|tool| tool["name"] == name)
@@ -1965,13 +1965,18 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
         McpOutcome::Ok(value) => value,
         other => panic!("expected tools/list Ok, got {other:?}"),
     };
-    let job_status = listed["result"]["tools"]
-        .as_array()
-        .unwrap()
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    assert!(
+        tools.iter().all(|tool| tool["name"] != "job_status"),
+        "retired job_status must stay absent from MCP tools/list"
+    );
+    let observe_jobs = tools
         .iter()
-        .find(|tool| tool["name"] == "job_status")
-        .expect("job_status must be model-visible on local_coding");
-    let properties = job_status["inputSchema"]["properties"].as_object().unwrap();
+        .find(|tool| tool["name"] == "observe_jobs")
+        .expect("observe_jobs must be model-visible on local_coding");
+    let properties = observe_jobs["inputSchema"]["properties"]
+        .as_object()
+        .unwrap();
     for field in [
         "expected_failure",
         "expected_failure_kind",
@@ -1992,12 +1997,14 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
             "tools/call",
             Some(Value::from(331)),
             mcp_2026_params(json!({
-                "name": "job_status",
+                "name": "stop_job",
                 "arguments": {
                     crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &session.session_id,
+                    "project": "agent:nope:nope",
                     "job_id": "missing-job",
+                    "confirm": false,
                     "expected_failure": true,
-                    "expected_failure_kind": "job_not_found",
+                    "expected_failure_kind": "confirmation_required",
                     "assertion_name": "mcp hidden metadata compatibility"
                 }
             })),
@@ -2020,11 +2027,11 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
         .iter()
         .find(|event| event.kind == "tool_call_finished")
         .expect("raw MCP call must be recorded");
-    assert_eq!(finished.tool_name, "job_status");
+    assert_eq!(finished.tool_name, "stop_job");
     assert_eq!(finished.expected_failure, Some(true));
     assert_eq!(
         finished.expected_failure_kind.as_deref(),
-        Some("job_not_found")
+        Some("confirmation_required")
     );
     assert_eq!(
         finished.assertion_name.as_deref(),
@@ -2032,7 +2039,7 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
     );
     assert_eq!(
         finished.actual_failure_kind.as_deref(),
-        Some("job_not_found")
+        Some("confirmation_required")
     );
     assert_eq!(
         finished.failure_expectation_result.as_deref(),

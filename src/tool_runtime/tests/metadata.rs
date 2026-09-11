@@ -703,13 +703,16 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::ReadFile {
+                    ToolCall::ReadFiles {
                         project: "agent:client-a:proj-a".to_string(),
-                        path: "README.md".to_string(),
+                        items: vec![crate::tool_runtime::ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: None,
+                        }],
                         session_id: None,
-                        start_line: None,
-                        limit: None,
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&bridge_a),
                 )
@@ -732,13 +735,16 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
 
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ReadFile {
+            ToolCall::ReadFiles {
                 project: "agent:client-b:proj-b".to_string(),
-                path: "README.md".to_string(),
+                items: vec![crate::tool_runtime::ReadFilesItem {
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                }],
                 session_id: None,
-                start_line: None,
-                limit: None,
                 with_line_numbers: None,
+                max_result_bytes: None,
             },
             Some(&bridge_a),
         )
@@ -762,13 +768,16 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
 
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ReadFile {
+            ToolCall::ReadFiles {
                 project: "agent:client-a:proj-a".to_string(),
-                path: "README.md".to_string(),
+                items: vec![crate::tool_runtime::ReadFilesItem {
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                }],
                 session_id: None,
-                start_line: None,
-                limit: None,
                 with_line_numbers: None,
+                max_result_bytes: None,
             },
             Some(&bridge_b),
         )
@@ -795,13 +804,16 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::ReadFile {
+                    ToolCall::ReadFiles {
                         project: "agent:client-open:proj-open".to_string(),
-                        path: "README.md".to_string(),
+                        items: vec![crate::tool_runtime::ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: None,
+                        }],
                         session_id: None,
-                        start_line: None,
-                        limit: None,
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&open),
                 )
@@ -855,13 +867,16 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
 
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ReadFile {
+            ToolCall::ReadFiles {
                 project: "agent:client-a:proj-a".to_string(),
-                path: "README.md".to_string(),
+                items: vec![crate::tool_runtime::ReadFilesItem {
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                }],
                 session_id: None,
-                start_line: None,
-                limit: None,
                 with_line_numbers: None,
+                max_result_bytes: None,
             },
             Some(&open),
         )
@@ -891,13 +906,16 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
 
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ReadFile {
+            ToolCall::ReadFiles {
                 project: "agent:client-b:proj-b".to_string(),
-                path: "README.md".to_string(),
+                items: vec![crate::tool_runtime::ReadFilesItem {
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                }],
                 session_id: None,
-                start_line: None,
-                limit: None,
                 with_line_numbers: None,
+                max_result_bytes: None,
             },
             Some(&shared_a),
         )
@@ -907,13 +925,16 @@ async fn shared_key_list_projects_and_dispatch_are_filtered_by_auth_group() {
 
     let result = runtime
         .dispatch_with_auth(
-            ToolCall::ReadFile {
+            ToolCall::ReadFiles {
                 project: "agent:client-open:proj-open".to_string(),
-                path: "README.md".to_string(),
+                items: vec![crate::tool_runtime::ReadFilesItem {
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                }],
                 session_id: None,
-                start_line: None,
-                limit: None,
                 with_line_numbers: None,
+                max_result_bytes: None,
             },
             Some(&shared_a),
         )
@@ -1003,13 +1024,16 @@ async fn replacement_runner_pending_inventory_has_zero_project_routing_authority
             purpose: None,
             shell: None,
         },
-        ToolCall::ReadFile {
+        ToolCall::ReadFiles {
             project: project_id.clone(),
-            path: "README.md".to_string(),
+            items: vec![crate::tool_runtime::ReadFilesItem {
+                path: "README.md".to_string(),
+                start_line: None,
+                limit: None,
+            }],
             session_id: None,
-            start_line: None,
-            limit: None,
             with_line_numbers: None,
+            max_result_bytes: None,
         },
         ToolCall::WriteProjectFile {
             project: project_id.clone(),
@@ -1932,7 +1956,6 @@ async fn tool_manifest_keeps_list_compact_and_exact_contract_bounded() {
             "artifact_upload_abort",
             vec!["project", "path", "upload_id", "session_id"],
         ),
-        ("job_status", vec!["job_id", "include_command_preview"]),
     ] {
         let accepted = accepted(tool);
         for field in fields {
@@ -2998,7 +3021,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .values()
         .map(|path| path.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 22);
+    assert_eq!(operation_count, 16);
 }
 
 #[tokio::test]

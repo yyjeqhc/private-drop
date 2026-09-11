@@ -10,47 +10,11 @@ use crate::metadata::{
     JOB_RUN, PROJECT_READ, PROJECT_WRITE, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
-    git_commit_paths_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
-    git_diff_summary_input_schema, git_log_input_schema, git_review_summary_input_schema,
-    git_status_input_schema, show_changes_input_schema,
+    git_commit_paths_input_schema, git_diff_hunks_input_schema, git_log_input_schema,
+    git_review_summary_input_schema, git_status_input_schema, show_changes_input_schema,
 };
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
-    context_recovery_only(change_summary_like(git_like(model_spec(
-        def(
-            "git_diff_summary",
-            super::ToolAuditPolicy::TYPED_CANONICAL.context(
-                super::ToolAuditContextPolicy::Fields(&[
-                    super::ToolAuditResultField::value("clean"),
-                    super::ToolAuditResultField::value("branch"),
-                    super::ToolAuditResultField::value("head"),
-                    super::ToolAuditResultField::value("upstream"),
-                    super::ToolAuditResultField::value("ahead"),
-                    super::ToolAuditResultField::value("behind"),
-                    super::ToolAuditResultField::value("counts"),
-                    super::ToolAuditResultField::value("changed_files"),
-                ]),
-            ),
-            ModelVisible,
-            TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::DiffReview).diff_review(super::ToolDiffReviewEvidence::Always),
-        ),
-        "Read-only compatibility summary primitive: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Ordinary agent-facing worktree review should prefer show_changes, then git_diff_hunks when focused or paged diff inspection is needed. Does not modify the worktree.",
-        git_diff_summary_input_schema,
-    )))),
     adaptive_runtime_direct(
         context_recovery_only(change_summary_like(git_like(model_spec(
             def(
@@ -180,30 +144,6 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         ),
         "Run git status --porcelain for a project.",
         git_status_input_schema,
-    ))),
-    context_recovery_only(git_like(model_spec(
-        def(
-            "git_diff",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_GIT,
-            Some(GitOrShell),
-            TOOL_PROVIDER_RUNNER,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(PROJECT_READ),
-            true,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::DiffReview).diff_review(super::ToolDiffReviewEvidence::Always),
-        ),
-        "Raw git diff compatibility primitive, optionally scoped to paths. Ordinary agent-facing review should prefer show_changes for worktree overview and git_diff_hunks for focused or paged diff inspection.",
-        git_diff_input_schema,
     ))),
     adaptive_runtime_direct(
         context_recovery_only(change_summary_like(git_like(model_spec(

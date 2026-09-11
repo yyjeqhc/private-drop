@@ -101,7 +101,7 @@ pub fn project_overview_input_schema() -> Value {
     schema
 }
 
-pub fn search_project_text_input_schema() -> Value {
+fn search_project_text_query_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Runner-registered project id.", true),
         (
@@ -189,7 +189,7 @@ pub fn search_project_text_input_schema() -> Value {
 }
 
 pub fn search_project_texts_input_schema() -> Value {
-    let single = search_project_text_input_schema();
+    let single = search_project_text_query_schema();
     let mut query_properties = single["properties"]
         .as_object()
         .expect("search_project_text properties")
@@ -236,21 +236,6 @@ pub fn search_project_texts_input_schema() -> Value {
     schema
 }
 
-pub fn read_file_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        ("path", "string", "Project-relative file path.", true),
-        ("start_line", "integer", "1-based line offset.", false),
-        ("limit", "integer", "Maximum line count.", false),
-        (
-            "with_line_numbers",
-            "boolean",
-            "When true, return the single text field in numbered format instead of plain format.",
-            false,
-        ),
-    ]))
-}
-
 pub fn read_files_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Configured project id.", true),
@@ -290,11 +275,11 @@ pub fn read_files_input_schema() -> Value {
                 },
                 "start_line": {
                     "type": "integer",
-                    "description": "Optional 1-based line offset; normalized exactly like read_file."
+                    "description": "Optional 1-based line offset; normalized by the canonical file-read range rules."
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Optional maximum line count; normalized exactly like read_file."
+                    "description": "Optional maximum line count; normalized by the canonical file-read range rules."
                 }
             }
         }

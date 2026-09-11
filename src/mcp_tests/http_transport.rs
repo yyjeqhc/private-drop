@@ -714,7 +714,7 @@ async fn mcp_pre_result_invalid_arguments_still_records_generic_attempt() {
             "jsonrpc": "2.0",
             "id": 101,
             "method": "tools/call",
-            "params": {"name": "read_file", "arguments": {}}
+            "params": {"name": "read_files", "arguments": {}}
         }))
         .send(&service)
         .await;
@@ -725,14 +725,14 @@ async fn mcp_pre_result_invalid_arguments_still_records_generic_attempt() {
     let summary: String = db
         .conn_for_tests()
         .query_row(
-            "SELECT summary_json FROM action_events WHERE operation = 'read_file'",
+            "SELECT summary_json FROM action_events WHERE operation = 'read_files'",
             [],
             |row| row.get(0),
         )
         .unwrap();
     let summary: Value = serde_json::from_str(&summary).unwrap();
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["tool_name"], "read_file");
+    assert_eq!(telemetry["tool_name"], "read_files");
     assert_eq!(telemetry["success"], false);
     assert_eq!(telemetry["error_kind"], "invalid_arguments");
     assert!(telemetry["serialized_result_bytes"].is_null());
@@ -2539,7 +2539,7 @@ async fn http_mcp_2026_reads_computer_app_template_with_cache_contract() {
         json!({
             "transport": "mcp",
             "resource_uri": MCP_COMPUTER_UI_RESOURCE_URI,
-            "resource_version": "v11",
+            "resource_version": "v12",
             "protocol_era": "stateless_2026",
             "ui_capability_present": true,
             "mcp_error_code": Value::Null,
@@ -2593,7 +2593,7 @@ async fn http_mcp_computer_app_resource_protocol_failure_is_audited_without_cont
     assert_eq!(http_status, 400);
     let summary: Value = serde_json::from_str(&summary).unwrap();
     assert_eq!(summary["resource_uri"], MCP_COMPUTER_UI_RESOURCE_URI);
-    assert_eq!(summary["resource_version"], "v11");
+    assert_eq!(summary["resource_version"], "v12");
     assert_eq!(summary["protocol_era"], "validation_failed");
     assert_eq!(summary["ui_capability_present"], true);
     assert_eq!(

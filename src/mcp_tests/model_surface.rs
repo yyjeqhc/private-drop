@@ -47,7 +47,6 @@ async fn local_coding_tools_list_returns_exact_ordered_surface() {
     );
     for required in [
         "work_on_project",
-        "read_file",
         "read_files",
         "search_project_texts",
         "get_session_assignment",
@@ -760,10 +759,9 @@ async fn adaptive_runtime_gateway_uses_long_tail_target_checkpoint_policy_once()
             mcp_2026_params(json!({
                 "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
                 "arguments": {
-                    "tool": "read_file",
+                    "tool": "list_project_files",
                     "arguments": {
-                        "project": "missing-project",
-                        "path": "src/lib.rs"
+                        "project": "missing-project"
                     },
                     "recording_session_id": gateway_session.session_id,
                     "ack_session_context_revision": 999
@@ -937,8 +935,8 @@ async fn adaptive_runtime_gateway_route_classification_does_not_mask_target_scop
             mcp_2026_params(json!({
                 "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
                 "arguments": {
-                    "tool": "read_file",
-                    "arguments": {"project": "missing-project", "path": "src/lib.rs"}
+                    "tool": "list_project_files",
+                    "arguments": {"project": "missing-project"}
                 }
             })),
         ),
@@ -950,7 +948,7 @@ async fn adaptive_runtime_gateway_route_classification_does_not_mask_target_scop
         body,
     } = outcome
     else {
-        panic!("gateway-routed read_file must retain its canonical scope denial");
+        panic!("gateway-routed list_project_files must retain its canonical scope denial");
     };
     assert_eq!(required_scope, Some(crate::auth::SCOPE_PROJECT_READ));
     assert!(body.to_string().contains(crate::auth::SCOPE_PROJECT_READ));
@@ -1745,11 +1743,18 @@ async fn full_operator_tools_list_projects_destructive_hints_for_non_additive_mu
     };
     let tools = value["result"]["tools"].as_array().unwrap();
 
+    #[cfg(not(feature = "workspace-checkpoints"))]
+    assert!(tools.iter().all(|tool| !tool["name"]
+        .as_str()
+        .unwrap()
+        .starts_with("workspace_checkpoint_")));
+
     for name in [
         "apply_patch",
         "apply_text_edits",
         "apply_unified_diff",
         "write_project_file",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_restore",
         "save_project_artifact",
         "import_conversation_files_to_project",
@@ -1786,6 +1791,7 @@ async fn full_operator_tools_list_projects_destructive_hints_for_non_additive_mu
     }
 
     for name in [
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_create",
         "artifact_upload_begin",
         "artifact_upload_chunk",

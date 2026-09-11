@@ -4,6 +4,10 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+workspace-checkpoints = []
+
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
 serde = { version = "1", features = ["derive"] }

@@ -360,45 +360,6 @@ fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
 
 #[test]
 fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
-    let read_file = output_schema_for_tool("read_file");
-    test_support::validate_schema_instance(
-        &json!({
-            "success": true,
-            "output": {
-                "text": "two",
-                "format": "plain",
-                "path": "src/lib.rs",
-                "sha256": "a".repeat(64),
-                "start_line": 2,
-                "limit": 1,
-                "total_lines": 3,
-                "returned_lines": 1,
-                "end_line": 2,
-                "has_more": true,
-                "next_start_line": 3,
-                "continuation": {
-                    "kind": "read_range",
-                    "safe_cursor": true,
-                    "source_sha256": "a".repeat(64),
-                    "snapshot_stable": false,
-                    "suggested_call": {
-                        "tool": "read_file",
-                        "arguments": {
-                            "project": "agent:oe:demo",
-                            "path": "src/lib.rs",
-                            "session_id": "wc_sess_demo",
-                            "start_line": 3,
-                            "limit": 1
-                        }
-                    }
-                }
-            },
-            "error": null
-        }),
-        &read_file,
-    )
-    .unwrap();
-
     let read_files = output_schema_for_tool("read_files");
     test_support::validate_schema_instance(
         &json!({
@@ -435,12 +396,14 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
                         "source_sha256": "b".repeat(64),
                         "snapshot_stable": false,
                         "suggested_call": {
-                            "tool": "read_file",
+                            "tool": "read_files",
                             "arguments": {
                                 "project": "agent:oe:demo",
-                                "path": "src/0.rs",
-                                "start_line": 51,
-                                "limit": 50
+                                "items": [{
+                                    "path": "src/0.rs",
+                                    "start_line": 51,
+                                    "limit": 50
+                                }]
                             }
                         }
                     }
@@ -509,7 +472,7 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
 
 #[test]
 fn read_recovery_schemas_keep_transport_and_recorder_identifiers_private() {
-    for tool in ["read_file", "read_files"] {
+    for tool in ["read_files"] {
         let schema = output_schema_for_tool(tool);
         let serialized = serde_json::to_string(&schema).unwrap();
         for forbidden in ["window_id", "client_window", "recording_session_id"] {
@@ -1143,52 +1106,6 @@ fn key_tool_output_schemas_include_expected_fields() {
             "cargo_test diagnostics.test_summary missing {field}"
         );
     }
-    for field in [
-        "text",
-        "format",
-        "start_line",
-        "limit",
-        "total_lines",
-        "returned_lines",
-        "end_line",
-        "has_more",
-        "next_start_line",
-        "sha256",
-        "continuation",
-    ] {
-        assert!(
-            has_output_field("read_file", field),
-            "read_file missing {field}"
-        );
-    }
-    for removed in ["content", "numbered_text"] {
-        assert!(
-            !has_output_field("read_file", removed),
-            "read_file must not duplicate its primary text as {removed}"
-        );
-    }
-    for field in [
-        "backend",
-        "result_mode",
-        "effective_timeout_secs",
-        "matches",
-        "count",
-        "files",
-        "returned_file_count",
-        "returned_match_count",
-        "count_complete",
-        "total_matches",
-        "truncated",
-        "truncation_reason",
-        "continuation",
-        "context_before",
-        "context_after",
-    ] {
-        assert!(
-            has_output_field("search_project_text", field),
-            "search_project_text missing {field}"
-        );
-    }
     for field in ["project", "path", "entries", "truncated"] {
         assert!(
             has_output_field("list_project_files", field),
@@ -1262,67 +1179,6 @@ fn key_tool_output_schemas_include_expected_fields() {
             "stop_job missing {field}"
         );
     }
-    for field in [
-        "job_id",
-        "project",
-        "session_id",
-        "ssh_resource",
-        "status",
-        "exit_code",
-        "started_at",
-        "ended_at",
-        "error",
-        "command_execution_state",
-        "structured_execution",
-        "command_preview_included",
-        "active",
-        "blocking_active",
-        "terminal",
-        "terminal_pending",
-        "command_preview",
-        "command_preview_truncated",
-        "command_preview_max_chars",
-        "command_preview_bounded",
-    ] {
-        assert!(
-            has_output_field("job_status", field),
-            "job_status missing {field}"
-        );
-    }
-    for field in [
-        "job_id",
-        "session_id",
-        "ssh_resource",
-        "exit_code",
-        "command_execution_state",
-        "structured_execution",
-        "stdout_tail",
-        "stderr_tail",
-        "stdout_lines",
-        "stderr_lines",
-        "stdout_truncated",
-        "stderr_truncated",
-        "log_delta_status",
-        "stdout_delta_reset",
-        "stderr_delta_reset",
-        "cursor",
-        "status",
-        "executor",
-        "cwd",
-        "shell",
-        "purpose",
-        "command_summary",
-        "detected_summary",
-        "wait_outcome",
-        "waited_ms",
-        "changed",
-        "terminal",
-    ] {
-        assert!(
-            has_output_field("job_log", field),
-            "job_log missing {field}"
-        );
-    }
     for field in ["jobs", "count", "truncated"] {
         assert!(
             has_output_field("list_jobs", field),
@@ -1367,66 +1223,6 @@ fn key_tool_output_schemas_include_expected_fields() {
             "list_jobs summary schema must not expose {forbidden} bodies"
         );
     }
-    for field in [
-        "job_id",
-        "session_id",
-        "ssh_resource",
-        "exit_code",
-        "command_execution_state",
-        "structured_execution",
-        "stdout_tail",
-        "stderr_tail",
-        "stdout_lines",
-        "stderr_lines",
-        "stdout_truncated",
-        "stderr_truncated",
-        "log_delta_status",
-        "stdout_delta_reset",
-        "stderr_delta_reset",
-        "cursor",
-        "status",
-        "executor",
-        "cwd",
-        "shell",
-        "purpose",
-        "command_summary",
-        "detected_summary",
-        "wait_outcome",
-        "waited_ms",
-        "changed",
-        "terminal",
-    ] {
-        assert!(
-            has_output_field("job_log", field),
-            "job_log missing {field}"
-        );
-    }
-    for field in ["stdout_tail", "stderr_tail"] {
-        let description = output_schema_property(&specs, "job_log", field)["description"]
-            .as_str()
-            .expect("job_log stream description")
-            .to_lowercase();
-        assert!(
-            description.contains("bounded"),
-            "job_log {field} description must describe bounded tail text: {description}"
-        );
-    }
-    assert_eq!(
-        output_schema_property(&specs, "job_log", "log_delta_status")["enum"],
-        serde_json::json!(["baseline", "delta", "unchanged", "reset"])
-    );
-    assert_eq!(
-        output_schema_property(&specs, "job_log", "observation_token")["maxLength"],
-        webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
-    );
-    let cursor_description = output_schema_property(&specs, "job_log", "cursor")["description"]
-        .as_str()
-        .expect("job_log cursor description")
-        .to_lowercase();
-    assert!(
-        cursor_description.contains("cursor") && cursor_description.contains("bounded"),
-        "job_log cursor must describe bounded continuation metadata: {cursor_description}"
-    );
     for field in [
         "path",
         "exists",
@@ -1848,7 +1644,6 @@ fn model_facing_output_schemas_do_not_publish_recorder_only_telemetry() {
     }
 
     for tool in [
-        "read_file",
         "read_files",
         "search_project_texts",
         "apply_patch",

@@ -284,7 +284,7 @@ fn join_relative(prefix: &str, name: &str) -> String {
 }
 
 fn is_project_overview_excluded_path(path: &str) -> bool {
-    crate::workspace_checkpoint::sensitive_path(path) || path.split('/').any(is_excluded_component)
+    crate::path_policy::sensitive_path(path) || path.split('/').any(is_excluded_component)
 }
 
 fn is_excluded_component(component: &str) -> bool {

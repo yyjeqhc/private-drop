@@ -1,4 +1,5 @@
 pub(crate) mod artifacts;
+#[cfg(feature = "workspace-checkpoints")]
 pub(crate) mod checkpoints;
 pub(crate) mod coding_agent;
 pub(crate) mod computer;
@@ -35,8 +36,9 @@ pub(crate) mod validation;
 pub(crate) use artifacts::handle_artifact_file_operation;
 #[cfg(test)]
 pub(crate) use artifacts::is_artifact_request_kind;
+#[cfg(feature = "workspace-checkpoints")]
 pub(crate) use checkpoints::handle_checkpoint_file_request;
-#[cfg(test)]
+#[cfg(all(test, feature = "workspace-checkpoints"))]
 pub(crate) use checkpoints::is_checkpoint_request_kind;
 pub(crate) use computer::handle_computer_operation;
 pub(crate) use config::SshConfig;

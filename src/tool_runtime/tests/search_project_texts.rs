@@ -154,6 +154,25 @@ fn project_single_search(canonical: &ToolResult) -> ToolResult {
     projected
 }
 
+fn extract_single_search_batch_result(batch: &ToolResult) -> ToolResult {
+    assert!(batch.success, "{:?}", batch.error);
+    let items = batch.output["items"]
+        .as_array()
+        .expect("one-query search batch items");
+    assert_eq!(items.len(), 1, "one-query search batch: {}", batch.output);
+    let item = &items[0];
+    ToolResult {
+        success: item["success"]
+            .as_bool()
+            .expect("one-query search item success"),
+        output: item.get("output").cloned().unwrap_or(Value::Null),
+        error: item
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
 fn serialized_output_bytes(result: &ToolResult) -> usize {
     serde_json::to_vec(&result.output).unwrap().len()
 }
@@ -599,13 +618,6 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
         assert!(ToolCall::from_tool_name("search_project_texts", invalid).is_err());
     }
 
-    let single = spec_named(&specs, "search_project_text");
-    assert!(single.input_schema["properties"].get("queries").is_none());
-    assert_eq!(
-        single.input_schema["required"],
-        json!(["project", "pattern"]),
-        "single-query schema remains unchanged"
-    );
     let success_full = &batch.output_schema["properties"]["output"]["anyOf"][0]["anyOf"][0]
         ["properties"]["items"]["items"]["properties"]["output"]["anyOf"][0]["anyOf"][0];
     let removed_output_cursor = ["next", "match", "offset"].join("_");
@@ -646,7 +658,7 @@ fn search_project_texts_schema_and_parser_enforce_strict_batch_contract() {
 }
 
 #[tokio::test]
-async fn search_project_text_default_success_is_sparse_after_session_recording() {
+async fn search_project_texts_one_query_default_success_is_sparse_after_session_recording() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-sparse-single";
@@ -663,19 +675,22 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::SearchProjectText {
-                        project,
-                        pattern: "needle".to_string(),
+                    ToolCall::SearchProjectTexts {
+                        project: project,
+                        queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
+                            pattern: "needle".to_string(),
+                            pattern_mode: None,
+                            path: None,
+                            limit: Some(20),
+                            context_before: None,
+                            context_after: None,
+                            include_globs: None,
+                            exclude_globs: None,
+                            result_mode: None,
+                            timeout_secs: None,
+                        }],
                         session_id: Some(session_id),
-                        pattern_mode: None,
-                        path: None,
-                        limit: Some(20),
-                        context_before: None,
-                        context_after: None,
-                        include_globs: None,
-                        exclude_globs: None,
-                        result_mode: None,
-                        timeout_secs: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -685,7 +700,14 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
     complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
 
-    let result = task.await.unwrap();
+    let batch = task.await.unwrap();
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_texts");
+    let serialized = serde_json::to_value(&batch).unwrap();
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&serialized, &schema)
+        .unwrap_or_else(|error| {
+            panic!("sparse one-query batch search success must match schema: {error}")
+        });
+    let result = extract_single_search_batch_result(&batch);
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["matches"][0]["path"], "src/a.rs");
     assert!(result.output.get("session_recorded").is_none());
@@ -720,22 +742,13 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
     );
     eprintln!("search_project_text_sparse_default_bytes={sparse_bytes}");
 
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_project_text");
-    let instance = json!({
-        "success": true,
-        "output": result.output.clone(),
-        "error": null,
-    });
-    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
-        .unwrap_or_else(|error| panic!("sparse search success must match schema: {error}"));
-
     let summary = runtime.sessions.summary(&session_id, Some(20)).unwrap();
     let finished = summary
         .events
         .iter()
         .rev()
         .find(|event| {
-            event.kind == "tool_call_finished" && event.tool_name == "search_project_text"
+            event.kind == "tool_call_finished" && event.tool_name == "search_project_texts"
         })
         .expect("recorded search completion");
     assert!(
@@ -748,7 +761,7 @@ async fn search_project_text_default_success_is_sparse_after_session_recording()
 }
 
 #[tokio::test]
-async fn search_project_text_nondefault_success_keeps_effective_selection_metadata() {
+async fn search_project_texts_one_query_nondefault_success_keeps_effective_selection_metadata() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-noteworthy-single";
@@ -762,19 +775,22 @@ async fn search_project_text_nondefault_success_keeps_effective_selection_metada
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::SearchProjectText {
-                        project,
-                        pattern: "needle".to_string(),
+                    ToolCall::SearchProjectTexts {
+                        project: project,
+                        queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
+                            pattern: "needle".to_string(),
+                            pattern_mode: None,
+                            path: Some("src".to_string()),
+                            limit: Some(20),
+                            context_before: Some(1),
+                            context_after: None,
+                            include_globs: None,
+                            exclude_globs: None,
+                            result_mode: None,
+                            timeout_secs: Some(5),
+                        }],
                         session_id: None,
-                        path: Some("src".to_string()),
-                        pattern_mode: None,
-                        limit: Some(20),
-                        context_before: Some(1),
-                        context_after: None,
-                        include_globs: None,
-                        exclude_globs: None,
-                        result_mode: None,
-                        timeout_secs: Some(5),
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -784,7 +800,8 @@ async fn search_project_text_nondefault_success_keeps_effective_selection_metada
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
     complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
 
-    let result = task.await.unwrap();
+    let batch = task.await.unwrap();
+    let result = extract_single_search_batch_result(&batch);
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["path"], "src");
     assert_eq!(result.output["effective_timeout_secs"], 5);
@@ -808,7 +825,7 @@ async fn search_project_text_nondefault_success_keeps_effective_selection_metada
 }
 
 #[tokio::test]
-async fn search_project_text_literal_mode_keeps_effective_metadata() {
+async fn search_project_texts_one_query_literal_mode_keeps_effective_metadata() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-literal-single";
@@ -822,19 +839,22 @@ async fn search_project_text_literal_mode_keeps_effective_metadata() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::SearchProjectText {
-                        project,
-                        pattern: "RuntimeInfo {".to_string(),
-                        pattern_mode: Some(SearchPatternMode::Literal),
+                    ToolCall::SearchProjectTexts {
+                        project: project,
+                        queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
+                            pattern: "RuntimeInfo {".to_string(),
+                            pattern_mode: Some(SearchPatternMode::Literal),
+                            path: None,
+                            limit: Some(20),
+                            context_before: None,
+                            context_after: None,
+                            include_globs: None,
+                            exclude_globs: None,
+                            result_mode: None,
+                            timeout_secs: None,
+                        }],
                         session_id: None,
-                        path: None,
-                        limit: Some(20),
-                        context_before: None,
-                        context_after: None,
-                        include_globs: None,
-                        exclude_globs: None,
-                        result_mode: None,
-                        timeout_secs: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -848,7 +868,8 @@ async fn search_project_text_literal_mode_keeps_effective_metadata() {
     assert_eq!(payload["pattern"], r"RuntimeInfo \{");
     complete_search_success(&runtime, client_id, &request, "src/a.rs").await;
 
-    let result = task.await.unwrap();
+    let batch = task.await.unwrap();
+    let result = extract_single_search_batch_result(&batch);
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["pattern_mode"], "literal");
     assert!(result.output.get("backend").is_none());
@@ -906,7 +927,7 @@ async fn search_project_texts_literal_query_preserves_mode_to_runner_and_output(
 }
 
 #[tokio::test]
-async fn search_project_text_grep_fallback_keeps_backend_metadata() {
+async fn search_project_texts_one_query_grep_fallback_keeps_backend_metadata() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "search-grep-visible";
@@ -920,19 +941,22 @@ async fn search_project_text_grep_fallback_keeps_backend_metadata() {
         async move {
             runtime
                 .dispatch_with_auth(
-                    ToolCall::SearchProjectText {
-                        project,
-                        pattern: "needle".to_string(),
+                    ToolCall::SearchProjectTexts {
+                        project: project,
+                        queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
+                            pattern: "needle".to_string(),
+                            pattern_mode: None,
+                            path: None,
+                            limit: Some(20),
+                            context_before: None,
+                            context_after: None,
+                            include_globs: None,
+                            exclude_globs: None,
+                            result_mode: None,
+                            timeout_secs: None,
+                        }],
                         session_id: None,
-                        path: None,
-                        limit: Some(20),
-                        pattern_mode: None,
-                        context_before: None,
-                        context_after: None,
-                        include_globs: None,
-                        exclude_globs: None,
-                        result_mode: None,
-                        timeout_secs: None,
+                        max_result_bytes: None,
                     },
                     Some(&auth),
                 )
@@ -946,11 +970,13 @@ async fn search_project_text_grep_fallback_keeps_backend_metadata() {
     );
     complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, stdout, "").await;
 
-    let result = task.await.unwrap();
+    let batch = task.await.unwrap();
+    let result = extract_single_search_batch_result(&batch);
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["backend"], "grep");
     assert_eq!(result.output["result_mode"], "matches");
-    assert_eq!(result.output["effective_timeout_secs"], 30);
+    let effective_timeout = result.output["effective_timeout_secs"].as_u64().unwrap();
+    assert!((29..=30).contains(&effective_timeout));
     assert_eq!(result.output["count"], 1);
     assert_eq!(result.output["truncated"], false);
     assert!(result.output["truncation_reason"].is_null());

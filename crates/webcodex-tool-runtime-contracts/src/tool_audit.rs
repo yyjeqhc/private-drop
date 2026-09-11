@@ -3,6 +3,7 @@
 #[cfg(test)]
 use super::tool_call::ComputerSnapshotRegion;
 use super::tool_call::ToolCall;
+#[cfg(feature = "workspace-checkpoints")]
 use super::tool_inputs::{is_checkpoint_kind, is_checkpoint_validation_status};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1271,7 +1272,7 @@ mod computer_privacy_tests {
         let malformed = json!({"secret": "MALFORMED_READ_SECRET"});
         let malformed_before = malformed.clone();
         assert_eq!(
-            session_log_arguments_for_tool_request("read_file", &malformed),
+            session_log_arguments_for_tool_request("read_files", &malformed),
             json!({})
         );
         assert_eq!(malformed, malformed_before);
@@ -1360,15 +1361,18 @@ mod computer_privacy_tests {
         assert!(!register_serialized.contains(PROJECT_PATH));
         assert!(!register_serialized.contains("PRIVATE PROJECT DESCRIPTION"));
 
-        let job_log = json!({
-            "job_id": "job-safe",
-            "after_observation_token": JOB_TOKEN,
+        let observe_jobs = json!({
+            "items": [{
+                "job_id": "job-safe",
+                "after_observation_token": JOB_TOKEN
+            }],
             "tail_lines": 20,
             "wait_secs": 1
         });
-        let job_summary = session_log_arguments_for_tool_request("job_log", &job_log);
-        assert_eq!(job_summary["job_id"], "job-safe");
-        assert_eq!(job_summary["token_present"], true);
+        let job_summary = session_log_arguments_for_tool_request("observe_jobs", &observe_jobs);
+        assert_eq!(job_summary["item_count"], 1);
+        assert_eq!(job_summary["token_count"], 1);
+        assert_eq!(job_summary["job_ids"], json!(["job-safe"]));
         assert!(!serde_json::to_string(&job_summary)
             .unwrap()
             .contains(JOB_TOKEN));
@@ -3196,11 +3200,9 @@ impl ToolCall {
                     "message_present": true,
                 })
             }
-            Self::GitStatus { project, .. } | Self::GitDiffSummary { project, .. } => {
-                serde_json::json!({
-                    "project": project,
-                })
-            }
+            Self::GitStatus { project, .. } => serde_json::json!({
+                "project": project,
+            }),
             Self::GitReviewSummary {
                 project,
                 base_commit,
@@ -3226,10 +3228,6 @@ impl ToolCall {
                 "project": project,
                 "limit": limit,
                 "skip": skip,
-            }),
-            Self::GitDiff { project, args, .. } => serde_json::json!({
-                "project": project,
-                "args_count": args.as_ref().map(Vec::len),
             }),
             Self::GitDiffHunks {
                 project,
@@ -3360,20 +3358,6 @@ impl ToolCall {
                     "sync_wait_secs": sync_wait_secs,
                 }),
             ),
-            Self::ReadFile {
-                project,
-                path,
-                start_line,
-                limit,
-                with_line_numbers,
-                ..
-            } => serde_json::json!({
-                "project": project,
-                "path": path,
-                "start_line": start_line,
-                "limit": limit,
-                "with_line_numbers": with_line_numbers,
-            }),
             Self::ReadFiles {
                 project,
                 items,
@@ -3929,29 +3913,6 @@ impl ToolCall {
                 "max_depth": max_depth,
                 "limit": limit,
             }),
-            Self::SearchProjectText {
-                project,
-                path,
-                limit,
-                context_before,
-                context_after,
-                include_globs,
-                exclude_globs,
-                result_mode,
-                timeout_secs,
-                ..
-            } => serde_json::json!({
-                "project": project,
-                "pattern_present": true,
-                "path": path,
-                "limit": limit,
-                "context_before": context_before,
-                "context_after": context_after,
-                "include_glob_count": include_globs.as_ref().map(Vec::len).unwrap_or(0),
-                "exclude_glob_count": exclude_globs.as_ref().map(Vec::len).unwrap_or(0),
-                "result_mode": result_mode,
-                "timeout_secs": timeout_secs,
-            }),
             Self::SearchProjectTexts {
                 project, queries, ..
             } => serde_json::json!({
@@ -4201,6 +4162,7 @@ impl ToolCall {
                     "dry_run": dry_run,
                 })
             }
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointCreate {
                 project,
                 title,
@@ -4244,10 +4206,12 @@ impl ToolCall {
                     "validation_status": validation_status,
                 })
             }
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointList { project, limit, .. } => serde_json::json!({
                 "project": project,
                 "limit": limit,
             }),
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointShow {
                 project,
                 checkpoint_id,
@@ -4258,6 +4222,7 @@ impl ToolCall {
                 "checkpoint_id": checkpoint_id,
                 "include_diff_stat": include_diff_stat,
             }),
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointRestore {
                 project,
                 checkpoint_id,
@@ -4268,6 +4233,7 @@ impl ToolCall {
                 "checkpoint_id": checkpoint_id,
                 "confirm": confirm,
             }),
+            #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointDelete {
                 project,
                 checkpoint_id,
@@ -4539,26 +4505,6 @@ impl ToolCall {
                 "timeout_secs": timeout_secs,
                 "cwd": cwd,
                 "purpose": purpose,
-            }),
-            Self::JobStatus {
-                job_id,
-                include_command_preview,
-            } => serde_json::json!({
-                "job_id": job_id,
-                "include_command_preview": include_command_preview,
-            }),
-            Self::JobLog {
-                job_id,
-                offset,
-                tail_lines,
-                after_observation_token,
-                wait_secs,
-            } => serde_json::json!({
-                "job_id": job_id,
-                "offset": offset,
-                "tail_lines": tail_lines,
-                "token_present": after_observation_token.is_some(),
-                "wait_secs": wait_secs,
             }),
             Self::JobTail {
                 job_id,

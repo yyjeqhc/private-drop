@@ -365,18 +365,18 @@ observe_job_call() {
     tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"${job_id}\",\"after_observation_token\":${encoded_token}}],\"tail_lines\":40,\"wait_secs\":${wait_secs}}"
 }
 
+observe_one_job_compat() {
+    local job_id="$1"; local tail_lines="$2"
+    tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"${job_id}\"}],\"tail_lines\":${tail_lines}}" | python3 -c \
+        'import json,sys; d=json.load(sys.stdin); item=d["output"]["items"][0]; print(json.dumps({"success":item["success"],"output":item.get("output",{}),"error":item.get("error")}))'
+}
+
 job_status_call() {
-    local job_id="$1"
-    tool_call "job_status" "{\"job_id\":\"${job_id}\"}"
+    observe_one_job_compat "$1" 1
 }
 
 job_log_call() {
-    local job_id="$1"; local offset="${2:-}"
-    local extra=""
-    if [ -n "$offset" ]; then
-        extra=",\"offset\":${offset}"
-    fi
-    tool_call "job_log" "{\"job_id\":\"${job_id}\"${extra}}"
+    observe_one_job_compat "$1" 40
 }
 
 stop_job_call() {

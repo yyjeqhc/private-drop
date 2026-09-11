@@ -543,6 +543,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "workspace",
                 open_object_schema("Bounded workspace summary when project is provided: project, git_available, non_git_project, clean, branch, head, changed_files_count, warnings, suggested_next_actions. Never includes hunks or full diffs."),
             ),
+            #[cfg(feature = "workspace-checkpoints")]
             (
                 "checkpoints",
                 open_object_schema("Bounded checkpoint candidates when project is provided: latest_last_known_good and recent list. Never includes validation.commands or diffs."),

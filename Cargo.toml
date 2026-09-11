@@ -30,6 +30,14 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+workspace-checkpoints = [
+    "webcodex-tool-contracts/workspace-checkpoints",
+    "webcodex-tool-runtime-contracts/workspace-checkpoints",
+    "webcodex-workspace/workspace-checkpoints",
+]
+
 [[bin]]
 name = "webcodex-server"
 path = "src/bin/webcodex-server.rs"

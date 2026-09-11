@@ -13,7 +13,7 @@ set -euo pipefail
 #   - Server boots with WEBCODEX_TOKEN auth and no server-side projects.toml.
 #   - Agent registers over the selected transport and announces a project.
 #   - listProjects / getRuntimeStatus see the agent-registered project.
-#   - readProjectFile / getProjectGitStatus route to the agent.
+#   - read_files / getProjectGitStatus route to the agent.
 #   - startProjectShellJob starts an async job on the agent and job status/log
 #     round-trip.
 #   - MCP initialize / tools/list / tools/call(list_projects) work.
@@ -157,6 +157,22 @@ api_post() {
         -H "Content-Type: application/json" \
         -X POST "http://127.0.0.1:${PORT}${path}" \
         -d "$body" 2>/dev/null
+}
+
+runtime_tool_call() {
+    local tool="$1"
+    local params="$2"
+    api_post /api/tools/call "{\"tool\":\"${tool}\",\"params\":${params}}"
+}
+
+show_changes_call() {
+    runtime_tool_call "show_changes" "{\"project\":\"$RUNTIME_PROJECT_ID\"}"
+}
+
+observe_one_job_call() {
+    local job_id="$1"
+    local tail_lines="${2:-40}"
+    runtime_tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"${job_id}\"}],\"tail_lines\":${tail_lines}}"
 }
 
 api_get() {
@@ -477,19 +493,19 @@ fi
 body="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 assert_success "getProjectGitStatus" "$body" || true
 
-# readProjectFile — reads README.md through the agent.
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"README.md\"}")"
-assert_success "readProjectFile(README.md)" "$body" || true
-readme_content="$(json_get "$body" output.text)"
+# read_files — reads README.md through the canonical runtime tool.
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"README.md\"}]}}")"
+assert_success "read_files(README.md)" "$body" || true
+readme_content="$(json_get "$body" output.items.0.output.text)"
 if echo "$readme_content" | grep -q "Smoke Project"; then
-    pass "readProjectFile returns README content"
+    pass "read_files returns README content"
 else
-    fail "readProjectFile content mismatch (got: ${readme_content:0:120})"
+    fail "read_files content mismatch (got: ${readme_content:0:120})"
 fi
 
-# getProjectGitDiff — routes to the agent, runs `git diff`.
-body="$(api_post /api/projects/git_diff "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-assert_success "getProjectGitDiff" "$body" || true
+# git_diff_hunks — canonical bounded diff inspection through the generic runtime route.
+body="$(runtime_tool_call "git_diff_hunks" "{\"project\":\"$RUNTIME_PROJECT_ID\",\"max_hunks\":5}")"
+assert_success "git_diff_hunks" "$body" || true
 
 # runProjectShellCommand — runs `echo hi` through the agent.
 body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"echo hi\"}")"
@@ -522,8 +538,8 @@ else
     JOB_TERMINAL=0
     for _ in $(seq 1 40); do
         check_deadline
-        body="$(api_post /api/jobs/status "{\"job_id\":\"$JOB_ID\"}")"
-        status="$(json_get "$body" output.status)"
+        body="$(observe_one_job_call "$JOB_ID" 1)"
+        status="$(json_get "$body" output.items.0.output.status)"
         case "$status" in
             completed|failed|stopped|lost)
                 JOB_TERMINAL=1
@@ -545,14 +561,14 @@ else
         fi
     fi
 
-    # getRuntimeJobLog — read bounded stdout for the job.
-    body="$(api_post /api/jobs/log "{\"job_id\":\"$JOB_ID\"}")"
-    assert_success "getRuntimeJobLog" "$body" || true
-    log_stdout="$(json_get "$body" output.stdout_tail)"
+    # observe_jobs — read bounded stdout for the job through the canonical observer.
+    body="$(observe_one_job_call "$JOB_ID" 50)"
+    assert_success "observe_jobs" "$body" || true
+    log_stdout="$(json_get "$body" output.items.0.output.stdout_tail)"
     if echo "$log_stdout" | grep -q "job-log-ok"; then
-        pass "getRuntimeJobLog contains async job output"
+        pass "observe_jobs contains async job output"
     else
-        fail "getRuntimeJobLog did not contain async job output (got: ${log_stdout:0:160})"
+        fail "observe_jobs did not contain async job output (got: ${log_stdout:0:160})"
     fi
 fi
 
@@ -635,10 +651,10 @@ mcp_tool_present() {
 if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
     # The local_coding canonical coding loop must expose its key tools.
     mcp_canonical_present=1
-    for tname in work_on_project list_projects project_overview read_file read_files \
-        search_project_text search_project_texts apply_text_edits apply_unified_diff run_shell \
-        run_job job_status job_log list_jobs stop_job cargo_fmt cargo_check \
-        cargo_test validation_summary git_status git_diff show_changes \
+    for tname in work_on_project list_projects project_overview read_files \
+        search_project_texts apply_text_edits apply_unified_diff run_shell \
+        run_job observe_jobs list_jobs stop_job cargo_fmt cargo_check \
+        cargo_test validation_summary git_status git_diff_hunks show_changes \
         finish_coding_task; do
         if mcp_tool_present "$tname"; then
             :
@@ -656,7 +672,8 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
     # full-operator surface, never on local_coding.
     mcp_compat_absent=1
     for tname in write_project_file job_tail list_tools \
-        git_diff_summary start_coding_task; do
+        read_file search_project_text git_diff git_diff_summary job_status job_log \
+        start_coding_task; do
         if mcp_tool_present "$tname"; then
             mcp_compat_absent=0
             fail "MCP tools/list must not expose $tname on local_coding"
@@ -668,7 +685,7 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
 elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
     adaptive_present=1
     for tname in work_on_project runtime_status tool_manifest \
-        search_project_texts read_files apply_text_edits apply_patch run_process run_shell observe_jobs list_jobs \
+        search_project_texts read_files apply_text_edits run_process run_shell observe_jobs list_jobs \
         cargo_check cargo_test git_review_summary git_diff_hunks \
         show_changes workspace_hygiene_check finish_coding_task call_runtime_tool; do
         if mcp_tool_present "$tname"; then
@@ -678,7 +695,7 @@ elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
             fail "MCP tools/list missing adaptive_runtime tool $tname"
         fi
     done
-    for tname in list_tools list_projects project_overview read_file run_script apply_unified_diff \
+    for tname in list_tools list_projects project_overview apply_patch run_script apply_unified_diff \
         go_test validation_summary git_status goto_definition computer_list_windows \
         post_session_message coding_agent_start artifact_upload_begin; do
         if mcp_tool_present "$tname"; then
@@ -689,12 +706,18 @@ elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
     if [ "$adaptive_present" = "1" ]; then
         pass "MCP tools/list exposes only the adaptive typed core plus gateway"
     fi
+    for retired in read_file search_project_text job_status job_log git_diff git_diff_summary; do
+        if mcp_tool_present "$retired"; then
+            adaptive_present=0
+            fail "MCP tools/list must not expose retired tool $retired"
+        fi
+    done
 else
     # full_operator_runtime: the complete operator tool surface.
     mcp_operator_present=1
     for tname in list_tools work_on_project finish_coding_task \
-        git_diff_summary apply_unified_diff read_file read_files \
-        search_project_texts run_shell run_job job_status job_log list_jobs show_changes; do
+        git_review_summary git_diff_hunks apply_unified_diff read_files \
+        search_project_texts run_shell run_job observe_jobs list_jobs show_changes; do
         if mcp_tool_present "$tname"; then
             :
         else
@@ -801,34 +824,31 @@ else
     fail "list_project_files did not include README.md (got: ${lpf_entries:0:200})"
 fi
 
-# search_project_text via REST — must find a bounded match in README.md. Ordinary
-# complete default matches success is sparse, so validate the returned record rather
-# than redundant count/result metadata that is intentionally omitted.
-body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"Smoke Project\",\"path\":\"README.md\",\"limit\":10}")"
+# search_project_texts via the generic runtime route — one query is the canonical
+# single-query path. Validate the sparse item payload rather than redundant metadata.
+body="$(api_post /api/tools/call "{\"tool\":\"search_project_texts\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"queries\":[{\"pattern\":\"Smoke Project\",\"path\":\"README.md\",\"limit\":10}]}}")"
 if [ "$(json_get "$body" success)" = "True" ]; then
-    pass "search_project_text returns success"
+    pass "search_project_texts returns success"
 else
-    fail "search_project_text did not return success (body: ${body:0:300})"
+    fail "search_project_texts did not return success (body: ${body:0:300})"
 fi
-if [ "$(json_get "$body" output.matches.0.path)" = "README.md" ]; then
-    pass "search_project_text found README.md match"
+if [ "$(json_get "$body" output.items.0.output.matches.0.path)" = "README.md" ]; then
+    pass "search_project_texts found README.md match"
 else
-    fail "search_project_text did not return README.md match (got: ${body:0:200})"
+    fail "search_project_texts did not return README.md match (got: ${body:0:200})"
 fi
 
-# git_diff_summary via REST — read-only; must return porcelain + changed_files.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+# show_changes via generic runtime — canonical read-only worktree summary.
+body="$(show_changes_call)"
 if [ "$(json_get "$body" success)" = "True" ]; then
-    pass "git_diff_summary returns success"
+    pass "show_changes returns success"
 else
-    fail "git_diff_summary did not return success (body: ${body:0:300})"
+    fail "show_changes did not return success (body: ${body:0:300})"
 fi
-gds_porcelain="$(json_get "$body" output.porcelain)"
-gds_changed="$(json_get "$body" output.changed_files)"
-if [ "$(json_get "$body" output.changed_files_count)" != "None" ]; then
-    pass "git_diff_summary returns changed_files_count"
+if [ "$(json_get "$body" output.files_total)" != "None" ]; then
+    pass "show_changes returns files_total"
 else
-    fail "git_diff_summary missing changed_files_count (got: ${body:0:200})"
+    fail "show_changes missing files_total (got: ${body:0:200})"
 fi
 
 # list_jobs via REST — bounded summaries, never stdout/stderr bodies.
@@ -857,22 +877,24 @@ else
     fail "job_tail skipped: no JOB_ID available"
 fi
 
-# MCP tools/list must now expose the Phase A tool names only on expanded coding
-# surfaces. adaptive_runtime deliberately keeps these lower-frequency tools
-# behind call_runtime_tool rather than expanding their schemas.
+# list_project_files remains a lower-frequency Adaptive gateway tool, while
+# list_jobs is part of the direct Adaptive core. Compatibility/full surfaces
+# expose both directly.
 phase_a_present=1
 if [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
-    for tname in list_project_files search_project_text list_jobs job_log git_diff; do
-        if mcp_tool_present "$tname"; then
-            phase_a_present=0
-            fail "MCP tools/list must keep Phase A long-tail tool $tname behind call_runtime_tool"
-        fi
-    done
+    if mcp_tool_present "list_project_files"; then
+        phase_a_present=0
+        fail "MCP tools/list must keep list_project_files behind call_runtime_tool"
+    fi
+    if ! mcp_tool_present "list_jobs"; then
+        phase_a_present=0
+        fail "MCP tools/list missing direct Adaptive tool list_jobs"
+    fi
     if [ "$phase_a_present" = "1" ]; then
-        pass "MCP adaptive_runtime keeps Phase A long-tail schemas behind the gateway"
+        pass "MCP adaptive_runtime keeps low-frequency file listing behind the gateway"
     fi
 else
-    for tname in list_project_files search_project_text list_jobs job_log git_diff; do
+    for tname in list_project_files list_jobs; do
         if mcp_tool_present "$tname"; then
             :
         else
@@ -880,12 +902,8 @@ else
             fail "MCP tools/list missing $tname"
         fi
     done
-    if [ "$EXPECTED_SURFACE" = "local_coding" ] && mcp_tool_present "git_diff_summary"; then
-        phase_a_present=0
-        fail "MCP tools/list must not expose git_diff_summary on local_coding"
-    fi
     if [ "$phase_a_present" = "1" ]; then
-        pass "MCP tools/list exposes the Phase A console tools on the expanded model surface"
+        pass "MCP tools/list exposes the retained Phase A console tools"
     fi
 fi
 
@@ -975,9 +993,8 @@ ops_set = set(ops)
 
 expected_ops = {
     "listRuntimeTools", "listProjects", "registerProject", "createProject",
-    "getRuntimeStatus", "getRuntimeJobStatus", "getRuntimeJobLog",
-    "readProjectFile", "getProjectGitStatus", "getProjectGitDiff",
-    "getProjectGitDiffSummary", "listProjectFiles", "searchProjectText",
+    "getRuntimeStatus",
+    "getProjectGitStatus", "listProjectFiles",
     "applyUnifiedDiff",
     "runProjectShellCommand", "gitRestorePaths",
     "discardUntrackedFiles", "importConversationFilesToProject", "startProjectShellJob",
@@ -1029,8 +1046,8 @@ for path, methods in schema.get("paths", {}).items():
             )
 
 # Forbidden legacy/admin/internal paths must not appear in the schema paths.
-# list_files, search_text, git_diff_summary, jobs/list, and jobs/tail remain
-# dedicated GPT Actions. Legacy dedicated patch routes are explicitly forbidden;
+# list_files, jobs/list, and jobs/tail remain dedicated GPT Actions; canonical
+# change review and Job observation use callRuntimeTool. Legacy dedicated patch routes are explicitly forbidden;
 # the current apply_patch tool is runtime-only through callRuntimeTool. jobs/stop,
 # audit, legacy shell/codex, console, and /mcp also remain forbidden.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
@@ -1121,16 +1138,10 @@ readonly_paths = [
     "/api/tools/list",
     "/api/projects/list",
     "/api/runtime/status",
-    "/api/jobs/status",
-    "/api/jobs/log",
     "/api/jobs/list",
     "/api/jobs/tail",
-    "/api/projects/read_file",
     "/api/projects/git_status",
-    "/api/projects/git_diff",
-    "/api/projects/git_diff_summary",
     "/api/projects/list_files",
-    "/api/projects/search_text",
 ]
 for path in readonly_paths:
     op = schema.get("paths", {}).get(path, {}).get("post", {})
@@ -1261,7 +1272,9 @@ if isinstance(names, list):
     missing = sorted({
         "work_on_project",
         "finish_coding_task",
-        "git_diff_summary",
+        "show_changes",
+        "git_diff_hunks",
+        "observe_jobs",
         "list_tools",
     } - set(names))
     if missing:
@@ -1305,12 +1318,12 @@ else
     fail "callRuntimeTool(list_tools) accepted retired arguments envelope (body: ${body:0:300})"
 fi
 
-# callRuntimeTool: git_diff_summary against the agent project succeeds.
-body="$(api_post /api/tools/call "{\"tool\":\"git_diff_summary\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\"}}")"
+# callRuntimeTool: show_changes against the agent project succeeds.
+body="$(show_changes_call)"
 if [ "$(json_get "$body" success)" = "True" ]; then
-    pass "callRuntimeTool(git_diff_summary) routes to agent and succeeds"
+    pass "callRuntimeTool(show_changes) routes to agent and succeeds"
 else
-    fail "callRuntimeTool(git_diff_summary) failed (body: ${body:0:300})"
+    fail "callRuntimeTool(show_changes) failed (body: ${body:0:300})"
 fi
 
 # callRuntimeTool: unknown tool returns a useful error (not a 5xx / empty).
@@ -1498,7 +1511,7 @@ print(json.dumps(obj))
 }
 
 # applyUnifiedDiff — apply a probe diff that creates a new file,
-# then verify via git_diff_summary that the probe file appears as untracked.
+# then verify via show_changes that the probe file appears as untracked.
 PROBE_PATCH='diff --git a/APPLY_CHECKED_PROBE.txt b/APPLY_CHECKED_PROBE.txt
 new file mode 100644
 --- /dev/null
@@ -1517,13 +1530,13 @@ if [ "$apc_success" = "True" ]; then
 else
     fail "applyUnifiedDiff(probe) failed (body: ${body:0:300})"
 fi
-# Verify the probe file now shows up in the worktree via git_diff_summary.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-gds_changed="$(json_get "$body" output.changed_files)"
-if echo "$gds_changed" | grep -q "APPLY_CHECKED_PROBE.txt"; then
-    pass "applyUnifiedDiff probe file visible in git_diff_summary"
+# Verify the probe file now shows up in the worktree via show_changes.
+body="$(show_changes_call)"
+changed_files="$(json_get "$body" output.files)"
+if echo "$changed_files" | grep -q "APPLY_CHECKED_PROBE.txt"; then
+    pass "applyUnifiedDiff probe file visible in show_changes"
 else
-    fail "applyUnifiedDiff probe file not in diff summary (got: ${gds_changed:0:200})"
+    fail "applyUnifiedDiff probe file not in show_changes (got: ${changed_files:0:200})"
 fi
 
 # Canonical runtime delete — delete the probe file created above.
@@ -1574,8 +1587,8 @@ if [ "$rest_success" = "True" ]; then
 else
     fail "gitRestorePaths(probe) failed (body: ${body:0:300})"
 fi
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"RESTORE_PROBE.txt\"}")"
-restore_content="$(json_get "$body" output.text)"
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"RESTORE_PROBE.txt\"}]}}")"
+restore_content="$(json_get "$body" output.items.0.output.text)"
 if echo "$restore_content" | grep -q "original"; then
     pass "gitRestorePaths restored probe file to committed content"
 else
@@ -1619,12 +1632,12 @@ else
     fail "write_project_file missing sha256 (got: $wpf_sha)"
 fi
 
-# readProjectFile confirms the probe content.
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"EDIT_PROBE.txt\"}")"
-if echo "$(json_get "$body" output.text)" | grep -q "hello world"; then
-    pass "readProjectFile confirms EDIT_PROBE.txt content"
+# read_files confirms the probe content.
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"EDIT_PROBE.txt\"}]}}")"
+if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello world"; then
+    pass "read_files confirms EDIT_PROBE.txt content"
 else
-    fail "readProjectFile did not confirm probe content (got: ${body:0:200})"
+    fail "read_files did not confirm probe content (got: ${body:0:200})"
 fi
 
 # apply_text_edits via callRuntimeTool — replace_exact "world" -> "rust" on
@@ -1653,12 +1666,12 @@ else
     fail "callRuntimeTool(apply_text_edits) did not edit probe (success=$ate_success changed=$ate_changed body=${body:0:300})"
 fi
 
-# readProjectFile confirms the edited content.
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"EDIT_PROBE.txt\"}")"
-if echo "$(json_get "$body" output.text)" | grep -q "hello rust"; then
-    pass "readProjectFile confirms apply_text_edits edit"
+# read_files confirms the edited content.
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"EDIT_PROBE.txt\"}]}}")"
+if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello rust"; then
+    pass "read_files confirms apply_text_edits edit"
 else
-    fail "readProjectFile did not confirm edit (got: ${body:0:200})"
+    fail "read_files did not confirm edit (got: ${body:0:200})"
 fi
 
 # apply_text_edits with a stale expected_sha256 (the create-time hash no longer
@@ -1685,8 +1698,8 @@ if [ "$(json_get "$body" success)" = "False" ] && [ "$ate_error_kind" = "sha256_
 else
     fail "apply_text_edits(stale sha guard) did not report sha256_conflict (error_kind=$ate_error_kind body: ${body:0:200})"
 fi
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"EDIT_PROBE.txt\"}")"
-if echo "$(json_get "$body" output.text)" | grep -q "hello rust"; then
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"EDIT_PROBE.txt\"}]}}")"
+if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello rust"; then
     pass "apply_text_edits(stale sha guard) left file unchanged"
 else
     fail "apply_text_edits(stale sha guard) modified the file (got: ${body:0:200})"
@@ -1754,8 +1767,8 @@ if [ "$neg_status" = "400" ] && \
 else
     fail "replace_in_file did not fail as an unknown tool (status=$neg_status error: ${neg_err:0:200})"
 fi
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"NEG_PROBE.txt\"}")"
-if echo "$(json_get "$body" output.text)" | grep -q "unchanged"; then
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"NEG_PROBE.txt\"}]}}")"
+if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "unchanged"; then
     pass "replace_in_file unknown-tool failure left file unchanged"
 else
     fail "replace_in_file probe was modified (got: ${body:0:200})"
@@ -1807,9 +1820,9 @@ else
     fail "applyUnifiedDiff large diff did not apply (success=$lap_success applied=$lap_applied body=${body:0:300})"
 fi
 # Verify the large probe file now shows up in the worktree.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-if echo "$(json_get "$body" output.changed_files)" | grep -q "LARGE_APPLY_PROBE.md"; then
-    pass "large apply probe file visible in git_diff_summary"
+body="$(show_changes_call)"
+if echo "$(json_get "$body" output.files)" | grep -q "LARGE_APPLY_PROBE.md"; then
+    pass "large apply probe file visible in show_changes"
 else
     fail "large apply probe file not visible (got: ${body:0:200})"
 fi
@@ -1848,26 +1861,26 @@ fi
 # 7h. Full-auto coding loop smoke (dedicated actions plus callRuntimeTool)
 # ----------------------------------------------------------------------------
 #
-# Simulates a GPT Actions auto coding loop using the dedicated read/diff/check
-# actions plus callRuntimeTool for the canonical apply_text_edits edit. Proves
+# Simulates a GPT Actions auto coding loop using dedicated project/Git actions plus
+# callRuntimeTool for canonical read/search/edit tools. Proves
 # a custom GPT can complete a small edit → verify → cleanup cycle through the
 # recommended flow:
 #
 #   1. listProjects              — find the agent project
-#   2. readProjectFile           — read a tracked file (README.md)
-#   3. searchProjectText         — locate the target substring
-#   4. getProjectGitDiffSummary  — confirm initial clean state
+#   2. callRuntimeTool(read_files) — read a tracked file (README.md)
+#   3. callRuntimeTool(search_project_texts) — locate the target substring
+#   4. callRuntimeTool(show_changes) — confirm initial clean state
 #   5. callRuntimeTool           — run apply_text_edits for a reversible text edit
-#   6. getProjectGitDiffSummary  — confirm the diff is visible
+#   6. callRuntimeTool(show_changes) — confirm the diff is visible
 #   7. runProjectShellCommand    — lightweight check (grep)
 #   8. gitRestorePaths           — restore the modified tracked file
-#   9. getProjectGitDiffSummary  — confirm worktree is clean again
+#   9. callRuntimeTool(show_changes) — confirm worktree is clean again
 #
 # Then an optional unified-diff sub-loop:
 #  10. applyUnifiedDiff           — preflight + apply one small raw unified diff
-#  11. getProjectGitDiffSummary   — confirm diff visible
+#  11. callRuntimeTool(show_changes) — confirm diff visible
 #  12. callRuntimeTool(delete_project_files) — cleanup the probe file
-#  13. getProjectGitDiffSummary   — confirm clean again
+#  13. callRuntimeTool(show_changes) — confirm clean again
 
 log "---- full-auto coding loop smoke (dedicated actions plus callRuntimeTool) ----"
 
@@ -1883,37 +1896,37 @@ else
     fail "loop: listProjects did not find $RUNTIME_PROJECT_ID (got: ${loop_list_json:0:200})"
 fi
 
-# Step 2: readProjectFile — read README.md.
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"README.md\"}")"
-loop_readme="$(json_get "$body" output.text)"
-loop_readme_sha="$(json_get "$body" output.sha256)"
+# Step 2: read_files — read README.md.
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"README.md\"}]}}")"
+loop_readme="$(json_get "$body" output.items.0.output.text)"
+loop_readme_sha="$(json_get "$body" output.items.0.output.sha256)"
 if echo "$loop_readme" | grep -q "$LOOP_MARKER_OLD"; then
-    pass "loop: readProjectFile sees README.md with target marker"
+    pass "loop: read_files sees README.md with target marker"
 else
-    fail "loop: readProjectFile did not find marker in README.md (got: ${loop_readme:0:120})"
+    fail "loop: read_files did not find marker in README.md (got: ${loop_readme:0:120})"
 fi
 if [ -n "$loop_readme_sha" ] && [ "$loop_readme_sha" != "None" ] && [ ${#loop_readme_sha} -eq 64 ]; then
-    pass "loop: readProjectFile returns README.md sha256 guard"
+    pass "loop: read_files returns README.md sha256 guard"
 else
-    fail "loop: readProjectFile did not return a valid README.md sha256 (got: $loop_readme_sha)"
+    fail "loop: read_files did not return a valid README.md sha256 (got: $loop_readme_sha)"
 fi
 
-# Step 3: searchProjectText — locate the target substring. Default complete search
-# success is sparse, so the match record itself is the stable assertion surface.
-body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"$LOOP_MARKER_OLD\",\"path\":\"README.md\",\"limit\":10}")"
-if [ "$(json_get "$body" output.matches.0.path)" = "README.md" ]; then
-    pass "loop: searchProjectText located target marker in README.md"
+# Step 3: search_project_texts — locate the target substring through the canonical
+# one-query batch path. The sparse match record is the stable assertion surface.
+body="$(api_post /api/tools/call "{\"tool\":\"search_project_texts\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"queries\":[{\"pattern\":\"$LOOP_MARKER_OLD\",\"path\":\"README.md\",\"limit\":10}]}}")"
+if [ "$(json_get "$body" output.items.0.output.matches.0.path)" = "README.md" ]; then
+    pass "loop: search_project_texts located target marker in README.md"
 else
-    fail "loop: searchProjectText did not locate target marker (got: ${body:0:200})"
+    fail "loop: search_project_texts did not locate target marker (got: ${body:0:200})"
 fi
 
-# Step 4: getProjectGitDiffSummary — confirm initial clean state.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-loop_pre_count="$(json_get "$body" output.changed_files_count)"
-if [ "${loop_pre_count:-0}" = "0" ] 2>/dev/null; then
-    pass "loop: getProjectGitDiffSummary confirms clean initial state"
+# Step 4: show_changes — confirm initial clean state.
+body="$(show_changes_call)"
+loop_pre_clean="$(json_get "$body" output.clean)"
+if [ "$loop_pre_clean" = "True" ]; then
+    pass "loop: show_changes confirms clean initial state"
 else
-    fail "loop: worktree not clean before loop (changed_files_count=$loop_pre_count got: ${body:0:200})"
+    fail "loop: worktree not clean before loop (clean=$loop_pre_clean got: ${body:0:200})"
 fi
 
 # Step 5: callRuntimeTool(apply_text_edits) — small reversible edit on
@@ -1944,14 +1957,13 @@ else
     fail "loop: callRuntimeTool(apply_text_edits) did not edit README.md (body: ${body:0:300})"
 fi
 
-# Step 6: getProjectGitDiffSummary — confirm the diff is now visible.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-loop_post_count="$(json_get "$body" output.changed_files_count)"
-loop_post_files="$(json_get "$body" output.changed_files)"
-if [ "${loop_post_count:-0}" -ge 1 ] 2>/dev/null && echo "$loop_post_files" | grep -q "README.md"; then
-    pass "loop: getProjectGitDiffSummary shows README.md modified"
+# Step 6: show_changes — confirm the diff is now visible.
+body="$(show_changes_call)"
+loop_post_files="$(json_get "$body" output.files)"
+if echo "$loop_post_files" | grep -q "README.md"; then
+    pass "loop: show_changes shows README.md modified"
 else
-    fail "loop: diff summary did not show README.md modified (count=$loop_post_count files=${loop_post_files:0:200})"
+    fail "loop: show_changes did not show README.md modified (files=${loop_post_files:0:200})"
 fi
 
 # Step 7: runProjectShellCommand — lightweight check (grep for the edited marker).
@@ -1972,17 +1984,17 @@ else
     fail "loop: gitRestorePaths failed (body: ${body:0:300})"
 fi
 
-# Step 9: getProjectGitDiffSummary — confirm worktree is clean again.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-loop_final_count="$(json_get "$body" output.changed_files_count)"
-if [ "${loop_final_count:-0}" = "0" ] 2>/dev/null; then
-    pass "loop: getProjectGitDiffSummary confirms worktree clean after restore"
+# Step 9: show_changes — confirm worktree is clean again.
+body="$(show_changes_call)"
+loop_final_clean="$(json_get "$body" output.clean)"
+if [ "$loop_final_clean" = "True" ]; then
+    pass "loop: show_changes confirms worktree clean after restore"
 else
-    fail "loop: worktree not clean after restore (changed_files_count=$loop_final_count got: ${body:0:200})"
+    fail "loop: worktree not clean after restore (clean=$loop_final_clean got: ${body:0:200})"
 fi
 # Double-check via git_status that README.md is back to its committed content.
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"README.md\"}")"
-if echo "$(json_get "$body" output.text)" | grep -q "$LOOP_MARKER_OLD"; then
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"README.md\"}]}}")"
+if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "$LOOP_MARKER_OLD"; then
     pass "loop: README.md content restored to original marker"
 else
     fail "loop: README.md content not restored (got: ${body:0:200})"
@@ -2006,10 +2018,10 @@ else
     fail "loop: applyUnifiedDiff did not apply probe diff (body: ${body:0:300})"
 fi
 
-# Step 11: getProjectGitDiffSummary — confirm the probe file is visible.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-if echo "$(json_get "$body" output.changed_files)" | grep -q "LOOP_PATCH_PROBE.md"; then
-    pass "loop: getProjectGitDiffSummary shows probe file after apply"
+# Step 11: show_changes — confirm the probe file is visible.
+body="$(show_changes_call)"
+if echo "$(json_get "$body" output.files)" | grep -q "LOOP_PATCH_PROBE.md"; then
+    pass "loop: show_changes shows probe file after apply"
 else
     fail "loop: probe file not visible after apply (got: ${body:0:200})"
 fi
@@ -2023,13 +2035,13 @@ else
     fail "loop: delete_project_files did not remove probe file (body: ${body:0:300})"
 fi
 
-# Step 13: getProjectGitDiffSummary — confirm clean again.
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-loop_patch_final_count="$(json_get "$body" output.changed_files_count)"
-if [ "${loop_patch_final_count:-0}" = "0" ] 2>/dev/null; then
-    pass "loop: getProjectGitDiffSummary confirms clean after patch cleanup"
+# Step 13: show_changes — confirm clean again.
+body="$(show_changes_call)"
+loop_patch_final_clean="$(json_get "$body" output.clean)"
+if [ "$loop_patch_final_clean" = "True" ]; then
+    pass "loop: show_changes confirms clean after patch cleanup"
 else
-    fail "loop: worktree not clean after patch cleanup (changed_files_count=$loop_patch_final_count)"
+    fail "loop: worktree not clean after patch cleanup (clean=$loop_patch_final_clean)"
 fi
 
 # ----------------------------------------------------------------------------
@@ -2040,12 +2052,12 @@ fi
 # dedicated async job actions work end-to-end:
 #
 #   1. callRuntimeTool(write_project_file) — create WRITE_ACTION_PROBE.txt
-#   2. readProjectFile                    — confirm content
+#   2. callRuntimeTool(read_files)        — confirm content
 #   3. callRuntimeTool(write_project_file) — overwrite with an expected_sha256 guard
-#   4. readProjectFile    — confirm overwritten content
+#   4. callRuntimeTool(read_files) — confirm overwritten content
 #   5. callRuntimeTool(delete_project_files) — cleanup the probe file
 #   6. startProjectShellJob — start `printf job-ok` asynchronously
-#   7. getRuntimeJobStatus — poll until completed
+#   7. callRuntimeTool(observe_jobs) — poll until completed
 #   8. getRuntimeJobTail   — confirm the output contains job-ok
 
 log "---- runtime write_project_file + dedicated startProjectShellJob smoke ----"
@@ -2075,12 +2087,12 @@ else
     fail "write_project_file missing sha256 (got: $waf_sha)"
 fi
 
-# Step 2: readProjectFile — confirm content.
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"WRITE_ACTION_PROBE.txt\"}")"
-if echo "$(json_get "$body" output.text)" | grep -q "write-action-probe-v1"; then
-    pass "readProjectFile confirms WRITE_ACTION_PROBE.txt content"
+# Step 2: read_files — confirm content.
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"WRITE_ACTION_PROBE.txt\"}]}}")"
+if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "write-action-probe-v1"; then
+    pass "read_files confirms WRITE_ACTION_PROBE.txt content"
 else
-    fail "readProjectFile did not confirm probe content (got: ${body:0:200})"
+    fail "read_files did not confirm probe content (got: ${body:0:200})"
 fi
 
 # Step 3: callRuntimeTool(write_project_file) — overwrite with an expected_sha256
@@ -2105,12 +2117,12 @@ else
     fail "callRuntimeTool(write_project_file) overwrite with guard failed (body: ${body:0:300})"
 fi
 
-# Step 4: readProjectFile — confirm overwritten content.
-body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"WRITE_ACTION_PROBE.txt\"}")"
-if echo "$(json_get "$body" output.text)" | grep -q "write-action-probe-v2"; then
-    pass "readProjectFile confirms overwritten content"
+# Step 4: read_files — confirm overwritten content.
+body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"WRITE_ACTION_PROBE.txt\"}]}}")"
+if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "write-action-probe-v2"; then
+    pass "read_files confirms overwritten content"
 else
-    fail "readProjectFile did not confirm overwritten content (got: ${body:0:200})"
+    fail "read_files did not confirm overwritten content (got: ${body:0:200})"
 fi
 
 # Step 5: callRuntimeTool(delete_project_files) — cleanup the probe.
@@ -2139,14 +2151,14 @@ else
     fail "startProjectShellJob did not start a job (success=$sjr_success body=${body:0:300})"
 fi
 
-# Step 7: getRuntimeJobStatus — poll until completed.
+# Step 7: observe_jobs — poll until completed.
 sj_done=0
 sj_poll_tries=0
 sj_status=""
 while [ "$sj_poll_tries" -lt 20 ]; do
     check_deadline
-    body="$(api_post /api/jobs/status "{\"job_id\":\"$SJ_JOB_ID\"}")"
-    sj_status="$(json_get "$body" output.status)"
+    body="$(observe_one_job_call "$SJ_JOB_ID" 1)"
+    sj_status="$(json_get "$body" output.items.0.output.status)"
     case "$sj_status" in
         completed|failed|stopped|lost)
             sj_done=1
@@ -2157,9 +2169,9 @@ while [ "$sj_poll_tries" -lt 20 ]; do
     sleep 1
 done
 if [ "$sj_done" = "1" ] && [ "$sj_status" = "completed" ]; then
-    pass "getRuntimeJobStatus confirms async job completed"
+    pass "observe_jobs confirms async job completed"
 else
-    fail "getRuntimeJobStatus did not confirm completion (status=$sj_status tries=$sj_poll_tries body=${body:0:200})"
+    fail "observe_jobs did not confirm completion (status=$sj_status tries=$sj_poll_tries body=${body:0:200})"
 fi
 
 # Step 8: getRuntimeJobTail — confirm the output contains job-ok.
@@ -2173,12 +2185,12 @@ fi
 
 # Confirm the worktree is clean after the dedicated action smoke (the job ran
 # `printf` which does not touch the repo).
-body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
-ded_final_count="$(json_get "$body" output.changed_files_count)"
-if [ "${ded_final_count:-0}" = "0" ] 2>/dev/null; then
+body="$(show_changes_call)"
+ded_final_clean="$(json_get "$body" output.clean)"
+if [ "$ded_final_clean" = "True" ]; then
     pass "dedicated action smoke leaves worktree clean"
 else
-    fail "dedicated action smoke left worktree dirty (changed_files_count=$ded_final_count)"
+    fail "dedicated action smoke left worktree dirty (clean=$ded_final_clean)"
 fi
 
 # ----------------------------------------------------------------------------

@@ -4869,13 +4869,16 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
             let bootstrap = auth_context(None, true);
             runtime
                 .dispatch_with_auth(
-                    ToolCall::ReadFile {
-                        project,
-                        path: "README.md".to_string(),
+                    ToolCall::ReadFiles {
+                        project: project,
+                        items: vec![crate::tool_runtime::ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: Some(1),
+                        }],
                         session_id: Some(session_id),
-                        start_line: None,
-                        limit: Some(1),
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&bootstrap),
                 )
@@ -4948,7 +4951,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|event| event["tool_name"] == "read_file"));
+        .any(|event| event["tool_name"] == "read_files"));
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))
@@ -5005,53 +5008,6 @@ async fn show_changes_accepts_unique_short_id() {
 }
 
 #[test]
-fn parse_porcelain_summary_buckets_untracked_files() {
-    let summary =
-        parse_porcelain_summary(" M README.md\n?? tmp.txt\nR  old.rs -> new.rs\n!! ignored.log\n");
-    assert_eq!(summary.tracked_changed_files, vec!["README.md", "new.rs"]);
-    assert_eq!(summary.untracked_files, vec!["tmp.txt"]);
-    assert_eq!(summary.ignored_files, vec!["ignored.log"]);
-    assert_eq!(summary.changed_files_count, 4);
-}
-
-#[test]
-fn parse_porcelain_summary_handles_basic_rename_and_quoted_paths() {
-    let porcelain =
-        " M src/main.rs\nA  new_file.rs\nR  old_name.rs -> new_name.rs\n?? \"quoted path.rs\"";
-    let files = parse_porcelain_summary(porcelain).changed_files;
-    assert_eq!(
-        files,
-        vec![
-            "src/main.rs",
-            "new_file.rs",
-            "new_name.rs",
-            "quoted path.rs",
-        ]
-    );
-}
-
-#[test]
-fn split_diff_summary_separates_porcelain_and_stat() {
-    let stdout = format!(
-        " M src/a.rs\nA  src/b.rs\n\n{}\n src/a.rs | 2 +-\n 1 file changed",
-        DIFF_SUMMARY_SENTINEL,
-    );
-    let (porcelain, diff_stat) = split_diff_summary(&stdout);
-    assert!(porcelain.contains("src/a.rs"));
-    assert!(porcelain.contains("src/b.rs"));
-    assert!(!porcelain.contains(DIFF_SUMMARY_SENTINEL));
-    assert!(diff_stat.contains("1 file changed"));
-    assert!(!diff_stat.contains(DIFF_SUMMARY_SENTINEL));
-}
-
-#[test]
-fn split_diff_summary_without_sentinel_returns_all_as_porcelain() {
-    let (porcelain, diff_stat) = split_diff_summary("just status lines");
-    assert_eq!(porcelain, "just status lines");
-    assert_eq!(diff_stat, "");
-}
-
-#[test]
 fn git_read_commands_are_non_mutating_and_log_is_bounded() {
     assert_eq!(normalize_git_log_limit(None), 20);
     assert_eq!(normalize_git_log_limit(Some(0)), 20);
@@ -5062,19 +5018,14 @@ fn git_read_commands_are_non_mutating_and_log_is_bounded() {
     assert!(log.contains("git log"));
     assert!(log.contains("-n 22"));
     assert!(log.contains("--skip 7"));
-    let summary = git_diff_summary_command();
-    assert!(summary.contains("git status --porcelain"));
-    assert!(summary.contains("git diff --stat"));
 
-    for (tool, command) in [("git_log", log), ("git_diff_summary", summary)] {
-        for forbidden in [
-            "apply", "commit", "checkout", "reset", "push", "stash", "merge", "rebase", "rm ",
-        ] {
-            assert!(
-                !command.contains(forbidden),
-                "{tool} command must not contain {forbidden:?}: {command}"
-            );
-        }
+    for forbidden in [
+        "apply", "commit", "checkout", "reset", "push", "stash", "merge", "rebase", "rm ",
+    ] {
+        assert!(
+            !log.contains(forbidden),
+            "git_log command must not contain {forbidden:?}: {log}"
+        );
     }
 }
 
@@ -5097,40 +5048,6 @@ fn git_log_parser_splits_commits_refs_and_truncation() {
     }
     assert!(parse_git_log_commits(stdout.trim_end_matches('\u{1e}'), 1).is_err());
     assert!(parse_git_log_commits("partial record\u{1e}", 1).is_err());
-}
-
-#[tokio::test]
-async fn git_diff_summary_agent_uses_internal_posix_runtime() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git_repo(tmp.path());
-    commit_file(tmp.path(), "README.md", "before\n", "initial");
-    std::fs::write(tmp.path().join("README.md"), "after\n").unwrap();
-
-    let runtime = test_runtime();
-    let project =
-        register_runner_project_at_path(&runtime, "summary-internal", "demo", tmp.path()).await;
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        async move { runtime.git_diff_summary(project).await }
-    });
-
-    let request = wait_for_patch_agent_request(&runtime, "summary-internal").await;
-    assert_internal_posix_script_contains(&request, "git status --porcelain");
-    assert_eq!(
-        request.script.as_ref().unwrap().script,
-        git_diff_summary_command()
-    );
-    complete_agent_request_by_running_locally(&runtime, "summary-internal", request).await;
-
-    let result = task.await.unwrap();
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["changed_files_count"], 1);
-    assert_eq!(result.output["changed_files"], json!(["README.md"]));
-    assert!(result.output["diff_stat"]
-        .as_str()
-        .unwrap()
-        .contains("README.md"));
 }
 
 fn write_git_review_fixture_file(root: &Path, path: &str, content: &str) {
@@ -6035,10 +5952,6 @@ async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
     let bootstrap = auth_context(None, true);
 
     let calls = [
-        ToolCall::GitDiffSummary {
-            project: agent_test_project_id("oe"),
-            session_id: None,
-        },
         ToolCall::GitReviewSummary {
             project: agent_test_project_id("oe"),
             base_commit: "a".repeat(40),

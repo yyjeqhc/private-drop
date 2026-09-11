@@ -769,7 +769,12 @@ fn meaningful_tool_classification_excludes_status_and_manifest_queries() {
         );
     }
     // Write / shell / git / validation tools do count.
-    for name in ["apply_text_edits", "run_shell", "git_diff", "cargo_test"] {
+    for name in [
+        "apply_text_edits",
+        "run_shell",
+        "show_changes",
+        "cargo_test",
+    ] {
         assert!(is_meaningful(name), "{name} should count as meaningful");
     }
 }

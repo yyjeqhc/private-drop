@@ -103,10 +103,7 @@ pub(crate) fn public_url() -> String {
 ///
 /// Order is grouped by recommended GPT call flow:
 /// 1. discovery (`listRuntimeTools`, `listProjects`, `getRuntimeStatus`)
-/// 2. job inspection (`getRuntimeJobStatus`, `getRuntimeJobLog`)
-/// 3. project inspection (`readProjectFile`, `getProjectGitStatus`,
-///    `getProjectGitDiff`, `getProjectGitDiffSummary`, `listProjectFiles`,
-///    `searchProjectText`)
+/// 2. project inspection (`getProjectGitStatus`, `listProjectFiles`)
 /// 4. project mutation (`applyUnifiedDiff`, `runProjectShellCommand`,
 ///    `gitRestorePaths`, `discardUntrackedFiles`, `startProjectShellJob`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
@@ -127,14 +124,8 @@ const GPT_ACTION_OPS: &[&str] = &[
     "registerProject",
     "createProject",
     "getRuntimeStatus",
-    "getRuntimeJobStatus",
-    "getRuntimeJobLog",
-    "readProjectFile",
     "getProjectGitStatus",
-    "getProjectGitDiff",
-    "getProjectGitDiffSummary",
     "listProjectFiles",
-    "searchProjectText",
     "applyUnifiedDiff",
     "runProjectShellCommand",
     "gitRestorePaths",
@@ -398,60 +389,11 @@ fn schemas() -> Value {
                 },
                 "kind": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. For message-board tools, one of note, proposal, question, answer, decision, risk, progress, guidance, todo. For workspace_checkpoint_create, one of snapshot, baseline, before_refactor, after_refactor, last_known_good, rollback_candidate. Used only when `params` is absent or null."
-                },
-                "labels": {
-                    "type": "array",
-                    "items": {"type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9._-]+$"},
-                    "maxItems": 20,
-                    "description": "Flattened workspace_checkpoint_create labels. Used only when `params` is absent or null."
-                },
-                "validation": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Flattened workspace_checkpoint_create validation metadata. The runtime records this metadata only and does not run commands.",
-                    "properties": {
-                        "status": {
-                            "type": "string",
-                            "enum": ["unknown", "not_run", "passed", "failed"]
-                        },
-                        "commands": {
-                            "type": "array",
-                            "items": {"type": "string", "maxLength": 200},
-                            "maxItems": 20
-                        },
-                        "summary": {
-                            "anyOf": [
-                                {"type": "string"},
-                                {"type": "null"}
-                            ],
-                            "maxLength": 500
-                        }
-                    }
-                },
-                "note": {
-                    "type": "string",
-                    "description": "Flattened workspace_checkpoint_create optional note (not used by restore). Used only when `params` is absent or null."
-                },
-                "include_untracked": {
-                    "type": "boolean",
-                    "description": "Flattened workspace_checkpoint_create flag to capture small non-secret UTF-8 untracked files (default false). Used only when `params` is absent or null."
-                },
-                "checkpoint_id": {
-                    "type": "string",
-                    "description": "Flattened workspace_checkpoint_show/restore/delete wc_ckpt_* id. Used only when `params` is absent or null."
+                    "description": "Flattened tool-specific argument. For message-board tools, one of note, proposal, question, answer, decision, risk, progress, guidance, todo. Used only when `params` is absent or null."
                 },
                 "confirm": {
                     "type": "boolean",
-                    "description": "Flattened confirmation flag for workspace_checkpoint_restore/delete and stop_job; must be true to proceed. Used only when `params` is absent or null."
-                },
-                "include_command_preview": {
-                    "type": "boolean",
-                    "description": "Flattened job_status debug flag. Defaults to false; when true, job_status includes bounded command_preview metadata. stdout/stderr bodies are never included. Used only when `params` is absent or null."
-                },
-                "include_diff_stat": {
-                    "type": "boolean",
-                    "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` is absent or null."
+                    "description": "Flattened tool-specific confirmation flag; must be true when the selected tool requires confirmation. Used only when `params` is absent or null."
                 },
                 // Keep the flattened GPT Action shape composition-free. The canonical MCP/local-coding
                 // ToolSpec carries the strict per-kind oneOf contract; this import-facing projection uses
@@ -614,7 +556,7 @@ fn schemas() -> Value {
                 },
                 "include_checkpoints": {
                     "type": "boolean",
-                    "description": "Flattened session_handoff_summary flag. Include bounded checkpoint candidates when project is provided. Used only when params and arguments are absent."
+                    "description": "Flattened session_handoff_summary flag. Include bounded workspace checkpoint candidates when project is provided and the workspace-checkpoints build feature is enabled; otherwise accepted and ignored. Used only when params is absent or null."
                 },
                 "features": {
                     "type": "string",
@@ -638,70 +580,6 @@ fn schemas() -> Value {
                 },
             }
         },
-        "JobStatusRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["job_id"],
-            "description": "Poll a runtime job by id.",
-            "properties": {
-                "job_id": {
-                    "type": "string",
-                    "description": "Runtime job id returned by run_job."
-                }
-            }
-        },
-        "JobLogRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["job_id"],
-            "description": "Read bounded stdout/stderr for a runtime job.",
-            "properties": {
-                "job_id": {
-                    "type": "string",
-                    "description": "Runtime job id returned by run_job."
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Optional 1-based continuation offset. Use cursor.stdout from the previous response."
-                },
-                "tail_lines": {
-                    "type": "integer",
-                    "description": "Optional number of trailing stdout/stderr lines. Logs are always bounded; large values are capped server-side."
-                }
-            }
-        },
-        "ReadProjectFileRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "path"],
-            "description": "Read a UTF-8 file from a Runner-registered Project.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Project-relative file path. Absolute paths and traversal (..) are rejected."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "Optional 1-based line offset for pagination."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional maximum line count (bounded server-side)."
-                },
-                "with_line_numbers": {
-                    "type": "boolean",
-                    "description": "Optional. When true, the single text field uses numbered format with 1-based line numbers; plain and numbered content are never duplicated."
-                }
-            }
-        },
         "ProjectIdRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -711,27 +589,6 @@ fn schemas() -> Value {
                 "project": {
                     "type": "string",
                     "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                }
-            }
-        },
-        "ProjectGitDiffRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project"],
-            "description": "Run `git diff` in a Runner-registered Project. Optional `args` scopes paths or adds git diff flags.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "args": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Optional git diff arguments / path specs (e.g. [\"--stat\"] or [\"src/main.rs\"])."
                 },
                 "session_id": {
                     "type": "string",
@@ -811,7 +668,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "command"],
-            "description": "Start an async background shell job in a Runner-registered Project. Execution with side effects; returns a job_id to poll with getRuntimeJobStatus.",
+            "description": "Start an async background shell job in a Runner-registered Project. Execution with side effects; returns a job_id for observe_jobs/list_jobs inspection.",
             "properties": {
                 "project": {
                     "type": "string",
@@ -863,71 +720,6 @@ fn schemas() -> Value {
                     "minimum": 0,
                     "default": 0,
                     "description": "Zero-based entry offset; use next_offset from the previous page."
-                }
-            }
-        },
-        "SearchProjectTextRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "pattern"],
-            "description": "Search text inside a Runner-registered Project. Read-only bounded matches.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "pattern": {
-                    "type": "string",
-                    "description": "Search pattern. Interpreted as a regular expression by default. For identifiers, source snippets, paths, and other exact text, prefer pattern_mode=literal; use regex when regex syntax is intentional."
-                },
-                "pattern_mode": {
-                    "type": "string",
-                    "enum": ["regex", "literal"],
-                    "default": "regex",
-                    "description": "Pattern interpretation: regex (default, backward compatible) or literal. Prefer literal unless regex syntax is intentional."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Optional project-relative directory to scope the search (default: project root)."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional maximum number of matches to return."
-                },
-                "context_before": {
-                    "type": "integer",
-                    "description": "Optional context lines before each match; clamped server-side to 20."
-                },
-                "context_after": {
-                    "type": "integer",
-                    "description": "Optional context lines after each match; clamped server-side to 20."
-                },
-                "include_globs": {
-                    "type": "array",
-                    "maxItems": 32,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 256},
-                    "description": "Optional ripgrep include globs. Negated and protected-path globs are rejected."
-                },
-                "exclude_globs": {
-                    "type": "array",
-                    "maxItems": 32,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 256},
-                    "description": "Optional additive ripgrep exclude globs; built-in secret/build exclusions remain active."
-                },
-                "result_mode": {
-                    "type": "string",
-                    "enum": ["matches", "files_with_matches", "count"],
-                    "default": "matches",
-                    "description": "Result shape. limit applies to matches in matches mode and files in other modes."
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "default": 30,
-                    "description": "Optional search timeout in seconds. Server clamps the value to 1..120; out-of-range integers are accepted and clamped rather than schema-rejected."
                 }
             }
         },

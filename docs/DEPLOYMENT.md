@@ -195,8 +195,11 @@ Hosted MCP clients and GPT Actions require a public HTTPS URL. Set
 `WEBCODEX_PUBLIC_URL` in the Server env file and put a reverse proxy in front
 of `127.0.0.1:8080`. Nginx is supported; a named Cloudflare Tunnel is also a
 valid front door. The same hostname must carry ordinary HTTPS requests and
-`/api/agents/ws` (Cloudflare supports WebSocket upgrades). WebCodex CLI does
-not automate reverse proxy or tunnel setup.
+`/api/agents/ws` (Cloudflare supports WebSocket upgrades). WebCodex also uses
+this configured origin as the MCP App `ui.domain` for Computer and Result
+resources; it never substitutes a WebCodex-operated domain for self-hosted
+servers. When no public URL is configured the optional field is omitted.
+WebCodex CLI does not automate reverse proxy or tunnel setup.
 
 ### Enroll a repository machine
 
@@ -520,7 +523,7 @@ ChatGPT path. Credentials are deliberately never returned by the console API.
 
 ### Runtime job API trust model
 
-`job_status`, `job_log`, `list_jobs`, and `job_tail` are intended for trusted
+`observe_jobs`, `list_jobs`, and `job_tail` are intended for trusted
 single-operator deployments. They are not a tenant boundary between mutually
 untrusted users. Do not expose one runtime to multiple untrusted users without
 adding job-owner isolation; use separate server/runtime instances instead.

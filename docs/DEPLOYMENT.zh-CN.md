@@ -463,7 +463,7 @@ Reject；这些动作与 CLI 使用相同的权限边界，在线模型仍然不
 
 ### Runtime job API 信任模型
 
-`job_status`、`job_log`、`list_jobs` 与 `job_tail` 面向受信的单运维者部署。它们
+`observe_jobs`、`list_jobs` 与 `job_tail` 面向受信的单运维者部署。它们
 不是互不信任用户之间的租户边界。不要把单个 runtime 暴露给多个不受信用户，除非
 为无项目 job API 增加 job-owner 隔离；否则请使用独立的 server/runtime 实例。
 

@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn non_edit_tools_are_not_tracked() {
         for name in [
-            "read_file",
+            "read_files",
             "run_shell",
             "list_tools",
             "save_project_artifact",
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn start_returns_none_for_non_edit_tools() {
-        assert!(start_edit_tool_usage("read_file").is_none());
+        assert!(start_edit_tool_usage("read_files").is_none());
     }
 
     #[test]

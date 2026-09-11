@@ -362,14 +362,7 @@ fn tool_discovery_groups_drive_tool_categories() {
         );
     }
 
-    let exact_discovery_only = [
-        "read_file",
-        "search_project_text",
-        "git_diff",
-        "git_diff_summary",
-    ]
-    .into_iter()
-    .collect::<BTreeSet<_>>();
+    let exact_discovery_only = BTreeSet::new();
     let mut omitted_from_groups = BTreeSet::new();
     for definition in model_visible_tool_definitions() {
         let Some(groups) = memberships.get(definition.name) else {
@@ -419,10 +412,15 @@ fn tool_discovery_groups_drive_tool_categories() {
         "runtime_status",
         "show_changes",
         "work_on_project",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_create",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_delete",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_list",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_restore",
+        #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_show",
     ] {
         assert!(
@@ -1516,7 +1514,7 @@ async fn tool_manifest_projects_canonical_semantic_contracts() {
     let runtime = test_runtime();
     for (tool_name, effect, risk, approval, idempotency, read_only) in [
         (
-            "read_file",
+            "read_files",
             "observe",
             "read_only",
             "none",
@@ -1834,4 +1832,19 @@ async fn unfiltered_tool_manifest_keeps_full_recommended_flows() {
             && serialized.contains("do not combine validation, commit, push, deploy, restart"),
         "unfiltered flows must keep run_shell selection and effect-boundary guidance: {serialized}"
     );
+}
+
+#[cfg(not(feature = "workspace-checkpoints"))]
+#[tokio::test]
+async fn workspace_checkpoints_disabled_manifest_and_parser() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::from_tool_name("tool_manifest", json!({})).unwrap())
+        .await;
+    assert!(result.success, "{result:?}");
+    assert!(!result.output.to_string().contains("workspace_checkpoint_"));
+    for suffix in ["create", "list", "show", "restore", "delete"] {
+        let name = format!("workspace_checkpoint_{suffix}");
+        assert!(ToolCall::from_tool_name(&name, json!({"project": "demo"})).is_err());
+    }
 }

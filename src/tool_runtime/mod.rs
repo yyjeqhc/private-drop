@@ -7,6 +7,7 @@ pub mod activity;
 mod agent_task;
 mod cargo;
 mod cargo_tools;
+#[cfg(feature = "workspace-checkpoints")]
 mod checkpoint;
 mod coding_agent;
 mod coding_task;
@@ -134,11 +135,12 @@ pub(crate) use tool_definition::{
 };
 #[cfg(test)]
 pub use tool_inputs::ApplyFileChangeInput;
+#[cfg(all(test, feature = "workspace-checkpoints"))]
+pub use tool_inputs::CheckpointValidationInput;
 pub use tool_inputs::{default_true, ExecutionPurpose, ExecutionShell, ListToolsOptions};
 #[cfg(test)]
 pub use tool_inputs::{
-    ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, CheckpointValidationInput,
-    SessionMode, StartupDetail,
+    ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, SessionMode, StartupDetail,
 };
 pub use tool_result::ToolResult;
 pub(crate) use tool_result::{RecoveryKind, RecoveryTool, RECOVERY_KIND_VALUES};

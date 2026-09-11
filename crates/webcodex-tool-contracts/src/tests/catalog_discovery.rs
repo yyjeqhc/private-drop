@@ -145,9 +145,9 @@ fn edit_recommended_flow_pairs_reads_with_guarded_exact_edits() {
     assert_eq!(flow.tools.first().copied(), Some("read_files"));
     assert_eq!(flow.tools.get(1).copied(), Some("apply_text_edits"));
     assert_eq!(flow.tools.get(2).copied(), Some("apply_patch"));
-    assert!(flow.summary.starts_with(
-        "Edit: after read_file/read_files, apply_text_edits with current SHA is the default"
-    ));
+    assert!(flow
+        .summary
+        .starts_with("Edit: after read_files, apply_text_edits with current SHA is the default"));
     assert!(flow.summary.contains("even when many lines change"));
     assert!(flow.summary.contains("Use apply_patch only when"));
     let guidance = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_lowercase();
@@ -231,6 +231,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         TOOL_DISCOVERY_GROUP_JOBS,
         TOOL_DISCOVERY_GROUP_RUNTIME,
         TOOL_DISCOVERY_GROUP_CLEANUP,
+        #[cfg(feature = "workspace-checkpoints")]
         TOOL_DISCOVERY_GROUP_CHECKPOINT,
     ] {
         assert!(
@@ -262,12 +263,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             "inspect category: {name}"
         );
     }
-    for compatibility_primitive in [
-        "read_file",
-        "search_project_text",
-        "git_diff",
-        "git_diff_summary",
-    ] {
+    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
         assert!(
             !inspect.iter().any(|value| value == compatibility_primitive),
             "inspect category should prefer canonical tools over {compatibility_primitive}"
@@ -341,7 +337,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "inspect: on adaptive runtime prefer search_project_texts/read_files even for one query/range",
         "run_shell for a short tightly related shell chain",
         "run_script for program-like shell content",
-        "edit: after read_file/read_files, apply_text_edits with current sha is the default",
+        "edit: after read_files, apply_text_edits with current sha is the default",
         "even when many lines change",
         "use apply_patch only when contextual/large multi-hunk patch form is materially clearer",
         "external diffs use apply_unified_diff",
@@ -598,9 +594,7 @@ fn local_coding_compatibility_surface_stays_exact_and_ordered() {
             "project_overview",
             "list_project_tracked_files",
             "list_project_files",
-            "search_project_text",
             "search_project_texts",
-            "read_file",
             "read_files",
             "lsp_status",
             "document_symbols",
@@ -618,8 +612,6 @@ fn local_coding_compatibility_surface_stays_exact_and_ordered() {
             "run_shell",
             "run_job",
             "observe_jobs",
-            "job_status",
-            "job_log",
             "list_jobs",
             "stop_job",
             "cargo_fmt",
@@ -630,7 +622,6 @@ fn local_coding_compatibility_surface_stays_exact_and_ordered() {
             "git_status",
             "git_log",
             "git_review_summary",
-            "git_diff",
             "git_diff_hunks",
             "show_changes",
             "workspace_hygiene_check",

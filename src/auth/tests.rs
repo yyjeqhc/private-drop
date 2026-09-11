@@ -286,7 +286,7 @@ fn gate_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
                 .push(Router::with_path("tools/call").post(echo_ok))
                 .push(Router::with_path("future/authenticated-route").post(echo_ok))
                 .push(Router::with_path("projects/list").post(echo_ok))
-                .push(Router::with_path("projects/read_file").post(echo_ok))
+                .push(Router::with_path("projects/git_status").post(echo_ok))
                 .push(Router::with_path("projects/run_job").post(echo_ok))
                 .push(Router::with_path("jobs/list").post(echo_ok))
                 .push(Router::with_path("audit/sessions").post(echo_ok))
@@ -1969,7 +1969,7 @@ async fn oauth2_scope_gate_matrix() {
     // A granted scope opens exactly its own surface…
     for (scopes, path) in [
         ("runtime:read", "/api/runtime/status"),
-        ("project:read", "/api/projects/read_file"),
+        ("project:read", "/api/projects/git_status"),
         ("job:run", "/api/projects/run_job"),
     ] {
         let (_tmp, service, token) = gate_oauth2_token_with_scopes(scopes).await;
@@ -1987,7 +1987,7 @@ async fn oauth2_scope_gate_matrix() {
         ),
         (
             "runtime:read",
-            "/api/projects/read_file",
+            "/api/projects/git_status",
             Some(SCOPE_PROJECT_READ),
         ),
         (
@@ -2045,7 +2045,7 @@ async fn api_token_obeys_declared_scope_and_unknown_route_policy() {
 
     for path in [
         "/api/runtime/status",
-        "/api/projects/read_file",
+        "/api/projects/git_status",
         "/api/projects/run_job",
     ] {
         let (status, body) = gate_send(&service, path, Some(&user_token)).await;
@@ -2054,7 +2054,7 @@ async fn api_token_obeys_declared_scope_and_unknown_route_policy() {
 
     let (status, body) = gate_send(
         &service,
-        "/api/projects/read_file",
+        "/api/projects/git_status",
         Some(&runtime_only_token),
     )
     .await;

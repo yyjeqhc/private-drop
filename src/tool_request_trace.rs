@@ -2179,7 +2179,7 @@ mod tests {
                 "trace-background-writer".into(),
                 "none",
                 "tools/call",
-                Some("read_file".into()),
+                Some("read_files".into()),
             );
             guard.capture_payload("raw_arguments", &json!({"path": "README.md"}));
             let _ = done_tx.send(());
@@ -2214,7 +2214,7 @@ mod tests {
             "trace-fail-open".into(),
             "-",
             "POST /api/tools/call",
-            Some("read_file".into()),
+            Some("read_files".into()),
         );
         guard.capture_payload("raw_arguments", &json!({"path": "README.md"}));
         drop(guard);
