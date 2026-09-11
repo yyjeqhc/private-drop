@@ -17,6 +17,8 @@ pub(super) fn tool_supports_result_app(tool_name: &str) -> bool {
             | "cargo_test"
             | "go_test"
             | "validation_summary"
+            | "show_changes"
+            | "git_review_summary"
     )
 }
 
@@ -511,6 +513,361 @@ fn validation_summary_presentation(output: &Value) -> Option<Value> {
     }))
 }
 
+fn safe_label(value: &Value) -> Option<String> {
+    let value = value.as_str()?;
+    if value.is_empty()
+        || !value
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | '-'))
+    {
+        return None;
+    }
+    bounded_text(&Value::String(value.to_string()))
+}
+
+fn safe_repo_relative_path(value: &Value) -> Option<String> {
+    let path = value.as_str()?;
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.starts_with('\\')
+        || path.contains("://")
+        || path.chars().any(char::is_control)
+        || path
+            .split(|ch| ch == '/' || ch == '\\')
+            .any(|component| component == "..")
+    {
+        return None;
+    }
+    let bytes = path.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+    {
+        return None;
+    }
+    bounded_text(value)
+}
+
+fn short_git_commit(value: &Value) -> Option<String> {
+    let value = value.as_str()?;
+    if !(4..=40).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(value[..value.len().min(8)].to_ascii_lowercase())
+}
+
+fn bounded_safe_labels(source: &Value) -> (Vec<Value>, bool) {
+    let Some(source) = source.as_array() else {
+        return (Vec::new(), false);
+    };
+    let mut values = Vec::new();
+    let mut truncated = false;
+    for value in source {
+        if values.len() == MAX_MCP_PRESENTATION_ITEMS {
+            truncated = true;
+            break;
+        }
+        if let Some(value) = safe_label(value) {
+            values.push(Value::String(value));
+        } else {
+            truncated = true;
+        }
+    }
+    (
+        values,
+        truncated || source.len() > MAX_MCP_PRESENTATION_ITEMS,
+    )
+}
+
+fn show_changes_file_presentation(file: &Value) -> Option<Value> {
+    file.as_object()?;
+    let path = file.get("path").and_then(safe_repo_relative_path)?;
+    let mut item = Map::new();
+    item.insert("path".to_string(), Value::String(path));
+    if let Some(status) = file.get("status").and_then(safe_label) {
+        item.insert("status".to_string(), Value::String(status));
+    }
+    if let Some(kind) = file.get("kind").and_then(safe_label) {
+        item.insert("kind".to_string(), Value::String(kind));
+    }
+    for key in ["staged", "unstaged"] {
+        copy_scalar(file, &mut item, key);
+    }
+    if let Some(old_path) = file.get("old_path").and_then(safe_repo_relative_path) {
+        item.insert("old_path".to_string(), Value::String(old_path));
+    }
+    Some(Value::Object(item))
+}
+
+fn show_changes_status_observation(output: &Value) -> Option<Value> {
+    let observation = output.get("status_observation")?;
+    observation.as_object()?;
+    let mut result = Map::new();
+    for key in ["status", "reason_code"] {
+        if let Some(value) = observation.get(key).and_then(safe_label) {
+            result.insert(key.to_string(), Value::String(value));
+        }
+    }
+    copy_scalar(observation, &mut result, "exit_code");
+    (!result.is_empty()).then_some(Value::Object(result))
+}
+
+fn show_changes_presentation(output: &Value) -> Option<Value> {
+    output.as_object()?;
+    let mut presentation = Map::new();
+    presentation.insert("version".to_string(), Value::from(MCP_PRESENTATION_VERSION));
+    presentation.insert("kind".to_string(), Value::String("git_changes".to_string()));
+    for key in ["branch"] {
+        copy_bounded_text(output, &mut presentation, key);
+    }
+    for key in ["upstream_status", "upstream_reason_code"] {
+        if let Some(value) = output.get(key).and_then(safe_label) {
+            presentation.insert(key.to_string(), Value::String(value));
+        }
+    }
+    for key in [
+        "git_available",
+        "non_git_project",
+        "ahead",
+        "behind",
+        "clean",
+        "files_total",
+        "files_returned",
+        "files_truncated",
+        "files_limit",
+        "transport_safe",
+        "output_truncated",
+    ] {
+        copy_scalar(output, &mut presentation, key);
+    }
+    if let Some(observation) = show_changes_status_observation(output) {
+        presentation.insert("status_observation".to_string(), observation);
+    }
+    if let Some(short) = output.pointer("/head/short").and_then(short_git_commit) {
+        presentation.insert("head".to_string(), json!({"short": short}));
+    }
+    if let Some(counts) = output.get("counts") {
+        if counts.is_object() {
+            let mut bounded_counts = Map::new();
+            for key in [
+                "modified",
+                "added",
+                "deleted",
+                "renamed",
+                "copied",
+                "untracked",
+                "conflicted",
+                "staged",
+                "unstaged",
+            ] {
+                copy_scalar(counts, &mut bounded_counts, key);
+            }
+            presentation.insert("counts".to_string(), Value::Object(bounded_counts));
+        }
+    }
+    let (truncation_reasons, reasons_truncated) = output
+        .get("truncation_reasons")
+        .map(bounded_safe_labels)
+        .unwrap_or_default();
+    if !truncation_reasons.is_empty() {
+        presentation.insert(
+            "truncation_reasons".to_string(),
+            Value::Array(truncation_reasons),
+        );
+    }
+    if reasons_truncated {
+        presentation.insert(
+            "truncation_reasons_truncated".to_string(),
+            Value::Bool(true),
+        );
+    }
+
+    if let Some(source_files) = output.get("files").and_then(Value::as_array) {
+        let mut files = Vec::new();
+        let mut items_truncated = false;
+        for file in source_files {
+            if files.len() == MAX_MCP_PRESENTATION_ITEMS {
+                items_truncated = true;
+                break;
+            }
+            if let Some(file) = show_changes_file_presentation(file) {
+                files.push(file);
+            } else {
+                items_truncated = true;
+            }
+        }
+        presentation.insert("files".to_string(), Value::Array(files));
+        presentation.insert(
+            "items_truncated".to_string(),
+            Value::Bool(items_truncated || source_files.len() > MAX_MCP_PRESENTATION_ITEMS),
+        );
+    }
+    Some(Value::Object(presentation))
+}
+
+fn review_file_presentation(file: &Value) -> Option<Value> {
+    file.as_object()?;
+    let path_omitted = file
+        .get("path_omitted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let path = match file.get("path") {
+        Some(value) if value.is_string() => Some(safe_repo_relative_path(value)?),
+        _ if path_omitted => None,
+        _ => return None,
+    };
+    let mut item = Map::new();
+    if let Some(path) = path {
+        item.insert("path".to_string(), Value::String(path));
+    }
+    item.insert("path_omitted".to_string(), Value::Bool(path_omitted));
+    if let Some(previous_path) = file.get("previous_path").and_then(safe_repo_relative_path) {
+        item.insert("previous_path".to_string(), Value::String(previous_path));
+    }
+    if let Some(status) = file.get("status").and_then(safe_label) {
+        item.insert("status".to_string(), Value::String(status));
+    }
+    for key in ["additions", "deletions", "binary", "gitlink"] {
+        copy_scalar(file, &mut item, key);
+    }
+    let (classes, classes_truncated) = file
+        .get("classes")
+        .map(bounded_safe_labels)
+        .unwrap_or_default();
+    if !classes.is_empty() {
+        item.insert("classes".to_string(), Value::Array(classes));
+    }
+    if classes_truncated {
+        item.insert("classes_truncated".to_string(), Value::Bool(true));
+    }
+    Some(Value::Object(item))
+}
+
+fn git_review_file_classes_presentation(output: &Value) -> Option<Value> {
+    let classes = output.get("file_classes")?;
+    classes.as_object()?;
+    let mut result = Map::new();
+    copy_scalar(classes, &mut result, "partial");
+    if let Some(counts) = classes.get("counts_observed").and_then(Value::as_object) {
+        let mut bounded_counts = Map::new();
+        let mut truncated = false;
+        for (key, value) in counts {
+            if bounded_counts.len() == MAX_MCP_PRESENTATION_ITEMS {
+                truncated = true;
+                break;
+            }
+            let label = safe_label(&Value::String(key.clone()));
+            if let Some(label) = label.filter(|_| value.is_number()) {
+                bounded_counts.insert(label, value.clone());
+            } else {
+                truncated = true;
+            }
+        }
+        result.insert("counts_observed".to_string(), Value::Object(bounded_counts));
+        result.insert(
+            "counts_truncated".to_string(),
+            Value::Bool(truncated || counts.len() > MAX_MCP_PRESENTATION_ITEMS),
+        );
+    }
+    Some(Value::Object(result))
+}
+
+fn git_review_presentation(output: &Value) -> Option<Value> {
+    output.as_object()?;
+    let mut presentation = Map::new();
+    presentation.insert("version".to_string(), Value::from(MCP_PRESENTATION_VERSION));
+    presentation.insert("kind".to_string(), Value::String("git_review".to_string()));
+    for key in ["deterministic", "truncated"] {
+        copy_scalar(output, &mut presentation, key);
+    }
+    if let Some(reason_code) = output.get("reason_code").and_then(safe_label) {
+        presentation.insert("reason_code".to_string(), Value::String(reason_code));
+    }
+    if let Some(scope) = output.get("scope") {
+        if scope.is_object() {
+            let mut bounded_scope = Map::new();
+            for (source, target) in [
+                ("requested_base", "base"),
+                ("requested_head", "head"),
+                ("merge_base", "merge_base"),
+            ] {
+                if let Some(value) = scope.get(source).and_then(short_git_commit) {
+                    bounded_scope.insert(target.to_string(), Value::String(value));
+                }
+            }
+            for key in ["base_is_ancestor", "commit_count"] {
+                copy_scalar(scope, &mut bounded_scope, key);
+            }
+            presentation.insert("scope".to_string(), Value::Object(bounded_scope));
+        }
+    }
+    for (source_key, target_key, fields) in [
+        (
+            "stats",
+            "stats",
+            &["files_changed", "insertions", "deletions", "binary_files"][..],
+        ),
+        (
+            "coverage",
+            "coverage",
+            &[
+                "production_changed",
+                "tests_changed",
+                "docs_changed",
+                "partial",
+            ][..],
+        ),
+        (
+            "truncation",
+            "truncation",
+            &[
+                "files_total",
+                "files_returned",
+                "files_truncated",
+                "classification_partial",
+                "file_stats_partial",
+                "file_modes_partial",
+                "symbols_partial",
+                "subsystems_partial",
+                "signals_partial",
+            ][..],
+        ),
+    ] {
+        if let Some(source) = output.get(source_key).filter(|value| value.is_object()) {
+            let mut target = Map::new();
+            for key in fields {
+                copy_scalar(source, &mut target, key);
+            }
+            presentation.insert(target_key.to_string(), Value::Object(target));
+        }
+    }
+    if let Some(classes) = git_review_file_classes_presentation(output) {
+        presentation.insert("file_classes".to_string(), classes);
+    }
+    if let Some(source_files) = output.get("files").and_then(Value::as_array) {
+        let mut files = Vec::new();
+        let mut items_truncated = false;
+        for file in source_files {
+            if files.len() == MAX_MCP_PRESENTATION_ITEMS {
+                items_truncated = true;
+                break;
+            }
+            if let Some(file) = review_file_presentation(file) {
+                files.push(file);
+            } else {
+                items_truncated = true;
+            }
+        }
+        presentation.insert("files".to_string(), Value::Array(files));
+        presentation.insert(
+            "items_truncated".to_string(),
+            Value::Bool(items_truncated || source_files.len() > MAX_MCP_PRESENTATION_ITEMS),
+        );
+    }
+    Some(Value::Object(presentation))
+}
+
 fn presentation_from_call_result(tool_name: &str, call_result: &Value) -> Option<Value> {
     if !tool_supports_result_app(tool_name) {
         return None;
@@ -522,6 +879,8 @@ fn presentation_from_call_result(tool_name: &str, call_result: &Value) -> Option
         "observe_jobs" => observe_jobs_presentation(output),
         "cargo_check" | "cargo_test" | "go_test" => validation_run_presentation(tool_name, output),
         "validation_summary" => validation_summary_presentation(output),
+        "show_changes" => show_changes_presentation(output),
+        "git_review_summary" => git_review_presentation(output),
         _ => None,
     }
 }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::runner_protocol::{
     RunnerCapabilities, RunnerJobUpdateRequest, RunnerPollRequest, RunnerProjectSummary,
-    RunnerRegisterRequest,
+    RunnerRegisterRequest, RunnerResultRequest,
 };
 use crate::tool_runtime::{ObserveJobsItem, ToolCall};
 
@@ -18,20 +18,28 @@ fn presentation<'a>(call_result: &'a Value) -> &'a Value {
     &call_result["_meta"][super::super::presentation::MCP_PRESENTATION_META_KEY]
 }
 
-const RESULT_APP_TOOLS: [&str; 6] = [
+const RESULT_APP_TOOLS: [&str; 8] = [
     "list_jobs",
     "observe_jobs",
     "cargo_check",
     "cargo_test",
     "go_test",
     "validation_summary",
+    "show_changes",
+    "git_review_summary",
 ];
-const UNBOUND_RESULT_APP_TOOLS: [&str; 5] = [
+const UNBOUND_RESULT_APP_TOOLS: [&str; 11] = [
     "cargo_fmt",
     "run_shell",
     "run_process",
     "run_job",
     "finish_coding_task",
+    "git_diff_summary",
+    "git_diff",
+    "git_diff_hunks",
+    "git_status",
+    "git_commit_paths",
+    "git_restore_paths",
 ];
 
 fn assert_presentation_strings_bounded(value: &Value) {
@@ -966,6 +974,409 @@ fn validation_summary_presentation_bounds_events_and_excludes_private_event_fiel
 }
 
 #[test]
+fn git_changes_presentation_preserves_canonical_workspace_states() {
+    let clean = projected_result(
+        "show_changes",
+        true,
+        json!({
+            "git_available": true,
+            "non_git_project": false,
+            "branch": "main",
+            "upstream_status": "absent",
+            "upstream_reason_code": "no_upstream",
+            "ahead": null,
+            "behind": null,
+            "head": {"commit": "a".repeat(40), "short": "aaaaaaaa", "summary": "canonical subject"},
+            "status_observation": {"status": "observed", "reason_code": null, "exit_code": 0},
+            "clean": true,
+            "counts": {"modified": 0, "added": 0, "deleted": 0, "renamed": 0, "copied": 0, "untracked": 0, "conflicted": 0, "staged": 0, "unstaged": 0},
+            "files": [],
+            "files_total": 0,
+            "files_returned": 0,
+            "files_truncated": false,
+            "files_limit": 200,
+            "transport_safe": true,
+            "output_truncated": false,
+            "truncation_reasons": []
+        }),
+    );
+    let clean_meta = presentation(&clean);
+    assert_eq!(clean_meta["kind"], "git_changes");
+    assert_eq!(clean_meta["git_available"], true);
+    assert_eq!(clean_meta["clean"], true);
+    assert_eq!(clean_meta["branch"], "main");
+    assert_eq!(clean_meta["upstream_status"], "absent");
+    assert_eq!(clean_meta["head"]["short"], "aaaaaaaa");
+    assert_eq!(clean_meta["files_total"], 0);
+
+    let dirty = projected_result(
+        "show_changes",
+        true,
+        json!({
+            "git_available": true,
+            "non_git_project": false,
+            "branch": "feature/git-card",
+            "upstream_status": "unobserved",
+            "upstream_reason_code": "git_status_unobserved",
+            "ahead": 2,
+            "behind": 1,
+            "head": {"short": "12345678"},
+            "status_observation": {"status": "observed", "reason_code": null, "exit_code": 0},
+            "clean": false,
+            "counts": {"modified": 2, "added": 1, "deleted": 1, "renamed": 1, "copied": 0, "untracked": 1, "conflicted": 1, "staged": 2, "unstaged": 3},
+            "files": [
+                {"path": "src/lib.rs", "status": "modified", "staged": true, "unstaged": true, "kind": "tracked"},
+                {"path": "src/new.rs", "old_path": "src/old.rs", "status": "renamed", "staged": true, "unstaged": false, "kind": "tracked"},
+                {"path": "notes.txt", "status": "untracked", "staged": false, "unstaged": false, "kind": "untracked"},
+                {"path": "src/conflict.rs", "status": "conflicted", "staged": false, "unstaged": false, "kind": "conflicted"}
+            ],
+            "files_total": 4,
+            "files_returned": 4,
+            "files_truncated": false,
+            "files_limit": 200,
+            "transport_safe": true,
+            "output_truncated": false,
+            "truncation_reasons": []
+        }),
+    );
+    let dirty_meta = presentation(&dirty);
+    assert_eq!(dirty_meta["clean"], false);
+    assert_eq!(dirty_meta["ahead"], 2);
+    assert_eq!(dirty_meta["behind"], 1);
+    assert_eq!(dirty_meta["counts"]["staged"], 2);
+    assert_eq!(dirty_meta["counts"]["unstaged"], 3);
+    assert_eq!(dirty_meta["counts"]["untracked"], 1);
+    assert_eq!(dirty_meta["counts"]["conflicted"], 1);
+    assert_eq!(dirty_meta["counts"]["renamed"], 1);
+    assert_eq!(dirty_meta["files"][1]["old_path"], "src/old.rs");
+
+    let non_git = projected_result(
+        "show_changes",
+        true,
+        json!({
+            "git_available": false,
+            "non_git_project": true,
+            "branch": null,
+            "upstream_status": "unobserved",
+            "upstream_reason_code": "git_unavailable",
+            "ahead": null,
+            "behind": null,
+            "head": {"short": null},
+            "status_observation": {"status": "non_git", "reason_code": "not_a_git_repository", "exit_code": 128},
+            "clean": null,
+            "counts": {"modified": 0, "added": 0, "deleted": 0, "renamed": 0, "copied": 0, "untracked": 0, "conflicted": null, "staged": 0, "unstaged": 0},
+            "files": [],
+            "files_total": null,
+            "files_returned": 0,
+            "files_truncated": false,
+            "transport_safe": false,
+            "output_truncated": false,
+            "truncation_reasons": []
+        }),
+    );
+    let non_git_meta = presentation(&non_git);
+    assert_eq!(non_git_meta["git_available"], false);
+    assert_eq!(non_git_meta["non_git_project"], true);
+    assert!(
+        non_git_meta.get("clean").is_none(),
+        "unavailable Git status must not become clean"
+    );
+    assert_eq!(non_git_meta["status_observation"]["status"], "non_git");
+    assert_eq!(non_git_meta["upstream_status"], "unobserved");
+}
+
+#[test]
+fn git_changes_presentation_bounds_paths_and_excludes_raw_private_fields() {
+    let secret = "GIT_PRESENTATION_SECRET_MARKER";
+    let mut files = vec![
+        json!({"path": format!("/private/{secret}"), "status": "modified", "kind": "tracked"}),
+        json!({"path": format!("https://example.invalid/{secret}"), "status": "modified", "kind": "tracked"}),
+        json!({"path": format!("../{secret}"), "status": "modified", "kind": "tracked"}),
+        json!({"path": format!("C:\\private\\{secret}"), "status": "modified", "kind": "tracked"}),
+        json!({"path": format!("src/{}{}", "x".repeat(320), secret), "status": "modified", "staged": false, "unstaged": true, "kind": "tracked"}),
+    ];
+    files.extend((0..12).map(|index| {
+        json!({
+            "path": format!("src/safe-{index}.rs"),
+            "status": if index == 0 { "renamed" } else { "modified" },
+            "old_path": (index == 0).then(|| format!("old/safe-{index}.rs")),
+            "staged": index % 2 == 0,
+            "unstaged": index % 2 == 1,
+            "kind": "tracked"
+        })
+    }));
+    let framed = projected_result(
+        "show_changes",
+        true,
+        json!({
+            "git_available": true,
+            "non_git_project": false,
+            "branch": "feature/git-card",
+            "upstream_status": "ahead",
+            "upstream_reason_code": "tracking_branch_observed",
+            "upstream": format!("https://user:{secret}@example.invalid/repo.git"),
+            "ahead": 1,
+            "behind": 0,
+            "head": {"short": "abcdef12", "summary": secret},
+            "status_observation": {"status": "observed", "reason_code": null, "exit_code": 0, "repository_probe": format!("/{secret}")},
+            "clean": false,
+            "counts": {"modified": 16, "added": 0, "deleted": 0, "renamed": 1, "copied": 0, "untracked": 0, "conflicted": 0, "staged": 6, "unstaged": 7},
+            "files": files,
+            "files_total": 17,
+            "files_returned": 17,
+            "files_truncated": true,
+            "files_limit": 200,
+            "transport_safe": true,
+            "output_truncated": true,
+            "truncation_reasons": ["status_file_count_limit"],
+            "diff_stat": format!("src/{secret}.rs | 99 +++++"),
+            "diff": format!("RAW_DIFF_{secret}"),
+            "hunks": [{"diff": format!("RAW_HUNK_{secret}")}],
+            "untracked_previews": [{"body": format!("PREVIEW_{secret}")}],
+            "porcelain": format!(" M /private/{secret}"),
+            "stdout": format!("STDOUT_{secret}"),
+            "stderr": format!("STDERR_{secret}"),
+            "command": format!("git status {secret}"),
+            "argv": [secret],
+            "cwd": format!("/absolute/{secret}"),
+            "remote_url": format!("https://{secret}@example.invalid"),
+            "Authorization": format!("Bearer {secret}"),
+            "credential": secret,
+            "token": secret,
+            "suggested_next_actions": [format!("do something with {secret}")]
+        }),
+    );
+    let meta = presentation(&framed);
+    assert_eq!(meta["kind"], "git_changes");
+    assert!(meta["files"].as_array().unwrap().len() <= 8);
+    assert_eq!(meta["items_truncated"], true);
+    assert_eq!(meta["files_truncated"], true);
+    assert_eq!(meta["output_truncated"], true);
+    assert!(meta["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["path"] == "src/safe-0.rs"));
+    let oversized = meta["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|item| {
+            item["path"]
+                .as_str()
+                .filter(|path| path.starts_with("src/xxx"))
+        })
+        .expect("bounded oversized repository-relative path");
+    assert!(oversized.chars().count() <= 256);
+    assert!(!oversized.contains(secret));
+    assert_presentation_strings_bounded(meta);
+    let serialized = serde_json::to_string(meta).unwrap();
+    for forbidden in [
+        secret,
+        "RAW_DIFF_",
+        "RAW_HUNK_",
+        "PREVIEW_",
+        "\"diff_stat\"",
+        "\"hunks\"",
+        "\"untracked_previews\"",
+        "\"porcelain\"",
+        "\"stdout\"",
+        "\"stderr\"",
+        "\"command\"",
+        "\"argv\"",
+        "\"cwd\"",
+        "\"remote_url\"",
+        "\"Authorization\"",
+        "\"credential\"",
+        "\"token\"",
+        "\"suggested_next_actions\"",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "leaked {forbidden}: {serialized}"
+        );
+    }
+}
+
+#[test]
+fn git_review_presentation_preserves_scope_stats_files_and_partial_state() {
+    let base = "a".repeat(40);
+    let head = "b".repeat(40);
+    let complete = projected_result(
+        "git_review_summary",
+        true,
+        json!({
+            "scope": {"requested_base": base, "requested_head": head, "merge_base": "a".repeat(40), "base_is_ancestor": true, "commit_count": 3, "diff_range": "raw range"},
+            "stats": {"files_changed": 4, "insertions": 12, "deletions": 7, "binary_files": 1},
+            "file_classes": {"counts_observed": {"production": 2, "test": 1, "docs": 1}, "partial": false},
+            "coverage": {"production_changed": true, "tests_changed": true, "docs_changed": true, "partial": false},
+            "truncation": {"files_total": 4, "files_returned": 4, "files_truncated": false, "classification_partial": false, "file_stats_partial": false, "file_modes_partial": false, "symbols_partial": false, "subsystems_partial": false, "signals_partial": false},
+            "files": [
+                {"path": "src/new.rs", "previous_path": "src/old.rs", "path_omitted": false, "status": "renamed", "additions": 5, "deletions": 2, "binary": false, "gitlink": false, "classes": ["production"], "symbols": ["ignored"]},
+                {"path": "src/added.rs", "previous_path": null, "path_omitted": false, "status": "added", "additions": 4, "deletions": 0, "binary": false, "gitlink": false, "classes": ["production"]},
+                {"path": "tests/deleted.rs", "previous_path": null, "path_omitted": false, "status": "deleted", "additions": 0, "deletions": 5, "binary": false, "gitlink": false, "classes": ["test"]},
+                {"path": "docs/blob.bin", "previous_path": null, "path_omitted": false, "status": "modified", "additions": null, "deletions": null, "binary": true, "gitlink": false, "classes": ["docs"]}
+            ],
+            "deterministic": true,
+            "llm_summary": false,
+            "truncated": false,
+            "reason_code": null
+        }),
+    );
+    let meta = presentation(&complete);
+    assert_eq!(meta["kind"], "git_review");
+    assert_eq!(meta["scope"]["base"], "aaaaaaaa");
+    assert_eq!(meta["scope"]["head"], "bbbbbbbb");
+    assert_eq!(meta["scope"]["base_is_ancestor"], true);
+    assert_eq!(meta["scope"]["commit_count"], 3);
+    assert_eq!(meta["stats"]["files_changed"], 4);
+    assert_eq!(meta["stats"]["insertions"], 12);
+    assert_eq!(meta["stats"]["deletions"], 7);
+    assert_eq!(meta["stats"]["binary_files"], 1);
+    assert_eq!(meta["coverage"]["production_changed"], true);
+    assert_eq!(meta["coverage"]["tests_changed"], true);
+    assert_eq!(meta["coverage"]["docs_changed"], true);
+    assert_eq!(meta["files"][0]["status"], "renamed");
+    assert_eq!(meta["files"][0]["previous_path"], "src/old.rs");
+    assert_eq!(meta["files"][3]["binary"], true);
+    assert_eq!(meta["truncated"], false);
+
+    let partial = projected_result(
+        "git_review_summary",
+        true,
+        json!({
+            "scope": {"requested_base": "c".repeat(40), "requested_head": "d".repeat(40), "merge_base": "c".repeat(40), "base_is_ancestor": true, "commit_count": 9},
+            "stats": {"files_changed": 120, "insertions": 500, "deletions": 250, "binary_files": 2},
+            "file_classes": {"counts_observed": {"production": 70}, "partial": true},
+            "coverage": {"production_changed": true, "tests_changed": null, "docs_changed": null, "partial": true},
+            "truncation": {"files_total": 120, "files_returned": 80, "files_truncated": true, "classification_partial": true, "file_stats_partial": true, "file_modes_partial": false, "symbols_partial": true, "subsystems_partial": true, "signals_partial": true},
+            "files": [{"path": null, "previous_path": null, "path_omitted": true, "status": "modified", "additions": null, "deletions": null, "binary": null, "gitlink": null, "classes": []}],
+            "deterministic": true,
+            "truncated": true
+        }),
+    );
+    let partial_meta = presentation(&partial);
+    assert_eq!(partial_meta["truncated"], true);
+    assert_eq!(partial_meta["coverage"]["partial"], true);
+    assert_eq!(partial_meta["file_classes"]["partial"], true);
+    assert_eq!(partial_meta["truncation"]["files_total"], 120);
+    assert_eq!(partial_meta["truncation"]["files_returned"], 80);
+    assert_eq!(partial_meta["truncation"]["files_truncated"], true);
+    assert_eq!(partial_meta["truncation"]["classification_partial"], true);
+    assert_eq!(partial_meta["files"][0]["path_omitted"], true);
+}
+
+#[test]
+fn git_review_presentation_bounds_file_metadata_and_excludes_raw_diff_context() {
+    let secret = "GIT_REVIEW_PRESENTATION_SECRET";
+    let base = "e".repeat(40);
+    let head = "f".repeat(40);
+    let class_counts = (0..12)
+        .map(|index| (format!("class_{index}"), Value::from(index + 1)))
+        .collect::<serde_json::Map<_, _>>();
+    let mut files = vec![json!({
+        "path": format!("/absolute/{secret}"), "previous_path": null, "path_omitted": false,
+        "status": "modified", "additions": 1, "deletions": 1, "binary": false, "gitlink": false,
+        "classes": ["production"], "symbols": [secret]
+    })];
+    files.extend((0..12).map(|index| {
+        json!({
+            "path": format!("src/review-{index}.rs"),
+            "previous_path": (index == 0).then(|| format!("/private/{secret}")),
+            "path_omitted": false,
+            "status": if index == 0 { "renamed" } else { "modified" },
+            "additions": index + 1,
+            "deletions": index,
+            "binary": index == 3,
+            "gitlink": index == 4,
+            "classes": (0..12).map(|class| format!("class_{class}")).collect::<Vec<_>>(),
+            "symbols": [format!("fn {secret}_{index}()")],
+            "symbol_inspection": secret
+        })
+    }));
+    let framed = projected_result(
+        "git_review_summary",
+        true,
+        json!({
+            "scope": {"requested_base": base, "requested_head": head, "merge_base": "e".repeat(40), "base_is_ancestor": true, "commit_count": 2, "diff_range": format!("{}..{}", "e".repeat(40), "f".repeat(40))},
+            "stats": {"files_changed": 13, "insertions": 91, "deletions": 78, "binary_files": 1},
+            "file_classes": {"counts_observed": class_counts, "partial": false},
+            "coverage": {"production_changed": true, "tests_changed": false, "docs_changed": false, "partial": false},
+            "truncation": {"files_total": 13, "files_returned": 13, "files_truncated": false, "classification_partial": false, "file_stats_partial": false, "file_modes_partial": false, "symbols_partial": true, "subsystems_partial": false, "signals_partial": false},
+            "files": files,
+            "subsystems": [{"name": secret, "paths": [format!("/private/{secret}")]}],
+            "signals": [{"name": secret, "reason": secret, "paths": [format!("/private/{secret}")]}],
+            "warnings": [secret],
+            "raw_diff": format!("@@ -1 +1 @@ {secret}"),
+            "raw_hunk": format!("HUNK_{secret}"),
+            "stdout": secret,
+            "stderr": secret,
+            "command": secret,
+            "argv": [secret],
+            "cwd": format!("/private/{secret}"),
+            "remote_url": format!("https://{secret}@example.invalid"),
+            "Authorization": format!("Bearer {secret}"),
+            "credential": secret,
+            "token": secret,
+            "deterministic": true,
+            "llm_summary": false,
+            "truncated": true,
+            "reason_code": null
+        }),
+    );
+    let meta = presentation(&framed);
+    assert_eq!(meta["kind"], "git_review");
+    assert!(meta["files"].as_array().unwrap().len() <= 8);
+    assert_eq!(meta["items_truncated"], true);
+    assert_eq!(
+        meta["file_classes"]["counts_observed"]
+            .as_object()
+            .unwrap()
+            .len(),
+        8
+    );
+    assert_eq!(meta["file_classes"]["counts_truncated"], true);
+    assert!(meta["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["classes"].as_array().unwrap().len() <= 8));
+    assert_eq!(meta["files"][0]["path"], "src/review-0.rs");
+    assert!(meta["files"][0].get("previous_path").is_none());
+    assert_eq!(meta["stats"]["files_changed"], 13);
+    assert_presentation_strings_bounded(meta);
+    let serialized = serde_json::to_string(meta).unwrap();
+    for forbidden in [
+        secret,
+        &"e".repeat(40),
+        &"f".repeat(40),
+        "@@ -1 +1 @@",
+        "HUNK_",
+        "\"subsystems\"",
+        "\"signals\"",
+        "\"symbols\"",
+        "\"warnings\"",
+        "\"raw_diff\"",
+        "\"raw_hunk\"",
+        "\"stdout\"",
+        "\"stderr\"",
+        "\"command\"",
+        "\"argv\"",
+        "\"cwd\"",
+        "\"remote_url\"",
+        "\"Authorization\"",
+        "\"credential\"",
+        "\"token\"",
+        "\"diff_range\"",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "leaked {forbidden}: {serialized}"
+        );
+    }
+}
+
+#[test]
 fn validation_presentation_is_fail_open_for_unknown_shapes_and_unbound_tools() {
     let canonical = ToolResult::ok(json!({"future_validation_shape": [1, 2, 3]}));
     let mut framed = super::super::tools::mcp_runtime_tool_result("cargo_check", false, canonical);
@@ -998,6 +1409,10 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "document.createElement(\"details\")",
         "validation_run",
         "validation_summary",
+        "git_changes",
+        "git_review",
+        "Git changes",
+        "Committed review",
         "Cargo Test",
         "Array.from",
         "Cargo test zero tests",
@@ -1043,6 +1458,9 @@ fn result_app_auth() -> crate::auth::AuthContext {
 
 async fn register_job_runner(runtime: &ToolRuntime, auth: &crate::auth::AuthContext) {
     let capabilities = RunnerCapabilities {
+        shell: true,
+        git: true,
+        internal_posix_script: true,
         async_jobs: true,
         async_shell_jobs: true,
         structured_validation_argv: true,
@@ -1185,6 +1603,64 @@ async fn complete_result_app_validation_job(
         })
         .await
         .unwrap();
+}
+
+async fn complete_result_app_show_changes(
+    runtime: &ToolRuntime,
+    request: &crate::runner_protocol::RunnerRequest,
+) {
+    assert_eq!(request.kind, "run_internal_posix_script");
+    let stdout = crate::tool_runtime::framed_clean_show_changes_test_stdout(
+        "secret canonical subject not projected",
+        false,
+    );
+    runtime
+        .runner_registry
+        .complete(RunnerResultRequest {
+            client_id: "result-app-runner".to_string(),
+            runner_instance_id: "inst-result-app".to_string(),
+            request_id: request.request_id.clone(),
+            exit_code: Some(0),
+            stdout: Some(stdout),
+            stderr: Some(String::new()),
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+}
+
+async fn mcp_show_changes_result(
+    runtime: &ToolRuntime,
+    auth: &crate::auth::AuthContext,
+    id: i64,
+    ui: bool,
+    server_apps_enabled: bool,
+) -> Value {
+    let params = json!({
+        "name": "show_changes",
+        "arguments": {"project": "agent:result-app-runner:demo", "include_diff": false}
+    });
+    let params = if ui {
+        mcp_2026_ui_params(params)
+    } else {
+        mcp_2026_params(params)
+    };
+    let call = handle_with_server_apps_enabled(
+        runtime,
+        rpc("tools/call", Some(json!(id)), params),
+        Some(auth),
+        server_apps_enabled,
+    );
+    let complete = async {
+        let request = wait_for_result_app_runner_request(runtime).await;
+        complete_result_app_show_changes(runtime, &request).await;
+    };
+    let (outcome, _) = tokio::join!(call, complete);
+    let McpOutcome::Ok(body) = outcome else {
+        panic!("expected show_changes MCP result");
+    };
+    body["result"].clone()
 }
 
 #[tokio::test]
@@ -1462,6 +1938,36 @@ async fn mcp_validation_run_and_summary_use_real_canonical_contracts() {
         summary_result["structuredContent"]
     );
     assert!(plain["result"]["_meta"]
+        .get(super::super::presentation::MCP_PRESENTATION_META_KEY)
+        .is_none());
+}
+
+#[tokio::test]
+async fn mcp_show_changes_uses_real_canonical_framing_and_app_gating() {
+    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    let auth = result_app_auth();
+    register_job_runner(&runtime, &auth).await;
+
+    let ui = mcp_show_changes_result(&runtime, &auth, 3230, true, true).await;
+    let canonical = ui["structuredContent"].clone();
+    assert_eq!(canonical["output"]["git_available"], true);
+    assert_eq!(canonical["output"]["clean"], true);
+    assert_eq!(canonical["output"]["branch"], "main");
+    let meta = presentation(&ui);
+    assert_eq!(meta["kind"], "git_changes");
+    assert_eq!(meta["git_available"], true);
+    assert_eq!(meta["clean"], true);
+    assert_eq!(meta["branch"], "main");
+
+    let disabled = mcp_show_changes_result(&runtime, &auth, 3231, true, false).await;
+    assert_eq!(disabled["structuredContent"], canonical);
+    assert!(disabled["_meta"]
+        .get(super::super::presentation::MCP_PRESENTATION_META_KEY)
+        .is_none());
+
+    let plain = mcp_show_changes_result(&runtime, &auth, 3232, false, true).await;
+    assert_eq!(plain["structuredContent"], canonical);
+    assert!(plain["_meta"]
         .get(super::super::presentation::MCP_PRESENTATION_META_KEY)
         .is_none());
 }

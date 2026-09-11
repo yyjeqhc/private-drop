@@ -64,8 +64,10 @@ For a regular independent Windows Server + Runner reached through OpenAI Tunnel,
 
 On operator surfaces, clients advertising MCP Apps HTML support can display
 read-only result cards for `list_jobs`, `observe_jobs`, `cargo_check`, `cargo_test`,
-`go_test`, and `validation_summary`. Validation cards show execution outcomes,
-bounded diagnostics, and current versus historical validation evidence.
+`go_test`, `validation_summary`, `show_changes`, and `git_review_summary`.
+Validation cards show execution outcomes, bounded diagnostics, and current versus
+historical validation evidence; Git cards show bounded worktree or committed-range
+metadata without embedding raw diffs or hunks.
 Cards do not poll, retry, or invoke tools; the canonical tool result remains
 available independently. `WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata
 and resources without disabling the underlying tools.
