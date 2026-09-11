@@ -960,11 +960,11 @@ fn project_catalog_reason(error: &GatewayError) -> &'static str {
 }
 
 impl ToolRuntime {
-    pub(crate) async fn plugin_project_catalog_context_projection(
+    pub(crate) async fn project_plugin_catalog(
         &self,
         project: &crate::tool_runtime::ResolvedProject,
         auth: Option<&AuthContext>,
-    ) -> Result<Value, &'static str> {
+    ) -> Result<ProjectPluginCatalog, &'static str> {
         let project_id = crate::tool_runtime::runner_local_project_id(&project.resolved_id)
             .ok_or("project_target_unavailable")?;
         let runner = resolve_runner(self, &project.config.client_id, auth)
@@ -980,8 +980,15 @@ impl ToolRuntime {
         )
         .await
         .map_err(|error| project_catalog_reason(&error))?;
-        let catalog =
-            response_project_catalog(response).map_err(|error| project_catalog_reason(&error))?;
+        response_project_catalog(response).map_err(|error| project_catalog_reason(&error))
+    }
+
+    pub(crate) async fn plugin_project_catalog_context_projection(
+        &self,
+        project: &crate::tool_runtime::ResolvedProject,
+        auth: Option<&AuthContext>,
+    ) -> Result<Value, &'static str> {
+        let catalog = self.project_plugin_catalog(project, auth).await?;
         Ok(project_plugin_catalog_projection(
             &catalog,
             MAX_PLUGIN_CATALOG_CONTEXT_BYTES,

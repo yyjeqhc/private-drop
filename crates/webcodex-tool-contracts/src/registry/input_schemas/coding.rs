@@ -47,6 +47,11 @@ pub fn work_on_project_input_schema() -> Value {
                 "default": true,
                 "description": "Whether this bootstrap response should include the static built-in WebCodex coding-workflow guidance. Defaults to true. Set false only when the caller's current model context already retains that workflow guidance. WebCodex does not infer that from session_id or transport identity. This flag controls only model-facing workflow projection; it does not change Workflow Session state, authority, role selection, or execution semantics."
             },
+            "include_extension_catalog": {
+                "type": "boolean",
+                "default": true,
+                "description": "Whether startup should include a small bounded Skills/Plugins selection catalog. Defaults to true. Set false only when the caller's current model context already retains the relevant extension metadata. False skips the startup Skill/Plugin discovery observations. The catalog grants no authority, never loads Skill bodies, never creates Plugin bindings, and never substitutes for plugin_tool describe before invocation."
+            },
             "session_id": {
                 "type": "string",
                 "pattern": "^wc_sess_[A-Za-z0-9_]+$",

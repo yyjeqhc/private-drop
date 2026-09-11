@@ -4,6 +4,7 @@
 //! value. The projection is deterministic, bounded, path-safe, and contains
 //! only the facts a coding model needs to start or continue work.
 
+use serde::Serialize;
 use serde_json::{json, Value};
 #[cfg(test)]
 use std::collections::BTreeSet;
@@ -21,6 +22,10 @@ use super::tool_inputs::StartupDetail;
 // Reserve transport-envelope headroom so a ToolResult and the GPT Actions
 // wrapper also remain below the externally documented 32 KiB ceiling.
 pub(crate) const STANDARD_STARTUP_HARD_MAX_BYTES: usize = 30 * 1024;
+pub(crate) const STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES: usize = 6 * 1024;
+pub(crate) const STARTUP_SKILL_CATALOG_MAX_BYTES: usize = 2_900;
+pub(crate) const STARTUP_PLUGIN_CATALOG_MAX_BYTES: usize = 2_900;
+pub(crate) const STARTUP_EXTENSION_DESCRIPTION_MAX_BYTES: usize = 512;
 pub(crate) const REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON: &str =
     "not_requested_by_work_on_project";
 const INSTRUCTION_CONTENT_JSON_BUDGET: usize = 10 * 1024;
@@ -108,6 +113,206 @@ pub(crate) const REPOSITORY_MAX_ROOTS_PER_CLASS: usize = 8;
 pub(crate) const REPOSITORY_MAX_WARNINGS: usize = 8;
 pub(crate) const REPOSITORY_MAX_PROJECT_TYPE_EVIDENCE: usize = 4;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct StartupSkillEntry {
+    pub(crate) skill_id: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) source_scope: String,
+    pub(crate) trust: String,
+    pub(crate) name_conflict: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct StartupPluginEntry {
+    pub(crate) plugin: String,
+    pub(crate) name: String,
+    pub(crate) tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) description: Option<String>,
+    #[serde(skip_serializing_if = "webcodex_core::plugin::PluginSelectionAnnotations::is_empty")]
+    pub(crate) annotations: webcodex_core::plugin::PluginSelectionAnnotations,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct StartupSkillsCatalog {
+    pub(crate) status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason_code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) catalog_revision: Option<String>,
+    pub(crate) total_count: usize,
+    pub(crate) returned_count: usize,
+    pub(crate) truncated: bool,
+    pub(crate) entries: Vec<StartupSkillEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) discovery_hint: Option<&'static str>,
+}
+
+impl StartupSkillsCatalog {
+    pub(crate) fn unavailable(reason_code: &'static str) -> Self {
+        Self {
+            status: "unavailable",
+            reason_code: Some(reason_code),
+            catalog_revision: None,
+            total_count: 0,
+            returned_count: 0,
+            truncated: false,
+            entries: Vec::new(),
+            discovery_hint: Some(
+                "Use skills.catalog or skill_list for explicit discovery when available.",
+            ),
+        }
+    }
+
+    pub(crate) fn available(catalog_revision: String, entries: Vec<StartupSkillEntry>) -> Self {
+        let total_count = entries.len();
+        let mut returned = Vec::new();
+        for entry in entries {
+            let mut candidate = returned.clone();
+            candidate.push(entry);
+            let truncated = candidate.len() < total_count;
+            let projection = Self {
+                status: "available",
+                reason_code: None,
+                catalog_revision: Some(catalog_revision.clone()),
+                total_count,
+                returned_count: candidate.len(),
+                truncated,
+                entries: candidate.clone(),
+                discovery_hint: truncated.then_some(
+                    "Use skills.catalog or skill_list for broader or refreshed discovery.",
+                ),
+            };
+            if serde_json::to_vec(&projection)
+                .map(|bytes| bytes.len() <= STARTUP_SKILL_CATALOG_MAX_BYTES)
+                .unwrap_or(false)
+            {
+                returned = candidate;
+            } else {
+                break;
+            }
+        }
+        let truncated = returned.len() < total_count;
+        Self {
+            status: "available",
+            reason_code: None,
+            catalog_revision: Some(catalog_revision),
+            total_count,
+            returned_count: returned.len(),
+            truncated,
+            entries: returned,
+            discovery_hint: truncated
+                .then_some("Use skills.catalog or skill_list for broader or refreshed discovery."),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct StartupPluginsCatalog {
+    pub(crate) status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason_code: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) catalog_revision: Option<String>,
+    pub(crate) total_count: usize,
+    pub(crate) returned_count: usize,
+    pub(crate) truncated: bool,
+    pub(crate) entries: Vec<StartupPluginEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) discovery_hint: Option<&'static str>,
+}
+
+impl StartupPluginsCatalog {
+    pub(crate) fn unavailable(reason_code: &'static str) -> Self {
+        Self {
+            status: "unavailable",
+            reason_code: Some(reason_code),
+            catalog_revision: None,
+            total_count: 0,
+            returned_count: 0,
+            truncated: false,
+            entries: Vec::new(),
+            discovery_hint: Some(
+                "Use explicit plugin_tool list and describe when Plugin discovery is available.",
+            ),
+        }
+    }
+
+    pub(crate) fn available(
+        catalog_revision: String,
+        total_count: usize,
+        entries: Vec<StartupPluginEntry>,
+    ) -> Self {
+        let mut returned = Vec::new();
+        for entry in entries {
+            let mut candidate = returned.clone();
+            candidate.push(entry);
+            let truncated = candidate.len() < total_count;
+            let projection = Self {
+                status: "available",
+                reason_code: None,
+                catalog_revision: Some(catalog_revision.clone()),
+                total_count,
+                returned_count: candidate.len(),
+                truncated,
+                entries: candidate.clone(),
+                discovery_hint: truncated.then_some(
+                    "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
+                ),
+            };
+            if serde_json::to_vec(&projection)
+                .map(|bytes| bytes.len() <= STARTUP_PLUGIN_CATALOG_MAX_BYTES)
+                .unwrap_or(false)
+            {
+                returned = candidate;
+            } else {
+                break;
+            }
+        }
+        let truncated = returned.len() < total_count;
+        Self {
+            status: "available",
+            reason_code: None,
+            catalog_revision: Some(catalog_revision),
+            total_count,
+            returned_count: returned.len(),
+            truncated,
+            entries: returned,
+            discovery_hint: truncated.then_some(
+                "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct StartupExtensions {
+    pub(crate) skills: StartupSkillsCatalog,
+    pub(crate) plugins: StartupPluginsCatalog,
+}
+
+impl StartupExtensions {
+    pub(crate) fn serialized_len(&self) -> usize {
+        serde_json::to_vec(self)
+            .map(|bytes| bytes.len())
+            .unwrap_or(usize::MAX)
+    }
+}
+
+pub(crate) fn bounded_extension_description(value: &str) -> String {
+    if value.len() <= STARTUP_EXTENSION_DESCRIPTION_MAX_BYTES {
+        return value.to_string();
+    }
+    let mut end = STARTUP_EXTENSION_DESCRIPTION_MAX_BYTES;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
 pub(crate) struct StartupBriefInput<'a> {
     pub(crate) detail: StartupDetail,
     pub(crate) requested_project: &'a str,
@@ -122,6 +327,7 @@ pub(crate) struct StartupBriefInput<'a> {
     pub(crate) force_instruction_load: bool,
     pub(crate) include_project_instructions: bool,
     pub(crate) include_reused_instruction_content: bool,
+    pub(crate) extensions: Option<&'a StartupExtensions>,
     pub(crate) git: &'a Value,
     pub(crate) semantic_navigation: &'a Value,
     pub(crate) repository: &'a Value,
@@ -193,6 +399,15 @@ pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
         "deterministic": true,
         "llm_summary": false,
     });
+    if let Some(extensions) = input.extensions {
+        debug_assert!(extensions.serialized_len() <= STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES);
+        brief["extensions"] = serde_json::to_value(extensions).unwrap_or_else(|_| {
+            json!({
+                "skills": StartupSkillsCatalog::unavailable("skills_catalog_unavailable"),
+                "plugins": StartupPluginsCatalog::unavailable("plugin_runtime_unavailable"),
+            })
+        });
+    }
     enforce_hard_size_limit(&mut brief);
     brief
 }
@@ -1876,6 +2091,43 @@ mod tests {
             "terminal_pending_count": 1,
             "recent": [{"status": "recovering"}],
         });
+        let extensions = StartupExtensions {
+            skills: StartupSkillsCatalog::available(
+                format!("wc_skillcat_{}", "a".repeat(64)),
+                (0..64)
+                    .map(|index| StartupSkillEntry {
+                        skill_id: format!("wc_skill_{index:032x}"),
+                        name: format!("skill-{index:02}"),
+                        description: format!("skill-{index:02}-{}", "s".repeat(500)),
+                        source_scope: "project".to_string(),
+                        trust: "project_content".to_string(),
+                        name_conflict: index < 2,
+                    })
+                    .collect(),
+            ),
+            plugins: StartupPluginsCatalog::available(
+                format!("wc_plugcat_{}", "b".repeat(64)),
+                64,
+                (0..64)
+                    .map(|index| StartupPluginEntry {
+                        plugin: format!("plugin-{index:02}"),
+                        name: format!("Plugin {index:02}"),
+                        tool: format!("tool_{index:02}"),
+                        title: Some(format!("Tool {index:02}")),
+                        description: Some(format!("plugin-{index:02}-{}", "p".repeat(500))),
+                        annotations: webcodex_core::plugin::PluginSelectionAnnotations {
+                            read_only_hint: Some(true),
+                            destructive_hint: Some(false),
+                            idempotent_hint: Some(true),
+                            open_world_hint: Some(false),
+                        },
+                    })
+                    .collect(),
+            ),
+        };
+        assert!(extensions.serialized_len() <= STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES);
+        assert!(extensions.skills.truncated);
+        assert!(extensions.plugins.truncated);
         let project_resolution = json!({
             "source": "project",
             "outcome": "resolved_existing_project",
@@ -1897,6 +2149,7 @@ mod tests {
                 force_instruction_load: true,
                 include_project_instructions: true,
                 include_reused_instruction_content: false,
+                extensions: Some(&extensions),
                 git: &git,
                 semantic_navigation: &semantic_navigation,
                 repository: &large_repository(),
