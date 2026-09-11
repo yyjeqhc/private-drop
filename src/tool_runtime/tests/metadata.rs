@@ -2265,7 +2265,10 @@ async fn runtime_status_includes_build_metadata() {
     );
     assert_eq!(
         result.output["mcp_compact_schemas"],
-        crate::config::mcp_compact_schemas_enabled()
+        crate::model_surface::effective_mcp_compact_schemas(
+            runtime.runtime_exposure(),
+            crate::config::mcp_compact_schemas_override(),
+        )
     );
     let build = &result.output["build"];
     assert!(build.is_object());
@@ -2348,6 +2351,39 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
     }
 }
 
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn runtime_status_reports_effective_mcp_compact_schema_policy() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+
+    for (surface, expected) in [
+        (crate::model_surface::ModelSurface::LocalCoding, false),
+        (crate::model_surface::ModelSurface::AdaptiveRuntime, true),
+        (
+            crate::model_surface::ModelSurface::FullOperatorRuntime,
+            false,
+        ),
+    ] {
+        let runtime = test_runtime().with_model_surface(surface);
+        let result = runtime.dispatch(runtime_status_call()).await;
+        assert!(result.success, "{surface:?}: {:?}", result.error);
+        assert_eq!(
+            result.output["mcp_compact_schemas"], expected,
+            "{surface:?}"
+        );
+    }
+
+    let adaptive =
+        test_runtime().with_model_surface(crate::model_surface::ModelSurface::AdaptiveRuntime);
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+    let full = adaptive.dispatch(runtime_status_call()).await;
+    assert_eq!(full.output["mcp_compact_schemas"], false);
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+    let compact = adaptive.dispatch(runtime_status_call()).await;
+    assert_eq!(compact.output["mcp_compact_schemas"], true);
+}
+
 #[tokio::test]
 async fn runtime_status_defaults_to_local_coding_surface() {
     // ToolRuntime::new_for_tests defaults to local_coding; keep this as a real
@@ -2403,7 +2439,10 @@ async fn runtime_status_reports_project_connector_exposure_when_configured() {
     );
     assert_eq!(
         compact.output["mcp_compact_schemas"],
-        crate::config::mcp_compact_schemas_enabled()
+        crate::model_surface::effective_mcp_compact_schemas(
+            runtime.runtime_exposure(),
+            crate::config::mcp_compact_schemas_override(),
+        )
     );
     assert_eq!(
         compact.output["effective_config"]["auth"]["oauth2_shared_key_bridge_enabled"],
@@ -2411,9 +2450,9 @@ async fn runtime_status_reports_project_connector_exposure_when_configured() {
     );
 }
 
-// runtime_status reads the process-global compact-schema switch on each call.
-// Serialize this async assertion with tests that mutate that switch so the
-// value cannot change between dispatch and the matching expectation.
+// runtime_status resolves the effective exposure-aware compact-schema policy on
+// each call. Serialize this async assertion with tests that mutate the override
+// so the value cannot change between dispatch and the matching expectation.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
@@ -2452,7 +2491,10 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
         assert_eq!(summary["compact"], true, "arguments: {arguments}");
         assert_eq!(
             summary["mcp_compact_schemas"],
-            crate::config::mcp_compact_schemas_enabled(),
+            crate::model_surface::effective_mcp_compact_schemas(
+                runtime.runtime_exposure(),
+                crate::config::mcp_compact_schemas_override(),
+            ),
             "arguments: {arguments}"
         );
         assert!(summary["effective_config"].is_object());

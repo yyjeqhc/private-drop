@@ -3,14 +3,14 @@ use super::*;
 // Durable model-ergonomics and MCP tool-surface measurement integration tests.
 // Keep these separate from the general HTTP transport lifecycle coverage.
 
-// The asserted outputSchema presence is the default (non-compact) product
-// behavior: `WEBCODEX_MCP_COMPACT_SCHEMAS` must stay unset (and serialized
-// against other env-mutating tests) for the whole HTTP request.
+// Local Coding is a fixed compatibility surface, so unset compact-schema config
+// retains the historical full outputSchema projection. Keep the env serialized
+// against other compact-schema tests for the whole HTTP request.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn http_mcp_tools_list_success() {
-    // Default (non-compact) HTTP tools/list: full schema fields present.
-    // Compact-mode shape is covered by mcp_tools_list_compact_*.
+    // Local Coding compatibility default: full schema fields remain present.
+    // Adaptive unset compact behavior is covered in model_surface tests.
     let mut env = crate::test_support::TestEnvGuard::new();
     env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
     let config = test_config(Some("secret"));
@@ -46,7 +46,7 @@ async fn http_mcp_tools_list_success() {
         } else {
             assert!(
                 tool["outputSchema"].is_object(),
-                "default HTTP tools/list must include outputSchema for {}",
+                "Local Coding unset tools/list must include outputSchema for {}",
                 tool["name"]
             );
         }
@@ -89,6 +89,54 @@ async fn http_mcp_tools_list_success() {
             "tools/list audit leaked schema content: {durable}"
         );
     }
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn http_adaptive_tools_list_unset_defaults_to_compact_and_reports_effective_policy() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::AdaptiveRuntime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .add_header("x-action-session-id", "adaptive-tools-list-audit", true)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 2030,
+            "method": "tools/list",
+            "params": {}
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::OK);
+    let body: Value = response.take_json().await.unwrap();
+    let tools = body["result"]["tools"].as_array().unwrap();
+    assert!(!tools.is_empty());
+    assert!(tools.iter().all(|tool| tool.get("outputSchema").is_none()));
+    assert!(tools
+        .iter()
+        .any(|tool| { tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME }));
+
+    let events = db
+        .list_action_events("adaptive-tools-list-audit", 10)
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
+    let surface = &summary["tool_surface"];
+    assert_eq!(
+        surface["runtime_exposure"],
+        crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
+    );
+    assert_eq!(surface["compact_schemas"], true);
+    assert_eq!(surface["tool_count"].as_u64().unwrap(), tools.len() as u64);
+    assert_eq!(
+        surface["serialized_tools_bytes"].as_u64().unwrap(),
+        serde_json::to_vec(&body["result"]["tools"]).unwrap().len() as u64
+    );
 }
 
 #[allow(clippy::await_holding_lock)]

@@ -37,7 +37,7 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
     // omits the stateless-only export_project_artifact transport adapter and the
     // scope-gated plugin_tool gateway. Schema shape is
     // covered by dedicated tests:
-    // `mcp_tools_list_default_retains_output_schema` and
+    // `mcp_tools_list_explicit_full_projection_retains_output_schema` and
     // `mcp_tools_list_compact_omits_output_schema_only`.
     let mut env = crate::test_support::TestEnvGuard::new();
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
@@ -71,6 +71,8 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
         if compact {
             env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
         } else {
+            // FullOperatorRuntime preserves the historical full-schema default
+            // when the override is unset.
             env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
         }
         let outcome = handle_mcp_request(
@@ -174,7 +176,7 @@ async fn mcp_tools_list_returns_same_names_as_runtime() {
             } else {
                 assert!(
                     tool["outputSchema"].is_object(),
-                    "default env adapter must retain outputSchema for {}",
+                    "FullOperator unset env adapter must retain outputSchema for {}",
                     tool["name"]
                 );
             }
@@ -1481,10 +1483,9 @@ fn project_connector_tools_list_is_exact_capability_registry() {
 }
 
 #[test]
-fn mcp_tools_list_default_retains_output_schema() {
-    // Pure renderer with the explicit default compact=false switch; the
-    // env-adapter path for the default is covered end-to-end by
-    // `mcp_tools_list_returns_same_names_as_runtime`.
+fn mcp_tools_list_explicit_full_projection_retains_output_schema() {
+    // Pure renderer with explicit compact=false. Exposure-specific defaults
+    // are covered through the request adapter rather than inferred here.
     let value = mcp_tools_list_payload_with_compact(ModelSurface::FullOperatorRuntime, false);
     let tools = value["tools"].as_array().expect("tools array");
     assert!(!tools.is_empty());
@@ -1494,7 +1495,7 @@ fn mcp_tools_list_default_retains_output_schema() {
         assert!(tool["inputSchema"].is_object());
         assert!(
             tool["outputSchema"].is_object(),
-            "default mode must keep outputSchema for {}",
+            "explicit full projection must keep outputSchema for {}",
             tool["name"]
         );
         assert!(tool["annotations"].is_object() || tool.get("annotations").is_some());
@@ -1548,7 +1549,7 @@ fn mcp_tools_list_compact_omits_output_schema_only() {
             "compact mode must omit outputSchema for {}",
             tool["name"]
         );
-        // First-version experiment keeps annotations to reduce variables.
+        // Compact projection deliberately preserves annotations; only outputSchema is omitted.
         assert!(
             tool.get("annotations").is_some(),
             "compact mode keeps annotations for {}",

@@ -400,25 +400,113 @@ async fn local_coding_allows_surface_tools_to_dispatch() {
 // adaptive_runtime model surface
 // =========================================================================
 
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    env.remove("WEBCODEX_MCP_APPS_ENABLED");
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
     let mut auth = model_surface_direct_auth();
     auth.scopes.push(crate::auth::SCOPE_SSH_LOCAL.to_string());
-    let outcome = handle_mcp_request(
+
+    let compact_outcome = handle_mcp_request(
         &runtime,
         rpc(
             "tools/list",
             Some(Value::from(720)),
-            mcp_2026_params(json!({})),
+            mcp_2026_ui_params(json!({})),
         ),
         Some(&auth),
     )
     .await;
-    let McpOutcome::Ok(value) = outcome else {
-        panic!("adaptive tools/list must succeed");
+    let McpOutcome::Ok(compact_value) = compact_outcome else {
+        panic!("default adaptive tools/list must succeed");
     };
-    let tools = value["result"]["tools"].as_array().unwrap();
+    let compact_tools = compact_value["result"]["tools"].as_array().unwrap();
+    assert!(
+        compact_tools
+            .iter()
+            .all(|tool| tool.get("outputSchema").is_none()),
+        "unset AdaptiveRuntime must use compact tools/list discovery"
+    );
+
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+    let full_outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(721)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(full_value) = full_outcome else {
+        panic!("explicit full adaptive tools/list must succeed");
+    };
+    let full_tools = full_value["result"]["tools"].as_array().unwrap();
+
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+    let explicit_compact_outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(722)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(explicit_compact_value) = explicit_compact_outcome else {
+        panic!("explicit compact adaptive tools/list must succeed");
+    };
+    assert_eq!(
+        explicit_compact_value["result"]["tools"], compact_value["result"]["tools"],
+        "explicit true and unset Adaptive compact projection must match"
+    );
+
+    let compact_names = compact_tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let full_names = full_tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        compact_names, full_names,
+        "compaction must not change tool names"
+    );
+    for (compact, full) in compact_tools.iter().zip(full_tools) {
+        for field in ["name", "description", "inputSchema", "annotations", "_meta"] {
+            assert_eq!(
+                compact.get(field),
+                full.get(field),
+                "compact discovery changed {field} for {}",
+                compact["name"]
+            );
+        }
+    }
+    let import = compact_tools
+        .iter()
+        .find(|tool| tool["name"] == "import_conversation_files_to_project")
+        .expect("Adaptive direct file import");
+    assert_eq!(
+        import["_meta"]["openai/fileParams"],
+        json!(["openaiFileIdRefs"])
+    );
+    for job_tool in ["list_jobs", "observe_jobs"] {
+        let tool = compact_tools
+            .iter()
+            .find(|tool| tool["name"] == job_tool)
+            .unwrap_or_else(|| panic!("missing {job_tool}"));
+        assert_eq!(
+            tool["_meta"]["ui"]["resourceUri"], MCP_RESULT_UI_RESOURCE_URI,
+            "compact projection lost MCP App metadata for {job_tool}"
+        );
+    }
+    let tools = compact_tools;
     let names: Vec<&str> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
@@ -436,16 +524,24 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         &names[..direct_names.len()],
         direct_names.iter().map(String::as_str).collect::<Vec<_>>()
     );
-    let serialized_tools_bytes = serde_json::to_vec(tools).unwrap().len();
-    // P5 admits directly actionable recovery targets and #317 adds the stable
-    // scope-gated plugin_tool gateway to the declared direct set. Measured
-    // post-#317 baseline is ~547,411 bytes (~534.6 KiB). Keep roughly the same
-    // ~13% schema-growth headroom without turning the exact tool count into an
-    // architectural lock.
-    const MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES: usize = 608 * 1024;
+    let compact_serialized_tools_bytes = serde_json::to_vec(compact_tools).unwrap().len();
+    let full_serialized_tools_bytes = serde_json::to_vec(full_tools).unwrap().len();
+    eprintln!(
+        "adaptive tools/list bytes: compact={compact_serialized_tools_bytes} full={full_serialized_tools_bytes}"
+    );
     assert!(
-        serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES,
-        "adaptive tools/list schema cost {serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES} bytes"
+        compact_serialized_tools_bytes < full_serialized_tools_bytes,
+        "Adaptive compact discovery must cost less than full schema discovery"
+    );
+    // Measured on this surface with Stateless 2026 wrappers, fileParams, and
+    // MCP App metadata: compact=107,089 bytes; full=565,453 bytes. Keep ~22%
+    // headroom over the compact baseline while retaining a guard far below the
+    // full-schema context cost. This is a model schema-cost budget, not an MCP
+    // transport limit and not the tools/call stable-readable result ceiling.
+    const MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES: usize = 128 * 1024;
+    assert!(
+        compact_serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES,
+        "adaptive compact tools/list schema cost {compact_serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES} bytes"
     );
     assert_eq!(
         names.last().copied(),
@@ -502,6 +598,26 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         .iter()
         .find(|tool| tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
         .expect("adaptive gateway");
+    let full_gateway = full_tools
+        .iter()
+        .find(|tool| tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+        .expect("full adaptive gateway");
+    assert!(full_gateway["outputSchema"].is_object());
+    assert_eq!(gateway["inputSchema"], full_gateway["inputSchema"]);
+    let gateway_input = gateway["inputSchema"]["properties"].as_object().unwrap();
+    for field in [
+        "recording_session_id",
+        "ack_session_message_ids",
+        "session_message_resolution",
+        "context_request",
+        "ack_session_context_revision",
+    ] {
+        assert!(
+            gateway_input.contains_key(field),
+            "compact gateway lost stateless wrapper field {field}"
+        );
+    }
+
     let gateway_description = gateway["description"].as_str().unwrap();
     assert!(gateway_description.contains("allowed fallback"));
     assert!(gateway_description.contains("preferred model exposure"));
@@ -1863,7 +1979,7 @@ async fn selected_surface_is_immutable_after_environment_changes() {
 }
 
 #[tokio::test]
-async fn local_coding_list_manifest_and_catalog_are_identical() {
+async fn local_coding_list_and_coding_manifest_use_independent_exact_surfaces() {
     let runtime = test_runtime_with_surface(ModelSurface::LocalCoding);
     let auth = model_surface_direct_auth();
     let listed = handle_mcp_request(
@@ -1902,6 +2018,7 @@ async fn local_coding_list_manifest_and_catalog_are_identical() {
     );
     assert_eq!(
         manifest_names,
-        crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES
+        crate::tool_runtime::tool_definition::CODING_INTENT_TOOL_NAMES
     );
+    assert_ne!(listed_names, manifest_names);
 }

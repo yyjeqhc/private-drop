@@ -56,6 +56,21 @@ impl RuntimeExposure {
     }
 }
 
+/// Resolve the MCP `tools/list` schema projection after startup exposure is known.
+///
+/// An explicit operator override always wins. Without one, Adaptive Runtime uses
+/// compact discovery to reduce model schema/context cost; compatibility surfaces
+/// and ProjectConnector preserve their historical full-schema projection.
+pub(crate) fn effective_mcp_compact_schemas(
+    exposure: RuntimeExposure,
+    configured_override: Option<bool>,
+) -> bool {
+    configured_override.unwrap_or(matches!(
+        exposure,
+        RuntimeExposure::Runtime(ModelSurface::AdaptiveRuntime)
+    ))
+}
+
 /// The top-level exposure and Connector runtime slot are one coherent startup state.
 /// ProjectConnector requires Connector state; runtime ModelSurfaces forbid it.
 pub(crate) fn validate_connector_runtime_presence(
@@ -530,6 +545,34 @@ mod tests {
             project_registry_dir: "/tmp/webcodex-projects".to_string(),
             profile: "default".to_string(),
             project_grant_id: "wc_pgrant_1111111111111111".to_string(),
+        }
+    }
+
+    #[test]
+    fn compact_schema_policy_defaults_only_adaptive_runtime_to_compact() {
+        for exposure in [
+            RuntimeExposure::Runtime(ModelSurface::LocalCoding),
+            RuntimeExposure::Runtime(ModelSurface::AdaptiveRuntime),
+            RuntimeExposure::Runtime(ModelSurface::FullOperatorRuntime),
+            RuntimeExposure::ProjectConnector,
+        ] {
+            let expected_default = matches!(
+                exposure,
+                RuntimeExposure::Runtime(ModelSurface::AdaptiveRuntime)
+            );
+            assert_eq!(
+                effective_mcp_compact_schemas(exposure, None),
+                expected_default,
+                "unset compact policy drifted for {exposure:?}"
+            );
+            assert!(
+                effective_mcp_compact_schemas(exposure, Some(true)),
+                "explicit true must win for {exposure:?}"
+            );
+            assert!(
+                !effective_mcp_compact_schemas(exposure, Some(false)),
+                "explicit false must win for {exposure:?}"
+            );
         }
     }
 

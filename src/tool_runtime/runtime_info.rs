@@ -449,7 +449,10 @@ impl ToolRuntime {
         let mut output = json!({
             "service": "webcodex",
             "runtime_exposure": self.runtime_exposure().name(),
-            "mcp_compact_schemas": crate::config::mcp_compact_schemas_enabled(),
+            "mcp_compact_schemas": crate::model_surface::effective_mcp_compact_schemas(
+                self.runtime_exposure(),
+                crate::config::mcp_compact_schemas_override(),
+            ),
             "effective_config": self.effective_config_status(),
             "version": env!("CARGO_PKG_VERSION"),
             "build": crate::build_info::runtime_build_info(),
@@ -647,7 +650,10 @@ impl ToolRuntime {
         ToolResult::ok(json!({
             "service": "webcodex",
             "runtime_exposure": self.runtime_exposure().name(),
-            "mcp_compact_schemas": crate::config::mcp_compact_schemas_enabled(),
+            "mcp_compact_schemas": crate::model_surface::effective_mcp_compact_schemas(
+                self.runtime_exposure(),
+                crate::config::mcp_compact_schemas_override(),
+            ),
             "effective_config": self.effective_config_status(),
             "version": env!("CARGO_PKG_VERSION"),
             "build": server_build,

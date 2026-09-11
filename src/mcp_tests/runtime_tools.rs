@@ -4,9 +4,9 @@ use super::*;
 // runtime_status via MCP tools/list and tools/call
 // =========================================================================
 
-// This test asserts the default full tools/list schema, including outputSchema.
-// Serialize it with other process-global compact-schema env tests so a concurrent
-// WEBCODEX_MCP_COMPACT_SCHEMAS mutation cannot change the observed contract.
+// Full Operator is a compatibility surface whose unset compact-schema policy
+// remains full, including outputSchema. Serialize it with process-global env
+// tests so a concurrent override cannot change the observed contract.
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux_flags() {
