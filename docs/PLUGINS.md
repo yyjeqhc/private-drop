@@ -231,11 +231,13 @@ Plugin `initialize -> tools/list` protocol/admission preflight.
 
 ## Plugin authoring/operator CLI
 
-`webcodex plugin` is the operator-friendly adapter over the same canonical
-`plugin_tool` path. It does not add a Plugin endpoint, Runtime, supervisor, or
-admission implementation. All four network commands issue one authenticated
-`POST /api/tools/call` with `tool="plugin_tool"` and the corresponding canonical
-`params`:
+`webcodex plugin` now has two deliberately separate paths. `plugin init` is a
+local-only scaffold generator and does not use Server authentication, a Runner,
+`plugin_tool`, or `/api/tools/call`. The four inspection/management commands remain
+operator-friendly adapters over the same canonical `plugin_tool` path; they do not
+add a Plugin endpoint, Runtime, supervisor, or admission implementation. Each
+network command issues one authenticated `POST /api/tools/call` with
+`tool="plugin_tool"` and the corresponding canonical `params`:
 
 ```text
 webcodex plugin list
@@ -251,6 +253,21 @@ webcodex plugin check --runner special --plugin safe-delete
 webcodex plugin reload --runner special
     -> {"action":"reload","runner":"special"}
 ```
+
+Create a standalone authoring project locally with:
+
+```text
+webcodex plugin init ./my-plugin
+webcodex plugin init ./MyPlugin --id my-plugin
+```
+
+The generated project contains `.gitignore`, `package.json`, `tsconfig.json`,
+`src/plugin.ts`, and `README.md`. It pins the public npm package
+`@yyjeqhc/webcodex-plugin-sdk` **exactly** to `0.1.0`; it does not use a `file:`,
+workspace, Git, source-checkout, or floating version dependency. `plugin init`
+does not install packages, execute generated code, edit `runner.toml`, register a
+provider, reload a Runner, or create credentials. The destination must be absent or
+an empty ordinary directory, and existing data is never overwritten.
 
 A practical author loop is therefore:
 
@@ -301,18 +318,21 @@ There is deliberately no `webcodex plugin call` in this authoring phase. The raw
 `plugin_tool describe -> call` contract remains the canonical invocation path with
 its existing binding, effect, retry, and `OutcomeUnknown` semantics.
 
-`webcodex plugin init` is also deferred for now. The TypeScript SDK is currently a
-repository-local development package used by first-party dogfood; it does not yet
-have a published/repeatable external distribution contract, and WebCodex binary/npm
-distribution does not bundle it as scaffoldable assets. The CLI will not generate
-a deceptively standalone project that depends on the current repository checkout,
-a build-machine path, vendored SDK source, or temporary `--sdk-path`. See the
-architecture roadmap for the distribution prerequisite.
+Phase 1 intentionally deferred `webcodex plugin init` until the SDK had a truthful
+external dependency contract. That prerequisite is now satisfied:
+`@yyjeqhc/webcodex-plugin-sdk@0.1.0` is publicly distributed through npm, and Phase 3
+adds the local scaffold using that exact compatibility pin. A generated project
+therefore works independently of a WebCodex source checkout. Repository first-party
+dogfood such as `plugins/safe-delete` intentionally continues to use the local SDK
+source so it tests the checkout under development; external projects created by
+`plugin init` use the published package.
 
 ## TypeScript Plugin SDK
 
 `@yyjeqhc/webcodex-plugin-sdk` is an optional TypeScript authoring layer for Native
-Tool Plugins:
+Tool Plugins. Version `0.1.0` is publicly distributed through npm; because the SDK
+is still pre-1.0, generated projects use an exact compatibility pin rather than a
+minor-compatible range:
 
 ```text
 raw executable protocol

@@ -204,10 +204,12 @@ reload` 则提供更窄、只需要 `plugin:manage` 的专门入口。Plugin man
 
 ## Plugin authoring/operator CLI
 
-`webcodex plugin` 是同一条 canonical `plugin_tool` 链路的 operator-friendly adapter；它不会
-新增 Plugin endpoint、Runtime、supervisor 或 admission implementation。四个网络命令都只向
-现有 `POST /api/tools/call` 发一次 authenticated request，外层固定为
-`tool="plugin_tool"`，`params` 严格映射已有 action：
+`webcodex plugin` 现在明确分成两条路径：`plugin init` 是纯本地 scaffold generator，不使用
+Server auth、Runner、`plugin_tool` 或 `/api/tools/call`；另外四个 inspect/manage 命令仍是
+同一条 canonical `plugin_tool` 链路的 operator-friendly adapter，不新增 Plugin endpoint、
+Runtime、supervisor 或 admission implementation。每个网络命令都只向现有
+`POST /api/tools/call` 发一次 authenticated request，外层固定为 `tool="plugin_tool"`，
+`params` 严格映射已有 action：
 
 ```text
 webcodex plugin list
@@ -223,6 +225,19 @@ webcodex plugin check --runner special --plugin safe-delete
 webcodex plugin reload --runner special
     -> {"action":"reload","runner":"special"}
 ```
+
+本地创建一个可独立使用的 authoring project：
+
+```text
+webcodex plugin init ./my-plugin
+webcodex plugin init ./MyPlugin --id my-plugin
+```
+
+生成目录只包含 `.gitignore`、`package.json`、`tsconfig.json`、`src/plugin.ts`、`README.md`。
+其中 `@yyjeqhc/webcodex-plugin-sdk` **精确固定**为公开 npm 版本 `0.1.0`，不会生成
+`file:`、workspace、Git、源码 checkout 或 floating version dependency。`plugin init` 不会
+安装依赖、执行生成代码、修改 `runner.toml`、注册 provider、reload Runner 或创建 credential。
+目标目录只能不存在或是空的 ordinary directory；任何已有用户数据都不会被覆盖。
 
 实际 author loop 可以直接写成：
 
@@ -264,15 +279,17 @@ Server/Runner，因此会保守报告 outcome may be unknown，并要求先观�
 本阶段刻意没有 `webcodex plugin call`。raw `plugin_tool describe -> call` 仍是 canonical
 invocation path，并继续拥有原有 binding、effect、retry 和 `OutcomeUnknown` 语义。
 
-当前也暂缓 `webcodex plugin init`。TypeScript SDK 目前仍是仓库内 first-party dogfood 使用的
-development package；尚未建立 published/repeatable external distribution contract，而且正常
-WebCodex binary/npm distribution 也不携带可 scaffold 的 SDK assets。CLI 不会生成一个表面
-standalone、实际依赖当前源码 checkout、build-machine path、vendored SDK 或临时 `--sdk-path`
-的项目。distribution 前置条件见 architecture roadmap。
+Phase 1 曾有意暂缓 `webcodex plugin init`，直到 SDK 建立真实 external dependency contract。
+这个前置条件现在已经满足：`@yyjeqhc/webcodex-plugin-sdk@0.1.0` 已通过 npm 公开分发，Phase 3
+因此加入使用该**精确兼容版本**的本地 scaffold。生成项目不依赖 WebCodex 源码 checkout。
+仓库内 first-party dogfood（例如 `plugins/safe-delete`）仍有意使用同 checkout 的 local SDK
+source，以持续测试正在开发的 SDK；外部 `plugin init` 项目则使用 published package。
 
 ## TypeScript Plugin SDK
 
-`@yyjeqhc/webcodex-plugin-sdk` 是 Native Tool Plugin 的可选 TypeScript authoring layer：
+`@yyjeqhc/webcodex-plugin-sdk` 是 Native Tool Plugin 的可选 TypeScript authoring layer。
+`0.1.0` 已通过 npm 公开分发；由于 SDK 仍处于 pre-1.0，`plugin init` 生成项目使用 exact
+compatibility pin，而不是允许自动跨 minor 的版本范围：
 
 ```text
 raw executable protocol

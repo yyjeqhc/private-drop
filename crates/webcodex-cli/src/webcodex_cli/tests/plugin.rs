@@ -1,5 +1,10 @@
 use super::support::*;
 use crate::webcodex_cli::plugin::{parse_plugin_command, run_plugin_command, PluginCommand};
+use crate::webcodex_cli::plugin_init::{
+    parse_plugin_init, run_plugin_init, PluginInitOptions, PLUGIN_INIT_SDK_VERSION,
+};
+use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::net::TcpStream;
 use std::sync::mpsc;
 
@@ -198,14 +203,14 @@ async fn run_once(
 }
 
 #[test]
-fn plugin_help_and_root_usage_expose_only_phase_one_surface() {
+fn plugin_help_and_root_usage_expose_phase_three_surface() {
     let root = cli_exit(["--help"]).unwrap();
     assert!(root
         .lines()
         .any(|line| line.trim_start().starts_with("plugin ")));
 
     let help = cli_exit(["plugin", "--help"]).unwrap();
-    for command in ["list", "describe", "check", "reload"] {
+    for command in ["init", "list", "describe", "check", "reload"] {
         assert!(
             help.lines()
                 .any(|line| line.trim_start().starts_with(command)),
@@ -218,14 +223,260 @@ fn plugin_help_and_root_usage_expose_only_phase_one_surface() {
             .any(|line| line.trim_start().starts_with("call ")),
         "{help}"
     );
-    assert!(
-        !help
-            .lines()
-            .any(|line| line.trim_start().starts_with("init ")),
-        "{help}"
-    );
+    assert!(help.contains("init is local-only"), "{help}");
     assert!(help.contains("plugin:inspect"), "{help}");
     assert!(help.contains("plugin:manage"), "{help}");
+}
+
+#[test]
+fn plugin_init_help_documents_local_scaffold_contract() {
+    let help = cli_exit(["plugin", "init", "--help"]).unwrap();
+    for expected in [
+        "plugin init <DIRECTORY> [--id PROVIDER_ID]",
+        "local-only",
+        "0.1.0",
+        "no Server request",
+        "never overwrites user data",
+    ] {
+        assert!(help.contains(expected), "missing {expected:?}: {help}");
+    }
+    assert!(!help.contains("--server-url"), "{help}");
+    assert!(!help.contains("--token"), "{help}");
+}
+
+#[test]
+fn plugin_init_parser_uses_derived_or_explicit_canonical_provider_id() {
+    match cli_action(["plugin", "init", "echo-plugin"]) {
+        CliAction::PluginInit(opts) => {
+            assert_eq!(opts.directory, PathBuf::from("echo-plugin"));
+            assert_eq!(opts.provider_id, "echo-plugin");
+        }
+        other => panic!("unexpected plugin init parse: {other:?}"),
+    }
+
+    match cli_action(["plugin", "init", "Example Plugin", "--id", "echo.plugin_1"]) {
+        CliAction::PluginInit(opts) => {
+            assert_eq!(opts.directory, PathBuf::from("Example Plugin"));
+            assert_eq!(opts.provider_id, "echo.plugin_1");
+        }
+        other => panic!("unexpected explicit-id plugin init parse: {other:?}"),
+    }
+}
+
+#[test]
+fn plugin_init_parser_rejects_invalid_ids_and_network_operator_flags() {
+    for (args, expected) in [
+        (
+            vec!["plugin", "init", "Invalid Name"],
+            "supply --id PROVIDER_ID",
+        ),
+        (
+            vec!["plugin", "init", "example", "--id", "Invalid-ID"],
+            "invalid --id provider id",
+        ),
+        (
+            vec![
+                "plugin",
+                "init",
+                "example",
+                "--server-url",
+                "http://127.0.0.1:9",
+            ],
+            "unknown plugin init flag: --server-url",
+        ),
+        (
+            vec!["plugin", "init", "example", "--token", "secret"],
+            "unknown plugin init flag: --token",
+        ),
+        (
+            vec!["plugin", "init", "example", "--runner", "special"],
+            "unknown plugin init flag: --runner",
+        ),
+        (
+            vec!["plugin", "init", "example", "--json"],
+            "unknown plugin init flag: --json",
+        ),
+    ] {
+        match cli_action(args.iter().copied()) {
+            CliAction::Exit { code, stderr, .. } => {
+                assert_eq!(code, 2, "{args:?}: {stderr}");
+                assert!(stderr.contains(expected), "{args:?}: {stderr}");
+            }
+            other => panic!("invalid plugin init unexpectedly parsed: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn plugin_init_creates_exact_public_sdk_scaffold_without_executing_dependencies() {
+    let temp = tempfile::tempdir().unwrap();
+    let destination = temp.path().join("echo-plugin");
+    let output = run_plugin_init(PluginInitOptions {
+        directory: destination.clone(),
+        provider_id: "echo-plugin".to_string(),
+    })
+    .unwrap();
+
+    assert!(output.contains("Provider id: echo-plugin"), "{output}");
+    assert!(output.contains("@yyjeqhc/webcodex-plugin-sdk@0.1.0"));
+    let root_entries = std::fs::read_dir(&destination)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        root_entries,
+        [
+            ".gitignore",
+            "README.md",
+            "package.json",
+            "src",
+            "tsconfig.json"
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect()
+    );
+    let src_entries = std::fs::read_dir(destination.join("src"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        src_entries,
+        [OsString::from("plugin.ts")].into_iter().collect()
+    );
+
+    let package_text = std::fs::read_to_string(destination.join("package.json")).unwrap();
+    let package: Value = serde_json::from_str(&package_text).unwrap();
+    assert_eq!(PLUGIN_INIT_SDK_VERSION, "0.1.0");
+    assert_eq!(package["private"], true);
+    assert_eq!(package["type"], "module");
+    assert_eq!(package["engines"]["node"], ">=18");
+    assert_eq!(
+        package["dependencies"]["@yyjeqhc/webcodex-plugin-sdk"],
+        PLUGIN_INIT_SDK_VERSION
+    );
+    for forbidden in ["file:", "workspace:", "git+", "latest", "^0.1.0", "~0.1.0"] {
+        assert!(!package_text.contains(forbidden), "{package_text}");
+    }
+    assert!(!package_text.contains("/root/git/webcodex"));
+
+    let plugin = std::fs::read_to_string(destination.join("src/plugin.ts")).unwrap();
+    assert!(plugin.contains("from \"@yyjeqhc/webcodex-plugin-sdk\""));
+    for api in [
+        "defineTool",
+        "definePlugin",
+        "runPlugin",
+        "schema",
+        "textResult",
+    ] {
+        assert!(
+            plugin.contains(api),
+            "generated plugin missing {api}: {plugin}"
+        );
+    }
+    assert!(plugin.contains("readOnlyHint: true"));
+    assert!(!plugin.contains("JSON-RPC"));
+    assert!(!plugin.contains("child_process"));
+    assert!(!plugin.contains("fetch("));
+
+    let readme = std::fs::read_to_string(destination.join("README.md")).unwrap();
+    assert!(readme.contains("npm install"));
+    assert!(readme.contains("npm run build"));
+    assert!(readme.contains("id = \"echo-plugin\""));
+    assert!(readme.contains("/absolute/path/to/PLUGIN_DIRECTORY/dist/plugin.js"));
+    assert!(readme.contains("webcodex plugin check --runner <runner> --plugin echo-plugin"));
+    assert!(readme.contains("--tool echo"));
+    assert!(!destination.join("node_modules").exists());
+    assert!(!destination.join("package-lock.json").exists());
+    assert!(!destination.join("dist").exists());
+}
+
+#[test]
+fn plugin_init_accepts_an_existing_empty_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let destination = temp.path().join("existing-empty");
+    std::fs::create_dir(&destination).unwrap();
+    run_plugin_init(PluginInitOptions {
+        directory: destination.clone(),
+        provider_id: "existing-empty".to_string(),
+    })
+    .unwrap();
+    assert!(destination.join("src/plugin.ts").is_file());
+}
+
+#[test]
+fn plugin_init_rejects_nonempty_destination_without_modifying_existing_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let destination = temp.path().join("occupied");
+    std::fs::create_dir(&destination).unwrap();
+    let sentinel = destination.join("keep.txt");
+    std::fs::write(&sentinel, "preserve me").unwrap();
+
+    let error = run_plugin_init(PluginInitOptions {
+        directory: destination.clone(),
+        provider_id: "occupied".to_string(),
+    })
+    .unwrap_err();
+    assert!(error.contains("not empty"), "{error}");
+    assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "preserve me");
+    assert_eq!(std::fs::read_dir(&destination).unwrap().count(), 1);
+}
+
+#[test]
+fn plugin_init_rejects_file_destination_without_modifying_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let destination = temp.path().join("occupied");
+    std::fs::write(&destination, "preserve me").unwrap();
+    let error = run_plugin_init(PluginInitOptions {
+        directory: destination.clone(),
+        provider_id: "occupied".to_string(),
+    })
+    .unwrap_err();
+    assert!(error.contains("ordinary directory"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(&destination).unwrap(),
+        "preserve me"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn plugin_init_rejects_symlink_destination_without_touching_target() {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("target");
+    let destination = temp.path().join("linked-plugin");
+    std::fs::create_dir(&target).unwrap();
+    std::os::unix::fs::symlink(&target, &destination).unwrap();
+
+    let error = run_plugin_init(PluginInitOptions {
+        directory: destination.clone(),
+        provider_id: "linked-plugin".to_string(),
+    })
+    .unwrap_err();
+    assert!(error.contains("symlink"), "{error}");
+    assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+    assert!(std::fs::symlink_metadata(&destination)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}
+
+#[test]
+fn plugin_init_runs_without_network_or_token_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let destination = temp.path().join("offline-plugin");
+    run_plugin_init(
+        parse_plugin_init(&[
+            destination.to_string_lossy().to_string(),
+            "--id".to_string(),
+            "offline-plugin".to_string(),
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(destination.join("package.json").is_file());
+    assert!(!destination.join("node_modules").exists());
+    assert!(!destination.join("package-lock.json").exists());
 }
 
 #[test]
@@ -352,7 +603,7 @@ fn plugin_parser_requires_exact_targets_and_rejects_invented_surfaces() {
             "unknown plugin reload flag: --plugin",
         ),
         (&["plugin", "call"], "unknown plugin subcommand: call"),
-        (&["plugin", "init"], "unknown plugin subcommand: init"),
+        (&["plugin", "init"], "plugin init requires DIRECTORY"),
         (&["plugin", "unknown"], "unknown plugin subcommand: unknown"),
     ];
     for (args, expected) in failures {

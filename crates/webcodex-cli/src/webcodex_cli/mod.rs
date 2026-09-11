@@ -7,6 +7,7 @@ pub(crate) mod ops;
 pub(crate) mod output;
 pub(crate) mod pairing;
 pub(crate) mod plugin;
+pub(crate) mod plugin_init;
 pub(crate) mod profiles;
 pub(crate) mod project;
 pub(crate) mod runner_service;
@@ -84,6 +85,7 @@ pub(crate) use output::{
 };
 pub(crate) use pairing::run_pairing_create;
 pub(crate) use plugin::{parse_plugin_command, run_plugin_command, PluginCommand};
+pub(crate) use plugin_init::{parse_plugin_init, run_plugin_init, PluginInitOptions};
 #[cfg(test)]
 pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
 pub(crate) use profiles::{
@@ -132,7 +134,7 @@ pub(crate) use usage::{
     connect_usage, disconnect_usage, login_usage, logout_usage, ops_projects_usage,
     ops_runner_usage, ops_runners_usage, ops_smoke_preflight_usage, ops_status_usage, ops_usage,
     ops_windows_usage, pairing_create_usage, pairing_usage, plugin_check_usage,
-    plugin_describe_usage, plugin_list_usage, plugin_reload_usage, plugin_usage,
+    plugin_describe_usage, plugin_init_usage, plugin_list_usage, plugin_reload_usage, plugin_usage,
     project_activate_usage, project_register_usage, runner_init_usage,
     runner_install_service_usage, runner_status_usage, runner_usage, server_init_usage,
     server_install_service_usage, server_status_usage, server_tunnel_usage, server_usage,

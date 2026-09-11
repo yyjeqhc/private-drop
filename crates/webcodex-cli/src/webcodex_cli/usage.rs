@@ -268,19 +268,33 @@ pub(crate) fn ops_smoke_preflight_usage() -> &'static str {
 
 pub(crate) fn plugin_usage() -> &'static str {
     "Usage: webcodex plugin <COMMAND>\n\n\
-Native Tool Plugin authoring/operator commands. These are thin authenticated adapters\n\
-over the canonical Server plugin_tool runtime; the CLI never starts Plugin executables\n\
-or implements Runner admission/lifecycle itself.\n\n\
+Native Tool Plugin authoring/operator commands. `init` is local scaffolding; the network\n\
+commands remain thin authenticated adapters over the canonical Server plugin_tool runtime.\n\n\
 Commands:\n\
+  init        Create a local TypeScript Plugin project using the published SDK\n\
   list        List visible Plugin-capable Runners, committed providers, or provider tools\n\
   describe    Describe one exact provider-local tool and return its opaque binding observation\n\
   check       Ask one exact Runner to perform the disposable Plugin admission preflight\n\
   reload      Ask one exact Runner to atomically replace its complete configured provider set\n\n\
 Use `webcodex plugin <COMMAND> --help` for command-specific options.\n\
+init is local-only and needs no Server, Runner, token, or Plugin scope.\n\
 list/describe require plugin:inspect. check/reload require plugin:manage.\n\
 --oauth-local-plugins grants plugin:inspect + plugin:invoke only; it never grants plugin:manage.\n\
-There is intentionally no plugin call command in this authoring phase. plugin init is deferred\n\
-until @yyjeqhc/webcodex-plugin-sdk has a real external distribution contract.\n"
+There is intentionally no plugin call command in this authoring phase.\n"
+}
+
+pub(crate) fn plugin_init_usage() -> &'static str {
+    "Usage: webcodex plugin init <DIRECTORY> [--id PROVIDER_ID]\n\n\
+Create a deterministic local TypeScript/ESM Native Tool Plugin project. The generated project\n\
+pins @yyjeqhc/webcodex-plugin-sdk exactly to 0.1.0 and builds independently of a WebCodex\n\
+source checkout. This command is local-only: it performs no Server request, token lookup,\n\
+Runner operation, dependency installation, Runner config edit, or generated-code execution.\n\n\
+Options:\n\
+  --id PROVIDER_ID          Exact Native Plugin provider id. When omitted, DIRECTORY's basename\n\
+                            is used only if it already passes canonical provider-id validation.\n\
+  -h, --help                Print help and exit\n\n\
+The destination must be absent or an empty ordinary directory. Existing files, symlinks, and\n\
+non-empty directories are rejected; plugin init never overwrites user data.\n"
 }
 
 fn plugin_common_usage() -> &'static str {
