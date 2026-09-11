@@ -291,6 +291,13 @@ Runner transport token 会在发起 user/API HTTP request 前被拒绝。`list` 
 `ready=false` non-zero，但仍保留 phase/code/detail/diagnostic。reload 只有 canonical
 `failures` 为空时 exit 0；known rejection non-zero。
 
+如果 `check` 返回 `phase=initialize`、`code=plugin_eof`，表示 provider process 在
+initialize 完成前已经退出。应先检查配置的 command 与 arguments。对于由
+`webcodex plugin init` 创建的 Plugin，还应确认已执行 `npm run build`，并且 Runner 主机上
+已经生成 `dist/plugin.js`，再重试。这里是条件性的 author guidance，不是 root-cause 分类：
+任何在 initialize 阶段提前退出的 provider 都可能产生 `plugin_eof`，WebCodex 不会根据 raw
+stderr 或 opaque argv 推断具体原因。
+
 CLI 不会自动 retry `check` 或 `reload`。请求开始后如果遇到 HTTP timeout、connection reset、
 post-send malformed response 或 response lost，CLI 无法证明 management operation 没有到达
 Server/Runner，因此会保守报告 outcome may be unknown，并要求先观察当前 Plugin state 再决定

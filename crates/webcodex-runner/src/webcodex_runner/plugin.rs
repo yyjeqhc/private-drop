@@ -242,7 +242,7 @@ fn initialize_failure_detail(code: &str) -> &'static str {
         }
         "plugin_initialize_invalid" => "Plugin initialize result violates protocol bounds",
         "plugin_timeout" => "Plugin initialize did not complete within the provider timeout",
-        "plugin_eof" => "Plugin process ended during initialize",
+        "plugin_eof" => "Plugin process exited before initialize completed; verify the configured command and arguments. For a generated TypeScript Plugin, run npm run build and ensure dist/plugin.js exists on the Runner host before retrying.",
         _ => "Plugin initialize did not complete successfully",
     }
 }

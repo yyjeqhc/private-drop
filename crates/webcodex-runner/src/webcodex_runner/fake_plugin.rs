@@ -81,7 +81,13 @@ fn main() -> io::Result<()> {
         match method.as_str() {
             "initialize" => {
                 append(marker, "initialize\n")?;
-                if scenario == "init_crash" || scenario == "check_init_crash" {
+                if matches!(
+                    scenario,
+                    "init_crash" | "check_init_crash" | "check_init_crash_stderr"
+                ) {
+                    if scenario == "check_init_crash_stderr" {
+                        eprintln!("diagnostic-only-secret-looking-initialize-stderr");
+                    }
                     return Ok(());
                 }
                 if scenario == "check_init_timeout" {
