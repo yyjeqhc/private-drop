@@ -78,6 +78,9 @@
     addRow(card, "Status", boundedString(item.status));
     addRow(card, "Project", boundedString(item.project));
     addRow(card, "Terminal", typeof item.terminal === "boolean" ? (item.terminal ? "yes" : "no") : null);
+    addRow(card, "Active", typeof item.active === "boolean" ? (item.active ? "yes" : "no") : null);
+    addRow(card, "Blocking", typeof item.blocking_active === "boolean" ? (item.blocking_active ? "yes" : "no") : null);
+    addRow(card, "Stop pending", typeof item.terminal_pending === "boolean" ? (item.terminal_pending ? "yes" : "no") : null);
     addRow(card, "Execution", boundedString(item.command_execution_state));
     addRow(card, "Duration", Number.isFinite(item.duration_ms) ? String(item.duration_ms) + " ms" : null);
     addRow(card, "Elapsed", Number.isFinite(item.elapsed_secs) ? String(item.elapsed_secs) + " s" : null);

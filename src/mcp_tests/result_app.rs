@@ -210,6 +210,10 @@ fn job_presentation_is_post_result_bounded_and_private() {
                 "job_id": format!("job-{index}"),
                 "status": if index == 0 { "lost" } else { "running" },
                 "project": "p".repeat(400),
+                "active": index != 0,
+                "blocking_active": index != 0,
+                "terminal": index == 0,
+                "terminal_pending": false,
                 "duration_ms": 25,
                 "elapsed_secs": 1,
                 "command_execution_state": if index == 0 { "outcome_unknown" } else { "completed" },
@@ -246,6 +250,9 @@ fn job_presentation_is_post_result_bounded_and_private() {
     );
     assert_eq!(meta["items"][0]["recovery_state"], "recovering");
     assert_eq!(meta["items"][0]["terminal"], true);
+    assert_eq!(meta["items"][0]["active"], false);
+    assert_eq!(meta["items"][0]["blocking_active"], false);
+    assert_eq!(meta["items"][0]["terminal_pending"], false);
     assert!(meta["items"][0]["guidance"]
         .as_str()
         .unwrap()

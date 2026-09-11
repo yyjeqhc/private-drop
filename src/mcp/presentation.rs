@@ -1,5 +1,4 @@
 use serde_json::{json, Map, Value};
-use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 pub(super) const MCP_PRESENTATION_META_KEY: &str = "webcodex/presentation";
 pub(super) const MCP_PRESENTATION_VERSION: u64 = 1;
@@ -77,11 +76,16 @@ fn job_summary_presentation(job: &Value) -> Option<Value> {
     copy_bounded_text(job, &mut item, "recovery_state");
     copy_bounded_text(job, &mut item, "recovery_reason_code");
     copy_bounded_text(job, &mut item, "recovery_reason");
-    copy_scalar(job, &mut item, "duration_ms");
-    copy_scalar(job, &mut item, "elapsed_secs");
-    copy_scalar(job, &mut item, "exit_code");
-    if let Ok(lifecycle) = RunnerJobLifecycle::from_wire(&status) {
-        item.insert("terminal".to_string(), Value::Bool(lifecycle.is_terminal()));
+    for key in [
+        "active",
+        "blocking_active",
+        "terminal",
+        "terminal_pending",
+        "duration_ms",
+        "elapsed_secs",
+        "exit_code",
+    ] {
+        copy_scalar(job, &mut item, key);
     }
     let execution_state = job.get("command_execution_state").and_then(Value::as_str);
     let recovery_state = job.get("recovery_state").and_then(Value::as_str);
