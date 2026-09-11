@@ -1112,7 +1112,7 @@ async fn handle_mcp_request_with_lifecycle(
             .await;
         }
         "resources/list" if stateless_2026 && runtime_resource_method => {
-            return resources::handle_list(id, mcp_app_enabled);
+            return resources::handle_list(runtime, id, mcp_app_enabled);
         }
         "resources/read" if stateless_2026 && runtime_resource_method => {
             let RuntimeExposure::Runtime(model_surface) = runtime_exposure else {

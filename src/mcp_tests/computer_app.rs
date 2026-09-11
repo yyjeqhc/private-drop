@@ -32,16 +32,21 @@ fn mcp_2026_ui_capability_detection_is_explicit_and_mime_aware() {
 
 #[tokio::test]
 async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
-    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+    const PUBLIC_URL: &str = "https://self-host.example";
+    let runtime =
+        test_runtime_with_surface_and_public_url(ModelSurface::FullOperatorRuntime, PUBLIC_URL);
     // The URI is a host cache key. Bump it whenever the App delivery contract
     // changes so a previously failed/blank iframe cannot pin the old resource.
-    assert_eq!(MCP_COMPUTER_UI_RESOURCE_URI, "ui://webcodex/computer/v11");
-    assert!(MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/computer/v10"));
+    assert_eq!(MCP_COMPUTER_UI_RESOURCE_URI, "ui://webcodex/computer/v12");
+    assert!(MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/computer/v11"));
     assert_eq!(MCP_COMPUTER_UI_RESOURCE_TTL_MS, 0);
+    assert!(mcp_computer_app_resource_meta(None)["ui"]
+        .get("domain")
+        .is_none());
     let expected_resource_meta = json!({
         "ui": {
             "prefersBorder": true,
-            "domain": MCP_COMPUTER_UI_DOMAIN,
+            "domain": PUBLIC_URL,
             "csp": {
                 "connectDomains": [],
                 "resourceDomains": []
