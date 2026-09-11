@@ -252,6 +252,137 @@
     });
   }
 
+  function addGitFile(body, item, reviewMode) {
+    if (!item || typeof item !== "object") return;
+    const path = boundedString(item.path);
+    const status = boundedString(item.status);
+    const oldPath = boundedString(reviewMode ? item.previous_path : item.old_path);
+    const line = document.createElement("div");
+    line.style.fontSize = "12px";
+    line.style.overflowWrap = "anywhere";
+    const facts = [];
+    if (status) facts.push(status);
+    if (reviewMode) {
+      if (Number.isInteger(item.additions)) facts.push("+" + String(item.additions));
+      if (Number.isInteger(item.deletions)) facts.push("−" + String(item.deletions));
+      if (item.binary === true) facts.push("binary");
+      if (item.gitlink === true) facts.push("gitlink");
+      const classes = Array.isArray(item.classes) ? item.classes.slice(0, MAX_ITEMS).map(boundedString).filter(Boolean) : [];
+      if (classes.length) facts.push(classes.join(", "));
+    } else {
+      if (item.staged === true) facts.push("staged");
+      if (item.unstaged === true) facts.push("unstaged");
+    }
+    line.textContent = (path || (item.path_omitted === true ? "path omitted" : "changed file"))
+      + (oldPath ? " ← " + oldPath : "")
+      + (facts.length ? " · " + facts.join(" · ") : "");
+    body.appendChild(line);
+  }
+
+  function renderGitChanges(presentation) {
+    const state = presentation.git_available === false
+      ? (presentation.non_git_project === true ? "Non-Git" : "Git unavailable")
+      : presentation.clean === true
+        ? "Clean"
+        : presentation.clean === false ? "Changes" : "Status unavailable";
+    titleEl.textContent = "Git changes";
+    stateEl.textContent = state;
+    const parts = [];
+    const branch = boundedString(presentation.branch);
+    if (branch) parts.push(branch);
+    if (Number.isInteger(presentation.files_total)) parts.push(String(presentation.files_total) + " changed files");
+    const upstream = boundedString(presentation.upstream_status);
+    if (upstream) parts.push("upstream: " + upstream);
+    if (Number.isInteger(presentation.ahead) && presentation.ahead > 0) parts.push(String(presentation.ahead) + " ahead");
+    if (Number.isInteger(presentation.behind) && presentation.behind > 0) parts.push(String(presentation.behind) + " behind");
+    if (presentation.files_truncated === true || presentation.output_truncated === true || presentation.items_truncated === true) parts.push("bounded view");
+    summaryEl.textContent = parts.length ? parts.join(" · ") : state;
+
+    appendDetailsCard((body) => {
+      addRow(body, "Git available", typeof presentation.git_available === "boolean" ? (presentation.git_available ? "yes" : "no") : null);
+      addRow(body, "Non-Git project", typeof presentation.non_git_project === "boolean" ? (presentation.non_git_project ? "yes" : "no") : null);
+      addRow(body, "Branch", branch);
+      addRow(body, "Head", presentation.head && typeof presentation.head === "object" ? boundedString(presentation.head.short) : null);
+      addRow(body, "Upstream", upstream);
+      addRow(body, "Upstream reason", boundedString(presentation.upstream_reason_code));
+      addRow(body, "Ahead", Number.isInteger(presentation.ahead) ? presentation.ahead : null);
+      addRow(body, "Behind", Number.isInteger(presentation.behind) ? presentation.behind : null);
+      const observation = presentation.status_observation && typeof presentation.status_observation === "object" ? presentation.status_observation : null;
+      if (observation) {
+        addRow(body, "Status observation", boundedString(observation.status));
+        addRow(body, "Status reason", boundedString(observation.reason_code));
+      }
+      const counts = presentation.counts && typeof presentation.counts === "object" ? presentation.counts : null;
+      if (counts) {
+        for (const [key, label] of [["modified", "Modified"], ["added", "Added"], ["deleted", "Deleted"], ["renamed", "Renamed"], ["copied", "Copied"], ["untracked", "Untracked"], ["conflicted", "Conflicted"], ["staged", "Staged"], ["unstaged", "Unstaged"]]) {
+          addRow(body, label, Number.isInteger(counts[key]) ? counts[key] : null);
+        }
+      }
+      const files = Array.isArray(presentation.files) ? presentation.files.slice(0, MAX_ITEMS) : [];
+      files.forEach((item) => addGitFile(body, item, false));
+      if (presentation.files_truncated === true || presentation.items_truncated === true) addRow(body, "Changed files", "bounded/truncated");
+      if (presentation.output_truncated === true) addRow(body, "Canonical output", "truncated");
+    });
+  }
+
+  function renderGitReview(presentation) {
+    titleEl.textContent = "Committed review";
+    stateEl.textContent = boundedString(presentation.reason_code)
+      ? "Unavailable"
+      : presentation.truncated === true
+        ? "Partial"
+        : presentation.deterministic === true ? "Mapped" : "Review metadata";
+    const scope = presentation.scope && typeof presentation.scope === "object" ? presentation.scope : null;
+    const stats = presentation.stats && typeof presentation.stats === "object" ? presentation.stats : null;
+    const parts = [];
+    if (scope && Number.isInteger(scope.commit_count)) parts.push(String(scope.commit_count) + " commits");
+    if (stats && Number.isInteger(stats.files_changed)) parts.push(String(stats.files_changed) + " files");
+    if (stats && Number.isInteger(stats.insertions)) parts.push("+" + String(stats.insertions));
+    if (stats && Number.isInteger(stats.deletions)) parts.push("−" + String(stats.deletions));
+    if (presentation.truncated === true || presentation.items_truncated === true) parts.push("bounded view");
+    summaryEl.textContent = parts.length ? parts.join(" · ") : "Committed-range metadata";
+
+    appendDetailsCard((body) => {
+      if (scope) {
+        const base = boundedString(scope.base);
+        const head = boundedString(scope.head);
+        const mergeBase = boundedString(scope.merge_base);
+        addRow(body, "Requested range", base && head ? base + " → " + head : base || head);
+        addRow(body, "Diff range", mergeBase && head ? mergeBase + " → " + head : null);
+        addRow(body, "Base is ancestor", typeof scope.base_is_ancestor === "boolean" ? (scope.base_is_ancestor ? "yes" : "no") : null);
+      }
+      addRow(body, "Deterministic", typeof presentation.deterministic === "boolean" ? (presentation.deterministic ? "yes" : "no") : null);
+      addRow(body, "Reason", boundedString(presentation.reason_code));
+      if (stats) {
+        addRow(body, "Files changed", Number.isInteger(stats.files_changed) ? stats.files_changed : null);
+        addRow(body, "Insertions", Number.isInteger(stats.insertions) ? stats.insertions : null);
+        addRow(body, "Deletions", Number.isInteger(stats.deletions) ? stats.deletions : null);
+        addRow(body, "Binary files", Number.isInteger(stats.binary_files) ? stats.binary_files : null);
+      }
+      const coverage = presentation.coverage && typeof presentation.coverage === "object" ? presentation.coverage : null;
+      if (coverage) {
+        addRow(body, "Production changed", typeof coverage.production_changed === "boolean" ? (coverage.production_changed ? "yes" : "no") : null);
+        addRow(body, "Tests changed", typeof coverage.tests_changed === "boolean" ? (coverage.tests_changed ? "yes" : "no") : null);
+        addRow(body, "Docs changed", typeof coverage.docs_changed === "boolean" ? (coverage.docs_changed ? "yes" : "no") : null);
+        addRow(body, "Coverage partial", typeof coverage.partial === "boolean" ? (coverage.partial ? "yes" : "no") : null);
+      }
+      const classes = presentation.file_classes && typeof presentation.file_classes === "object" ? presentation.file_classes : null;
+      if (classes && classes.counts_observed && typeof classes.counts_observed === "object") {
+        Object.entries(classes.counts_observed).slice(0, MAX_ITEMS).forEach(([name, count]) => addRow(body, "Class " + boundedString(name), Number.isInteger(count) ? count : null));
+        if (classes.counts_truncated === true) addRow(body, "File classes", "bounded/truncated");
+      }
+      const truncation = presentation.truncation && typeof presentation.truncation === "object" ? presentation.truncation : null;
+      if (truncation) {
+        addRow(body, "Files returned", Number.isInteger(truncation.files_returned) ? truncation.files_returned : null);
+        addRow(body, "Files total", Number.isInteger(truncation.files_total) ? truncation.files_total : null);
+        addRow(body, "Files truncated", typeof truncation.files_truncated === "boolean" ? (truncation.files_truncated ? "yes" : "no") : null);
+      }
+      const files = Array.isArray(presentation.files) ? presentation.files.slice(0, MAX_ITEMS) : [];
+      files.forEach((item) => addGitFile(body, item, true));
+      if (presentation.items_truncated === true) addRow(body, "Review files", "bounded/truncated");
+    });
+  }
+
   function renderItem(item) {
     if (!item || typeof item !== "object") return;
     const card = document.createElement("div");
@@ -294,6 +425,14 @@
     }
     if (presentation.kind === "validation_summary") {
       renderValidationSummary(presentation);
+      return;
+    }
+    if (presentation.kind === "git_changes") {
+      renderGitChanges(presentation);
+      return;
+    }
+    if (presentation.kind === "git_review") {
+      renderGitReview(presentation);
       return;
     }
     const items = Array.isArray(presentation.items) ? presentation.items.slice(0, MAX_ITEMS) : [];
