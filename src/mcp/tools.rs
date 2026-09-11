@@ -583,7 +583,7 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
             meta.insert("openai/fileParams".to_string(), json!(["openaiFileIdRefs"]));
         }
     }
-    if app_enabled && matches!(tool_name.as_str(), "list_jobs" | "observe_jobs") {
+    if app_enabled && presentation::tool_supports_result_app(&tool_name) {
         attach_app_metadata(&mut value, resources::MCP_RESULT_UI_RESOURCE_URI);
     }
     value

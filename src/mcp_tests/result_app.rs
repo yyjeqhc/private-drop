@@ -18,6 +18,50 @@ fn presentation<'a>(call_result: &'a Value) -> &'a Value {
     &call_result["_meta"][super::super::presentation::MCP_PRESENTATION_META_KEY]
 }
 
+const RESULT_APP_TOOLS: [&str; 6] = [
+    "list_jobs",
+    "observe_jobs",
+    "cargo_check",
+    "cargo_test",
+    "go_test",
+    "validation_summary",
+];
+const UNBOUND_RESULT_APP_TOOLS: [&str; 5] = [
+    "cargo_fmt",
+    "run_shell",
+    "run_process",
+    "run_job",
+    "finish_coding_task",
+];
+
+fn assert_presentation_strings_bounded(value: &Value) {
+    match value {
+        Value::String(text) => assert!(
+            text.chars().count() <= super::super::presentation::MAX_MCP_PRESENTATION_TEXT_CHARS,
+            "presentation text exceeded bound: {}",
+            text.chars().count()
+        ),
+        Value::Array(values) => values.iter().for_each(assert_presentation_strings_bounded),
+        Value::Object(values) => values
+            .values()
+            .for_each(assert_presentation_strings_bounded),
+        _ => {}
+    }
+}
+
+fn projected_result(tool_name: &str, success: bool, output: Value) -> Value {
+    let canonical = ToolResult {
+        success,
+        output,
+        error: (!success).then(|| "canonical validation failure".to_string()),
+    };
+    let mut framed = super::super::tools::mcp_runtime_tool_result(tool_name, false, canonical);
+    let structured_before = framed["structuredContent"].clone();
+    super::super::presentation::attach_result_app_presentation(tool_name, &mut framed);
+    assert_eq!(framed["structuredContent"], structured_before);
+    framed
+}
+
 async fn handle_with_server_apps_enabled(
     runtime: &ToolRuntime,
     request: JsonRpcRequest,
@@ -43,14 +87,15 @@ async fn handle_with_server_apps_enabled(
 }
 
 #[test]
-fn job_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
+fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
     for compact in [false, true] {
         let enabled = mcp_tools_list_payload_with_compact_and_app(
             ModelSurface::FullOperatorRuntime,
             compact,
             true,
         );
-        for name in ["list_jobs", "observe_jobs"] {
+        for name in RESULT_APP_TOOLS {
+            assert!(super::super::presentation::tool_supports_result_app(name));
             assert_eq!(
                 tool(&enabled, name)["_meta"]["ui"]["resourceUri"],
                 MCP_RESULT_UI_RESOURCE_URI
@@ -59,13 +104,22 @@ fn job_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
                 .get("ui/resourceUri")
                 .is_none());
         }
+        for name in UNBOUND_RESULT_APP_TOOLS {
+            assert!(!super::super::presentation::tool_supports_result_app(name));
+            assert_ne!(
+                tool(&enabled, name)
+                    .pointer("/_meta/ui/resourceUri")
+                    .and_then(Value::as_str),
+                Some(MCP_RESULT_UI_RESOURCE_URI)
+            );
+        }
 
         let disabled = mcp_tools_list_payload_with_compact_and_app(
             ModelSurface::FullOperatorRuntime,
             compact,
             false,
         );
-        for name in ["list_jobs", "observe_jobs"] {
+        for name in RESULT_APP_TOOLS {
             assert!(tool(&disabled, name).get("_meta").is_none());
         }
     }
@@ -87,7 +141,7 @@ fn job_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
 }
 
 #[tokio::test]
-async fn job_app_descriptor_and_resource_exposure_require_ui_operator_capability() {
+async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capability() {
     let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
     let ui_tools = handle_mcp_request(
         &runtime,
@@ -102,10 +156,21 @@ async fn job_app_descriptor_and_resource_exposure_require_ui_operator_capability
     let McpOutcome::Ok(ui_tools) = ui_tools else {
         panic!("expected UI-capable tools/list");
     };
-    for name in ["list_jobs", "observe_jobs"] {
+    for name in RESULT_APP_TOOLS {
         assert_eq!(
             tool(&ui_tools["result"], name)["_meta"]["ui"]["resourceUri"],
             MCP_RESULT_UI_RESOURCE_URI
+        );
+        assert!(tool(&ui_tools["result"], name)["_meta"]
+            .get("ui/resourceUri")
+            .is_none());
+    }
+    for name in UNBOUND_RESULT_APP_TOOLS {
+        assert_ne!(
+            tool(&ui_tools["result"], name)
+                .pointer("/_meta/ui/resourceUri")
+                .and_then(Value::as_str),
+            Some(MCP_RESULT_UI_RESOURCE_URI)
         );
     }
 
@@ -118,7 +183,7 @@ async fn job_app_descriptor_and_resource_exposure_require_ui_operator_capability
     let McpOutcome::Ok(plain_tools) = plain_tools else {
         panic!("expected ordinary tools/list");
     };
-    for name in ["list_jobs", "observe_jobs"] {
+    for name in RESULT_APP_TOOLS {
         assert!(tool(&plain_tools["result"], name).get("_meta").is_none());
     }
 
@@ -218,6 +283,17 @@ async fn job_app_descriptor_and_resource_exposure_require_ui_operator_capability
             .and_then(Value::as_str)
             != Some(MCP_RESULT_UI_RESOURCE_URI)));
 
+    let connector_tools =
+        super::super::tools::project_connector_tools_list_payload_with_compact(false);
+    assert!(connector_tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|tool| tool
+            .pointer("/_meta/ui/resourceUri")
+            .and_then(Value::as_str)
+            != Some(MCP_RESULT_UI_RESOURCE_URI)));
+
     assert!(!mcp_app_enabled(
         true,
         true,
@@ -287,7 +363,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
     let McpOutcome::Ok(tools) = tools else {
         panic!("tools/list with Apps disabled failed");
     };
-    for name in ["list_jobs", "observe_jobs"] {
+    for name in RESULT_APP_TOOLS {
         assert!(tool(&tools["result"], name)
             .pointer("/_meta/ui/resourceUri")
             .is_none());
@@ -528,6 +604,385 @@ fn observe_presentation_preserves_wait_uncertainty_and_unknown_job_without_log_b
 }
 
 #[test]
+fn validation_run_presentation_preserves_canonical_state_matrix() {
+    let cases = [
+        (
+            "completed_passed",
+            true,
+            json!({
+                "execution_state": "completed", "terminal": true, "passed": true,
+                "command_started": true, "command_completed": true,
+                "promoted_to_job": false, "duration_ms": 1840, "exit_code": 0,
+                "tests_detected": true, "tests_run_count": 42,
+                "tests_passed": 42, "tests_failed": 0, "zero_tests_run": false
+            }),
+            "completed",
+            Some(true),
+            None,
+        ),
+        (
+            "validation_failed",
+            false,
+            json!({
+                "execution_state": "completed", "terminal": true, "passed": false,
+                "failure_kind": "validation_failed", "command_started": true,
+                "command_completed": true, "promoted_to_job": false, "exit_code": 101
+            }),
+            "completed",
+            Some(false),
+            Some("validation_failed"),
+        ),
+        (
+            "process_exit",
+            false,
+            json!({
+                "execution_state": "completed", "terminal": true, "passed": false,
+                "failure_kind": "process_exit", "command_started": true,
+                "command_completed": true, "promoted_to_job": false, "exit_code": 2
+            }),
+            "completed",
+            Some(false),
+            Some("process_exit"),
+        ),
+        (
+            "promoted_running",
+            true,
+            json!({
+                "execution_state": "running", "terminal": false,
+                "command_started": true, "command_completed": false,
+                "promoted_to_job": true, "job_id": "job-validation",
+                "job_status": "running", "observation_token": "canonical-only-token"
+            }),
+            "running",
+            None,
+            None,
+        ),
+        (
+            "outcome_unknown",
+            false,
+            json!({
+                "execution_state": "outcome_unknown", "terminal": false, "passed": false,
+                "failure_kind": "outcome_unknown", "command_started": true,
+                "command_completed": false, "promoted_to_job": false
+            }),
+            "outcome_unknown",
+            Some(false),
+            Some("outcome_unknown"),
+        ),
+        (
+            "timed_out",
+            false,
+            json!({
+                "execution_state": "timed_out", "terminal": true, "passed": false,
+                "failure_kind": "timeout", "command_started": true,
+                "command_completed": false, "promoted_to_job": false
+            }),
+            "timed_out",
+            Some(false),
+            Some("timeout"),
+        ),
+        (
+            "pre_start",
+            false,
+            json!({
+                "execution_state": "not_started", "terminal": true, "passed": false,
+                "failure_kind": "permission_denied", "command_started": false,
+                "command_completed": false, "promoted_to_job": false
+            }),
+            "not_started",
+            Some(false),
+            Some("permission_denied"),
+        ),
+    ];
+
+    for (label, success, output, execution_state, passed, failure_kind) in cases {
+        let framed = projected_result("cargo_test", success, output);
+        let meta = presentation(&framed);
+        assert_eq!(meta["kind"], "validation_run", "{label}");
+        assert_eq!(meta["tool"], "cargo_test", "{label}");
+        assert_eq!(meta["validation_kind"], "test", "{label}");
+        assert_eq!(meta["execution_state"], execution_state, "{label}");
+        match passed {
+            Some(value) => assert_eq!(meta["passed"], value, "{label}"),
+            None => assert!(meta.get("passed").is_none(), "{label}"),
+        }
+        match failure_kind {
+            Some(value) => assert_eq!(meta["failure_kind"], value, "{label}"),
+            None => assert!(meta.get("failure_kind").is_none(), "{label}"),
+        }
+    }
+}
+
+#[test]
+fn validation_run_presentation_bounds_diagnostics_and_excludes_private_canonical_fields() {
+    let secret = "VALIDATION-PRIVATE-SECRET";
+    let diagnostics = (0..4)
+        .map(|index| {
+            json!({
+                "severity": "error",
+                "code": "C".repeat(300),
+                "message": format!("{index}-{}", "😀".repeat(300)),
+                "file": format!("/private/{secret}/{index}.rs"),
+                "line": 123,
+                "column": 7
+            })
+        })
+        .collect::<Vec<_>>();
+    let failed_tests = (0..9)
+        .map(|index| {
+            json!({
+                "name": format!("test_{}", "名".repeat(300)),
+                "failure_kind": "assertion",
+                "file": format!("/private/{secret}/test-{index}.rs"),
+                "line": 9,
+                "column": 2
+            })
+        })
+        .collect::<Vec<_>>();
+    let output = json!({
+        "execution_state": "completed",
+        "terminal": true,
+        "passed": false,
+        "failure_kind": "validation_failed",
+        "command_started": true,
+        "command_completed": true,
+        "promoted_to_job": false,
+        "stdout_tail": secret,
+        "stderr_tail": secret,
+        "stdout_evidence": secret,
+        "stderr_evidence": secret,
+        "command_summary": format!("cargo test -- {secret}"),
+        "command": secret,
+        "argv": [secret],
+        "cwd": format!("/private/{secret}"),
+        "affected_paths": [format!("/private/{secret}/src")],
+        "credential": secret,
+        "Authorization": secret,
+        "token": secret,
+        "observation_token": secret,
+        "identity": secret,
+        "detected_summary": {"raw": secret},
+        "diagnostics": {
+            "available": true,
+            "diagnostic_count": 13,
+            "returned_diagnostic_count": 13,
+            "diagnostics_truncated": false,
+            "failed_test_details_truncated": false,
+            "diagnostics": diagnostics,
+            "failed_test_details": failed_tests,
+            "raw_parser_output": secret
+        }
+    });
+    let framed = projected_result("cargo_test", false, output);
+    let meta = presentation(&framed);
+    let safe_diagnostics = &meta["diagnostics"];
+    assert_eq!(safe_diagnostics["items"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        safe_diagnostics["failed_tests"].as_array().unwrap().len(),
+        4
+    );
+    assert_eq!(safe_diagnostics["presentation_items_truncated"], true);
+    assert!(safe_diagnostics["items"][0].get("file").is_none());
+    assert!(safe_diagnostics["failed_tests"][0].get("file").is_none());
+    assert_eq!(
+        safe_diagnostics["items"][0]["message"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        super::super::presentation::MAX_MCP_PRESENTATION_TEXT_CHARS
+    );
+    assert_presentation_strings_bounded(meta);
+    let serialized = serde_json::to_string(meta).unwrap();
+    for forbidden in [
+        secret,
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_evidence",
+        "stderr_evidence",
+        "command_summary",
+        "command\"",
+        "argv",
+        "cwd",
+        "affected_paths",
+        "credential",
+        "Authorization",
+        "token",
+        "observation_token",
+        "identity",
+        "raw_parser_output",
+        "detected_summary",
+        "file",
+    ] {
+        assert!(!serialized.contains(forbidden), "leaked {forbidden}");
+    }
+}
+
+#[test]
+fn validation_summary_presentation_preserves_evidence_statuses_and_history_boundaries() {
+    let cases = [
+        ("passed", "passed", 0),
+        ("failed", "failed", 0),
+        ("mixed", "passed", 0),
+        ("inconclusive", "inconclusive", 0),
+        ("expected", "expected", 0),
+        ("passed", "stale", 0),
+        ("not_run", "not_run", 0),
+        ("unknown", "unknown", 1),
+    ];
+    for (status, current_status, evidence_gap_count) in cases {
+        let framed = projected_result(
+            "validation_summary",
+            true,
+            json!({
+                "validation": {
+                    "available": status != "not_run",
+                    "status": status,
+                    "latest_status": if status == "mixed" { "passed" } else { status },
+                    "reason": null,
+                    "current_evidence": {
+                        "status": current_status,
+                        "reason": if current_status == "stale" { Some("workspace changed") } else { None },
+                        "latest_status": if current_status == "stale" { "passed" } else { current_status },
+                        "events_total": 2,
+                        "successes": 1,
+                        "failures": 1,
+                        "expected_results": 0,
+                        "resolved_failure_count": 1,
+                        "unresolved_failure_count": 0,
+                        "evidence_gap_event_count": evidence_gap_count,
+                        "stale_failure_count": if current_status == "stale" { 1 } else { 0 },
+                        "evidence_after_latest_content_change": current_status != "stale",
+                        "boundary_reason": "workspace_content_changed"
+                    },
+                    "historical_failures": {"count": 3, "resolved": true, "unresolved": false},
+                    "resolved_failures": {"count": 3, "events": []},
+                    "unresolved_failures": {"count": 0, "events": []},
+                    "evidence_gaps": {"count": evidence_gap_count, "events": []},
+                    "cargo_test_zero_tests_run": false,
+                    "events": []
+                }
+            }),
+        );
+        let meta = presentation(&framed);
+        assert_eq!(meta["kind"], "validation_summary");
+        assert_eq!(meta["validation"]["status"], status);
+        assert_eq!(
+            meta["validation"]["current_evidence"]["status"],
+            current_status
+        );
+        assert_eq!(meta["validation"]["historical_failures"]["count"], 3);
+        assert_eq!(meta["validation"]["resolved_failures"]["count"], 3);
+        assert_eq!(meta["validation"]["unresolved_failures"]["count"], 0);
+        assert_eq!(
+            meta["validation"]["evidence_gaps"]["count"],
+            evidence_gap_count
+        );
+    }
+}
+
+#[test]
+fn validation_summary_presentation_bounds_events_and_excludes_private_event_fields() {
+    let secret = "LEDGER-PRIVATE-SECRET";
+    let events = (0..12)
+        .map(|index| {
+            json!({
+                "tool_name": if index % 2 == 0 { "cargo_check" } else { "cargo_test" },
+                "validation_kind": if index % 2 == 0 { "check" } else { "test" },
+                "success": index % 3 != 0,
+                "execution_success": index % 3 != 0,
+                "validation_passed": index % 4 != 0,
+                "expectation_satisfied": index % 5 == 0,
+                "failure_class": "execution_or_correctness",
+                "failure_kind": "validation_failed",
+                "unresolved_failure": index == 0,
+                "summary": format!("{index}-{}", "证".repeat(300)),
+                "duration_ms": 33,
+                "tests_run_count": 7,
+                "diagnostics": {"test_summary": {"passed": 6, "failed": 1}},
+                "command_summary": secret,
+                "cwd": format!("/private/{secret}"),
+                "affected_paths": [secret],
+                "identity": secret,
+                "stdout_evidence": secret,
+                "stderr_evidence": secret,
+                "raw_parser_output": secret
+            })
+        })
+        .collect::<Vec<_>>();
+    let framed = projected_result(
+        "validation_summary",
+        true,
+        json!({
+            "validation": {
+                "available": true,
+                "status": "mixed",
+                "latest_status": "passed",
+                "current_evidence": {
+                    "status": "passed", "reason": null, "latest_status": "passed",
+                    "events_total": 1, "successes": 1, "failures": 0, "expected_results": 0,
+                    "resolved_failure_count": 0, "unresolved_failure_count": 0,
+                    "evidence_gap_event_count": 0, "stale_failure_count": 0,
+                    "evidence_after_latest_content_change": true,
+                    "boundary_reason": "attempt_start"
+                },
+                "historical_failures": {"count": 4, "resolved": true, "unresolved": false},
+                "resolved_failures": {"count": 4, "events": []},
+                "unresolved_failures": {"count": 0, "events": []},
+                "evidence_gaps": {"count": 0, "events": []},
+                "cargo_test_zero_tests_run": false,
+                "events": events
+            }
+        }),
+    );
+    let meta = presentation(&framed);
+    assert_eq!(meta["validation"]["events"].as_array().unwrap().len(), 8);
+    assert_eq!(meta["validation"]["events_truncated"], true);
+    assert_eq!(meta["validation"]["events"][0]["tests_passed"], 6);
+    assert_eq!(meta["validation"]["events"][0]["tests_failed"], 1);
+    assert_eq!(meta["validation"]["events"][0]["success"], true);
+    assert_eq!(meta["validation"]["events"][0]["validation_passed"], false);
+    assert!(meta["validation"]["events"][0]["summary"]
+        .as_str()
+        .unwrap()
+        .starts_with("4-"));
+    assert_presentation_strings_bounded(meta);
+    let serialized = serde_json::to_string(meta).unwrap();
+    for forbidden in [
+        secret,
+        "command_summary",
+        "cwd",
+        "affected_paths",
+        "identity",
+        "stdout_evidence",
+        "stderr_evidence",
+        "raw_parser_output",
+    ] {
+        assert!(!serialized.contains(forbidden), "leaked {forbidden}");
+    }
+}
+
+#[test]
+fn validation_presentation_is_fail_open_for_unknown_shapes_and_unbound_tools() {
+    let canonical = ToolResult::ok(json!({"future_validation_shape": [1, 2, 3]}));
+    let mut framed = super::super::tools::mcp_runtime_tool_result("cargo_check", false, canonical);
+    let structured_before = framed["structuredContent"].clone();
+    super::super::presentation::attach_result_app_presentation("cargo_check", &mut framed);
+    assert_eq!(framed["structuredContent"], structured_before);
+    assert_eq!(presentation(&framed)["kind"], "validation_run");
+
+    let canonical = ToolResult::ok(json!({"execution_state": "completed", "passed": true}));
+    let mut unbound = super::super::tools::mcp_runtime_tool_result("cargo_fmt", false, canonical);
+    let structured_before = unbound["structuredContent"].clone();
+    super::super::presentation::attach_result_app_presentation("cargo_fmt", &mut unbound);
+    assert_eq!(unbound["structuredContent"], structured_before);
+    assert!(unbound
+        .get("_meta")
+        .and_then(|meta| meta.get(super::super::presentation::MCP_PRESENTATION_META_KEY))
+        .is_none());
+}
+
+#[test]
 fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
     let html = MCP_RESULT_APP_HTML;
     for expected in [
@@ -537,6 +992,10 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "webcodex/presentation",
         "textContent",
         "document.createElement",
+        "document.createElement(\"details\")",
+        "validation_run",
+        "validation_summary",
+        "Cargo Test",
         "Array.from",
     ] {
         assert!(html.contains(expected), "missing {expected}");
@@ -582,6 +1041,7 @@ async fn register_job_runner(runtime: &ToolRuntime, auth: &crate::auth::AuthCont
     let capabilities = RunnerCapabilities {
         async_jobs: true,
         async_shell_jobs: true,
+        structured_validation_argv: true,
         ..Default::default()
     };
     runtime
@@ -661,6 +1121,60 @@ async fn set_job_state(
             validation_progress: None,
             activity: None,
             finished,
+        })
+        .await
+        .unwrap();
+}
+
+async fn wait_for_result_app_runner_request(
+    runtime: &ToolRuntime,
+) -> crate::runner_protocol::RunnerRequest {
+    for _ in 0..100 {
+        if let Some(request) = runtime
+            .runner_registry
+            .poll(RunnerPollRequest {
+                client_id: "result-app-runner".to_string(),
+                runner_instance_id: "inst-result-app".to_string(),
+            })
+            .await
+            .unwrap()
+        {
+            return request;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    panic!("timed out waiting for Result App Runner request");
+}
+
+async fn complete_result_app_validation_job(
+    runtime: &ToolRuntime,
+    request: &crate::runner_protocol::RunnerRequest,
+) {
+    runtime
+        .runner_registry
+        .update_job(RunnerJobUpdateRequest {
+            client_id: "result-app-runner".to_string(),
+            runner_instance_id: "inst-result-app".to_string(),
+            update_seq: None,
+            job_id: request.job_id.clone().expect("validation Job id"),
+            request_id: Some(request.request_id.clone()),
+            status: "completed".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: Some("Finished `dev` profile [unoptimized] target(s)\n".to_string()),
+            stderr_tail: Some(String::new()),
+            log_snapshot: None,
+            exit_code: Some(0),
+            duration_ms: Some(25),
+            error: None,
+            command_execution_state: None,
+            validation_progress: Some(crate::runner_protocol::ShellJobValidationProgress {
+                completed: 1,
+                current_step: None,
+                failed_step: None,
+            }),
+            activity: None,
+            finished: true,
         })
         .await
         .unwrap();
@@ -798,6 +1312,151 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
     );
 
     assert!(runtime.runner_registry.remove_job_record(&job_id).await);
+}
+
+#[tokio::test]
+async fn mcp_validation_run_and_summary_use_real_canonical_contracts() {
+    std::fs::create_dir_all("/tmp/result-app-demo").unwrap();
+    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime)
+        .with_validation_sync_wait(std::time::Duration::from_millis(500));
+    let auth = result_app_auth();
+    register_job_runner(&runtime, &auth).await;
+    let project = "agent:result-app-runner:demo";
+    let session = runtime.sessions.start_session(
+        Some(project.to_string()),
+        Some("result app validation".to_string()),
+    );
+
+    let cargo_call = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let session_id = session.session_id.clone();
+        async move {
+            handle_mcp_request(
+                &runtime,
+                rpc(
+                    "tools/call",
+                    Some(json!(3220)),
+                    mcp_2026_ui_params(json!({
+                        "name": "cargo_check",
+                        "arguments": {
+                            "project": project,
+                            "session_id": session_id,
+                            "timeout_secs": 60,
+                            "sync_wait_secs": 1
+                        }
+                    })),
+                ),
+                Some(&auth),
+            )
+            .await
+        }
+    });
+    let request = wait_for_result_app_runner_request(&runtime).await;
+    assert_eq!(request.kind, "start_validation_job");
+    complete_result_app_validation_job(&runtime, &request).await;
+    let McpOutcome::Ok(cargo_call) = cargo_call.await.unwrap() else {
+        panic!("expected real cargo_check MCP result");
+    };
+    let cargo_result = &cargo_call["result"];
+    assert_eq!(
+        cargo_result["structuredContent"]["output"]["execution_state"],
+        "completed"
+    );
+    assert_eq!(cargo_result["structuredContent"]["output"]["passed"], true);
+    assert_eq!(presentation(cargo_result)["kind"], "validation_run");
+    assert_eq!(presentation(cargo_result)["tool"], "cargo_check");
+    assert_eq!(presentation(cargo_result)["execution_state"], "completed");
+    assert_eq!(presentation(cargo_result)["passed"], true);
+    assert!(!serde_json::to_string(presentation(cargo_result))
+        .unwrap()
+        .contains("secret log body"));
+
+    let summary = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(3221)),
+            mcp_2026_ui_params(json!({
+                "name": "validation_summary",
+                "arguments": {"project": project, "session_id": session.session_id}
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(summary) = summary else {
+        panic!("expected real validation_summary MCP result");
+    };
+    let summary_result = &summary["result"];
+    let canonical_validation = &summary_result["structuredContent"]["output"]["validation"];
+    assert_eq!(canonical_validation["status"], "passed");
+    assert_eq!(canonical_validation["current_evidence"]["status"], "passed");
+    assert_eq!(presentation(summary_result)["kind"], "validation_summary");
+    assert_eq!(
+        presentation(summary_result)["validation"]["status"],
+        canonical_validation["status"]
+    );
+    assert_eq!(
+        presentation(summary_result)["validation"]["current_evidence"]["status"],
+        canonical_validation["current_evidence"]["status"]
+    );
+    assert_eq!(
+        presentation(summary_result)["validation"]["events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let disabled = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(3222)),
+            mcp_2026_ui_params(json!({
+                "name": "validation_summary",
+                "arguments": {"project": project, "session_id": session.session_id}
+            })),
+        ),
+        Some(&auth),
+        false,
+    )
+    .await;
+    let McpOutcome::Ok(disabled) = disabled else {
+        panic!("Apps-disabled validation_summary should remain callable");
+    };
+    assert_eq!(
+        disabled["result"]["structuredContent"],
+        summary_result["structuredContent"]
+    );
+    assert!(disabled["result"]["_meta"]
+        .get(super::super::presentation::MCP_PRESENTATION_META_KEY)
+        .is_none());
+
+    let plain = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(3223)),
+            mcp_2026_params(json!({
+                "name": "validation_summary",
+                "arguments": {"project": project, "session_id": session.session_id}
+            })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(plain) = plain else {
+        panic!("non-UI validation_summary should remain callable");
+    };
+    assert_eq!(
+        plain["result"]["structuredContent"],
+        summary_result["structuredContent"]
+    );
+    assert!(plain["result"]["_meta"]
+        .get(super::super::presentation::MCP_PRESENTATION_META_KEY)
+        .is_none());
 }
 
 #[test]
