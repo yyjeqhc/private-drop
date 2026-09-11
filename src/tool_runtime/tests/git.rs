@@ -3906,6 +3906,29 @@ fn show_changes_complete_diff_does_not_handoff_to_git_diff_hunks() {
 }
 
 #[test]
+fn show_changes_small_mid_file_edit_stays_within_default_hunk_lines() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let original = (0..240)
+        .map(|index| format!("line-{index:03}\n"))
+        .collect::<String>();
+    commit_file(tmp.path(), "middle.txt", &original, "initial");
+    let changed = original.replacen("line-120\n", "line-120 changed\n", 1);
+    std::fs::write(tmp.path().join("middle.txt"), changed).unwrap();
+
+    let output = bounded_show_changes_output(tmp.path(), true, 20, 80);
+    assert_eq!(output["hunks_truncated"], false, "{output}");
+    assert!(output.get("diff_review_handoff").is_none(), "{output}");
+    let diff = output["hunks"][0]["hunks"][0]["diff"]
+        .as_str()
+        .expect("returned hunk diff");
+    assert!(
+        diff.lines().count() <= 80,
+        "ordinary small mid-file change should fit the default hunk line budget: {diff}"
+    );
+}
+
+#[test]
 fn show_changes_complete_model_projection_removes_only_derived_review_metadata() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());

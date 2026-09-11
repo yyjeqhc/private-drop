@@ -48,6 +48,9 @@ const GIT_COMMIT_MESSAGE_MAX_CHARS: usize = 1000;
 pub(crate) const GIT_COMMIT_RESULT_PREFIX: &str = "@@WEBCODEX_GIT_COMMIT@@";
 const SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES: usize = 80;
 const SHOW_CHANGES_MAX_HUNK_LINES: usize = 240;
+// Keep overview context materially below the default per-hunk line ceiling so
+// ordinary small mid-file edits remain decision-complete in show_changes.
+const SHOW_CHANGES_DIFF_CONTEXT_LINES: usize = 20;
 const SHOW_CHANGES_DEFAULT_SESSION_EVENT_LIMIT: usize = 30;
 const SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT: usize = 200;
 /// Maximum number of changed-file records `show_changes` emits on the
@@ -489,7 +492,7 @@ pub(crate) fn show_changes_command(
     let status_files_limit = SHOW_CHANGES_MAX_STATUS_FILES;
     let diff_part = if include_diff {
         r#"; {
-               git diff --unified=80; printf 'diff_exit=%s\n' "$?";
+               git diff --unified=__DIFF_CONTEXT_LINES__; printf 'diff_exit=%s\n' "$?";
              } | {
                hc=0; in_hunk=0; lc=0; diff_exit_raw=; diff_bytes=0; file_buf=; stop_emit=0;
                trunc_count=0; trunc_lines=0; trunc_bytes=0; trunc_bytes_in_hunk=0; have=0; pending=;
@@ -541,6 +544,10 @@ pub(crate) fn show_changes_command(
              }"#
         .replace("__HUNK_LIMIT__", &max_hunks.to_string())
         .replace("__LINE_LIMIT__", &max_hunk_lines.to_string())
+        .replace(
+            "__DIFF_CONTEXT_LINES__",
+            &SHOW_CHANGES_DIFF_CONTEXT_LINES.to_string(),
+        )
         .replace("__DIFF_BYTE_BUDGET__", &SHOW_CHANGES_DIFF_BYTES.to_string())
     } else {
         String::new()
