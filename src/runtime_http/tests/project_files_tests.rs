@@ -36,35 +36,6 @@ async fn http_projects_git_status_rejects_server_configured_project() {
 }
 
 // =========================================================================
-// getProjectGitDiff
-// =========================================================================
-
-#[tokio::test]
-async fn http_projects_git_diff_rejects_server_configured_project() {
-    let config = super::test_config(Some("secret"));
-    let (_tmp, db) = super::test_db();
-    let tmp_proj = tempfile::tempdir().unwrap();
-    let root = tmp_proj.path();
-    std::process::Command::new("git")
-        .args(["init"])
-        .current_dir(root)
-        .output()
-        .expect("git init");
-    let runtime = Arc::new(super::runtime_with_local_project(root, "demo"));
-    let service = Service::new(super::build_projects_router(config, db, runtime));
-
-    let mut resp = TestClient::post("http://localhost/api/projects/git_diff")
-        .bearer_auth("secret")
-        .json(&json!({"project": "demo"}))
-        .send(&service)
-        .await;
-    assert_eq!(super::effective_status(&resp), StatusCode::BAD_REQUEST);
-    let body: Value = resp.take_json().await.unwrap();
-    assert_eq!(body["success"], false);
-    assert!(body["error"].as_str().unwrap().contains("unknown_project"));
-}
-
-// =========================================================================
 // Phase A read-only console REST wrappers (wiring + auth gate)
 // =========================================================================
 
@@ -77,10 +48,7 @@ async fn http_console_routes_require_bearer_auth() {
     let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
     let service = Service::new(super::build_projects_router(config, db, runtime));
 
-    for (path, body) in [
-        ("/api/projects/list_files", json!({"project": "demo"})),
-        ("/api/projects/git_diff_summary", json!({"project": "demo"})),
-    ] {
+    for (path, body) in [("/api/projects/list_files", json!({"project": "demo"}))] {
         let resp = TestClient::post(format!("http://localhost{}", path))
             .json(&body)
             .send(&service)
@@ -105,6 +73,8 @@ async fn retired_project_compatibility_routes_are_unreachable() {
         "/api/projects/validate_patch",
         "/api/projects/read_file",
         "/api/projects/search_text",
+        "/api/projects/git_diff",
+        "/api/projects/git_diff_summary",
     ] {
         let resp = TestClient::post(format!("http://localhost{path}"))
             .bearer_auth("secret")

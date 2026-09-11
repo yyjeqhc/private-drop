@@ -15,13 +15,9 @@ pub(crate) enum OpenApiExampleSet {
     None,
     RegisterProject,
     CreateProject,
-    JobStatus,
-    JobLog,
     ListJobs,
     JobTail,
     GitStatus,
-    GitDiff,
-    GitDiffSummary,
     ListProjectFiles,
     ApplyUnifiedDiff,
     RunShell,
@@ -116,26 +112,6 @@ pub(super) const GET_RUNTIME_STATUS: OpenApiOperationSpec = operation(
     None,
 );
 
-pub(super) const GET_RUNTIME_JOB_STATUS: OpenApiOperationSpec = operation(
-    "getRuntimeJobStatus",
-    "Get job status",
-    "Read-only. Returns status, timing, and exit metadata for a runtime job. Use this to poll the job_id returned by run_job until status is completed, failed, stopped, or lost.",
-    "JobStatusRequest",
-    "ToolResult",
-    NonConsequential,
-    JobStatus,
-);
-
-pub(super) const GET_RUNTIME_JOB_LOG: OpenApiOperationSpec = operation(
-    "getRuntimeJobLog",
-    "Get job log",
-    "Read-only. Returns bounded tails, line totals, truncation, cursor, exit status, and detected summary for a job_id. Use cursor.stdout as offset to continue.",
-    "JobLogRequest",
-    "ToolResult",
-    NonConsequential,
-    JobLog,
-);
-
 pub(super) const LIST_RUNTIME_JOBS: OpenApiOperationSpec = operation(
     "listRuntimeJobs",
     "List runtime jobs",
@@ -164,26 +140,6 @@ pub(super) const GET_PROJECT_GIT_STATUS: OpenApiOperationSpec = operation(
     "ToolResult",
     NonConsequential,
     GitStatus,
-);
-
-pub(super) const GET_PROJECT_GIT_DIFF: OpenApiOperationSpec = operation(
-    "getProjectGitDiff",
-    "Get project git diff",
-    "Runs `git diff` in a Runner-registered Project and returns stdout, stderr, and exit_code. Optional `args` scopes paths or adds flags (e.g. [\"--stat\"]). Read-only inspection; routes to the owning Runner.",
-    "ProjectGitDiffRequest",
-    "ToolResult",
-    NonConsequential,
-    GitDiff,
-);
-
-pub(super) const GET_PROJECT_GIT_DIFF_SUMMARY: OpenApiOperationSpec = operation(
-    "getProjectGitDiffSummary",
-    "Get project git diff summary",
-    "Read-only git diff summary for a Runner-registered Project: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Does not modify the worktree. Routes to the owning Runner.",
-    "ProjectIdRequest",
-    "ToolResult",
-    NonConsequential,
-    GitDiffSummary,
 );
 
 pub(super) const LIST_PROJECT_FILES: OpenApiOperationSpec = operation(
@@ -249,7 +205,7 @@ pub(super) const IMPORT_CONVERSATION_FILES_TO_PROJECT: OpenApiOperationSpec = op
 pub(super) const START_PROJECT_SHELL_JOB: OpenApiOperationSpec = operation(
     "startProjectShellJob",
     "Start an async project shell job",
-    "Starts an async background shell job in a Runner-registered Project and returns a job_id. Execution with side effects; requires Bearer auth and the Runner async shell job capability. Poll with getRuntimeJobStatus; read output with getRuntimeJobTail or getRuntimeJobLog.",
+    "Starts an async background shell job in a Runner-registered Project and returns a job_id. Execution with side effects; requires Bearer auth and the Runner async shell job capability. Observe lifecycle plus bounded stdout/stderr deltas with callRuntimeTool tool=observe_jobs; getRuntimeJobTail remains the dedicated bounded REST tail.",
     "StartProjectShellJobRequest",
     "ToolResult",
     Consequential,
@@ -259,7 +215,7 @@ pub(super) const START_PROJECT_SHELL_JOB: OpenApiOperationSpec = operation(
 pub(super) const CALL_RUNTIME_TOOL: OpenApiOperationSpec = operation(
     "callRuntimeTool",
     "Call runtime tool",
-    "Generic/advanced route for model-visible runtime tools. Prefer dedicated actions when they match. For ordinary model-generated file edits after read_file/read_files, use tool=apply_text_edits with the current expected_sha256; use tool=apply_patch when a contextual or large patch-shaped change is clearer. Flatten tool args at top level; params is the canonical non-Action envelope; recording_session_id records wrapper calls.",
+    "Generic/advanced route for model-visible runtime tools. Prefer dedicated actions when they match. For ordinary model-generated file edits after read_files, use tool=apply_text_edits with the current expected_sha256; use tool=apply_patch when a contextual or large patch-shaped change is clearer. Flatten tool args at top level; params is the canonical non-Action envelope; recording_session_id records wrapper calls.",
     "ToolCallRequest",
     "ToolResult",
     Consequential,

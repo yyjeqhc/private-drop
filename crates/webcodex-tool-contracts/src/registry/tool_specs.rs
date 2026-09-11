@@ -314,34 +314,24 @@ mod tests {
         assert!(run_job.contains("observe"), "{run_job}");
         assert!(run_job.contains("retry"), "{run_job}");
 
-        for name in ["job_status", "job_log", "observe_jobs"] {
-            let description = &find(name).description;
-            let lower = description.to_ascii_lowercase();
-            assert!(lower.contains("never"), "{name}: {description}");
-            assert!(lower.contains("retr"), "{name}: {description}");
-        }
+        let observe_jobs = find("observe_jobs");
+        let description = &observe_jobs.description;
+        let lower = description.to_ascii_lowercase();
+        assert!(lower.contains("never"), "observe_jobs: {description}");
+        assert!(lower.contains("retr"), "observe_jobs: {description}");
 
-        let job_log = find("job_log");
-        let token = job_log.input_schema["properties"]["after_observation_token"]["description"]
-            .as_str()
-            .expect("job_log observation token description");
-        assert!(token.contains("not execution identity"), "{token}");
-        assert!(token.contains("Server epoch"), "{token}");
-        assert!(token.contains("log-delta state"), "{token}");
-        assert!(token.contains("Return it unchanged"), "{token}");
-        let batch_token = find("observe_jobs").input_schema["properties"]["items"]["items"]
-            ["properties"]["after_observation_token"]["description"]
+        let token = observe_jobs.input_schema["properties"]["items"]["items"]["properties"]
+            ["after_observation_token"]["description"]
             .as_str()
             .expect("observe_jobs observation token description");
-        assert!(batch_token.contains("log-delta token"), "{batch_token}");
-        assert!(
-            batch_token.contains("without interpreting"),
-            "{batch_token}"
-        );
-        let wait = job_log.input_schema["properties"]["wait_secs"]["description"]
+        assert!(token.contains("not execution identity"), "{token}");
+        assert!(token.contains("Server epoch"), "{token}");
+        assert!(token.contains("without interpreting"), "{token}");
+        assert!(token.contains("Return it unchanged"), "{token}");
+        let wait = observe_jobs.input_schema["properties"]["wait_secs"]["description"]
             .as_str()
-            .expect("job_log wait description");
-        assert!(wait.contains("not a subscription"), "{wait}");
+            .expect("observe_jobs wait description");
+        assert!(wait.contains("one shared bounded wait"), "{wait}");
 
         let register = find("register_project");
         assert!(

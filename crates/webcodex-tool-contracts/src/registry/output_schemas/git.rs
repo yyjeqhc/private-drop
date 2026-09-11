@@ -149,30 +149,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("failure_kind", nullable_schema("string", "Stable bounded commit rejection/failure kind.")),
             ("hook_policy", schema_type("string", "Always bypassed_exact_tree: commit-tree is used so hooks cannot add unrelated paths.")),
         ])),
-        "git_status" | "git_diff" => Some(wrapped_output_schema(vec![
+        "git_status" => Some(wrapped_output_schema(vec![
             (
                 "exit_code",
                 nullable_schema("integer", "Git command exit code."),
             ),
             ("stdout", schema_type("string", "Git command stdout.")),
             ("stderr", schema_type("string", "Git command stderr.")),
-        ])),
-        "git_diff_summary" => Some(wrapped_output_schema(vec![
-            (
-                "status",
-                schema_type("string", "Porcelain git status output."),
-            ),
-            (
-                "diff_stat",
-                schema_type("string", "Git diff --stat output."),
-            ),
-            (
-                "changed_files",
-                array_schema(
-                    open_object_schema("Changed file summary."),
-                    "Changed files.",
-                ),
-            ),
         ])),
         "git_review_summary" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project input.")),

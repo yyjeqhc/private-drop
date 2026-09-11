@@ -87,17 +87,15 @@ pub use files::{
     project_overview_input_schema, read_files_input_schema, search_project_texts_input_schema,
 };
 pub use git::{
-    git_commit_paths_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
-    git_diff_summary_input_schema, git_log_input_schema, git_review_summary_input_schema,
-    git_status_input_schema, show_changes_input_schema,
+    git_commit_paths_input_schema, git_diff_hunks_input_schema, git_log_input_schema,
+    git_review_summary_input_schema, git_status_input_schema, show_changes_input_schema,
 };
 pub use hygiene::workspace_hygiene_check_input_schema;
 pub use jobs::{
-    job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
-    observe_jobs_input_schema, open_session_shell_input_schema, run_detached_process_input_schema,
-    run_job_input_schema, run_process_input_schema, run_script_input_schema,
-    run_shell_input_schema, session_shell_exec_input_schema, session_shell_identity_input_schema,
-    stop_job_input_schema,
+    list_jobs_input_schema, observe_jobs_input_schema, open_session_shell_input_schema,
+    run_detached_process_input_schema, run_job_input_schema, run_process_input_schema,
+    run_script_input_schema, run_shell_input_schema, session_shell_exec_input_schema,
+    session_shell_identity_input_schema, stop_job_input_schema,
 };
 pub use line_edits::apply_text_edits_input_schema;
 pub use lsp::{

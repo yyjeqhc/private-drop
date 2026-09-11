@@ -46,29 +46,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                 }
             }
         })),
-        OpenApiExampleSet::JobStatus => Some(json!({
-            "byJobId": {
-                "summary": "Poll a job by id",
-                "value": {
-                    "job_id": "11111111-2222-3333-4444-555555555555"
-                }
-            }
-        })),
-        OpenApiExampleSet::JobLog => Some(json!({
-            "byJobId": {
-                "summary": "Read the tail of a job log",
-                "value": {
-                    "job_id": "11111111-2222-3333-4444-555555555555"
-                }
-            },
-            "withTailLines": {
-                "summary": "Read the last N stdout lines",
-                "value": {
-                    "job_id": "11111111-2222-3333-4444-555555555555",
-                    "tail_lines": 200
-                }
-            }
-        })),
         OpenApiExampleSet::ListJobs => Some(json!({
             "all": {
                 "summary": "List recent jobs",
@@ -101,29 +78,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
         OpenApiExampleSet::GitStatus => Some(json!({
             "byProject": {
                 "summary": "Check git status of a project",
-                "value": {
-                    "project": "webcodex"
-                }
-            }
-        })),
-        OpenApiExampleSet::GitDiff => Some(json!({
-            "byProject": {
-                "summary": "Full diff of a project",
-                "value": {
-                    "project": "webcodex"
-                }
-            },
-            "withStat": {
-                "summary": "Diffstat of a project",
-                "value": {
-                    "project": "webcodex",
-                    "args": ["--stat"]
-                }
-            }
-        })),
-        OpenApiExampleSet::GitDiffSummary => Some(json!({
-            "byProject": {
-                "summary": "Diff summary of a project",
                 "value": {
                     "project": "webcodex"
                 }
@@ -354,7 +308,7 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
             "paramsEnvelope": {
                 "summary": "Canonical direct/non-Action params envelope",
                 "value": {
-                    "tool": "git_diff_summary",
+                    "tool": "show_changes",
                     "params": {"project": "webcodex"}
                 }
             },

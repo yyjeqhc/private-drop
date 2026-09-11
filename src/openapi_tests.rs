@@ -149,10 +149,6 @@ fn openapi_consequential_flags_match_operation_risk() {
         "getRuntimeStatus",
         "listProjectFiles",
         "getProjectGitStatus",
-        "getProjectGitDiff",
-        "getProjectGitDiffSummary",
-        "getRuntimeJobStatus",
-        "getRuntimeJobLog",
         "getRuntimeJobTail",
         "listRuntimeJobs",
         "registerProject",
@@ -178,7 +174,7 @@ fn openapi_consequential_flags_match_operation_risk() {
     for id in consequential {
         assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
     }
-    assert_eq!(flags.len(), 20);
+    assert_eq!(flags.len(), 16);
 }
 
 #[test]
@@ -454,15 +450,17 @@ fn openapi_rejects_legacy_codex_paths_from_model_facing_spec() {
             && call_tool.contains("contextual or large patch-shaped change"),
         "callRuntimeTool description should prefer guarded text edits before contextual patching: {call_tool}"
     );
-    // getRuntimeJobStatus / getRuntimeJobLog should mention job_id polling.
-    let status_desc = &spec["paths"]["/api/jobs/status"]["post"]["description"]
-        .as_str()
-        .unwrap();
-    assert!(status_desc.contains("job_id"));
-    let log_desc = &spec["paths"]["/api/jobs/log"]["post"]["description"]
-        .as_str()
-        .unwrap();
-    assert!(log_desc.contains("job_id"));
+    for retired_path in [
+        "/api/jobs/status",
+        "/api/jobs/log",
+        "/api/projects/git_diff",
+        "/api/projects/git_diff_summary",
+    ] {
+        assert!(
+            spec["paths"].get(retired_path).is_none(),
+            "retired dedicated route {retired_path} must stay absent from OpenAPI"
+        );
+    }
 }
 
 #[test]
@@ -519,7 +517,7 @@ fn openapi_call_runtime_tool_lists_accepted_tool_names() {
         .collect::<Vec<_>>();
     assert!(!operation_ids.contains(&"hover"));
     assert!(!operation_ids.contains(&"workspaceSymbols"));
-    assert_eq!(operation_ids.len(), 20);
+    assert_eq!(operation_ids.len(), 16);
 }
 
 #[test]
@@ -624,11 +622,7 @@ fn openapi_search_project_texts_is_available_through_strict_flattened_runtime_fi
 fn openapi_key_actions_have_examples() {
     let spec = build_openapi_spec();
     for (path, label) in [
-        ("/api/jobs/status", "getRuntimeJobStatus"),
-        ("/api/jobs/log", "getRuntimeJobLog"),
         ("/api/projects/git_status", "getProjectGitStatus"),
-        ("/api/projects/git_diff", "getProjectGitDiff"),
-        ("/api/projects/git_diff_summary", "getProjectGitDiffSummary"),
         ("/api/projects/list_files", "listProjectFiles"),
         ("/api/projects/apply_unified_diff", "applyUnifiedDiff"),
         ("/api/projects/run_shell", "runProjectShellCommand"),
@@ -703,22 +697,6 @@ fn openapi_external_action_contract_matches_compatibility_golden() {
             "ToolResult",
         ),
         (
-            "/api/jobs/status",
-            "post",
-            "getRuntimeJobStatus",
-            false,
-            "JobStatusRequest",
-            "ToolResult",
-        ),
-        (
-            "/api/jobs/log",
-            "post",
-            "getRuntimeJobLog",
-            false,
-            "JobLogRequest",
-            "ToolResult",
-        ),
-        (
             "/api/jobs/list",
             "post",
             "listRuntimeJobs",
@@ -738,22 +716,6 @@ fn openapi_external_action_contract_matches_compatibility_golden() {
             "/api/projects/git_status",
             "post",
             "getProjectGitStatus",
-            false,
-            "ProjectIdRequest",
-            "ToolResult",
-        ),
-        (
-            "/api/projects/git_diff",
-            "post",
-            "getProjectGitDiff",
-            false,
-            "ProjectGitDiffRequest",
-            "ToolResult",
-        ),
-        (
-            "/api/projects/git_diff_summary",
-            "post",
-            "getProjectGitDiffSummary",
             false,
             "ProjectIdRequest",
             "ToolResult",
@@ -951,13 +913,9 @@ fn openapi_readonly_actions_describe_readonly() {
         "/api/tools/list",
         "/api/projects/list",
         "/api/runtime/status",
-        "/api/jobs/status",
-        "/api/jobs/log",
         "/api/jobs/list",
         "/api/jobs/tail",
         "/api/projects/git_status",
-        "/api/projects/git_diff",
-        "/api/projects/git_diff_summary",
         "/api/projects/list_files",
     ] {
         let desc = spec["paths"][path]["post"]["description"]
@@ -1053,7 +1011,6 @@ fn openapi_dedicated_project_action_schemas_include_optional_session_id() {
     for name in [
         "RunShellRequest",
         "ProjectIdRequest",
-        "ProjectGitDiffRequest",
         "ApplyUnifiedDiffRequest",
         "GitRestorePathsRequest",
         "DiscardUntrackedRequest",
@@ -1340,7 +1297,7 @@ fn openapi_tool_call_request_exposes_canonical_closeout_and_visible_runtime_fiel
     );
 
     let count = operation_ids(&spec).len();
-    assert_eq!(count, 20, "GPT Actions operation count must stay 20");
+    assert_eq!(count, 16, "GPT Actions operation count must stay 16");
 }
 
 #[test]
@@ -1399,7 +1356,7 @@ fn openapi_call_runtime_tool_declares_checkpoint_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 20, "operation count must stay 20");
+    assert_eq!(count, 16, "operation count must stay 16");
 }
 
 #[test]
@@ -1481,7 +1438,7 @@ fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 20, "operation count must stay 20");
+    assert_eq!(count, 16, "operation count must stay 16");
 }
 
 #[test]
@@ -1592,7 +1549,7 @@ fn openapi_artifact_upload_tools_remain_generic_and_under_action_limit() {
         );
     }
     let count = ids.len();
-    assert_eq!(count, 20, "GPT Actions operation count must stay 20");
+    assert_eq!(count, 16, "GPT Actions operation count must stay 16");
     assert!(count <= 30, "GPT Actions operation count must stay <= 30");
 
     let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];

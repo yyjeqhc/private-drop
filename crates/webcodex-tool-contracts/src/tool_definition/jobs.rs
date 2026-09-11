@@ -12,11 +12,10 @@ use crate::metadata::{
     JOB_RUN, RUNTIME_READ, TOOL_PROVIDER_NATIVE, TOOL_PROVIDER_RUNNER,
 };
 use crate::registry::input_schemas::{
-    job_log_input_schema, job_status_input_schema, list_jobs_input_schema,
-    observe_jobs_input_schema, open_session_shell_input_schema, run_detached_process_input_schema,
-    run_job_input_schema, run_process_input_schema, run_script_input_schema,
-    run_shell_input_schema, session_shell_exec_input_schema, session_shell_identity_input_schema,
-    stop_job_input_schema,
+    list_jobs_input_schema, observe_jobs_input_schema, open_session_shell_input_schema,
+    run_detached_process_input_schema, run_job_input_schema, run_process_input_schema,
+    run_script_input_schema, run_shell_input_schema, session_shell_exec_input_schema,
+    session_shell_identity_input_schema, stop_job_input_schema,
 };
 use webcodex_core::authority::SCOPE_JOB_DETACH;
 
@@ -315,54 +314,6 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             stop_job_input_schema,
         ),
         PERMISSION_RISK_JOB,
-    ),
-    model_spec(
-        def(
-            "job_status",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_JOB,
-            None,
-            TOOL_PROVIDER_NATIVE,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
-        "Single-Job lifecycle compatibility primitive. Ordinary model continuation should prefer observe_jobs, which combines lifecycle and bounded log observation; use job_status only when one Job's status metadata is specifically needed without logs. Never starts or retries work; command preview is opt-in and log bodies are excluded.",
-        job_status_input_schema,
-    ),
-    model_spec(
-        def(
-            "job_log",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
-            TOOL_CATEGORY_JOB,
-            None,
-            TOOL_PROVIDER_NATIVE,
-            super::ToolSemanticContract {
-                effect: super::ToolEffect::Observe,
-                risk: Read,
-                approval: super::ToolApprovalPolicy::None,
-                idempotency: super::ToolIdempotency::PureRead,
-            },
-            Some(RUNTIME_READ),
-            false,
-            NoPath,
-            false,
-            false,
-            super::ToolSessionEvidencePolicy::NONE,
-        ),
-        "Read bounded stdout/stderr for one Job. Return its opaque token to receive only new output; reset means a bounded recovery tail. wait_secs performs one bounded wait. Never starts or retries execution.",
-        job_log_input_schema,
     ),
     adaptive_runtime_direct(
         model_spec(

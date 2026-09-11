@@ -362,9 +362,7 @@ fn tool_discovery_groups_drive_tool_categories() {
         );
     }
 
-    let exact_discovery_only = ["git_diff", "git_diff_summary"]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
+    let exact_discovery_only = BTreeSet::new();
     let mut omitted_from_groups = BTreeSet::new();
     for definition in model_visible_tool_definitions() {
         let Some(groups) = memberships.get(definition.name) else {

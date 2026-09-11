@@ -1,6 +1,6 @@
 use crate::tool_runtime::git::{
-    collect_show_changes_untracked_previews_for_root, git_log_command, parse_porcelain_summary,
-    parse_show_changes_output, show_changes_command, split_show_changes_stdout,
+    collect_show_changes_untracked_previews_for_root, git_log_command, parse_show_changes_output,
+    show_changes_command, split_show_changes_stdout,
 };
 use crate::tool_runtime::helpers::run_command_sync;
 use crate::tool_runtime::{
@@ -100,7 +100,13 @@ pub(in crate::tool_runtime::tests) fn show_changes_output_from_command(
         &stderr,
     );
     if include_diff {
-        let untracked_paths = parse_porcelain_summary(&frames.status).untracked_files;
+        let untracked_paths = output["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|file| file["status"] == "untracked")
+            .filter_map(|file| file["path"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
         let (previews, truncated) =
             collect_show_changes_untracked_previews_for_root(root, &untracked_paths);
         output["untracked_previews"] = json!(previews);

@@ -365,7 +365,7 @@ async fn failure_history_read_only_failure_is_non_actionable_in_handoff() {
     let result = call_recorded_tool(
         &runtime,
         &sid,
-        "job_status",
+        "job_tail",
         json!({"job_id": "missing-job"}),
         None,
     )
@@ -385,7 +385,7 @@ async fn failure_history_read_only_failure_is_non_actionable_in_handoff() {
     );
     assert_eq!(
         handoff.output["unexpected_failed_tool_calls"][0]["tool_name"],
-        "job_status"
+        "job_tail"
     );
     assert_reason_list_not_contains(
         &handoff.output["verdict"],
@@ -1806,12 +1806,12 @@ async fn session_handoff_summary_only_is_compact() {
     let _ = call_recorded_tool(
         &runtime,
         &sid,
-        "job_status",
+        "job_tail",
         json!({
             "job_id": "missing-job",
             "expected_failure": true,
             "expected_failure_kind": "job_not_found",
-            "assertion_name": "missing job status"
+            "assertion_name": "missing job tail"
         }),
         None,
     )
@@ -3542,7 +3542,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 20, "OpenAPI operation count must remain 20");
+    assert_eq!(count, 16, "OpenAPI operation count must remain 16");
 }
 
 // =========================================================================
@@ -4004,8 +4004,6 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
                 "read_files"
                     | "list_project_files"
                     | "search_project_texts"
-                    | "git_diff"
-                    | "git_diff_summary"
                     | "git_diff_hunks"
                     | "git_review_summary"
                     | "show_changes"

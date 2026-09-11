@@ -142,11 +142,6 @@ fn required_runner_capability_matches_metadata_risk_table() {
             RunnerCapabilityRequirement::GitOrShell,
         ),
         (
-            "git_diff",
-            ToolRisk::Read,
-            RunnerCapabilityRequirement::GitOrShell,
-        ),
-        (
             "git_diff_hunks",
             ToolRisk::Read,
             RunnerCapabilityRequirement::GitOrShell,
@@ -250,11 +245,6 @@ fn required_runner_capability_matches_metadata_risk_table() {
             "search_project_texts",
             ToolRisk::Read,
             RunnerCapabilityRequirement::Shell,
-        ),
-        (
-            "git_diff_summary",
-            ToolRisk::Read,
-            RunnerCapabilityRequirement::GitOrShell,
         ),
         (
             "show_changes",

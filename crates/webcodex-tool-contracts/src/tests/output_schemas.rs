@@ -1179,67 +1179,6 @@ fn key_tool_output_schemas_include_expected_fields() {
             "stop_job missing {field}"
         );
     }
-    for field in [
-        "job_id",
-        "project",
-        "session_id",
-        "ssh_resource",
-        "status",
-        "exit_code",
-        "started_at",
-        "ended_at",
-        "error",
-        "command_execution_state",
-        "structured_execution",
-        "command_preview_included",
-        "active",
-        "blocking_active",
-        "terminal",
-        "terminal_pending",
-        "command_preview",
-        "command_preview_truncated",
-        "command_preview_max_chars",
-        "command_preview_bounded",
-    ] {
-        assert!(
-            has_output_field("job_status", field),
-            "job_status missing {field}"
-        );
-    }
-    for field in [
-        "job_id",
-        "session_id",
-        "ssh_resource",
-        "exit_code",
-        "command_execution_state",
-        "structured_execution",
-        "stdout_tail",
-        "stderr_tail",
-        "stdout_lines",
-        "stderr_lines",
-        "stdout_truncated",
-        "stderr_truncated",
-        "log_delta_status",
-        "stdout_delta_reset",
-        "stderr_delta_reset",
-        "cursor",
-        "status",
-        "executor",
-        "cwd",
-        "shell",
-        "purpose",
-        "command_summary",
-        "detected_summary",
-        "wait_outcome",
-        "waited_ms",
-        "changed",
-        "terminal",
-    ] {
-        assert!(
-            has_output_field("job_log", field),
-            "job_log missing {field}"
-        );
-    }
     for field in ["jobs", "count", "truncated"] {
         assert!(
             has_output_field("list_jobs", field),
@@ -1284,66 +1223,6 @@ fn key_tool_output_schemas_include_expected_fields() {
             "list_jobs summary schema must not expose {forbidden} bodies"
         );
     }
-    for field in [
-        "job_id",
-        "session_id",
-        "ssh_resource",
-        "exit_code",
-        "command_execution_state",
-        "structured_execution",
-        "stdout_tail",
-        "stderr_tail",
-        "stdout_lines",
-        "stderr_lines",
-        "stdout_truncated",
-        "stderr_truncated",
-        "log_delta_status",
-        "stdout_delta_reset",
-        "stderr_delta_reset",
-        "cursor",
-        "status",
-        "executor",
-        "cwd",
-        "shell",
-        "purpose",
-        "command_summary",
-        "detected_summary",
-        "wait_outcome",
-        "waited_ms",
-        "changed",
-        "terminal",
-    ] {
-        assert!(
-            has_output_field("job_log", field),
-            "job_log missing {field}"
-        );
-    }
-    for field in ["stdout_tail", "stderr_tail"] {
-        let description = output_schema_property(&specs, "job_log", field)["description"]
-            .as_str()
-            .expect("job_log stream description")
-            .to_lowercase();
-        assert!(
-            description.contains("bounded"),
-            "job_log {field} description must describe bounded tail text: {description}"
-        );
-    }
-    assert_eq!(
-        output_schema_property(&specs, "job_log", "log_delta_status")["enum"],
-        serde_json::json!(["baseline", "delta", "unchanged", "reset"])
-    );
-    assert_eq!(
-        output_schema_property(&specs, "job_log", "observation_token")["maxLength"],
-        webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
-    );
-    let cursor_description = output_schema_property(&specs, "job_log", "cursor")["description"]
-        .as_str()
-        .expect("job_log cursor description")
-        .to_lowercase();
-    assert!(
-        cursor_description.contains("cursor") && cursor_description.contains("bounded"),
-        "job_log cursor must describe bounded continuation metadata: {cursor_description}"
-    );
     for field in [
         "path",
         "exists",

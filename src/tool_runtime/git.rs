@@ -25,10 +25,6 @@ use super::ToolRuntime;
 use crate::runner_protocol::{ShellCommandExecutionState, ShellRunRequest};
 use crate::tool_runtime::sessions::{SessionEvent, SessionSummary};
 
-/// Sentinel separating `git status --porcelain` from `git diff --stat` in the
-/// combined `git_diff_summary` command output. Chosen to be extremely unlikely
-/// to appear in real git output.
-pub(crate) const DIFF_SUMMARY_SENTINEL: &str = "@@WEBCODEX_DIFF_SUMMARY_SEP@@";
 #[cfg(test)]
 pub(crate) const SHOW_CHANGES_SENTINEL: &str = "@@WEBCODEX_SHOW_CHANGES_SEP@@";
 const SHOW_CHANGES_BLOCK_TRAILER_BYTES: usize = 30;
@@ -113,16 +109,6 @@ const _: () = assert!(
         + SHOW_CHANGES_PROTOCOL_RESERVE_BYTES
         <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES
 );
-
-/// Build the read-only `git_diff_summary` command. Runs `git status
-/// --porcelain` and `git diff --stat` separated by a unique sentinel. No
-/// mutating git subcommand is emitted.
-pub(crate) fn git_diff_summary_command() -> String {
-    format!(
-        "git status --porcelain; printf '\\n{sentinel}\\n'; git diff --stat",
-        sentinel = DIFF_SUMMARY_SENTINEL,
-    )
-}
 
 fn normalize_git_diff_hunks_page_bytes(max_page_bytes: Option<usize>) -> usize {
     max_page_bytes
@@ -2506,23 +2492,6 @@ fn show_changes_session_event(event: &SessionEvent) -> Value {
     })
 }
 
-/// Split the combined `git_diff_summary` stdout into the porcelain section and
-/// the `diff --stat` section. If the sentinel is absent, everything is treated
-/// as porcelain (defensive; should not happen in practice).
-pub(crate) fn split_diff_summary(stdout: &str) -> (String, String) {
-    if let Some((before, after)) = stdout.split_once(DIFF_SUMMARY_SENTINEL) {
-        (
-            before.trim_end_matches(['\n', '\r']).to_string(),
-            after
-                .trim_start_matches(['\n', '\r'])
-                .trim_end()
-                .to_string(),
-        )
-    } else {
-        (stdout.trim_end().to_string(), String::new())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct GitDiffHunksContinuationV1 {
@@ -3701,45 +3670,6 @@ pub(crate) fn parse_git_diff_hunks(
     (files, hunk_count, truncated)
 }
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct PorcelainSummary {
-    pub(crate) changed_files: Vec<String>,
-    pub(crate) tracked_changed_files: Vec<String>,
-    pub(crate) untracked_files: Vec<String>,
-    pub(crate) ignored_files: Vec<String>,
-    pub(crate) changed_files_count: usize,
-}
-
-/// Parse `git status --porcelain` output into tracked/untracked buckets.
-/// Handles renames (`R  old -> new` -> `new`) and quoted paths.
-pub(crate) fn parse_porcelain_summary(porcelain: &str) -> PorcelainSummary {
-    let mut summary = PorcelainSummary::default();
-    for line in porcelain.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        let status = &line[..2];
-        let path_part = &line[3..];
-        let path = if let Some((_, dst)) = path_part.split_once(" -> ") {
-            dst
-        } else {
-            path_part
-        };
-        let path = path.trim().trim_matches('"');
-        if path.is_empty() {
-            continue;
-        }
-        match status {
-            "??" => summary.untracked_files.push(path.to_string()),
-            "!!" => summary.ignored_files.push(path.to_string()),
-            _ => summary.tracked_changed_files.push(path.to_string()),
-        }
-        summary.changed_files.push(path.to_string());
-    }
-    summary.changed_files_count = summary.changed_files.len();
-    summary
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitCommitMarker {
     pub(crate) status: String,
@@ -4015,55 +3945,6 @@ impl ToolRuntime {
                     timeout_secs: 30,
                     wait_timeout_secs: 32,
                 },
-                "tool_runtime".to_string(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(e),
-        };
-        match tokio::time::timeout(Duration::from_secs(34), rx).await {
-            Ok(Ok(resp)) => ToolResult::ok(json!({
-                "stdout": resp.stdout,
-                "stderr": resp.stderr,
-                "exit_code": resp.exit_code,
-            })),
-            Ok(Err(_)) => {
-                self.runner_registry.cancel_request(&req_id).await;
-                ToolResult::err("request dropped")
-            }
-            Err(_) => {
-                self.runner_registry.cancel_request(&req_id).await;
-                ToolResult::err("timed out")
-            }
-        }
-    }
-
-    pub(crate) async fn git_diff(&self, project: String, args: Option<Vec<String>>) -> ToolResult {
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => return ToolResult::err(e),
-        };
-        let diff_args = args.unwrap_or_default();
-        let cmd = if diff_args.is_empty() {
-            "git diff".to_string()
-        } else {
-            // `args` is the existing pathspec list contract. Keep the `--`
-            // fence and POSIX word quoting exactly as before, but execute the
-            // generated command through the typed internal POSIX path so the
-            // quoting can never be parsed by the user's configured shell.
-            let escaped: Vec<String> = diff_args.iter().map(|a| shell_escape_simple(a)).collect();
-            format!("git diff -- {}", escaped.join(" "))
-        };
-        let client_id = proj.client_id.clone();
-        let (req_id, rx) = match self
-            .runner_registry
-            .enqueue_internal_posix_script(
-                client_id,
-                Some(proj.path.clone()),
-                cmd,
-                30,
-                32,
                 "tool_runtime".to_string(),
             )
             .await
@@ -4796,55 +4677,6 @@ impl ToolRuntime {
                         "timed out after Runner dispatch may have occurred",
                     )
                 }
-            }
-        }
-    }
-
-    pub(crate) async fn git_diff_summary(&self, project: String) -> ToolResult {
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => return ToolResult::err(e),
-        };
-        let cmd = git_diff_summary_command();
-        let client_id = proj.client_id.clone();
-        let (req_id, rx) = match self
-            .runner_registry
-            .enqueue_internal_posix_script(
-                client_id,
-                Some(proj.path.clone()),
-                cmd,
-                30,
-                32,
-                "tool_runtime".to_string(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return ToolResult::err(e),
-        };
-        match tokio::time::timeout(Duration::from_secs(34), rx).await {
-            Ok(Ok(resp)) => {
-                let stdout = resp.stdout.unwrap_or_default();
-                let (porcelain, diff_stat) = split_diff_summary(&stdout);
-                let porcelain_summary = parse_porcelain_summary(&porcelain);
-                ToolResult::ok(json!({
-                    "porcelain": porcelain,
-                    "diff_stat": diff_stat,
-                    "changed_files": porcelain_summary.changed_files,
-                    "changed_files_count": porcelain_summary.changed_files_count,
-                    "tracked_changed_files": porcelain_summary.tracked_changed_files,
-                    "untracked_files": porcelain_summary.untracked_files,
-                    "ignored_files": porcelain_summary.ignored_files,
-                    "exit_code": resp.exit_code,
-                }))
-            }
-            Ok(Err(_)) => {
-                self.runner_registry.cancel_request(&req_id).await;
-                ToolResult::err("request dropped")
-            }
-            Err(_) => {
-                self.runner_registry.cancel_request(&req_id).await;
-                ToolResult::err("timed out")
             }
         }
     }

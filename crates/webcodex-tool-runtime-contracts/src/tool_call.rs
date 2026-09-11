@@ -914,15 +914,6 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
-    /// Run `git diff` on a project.
-    GitDiff {
-        project: String,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        args: Option<Vec<String>>,
-    },
-
     /// Return bounded structured recent git commit history.
     GitLog {
         project: String,
@@ -1483,30 +1474,6 @@ pub enum ToolCall {
         confirm: bool,
     },
 
-    /// Query the status of a running/finished job.
-    JobStatus {
-        job_id: String,
-        #[serde(default)]
-        include_command_preview: bool,
-    },
-
-    /// Retrieve stdout/stderr log of a job. When `after_observation_token` and
-    /// `wait_secs` are both supplied, this is a single bounded wait (up to
-    /// `wait_secs`, 1..=60) until the current opaque Job observation token
-    /// differs or the Job becomes terminal; it is never a subscription or
-    /// streaming connection.
-    JobLog {
-        job_id: String,
-        #[serde(default)]
-        offset: Option<usize>,
-        #[serde(default)]
-        tail_lines: Option<usize>,
-        #[serde(default)]
-        after_observation_token: Option<String>,
-        #[serde(default)]
-        wait_secs: Option<u64>,
-    },
-
     /// Observe up to eight existing Jobs using one shared bounded wait. Each
     /// item reuses the canonical single-Job observation-token and projection
     /// path; item failures are isolated and no Job is launched or modified.
@@ -1584,15 +1551,6 @@ pub enum ToolCall {
         session_id: Option<String>,
         #[serde(default)]
         max_result_bytes: Option<usize>,
-    },
-
-    /// Read-only git diff summary for a project: `git status --porcelain`,
-    /// `git diff --stat`, and a parsed changed-file list. Does not modify the
-    /// worktree. Routed to the owning Runner.
-    GitDiffSummary {
-        project: String,
-        #[serde(default)]
-        session_id: Option<String>,
     },
 
     /// Read-only model-facing git worktree summary for a project. Reports
@@ -2737,7 +2695,6 @@ impl ToolCall {
             Self::DiscardUntracked { .. } => "discard_untracked",
             Self::GitCommitPaths { .. } => "git_commit_paths",
             Self::GitStatus { .. } => "git_status",
-            Self::GitDiff { .. } => "git_diff",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
             Self::GitReviewSummary { .. } => "git_review_summary",
             Self::GitLog { .. } => "git_log",
@@ -2782,14 +2739,11 @@ impl ToolCall {
             Self::MemoryScopePurge { .. } => "memory_scope_purge",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
-            Self::JobStatus { .. } => "job_status",
-            Self::JobLog { .. } => "job_log",
             Self::ObserveJobs { .. } => "observe_jobs",
             Self::ListProjectFiles { .. } => "list_project_files",
             Self::ListProjectTrackedFiles { .. } => "list_project_tracked_files",
             Self::ProjectOverview { .. } => "project_overview",
             Self::SearchProjectTexts { .. } => "search_project_texts",
-            Self::GitDiffSummary { .. } => "git_diff_summary",
             Self::ShowChanges { .. } => "show_changes",
             Self::WorkspaceHygieneCheck { .. } => "workspace_hygiene_check",
             Self::ListJobs { .. } => "list_jobs",
@@ -2862,7 +2816,6 @@ impl ToolCall {
             | Self::DiscardUntracked { session_id, .. }
             | Self::GitCommitPaths { session_id, .. }
             | Self::GitStatus { session_id, .. }
-            | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
             | Self::GitReviewSummary { session_id, .. }
             | Self::GitLog { session_id, .. }
@@ -2887,7 +2840,6 @@ impl ToolCall {
             | Self::ListProjectTrackedFiles { session_id, .. }
             | Self::ProjectOverview { session_id, .. }
             | Self::SearchProjectTexts { session_id, .. }
-            | Self::GitDiffSummary { session_id, .. }
             | Self::ShowChanges { session_id, .. }
             | Self::WriteProjectFile { session_id, .. }
             | Self::SaveProjectArtifact { session_id, .. }
@@ -2994,7 +2946,6 @@ impl ToolCall {
             | Self::DiscardUntracked { project, .. }
             | Self::GitCommitPaths { project, .. }
             | Self::GitStatus { project, .. }
-            | Self::GitDiff { project, .. }
             | Self::GitDiffHunks { project, .. }
             | Self::GitReviewSummary { project, .. }
             | Self::GitLog { project, .. }
@@ -3019,7 +2970,6 @@ impl ToolCall {
             | Self::ListProjectTrackedFiles { project, .. }
             | Self::ProjectOverview { project, .. }
             | Self::SearchProjectTexts { project, .. }
-            | Self::GitDiffSummary { project, .. }
             | Self::ShowChanges { project, .. }
             | Self::WriteProjectFile { project, .. }
             | Self::SaveProjectArtifact { project, .. }

@@ -379,14 +379,6 @@ only for local/trusted-network demos."
                 .post(runtime_http::import_conversation_files_to_project),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::JobsStatus))
-                .post(runtime_http::job_status),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::JobsLog))
-                .post(runtime_http::job_log),
-        )
-        .push(
             Router::with_path(route_metadata::api_path(RouteId::JobsStop))
                 .post(runtime_http::job_stop),
         )
@@ -429,14 +421,6 @@ only for local/trusted-network demos."
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsGitStatus))
                 .post(runtime_http::projects_git_status),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitDiff))
-                .post(runtime_http::projects_git_diff),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsGitDiffSummary))
-                .post(runtime_http::projects_git_diff_summary),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsListFiles))

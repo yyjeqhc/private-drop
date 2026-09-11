@@ -12,15 +12,6 @@ struct ProjectIdRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct ProjectGitDiffRequest {
-    pub project: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub args: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
 struct ApplyUnifiedDiffRequest {
     pub project: String,
     pub diff: String,
@@ -85,32 +76,6 @@ pub async fn projects_git_status(req: &mut Request, depot: &mut Depot, res: &mut
         )
         .await;
     render_result(res, &audit, "git_status", project, result);
-}
-
-/// `POST /api/projects/git_diff` — thin GPT Actions wrapper over
-/// `ToolCall::GitDiff`. Read-only inspection routed to the owning Runner.
-#[handler]
-pub async fn projects_git_diff(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/projects/git_diff", "getProjectGitDiff");
-    let Some(runtime) = require_runtime(depot, res) else {
-        return;
-    };
-    let Some(body) = parse_json_body::<ProjectGitDiffRequest>(req, res).await else {
-        return;
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::GitDiff {
-                project: body.project,
-                session_id: body.session_id,
-                args: body.args,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "git_diff", project, result);
 }
 
 /// `POST /api/projects/apply_unified_diff` — thin GPT Actions wrapper over the
@@ -238,33 +203,4 @@ pub async fn projects_list_files(req: &mut Request, depot: &mut Depot, res: &mut
         )
         .await;
     render_result(res, &audit, "list_project_files", Some(project), result);
-}
-
-/// `ToolCall::GitDiffSummary`. Read-only git inspection.
-#[handler]
-pub async fn projects_git_diff_summary(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(
-        req,
-        depot,
-        "/api/projects/git_diff_summary",
-        "getProjectGitDiffSummary",
-    );
-    let Some(runtime) = require_runtime(depot, res) else {
-        return;
-    };
-    let Some(body) = parse_json_body::<ProjectIdRequest>(req, res).await else {
-        return;
-    };
-    let project = body.project.clone();
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::GitDiffSummary {
-                project: body.project,
-                session_id: body.session_id,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "git_diff_summary", Some(project), result);
 }

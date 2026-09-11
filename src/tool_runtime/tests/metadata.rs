@@ -1956,7 +1956,6 @@ async fn tool_manifest_keeps_list_compact_and_exact_contract_bounded() {
             "artifact_upload_abort",
             vec!["project", "path", "upload_id", "session_id"],
         ),
-        ("job_status", vec!["job_id", "include_command_preview"]),
     ] {
         let accepted = accepted(tool);
         for field in fields {
@@ -3022,7 +3021,7 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .values()
         .map(|path| path.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 20);
+    assert_eq!(operation_count, 16);
 }
 
 #[tokio::test]

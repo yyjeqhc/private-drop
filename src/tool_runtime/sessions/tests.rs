@@ -1867,14 +1867,23 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
     let observed = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "job_status",
-        &json!({"project": project, "job_id": job_id}),
-        crate::tool_runtime::sessions::session_tool_contract("job_status"),
+        "observe_jobs",
+        &json!({"items": [{"job_id": job_id}]}),
+        crate::tool_runtime::sessions::session_tool_contract("observe_jobs"),
     );
     store.record_tool_call_finished(
         observed,
         true,
-        &json!({"job_id": job_id, "status": "completed", "execution_state": "completed"}),
+        &json!({
+            "items": [{
+                "success": true,
+                "output": {
+                    "job_id": job_id,
+                    "status": "completed",
+                    "execution_state": "completed"
+                }
+            }]
+        }),
         None,
         None,
     );
@@ -1907,7 +1916,7 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
     assert!(row.current_activity.is_none());
     assert_eq!(
         row.last_activity.as_ref().unwrap().tool.as_deref(),
-        Some("job_status")
+        Some("observe_jobs")
     );
 
     store.close_session(&session.session_id).unwrap();
@@ -1925,7 +1934,7 @@ fn console_list_keeps_started_run_job_handoff_historical_and_later_activity_beco
     assert!(row.current_activity.is_none());
     assert_eq!(
         row.last_activity.as_ref().unwrap().tool.as_deref(),
-        Some("job_status")
+        Some("observe_jobs")
     );
 }
 

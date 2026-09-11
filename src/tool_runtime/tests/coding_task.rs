@@ -278,7 +278,10 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 20, "no dedicated OpenAPI operations added");
+    assert_eq!(
+        operation_count, 16,
+        "retired dedicated OpenAPI operations stay absent"
+    );
 }
 
 #[tokio::test]
@@ -3403,8 +3406,6 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
                 "read_files"
                     | "list_project_files"
                     | "search_project_texts"
-                    | "git_diff"
-                    | "git_diff_summary"
                     | "git_diff_hunks"
                     | "git_review_summary"
                     | "show_changes"

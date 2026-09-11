@@ -103,10 +103,7 @@ pub(crate) fn public_url() -> String {
 ///
 /// Order is grouped by recommended GPT call flow:
 /// 1. discovery (`listRuntimeTools`, `listProjects`, `getRuntimeStatus`)
-/// 2. job inspection (`getRuntimeJobStatus`, `getRuntimeJobLog`)
-/// 3. project inspection (`readProjectFile`, `getProjectGitStatus`,
-///    `getProjectGitDiff`, `getProjectGitDiffSummary`, `listProjectFiles`,
-///    `searchProjectText`)
+/// 2. project inspection (`getProjectGitStatus`, `listProjectFiles`)
 /// 4. project mutation (`applyUnifiedDiff`, `runProjectShellCommand`,
 ///    `gitRestorePaths`, `discardUntrackedFiles`, `startProjectShellJob`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
@@ -127,11 +124,7 @@ const GPT_ACTION_OPS: &[&str] = &[
     "registerProject",
     "createProject",
     "getRuntimeStatus",
-    "getRuntimeJobStatus",
-    "getRuntimeJobLog",
     "getProjectGitStatus",
-    "getProjectGitDiff",
-    "getProjectGitDiffSummary",
     "listProjectFiles",
     "applyUnifiedDiff",
     "runProjectShellCommand",
@@ -443,10 +436,6 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened confirmation flag for workspace_checkpoint_restore/delete and stop_job; must be true to proceed. Used only when `params` is absent or null."
                 },
-                "include_command_preview": {
-                    "type": "boolean",
-                    "description": "Flattened job_status debug flag. Defaults to false; when true, job_status includes bounded command_preview metadata. stdout/stderr bodies are never included. Used only when `params` is absent or null."
-                },
                 "include_diff_stat": {
                     "type": "boolean",
                     "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` is absent or null."
@@ -636,38 +625,6 @@ fn schemas() -> Value {
                 },
             }
         },
-        "JobStatusRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["job_id"],
-            "description": "Poll a runtime job by id.",
-            "properties": {
-                "job_id": {
-                    "type": "string",
-                    "description": "Runtime job id returned by run_job."
-                }
-            }
-        },
-        "JobLogRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["job_id"],
-            "description": "Read bounded stdout/stderr for a runtime job.",
-            "properties": {
-                "job_id": {
-                    "type": "string",
-                    "description": "Runtime job id returned by run_job."
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Optional 1-based continuation offset. Use cursor.stdout from the previous response."
-                },
-                "tail_lines": {
-                    "type": "integer",
-                    "description": "Optional number of trailing stdout/stderr lines. Logs are always bounded; large values are capped server-side."
-                }
-            }
-        },
         "ProjectIdRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -677,27 +634,6 @@ fn schemas() -> Value {
                 "project": {
                     "type": "string",
                     "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                }
-            }
-        },
-        "ProjectGitDiffRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project"],
-            "description": "Run `git diff` in a Runner-registered Project. Optional `args` scopes paths or adds git diff flags.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "args": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Optional git diff arguments / path specs (e.g. [\"--stat\"] or [\"src/main.rs\"])."
                 },
                 "session_id": {
                     "type": "string",
@@ -777,7 +713,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "command"],
-            "description": "Start an async background shell job in a Runner-registered Project. Execution with side effects; returns a job_id to poll with getRuntimeJobStatus.",
+            "description": "Start an async background shell job in a Runner-registered Project. Execution with side effects; returns a job_id for observe_jobs/list_jobs inspection.",
             "properties": {
                 "project": {
                     "type": "string",

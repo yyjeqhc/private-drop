@@ -67,7 +67,7 @@ fn call_runtime_tool_flattened_args_exclude_testing_and_debug_metadata() {
         accepted_fields.extend(generic_tool_call_flattened_args_for_spec(&spec));
     }
 
-    for field in ["summary_only", "include_command_preview", "compact"] {
+    for field in ["summary_only", "compact"] {
         assert!(
             accepted_fields.contains(field),
             "critical callRuntimeTool flattened arg {field} must remain accepted"
@@ -79,6 +79,7 @@ fn call_runtime_tool_flattened_args_exclude_testing_and_debug_metadata() {
         "assertion_name",
         "test_expect_failure_kind",
         "allow_cross_project_session",
+        "include_command_preview",
         "tool",
         "params",
         "arguments",

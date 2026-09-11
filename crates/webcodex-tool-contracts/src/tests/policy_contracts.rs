@@ -320,16 +320,14 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .copied()
         .collect::<BTreeSet<_>>();
 
-    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
-        let definition = lookup_tool_definition(compatibility_primitive)
-            .unwrap_or_else(|| panic!("{compatibility_primitive} definition"));
+    for retired_primitive in ["git_diff", "git_diff_summary"] {
         assert!(
-            definition.is_git_like(),
-            "{compatibility_primitive} must retain Git ledger semantics"
+            lookup_tool_definition(retired_primitive).is_none(),
+            "{retired_primitive} must stay retired from the public runtime contract"
         );
         assert!(
-            !git_group.contains(compatibility_primitive),
-            "{compatibility_primitive} should remain callable without being a canonical Git discovery recommendation"
+            !git_group.contains(retired_primitive),
+            "{retired_primitive} must stay absent from Git discovery"
         );
     }
 
@@ -496,12 +494,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .collect::<Vec<_>>();
     assert_eq!(
         change_summary_tools,
-        vec![
-            "git_diff_summary",
-            "git_review_summary",
-            "show_changes",
-            "git_diff_hunks",
-        ]
+        vec!["git_review_summary", "show_changes", "git_diff_hunks",]
     );
 
     let validation_output_tools = tool_definitions()
@@ -783,11 +776,6 @@ fn required_runner_capability_matches_metadata_risk_table() {
             RunnerCapabilityRequirement::GitOrShell,
         ),
         (
-            "git_diff",
-            ToolRisk::Read,
-            RunnerCapabilityRequirement::GitOrShell,
-        ),
-        (
             "git_diff_hunks",
             ToolRisk::Read,
             RunnerCapabilityRequirement::GitOrShell,
@@ -891,11 +879,6 @@ fn required_runner_capability_matches_metadata_risk_table() {
             "search_project_texts",
             ToolRisk::Read,
             RunnerCapabilityRequirement::Shell,
-        ),
-        (
-            "git_diff_summary",
-            ToolRisk::Read,
-            RunnerCapabilityRequirement::GitOrShell,
         ),
         (
             "show_changes",

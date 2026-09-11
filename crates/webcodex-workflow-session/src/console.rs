@@ -1076,8 +1076,8 @@ fn semantic_kind(event: &SessionEvent) -> &'static str {
         | "discard_untracked"
         | "workspace_checkpoint_restore" => "Edited",
         "git_status"
-        | "git_diff"
         | "git_diff_hunks"
+        | "git_review_summary"
         | "git_log"
         | "show_changes"
         | "workspace_hygiene_check"
@@ -1091,8 +1091,6 @@ fn semantic_kind(event: &SessionEvent) -> &'static str {
         | "session_shell_exec"
         | "session_shell_status"
         | "close_session_shell"
-        | "job_status"
-        | "job_log"
         | "observe_jobs"
         | "stop_job" => "Ran",
         _ if event.write_like => "Edited",

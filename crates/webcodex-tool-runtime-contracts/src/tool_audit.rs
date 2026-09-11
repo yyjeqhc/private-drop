@@ -1360,15 +1360,18 @@ mod computer_privacy_tests {
         assert!(!register_serialized.contains(PROJECT_PATH));
         assert!(!register_serialized.contains("PRIVATE PROJECT DESCRIPTION"));
 
-        let job_log = json!({
-            "job_id": "job-safe",
-            "after_observation_token": JOB_TOKEN,
+        let observe_jobs = json!({
+            "items": [{
+                "job_id": "job-safe",
+                "after_observation_token": JOB_TOKEN
+            }],
             "tail_lines": 20,
             "wait_secs": 1
         });
-        let job_summary = session_log_arguments_for_tool_request("job_log", &job_log);
-        assert_eq!(job_summary["job_id"], "job-safe");
-        assert_eq!(job_summary["token_present"], true);
+        let job_summary = session_log_arguments_for_tool_request("observe_jobs", &observe_jobs);
+        assert_eq!(job_summary["item_count"], 1);
+        assert_eq!(job_summary["token_count"], 1);
+        assert_eq!(job_summary["job_ids"], json!(["job-safe"]));
         assert!(!serde_json::to_string(&job_summary)
             .unwrap()
             .contains(JOB_TOKEN));
@@ -3196,11 +3199,9 @@ impl ToolCall {
                     "message_present": true,
                 })
             }
-            Self::GitStatus { project, .. } | Self::GitDiffSummary { project, .. } => {
-                serde_json::json!({
-                    "project": project,
-                })
-            }
+            Self::GitStatus { project, .. } => serde_json::json!({
+                "project": project,
+            }),
             Self::GitReviewSummary {
                 project,
                 base_commit,
@@ -3226,10 +3227,6 @@ impl ToolCall {
                 "project": project,
                 "limit": limit,
                 "skip": skip,
-            }),
-            Self::GitDiff { project, args, .. } => serde_json::json!({
-                "project": project,
-                "args_count": args.as_ref().map(Vec::len),
             }),
             Self::GitDiffHunks {
                 project,
@@ -4502,26 +4499,6 @@ impl ToolCall {
                 "timeout_secs": timeout_secs,
                 "cwd": cwd,
                 "purpose": purpose,
-            }),
-            Self::JobStatus {
-                job_id,
-                include_command_preview,
-            } => serde_json::json!({
-                "job_id": job_id,
-                "include_command_preview": include_command_preview,
-            }),
-            Self::JobLog {
-                job_id,
-                offset,
-                tail_lines,
-                after_observation_token,
-                wait_secs,
-            } => serde_json::json!({
-                "job_id": job_id,
-                "offset": offset,
-                "tail_lines": tail_lines,
-                "token_present": after_observation_token.is_some(),
-                "wait_secs": wait_secs,
             }),
             Self::JobTail {
                 job_id,

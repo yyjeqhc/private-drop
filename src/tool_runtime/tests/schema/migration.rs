@@ -146,7 +146,7 @@ fn tool_definition_surface_counts_stay_fixed() {
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(openapi_operation_count, 20, "OpenAPI operation count");
+    assert_eq!(openapi_operation_count, 16, "OpenAPI operation count");
 
     let operation_ids = openapi["paths"]
         .as_object()
@@ -176,12 +176,16 @@ fn tool_definition_surface_counts_stay_fixed() {
     let tool_call_properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
         .as_object()
         .expect("ToolCallRequest properties");
-    for field in ["summary_only", "include_command_preview", "compact"] {
+    for field in ["summary_only", "compact"] {
         assert!(
             tool_call_properties.contains_key(field),
             "callRuntimeTool must keep flattened GPT Action field {field}"
         );
     }
+    assert!(
+        !tool_call_properties.contains_key("include_command_preview"),
+        "retired job_status-only debug field must stay absent from callRuntimeTool",
+    );
     assert!(
         !tool_call_properties.contains_key("detail"),
         "hidden start-only detail must not be published by callRuntimeTool"

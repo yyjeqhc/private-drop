@@ -28,14 +28,12 @@ const RESULT_APP_TOOLS: [&str; 8] = [
     "show_changes",
     "git_review_summary",
 ];
-const UNBOUND_RESULT_APP_TOOLS: [&str; 11] = [
+const UNBOUND_RESULT_APP_TOOLS: [&str; 9] = [
     "cargo_fmt",
     "run_shell",
     "run_process",
     "run_job",
     "finish_coding_task",
-    "git_diff_summary",
-    "git_diff",
     "git_diff_hunks",
     "git_status",
     "git_commit_paths",

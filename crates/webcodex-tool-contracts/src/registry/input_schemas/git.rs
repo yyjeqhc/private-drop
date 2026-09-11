@@ -2,15 +2,6 @@ use serde_json::{json, Value};
 
 use super::common::{object_schema, with_optional_session_id};
 
-pub fn git_diff_summary_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![(
-        "project",
-        "string",
-        "Runner-registered project id.",
-        true,
-    )]))
-}
-
 pub fn git_review_summary_input_schema() -> Value {
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Runner-registered project id.", true),
@@ -115,13 +106,6 @@ pub fn git_commit_paths_input_schema() -> Value {
     schema["properties"]["message"]["minLength"] = Value::from(1);
     schema["properties"]["message"]["maxLength"] = Value::from(1000);
     schema
-}
-
-pub fn git_diff_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        ("args", "array", "Optional path list.", false),
-    ]))
 }
 
 pub fn git_diff_hunks_input_schema() -> Value {

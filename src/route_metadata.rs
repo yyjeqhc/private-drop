@@ -169,8 +169,6 @@ pub(crate) enum RouteId {
     ToolsList,
     ToolsCall,
     ArtifactsImport,
-    JobsStatus,
-    JobsLog,
     JobsStop,
     JobsList,
     JobsTail,
@@ -182,8 +180,6 @@ pub(crate) enum RouteId {
     ProjectsUnregister,
     ProjectsResolveOrRegister,
     ProjectsGitStatus,
-    ProjectsGitDiff,
-    ProjectsGitDiffSummary,
     ProjectsListFiles,
     ProjectsApplyUnifiedDiff,
     ProjectsRunShell,
@@ -457,7 +453,7 @@ mod tests {
             AdminWebStylesCss as usize + 1,
             "canonical iteration must cover every RouteId exactly once",
         );
-        assert_eq!(iter_routes().count(), 140, "canonical route closure");
+        assert_eq!(iter_routes().count(), 136, "canonical route closure");
         assert_eq!(lookup("GET", "/mcp").unwrap().id, McpGet);
         assert_eq!(lookup("POST", "/mcp").unwrap().id, McpPost);
     }
@@ -585,7 +581,7 @@ mod tests {
             );
             references += 1;
         }
-        assert_eq!(references, 140, "A2 production leaf RouteId closure");
+        assert_eq!(references, 136, "A2 production leaf RouteId closure");
     }
 
     #[test]
@@ -722,7 +718,7 @@ mod tests {
             ("/api/tools/call", Command),
             ("/api/runtime/status", Report),
             ("/api/artifacts/import", Artifact),
-            ("/api/projects/git_diff", Git),
+            ("/api/projects/git_status", Git),
             ("/api/projects/run_shell", Shell),
         ] {
             assert_eq!(audit_class_for_path(path), Some(class), "{path}");

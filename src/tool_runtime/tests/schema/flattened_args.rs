@@ -95,7 +95,7 @@ fn openapi_generic_call_runtime_tool_schema_remains_strict_model_visible_surface
         .values()
         .map(|methods| methods.as_object().expect("path methods").len())
         .sum();
-    assert_eq!(operation_count, 20, "OpenAPI operation count");
+    assert_eq!(operation_count, 16, "OpenAPI operation count");
 
     assert_eq!(
         registered_tool_specs().len(),

@@ -204,8 +204,8 @@ start_job() {
         'import json,sys; d=json.load(sys.stdin); assert d["success"]; print(d["output"]["job_id"])'
 }
 job_status() {
-    api_post /api/jobs/status "{\"job_id\":\"$1\"}" | python3 -c \
-        'import json,sys; d=json.load(sys.stdin); assert d["success"]; print(d["output"]["status"])'
+    api_post /api/tools/call "{\"tool\":\"observe_jobs\",\"items\":[{\"job_id\":\"$1\"}],\"tail_lines\":1}" | python3 -c \
+        'import json,sys; d=json.load(sys.stdin); assert d["success"]; item=d["output"]["items"][0]; assert item["success"]; print(item["output"]["status"])'
 }
 for command in awk curl git mv python3 setsid tail "$CARGO_BIN"; do require_command "$command"; done
 cd "$ROOT"

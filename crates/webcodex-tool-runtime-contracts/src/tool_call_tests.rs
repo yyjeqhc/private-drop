@@ -225,22 +225,16 @@ fn from_tool_name_parses_bounded_list_tools_options() {
 #[test]
 fn from_tool_name_records_and_strips_testing_metadata_before_parsing() {
     let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata(
-        "job_status",
+        "list_jobs",
         json!({
-            "job_id": "abc",
+            "status": "failed",
             "expected_failure": true,
             "expected_failure_kind": "job_not_found",
             "assertion_name": "missing job negative path"
         }),
     )
     .unwrap();
-    assert!(matches!(
-        call,
-        ToolCall::JobStatus {
-            ref job_id,
-            include_command_preview: false,
-        } if job_id == "abc"
-    ));
+    assert!(matches!(call, ToolCall::ListJobs { .. }));
     assert!(metadata.expectation.expected_failure);
     assert_eq!(
         metadata.expectation.expected_failure_kind.as_deref(),
@@ -334,9 +328,8 @@ fn from_tool_name_rejects_unsafe_result_expectation_combinations() {
             }),
         ),
         (
-            "job_status",
+            "list_jobs",
             json!({
-                "job_id": "job-1",
                 "result_expectation": "observe"
             }),
         ),
@@ -354,24 +347,18 @@ fn from_tool_name_rejects_unsafe_result_expectation_combinations() {
 }
 
 #[test]
-fn from_tool_name_does_not_treat_removed_failure_kind_alias_as_metadata() {
-    let (call, metadata) = ToolCall::from_tool_name_with_recorder_metadata(
-        "job_status",
+fn from_tool_name_rejects_removed_failure_kind_alias_as_tool_input() {
+    let error = ToolCall::from_tool_name_with_recorder_metadata(
+        "list_jobs",
         json!({
-            "job_id": "abc",
             "expected_failure": true,
             "test_expect_failure_kind": "job_not_found",
             "assertion_name": "removed alias"
         }),
     )
-    .unwrap();
-    assert!(matches!(call, ToolCall::JobStatus { .. }));
-    assert!(metadata.expectation.expected_failure);
-    assert_eq!(metadata.expectation.expected_failure_kind, None);
-    assert_eq!(
-        metadata.expectation.assertion_name.as_deref(),
-        Some("removed alias")
-    );
+    .unwrap_err();
+    assert!(error.contains("test_expect_failure_kind"), "{error}");
+    assert!(error.contains("unknown field"), "{error}");
 }
 
 #[test]
@@ -583,45 +570,13 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
 }
 
 #[test]
-fn from_tool_name_parses_job_status_and_job_log() {
-    let call = ToolCall::from_tool_name("job_status", json!({"job_id": "abc"})).unwrap();
-    assert!(matches!(
-        call,
-        ToolCall::JobStatus {
-            ref job_id,
-            include_command_preview: false,
-        } if job_id == "abc"
-    ));
-
-    let call = ToolCall::from_tool_name(
-        "job_status",
-        json!({"job_id": "abc", "include_command_preview": true}),
-    )
-    .unwrap();
-    assert!(matches!(
-        call,
-        ToolCall::JobStatus {
-            ref job_id,
-            include_command_preview: true,
-        } if job_id == "abc"
-    ));
-
-    let call = ToolCall::from_tool_name("job_log", json!({"job_id": "abc", "offset": 10})).unwrap();
-    match call {
-        ToolCall::JobLog {
-            job_id,
-            offset,
-            tail_lines,
-            after_observation_token,
-            wait_secs,
-        } => {
-            assert_eq!(job_id, "abc");
-            assert_eq!(offset, Some(10));
-            assert_eq!(tail_lines, None);
-            assert_eq!(after_observation_token, None);
-            assert_eq!(wait_secs, None);
-        }
-        other => panic!("expected JobLog, got {:?}", other),
+fn from_tool_name_rejects_retired_job_status_and_job_log() {
+    for (name, args) in [
+        ("job_status", json!({"job_id": "abc"})),
+        ("job_log", json!({"job_id": "abc", "offset": 10})),
+    ] {
+        let error = ToolCall::from_tool_name(name, args).unwrap_err();
+        assert!(error.contains("unknown tool"), "{name}: {error}");
     }
 }
 
@@ -661,7 +616,7 @@ fn from_tool_name_parses_stop_job_with_default_confirmation_false() {
 }
 
 #[test]
-fn from_tool_name_rejects_retired_read_file_and_parses_git_tools() {
+fn from_tool_name_rejects_retired_inspection_tools_and_parses_retained_git_tools() {
     let error =
         ToolCall::from_tool_name("read_file", json!({"project": "demo", "path": "README.md"}))
             .unwrap_err();
@@ -670,9 +625,10 @@ fn from_tool_name_rejects_retired_read_file_and_parses_git_tools() {
     let call = ToolCall::from_tool_name("git_status", json!({"project": "demo"})).unwrap();
     assert!(matches!(call, ToolCall::GitStatus { .. }));
 
-    let call = ToolCall::from_tool_name("git_diff", json!({"project": "demo", "args": ["--stat"]}))
-        .unwrap();
-    assert!(matches!(call, ToolCall::GitDiff { .. }));
+    for name in ["git_diff", "git_diff_summary"] {
+        let error = ToolCall::from_tool_name(name, json!({"project": "demo"})).unwrap_err();
+        assert!(error.contains("unknown tool"), "{name}: {error}");
+    }
 
     let call = ToolCall::from_tool_name(
         "apply_unified_diff",
@@ -701,7 +657,7 @@ fn from_tool_name_rejects_missing_required_field() {
         err
     );
 
-    let err = ToolCall::from_tool_name("job_status", json!({})).unwrap_err();
+    let err = ToolCall::from_tool_name("job_tail", json!({})).unwrap_err();
     assert!(err.contains("job_id"));
 }
 
@@ -811,7 +767,7 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
         err
     );
     // Should list at least a couple of known tool names.
-    assert!(err.contains("git_diff_summary"));
+    assert!(err.contains("show_changes"));
     assert!(err.contains("apply_unified_diff"));
     // Must not leak secret/config artifacts.
     let lower = err.to_lowercase();
@@ -1265,8 +1221,10 @@ fn from_tool_name_parses_phase_a_tools() {
                 && queries[0].timeout_secs == Some(45)
     ));
 
-    let call = ToolCall::from_tool_name("git_diff_summary", json!({"project": "demo"})).unwrap();
-    assert!(matches!(call, ToolCall::GitDiffSummary { project, .. } if project == "demo"));
+    for name in ["job_status", "job_log", "git_diff", "git_diff_summary"] {
+        let error = ToolCall::from_tool_name(name, json!({})).unwrap_err();
+        assert!(error.contains("unknown tool"), "{name}: {error}");
+    }
 
     // list_jobs has only optional fields; null arguments must still parse.
     let call = ToolCall::from_tool_name("list_jobs", Value::Null).unwrap();

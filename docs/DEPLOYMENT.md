@@ -520,7 +520,7 @@ ChatGPT path. Credentials are deliberately never returned by the console API.
 
 ### Runtime job API trust model
 
-`job_status`, `job_log`, `list_jobs`, and `job_tail` are intended for trusted
+`observe_jobs`, `list_jobs`, and `job_tail` are intended for trusted
 single-operator deployments. They are not a tenant boundary between mutually
 untrusted users. Do not expose one runtime to multiple untrusted users without
 adding job-owner isolation; use separate server/runtime instances instead.

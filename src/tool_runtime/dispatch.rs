@@ -2201,11 +2201,9 @@ impl ToolRuntime {
             | ToolCall::DiscardUntracked { .. }
             | ToolCall::GitCommitPaths { .. }
             | ToolCall::GitStatus { .. }
-            | ToolCall::GitDiff { .. }
             | ToolCall::GitDiffHunks { .. }
             | ToolCall::GitReviewSummary { .. }
             | ToolCall::GitLog { .. }
-            | ToolCall::GitDiffSummary { .. }
             | ToolCall::ShowChanges { .. }) => self.dispatch_git_tool(call).await,
 
             call @ (ToolCall::CargoFmt { .. }
@@ -2215,8 +2213,6 @@ impl ToolRuntime {
 
             call @ (ToolCall::RunJob { .. }
             | ToolCall::StopJob { .. }
-            | ToolCall::JobStatus { .. }
-            | ToolCall::JobLog { .. }
             | ToolCall::ObserveJobs { .. }
             | ToolCall::ListJobs { .. }
             | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth, ssh_resource).await,

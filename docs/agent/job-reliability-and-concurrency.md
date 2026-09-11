@@ -19,7 +19,7 @@ Three identities have different lifetimes:
 | `job_id` | Identity of one already-dispatched execution | Yes, when the same reconciliation-capable Runner process survives and reports the Job in inventory. |
 | `after_observation_token` | Opaque lifecycle and bounded log-delta state for one observed Job snapshot | No. Its Server epoch is process-local; a surviving Job should return a reset baseline and fresh token immediately after restart. |
 
-A dropped `observe_jobs`, `job_log`, or other MCP request therefore does **not**
+A dropped `observe_jobs`, `job_tail`, or other observation request therefore does **not**
 mean that the underlying Job was lost. The caller should keep the original
 `job_id` and observe authoritative Job state again before considering any retry.
 
@@ -208,8 +208,8 @@ consulting structured lifecycle state.
 
 ### Job observation tools
 
-For `job_status`, `job_log`, `job_tail`, and `observe_jobs`, the top-level
-description plus observation-field schemas should make clear that:
+For `job_tail` and `observe_jobs`, the top-level description plus
+observation-field schemas should make clear that:
 
 - observation never launches or retries the Job;
 - `wait_secs` is one bounded wait, not a subscription;
