@@ -315,28 +315,28 @@ fn observe_jobs_tool_call_enforces_batch_and_scalar_bounds() {
     )
     .is_err());
 
-    for tail_lines in [1, 200] {
+    for tail_lines in [1, 200, 201, 500] {
         assert!(ToolCall::from_tool_name(
             "observe_jobs",
             json!({"items": [{"job_id": "job"}], "tail_lines": tail_lines})
         )
         .is_ok());
     }
-    for tail_lines in [0, 201] {
+    for tail_lines in [0] {
         assert!(ToolCall::from_tool_name(
             "observe_jobs",
             json!({"items": [{"job_id": "job"}], "tail_lines": tail_lines})
         )
         .is_err());
     }
-    for wait_secs in [1, 60] {
+    for wait_secs in [1, 60, 61, 120] {
         assert!(ToolCall::from_tool_name(
             "observe_jobs",
             json!({"items": [{"job_id": "job"}], "wait_secs": wait_secs})
         )
         .is_ok());
     }
-    for wait_secs in [0, 61] {
+    for wait_secs in [0] {
         assert!(ToolCall::from_tool_name(
             "observe_jobs",
             json!({"items": [{"job_id": "job"}], "wait_secs": wait_secs})
@@ -371,10 +371,12 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
     assert_eq!(spec.input_schema["properties"]["items"]["minItems"], 1);
     assert_eq!(spec.input_schema["properties"]["items"]["maxItems"], 8);
     assert_eq!(spec.input_schema["properties"]["tail_lines"]["default"], 40);
-    assert_eq!(
-        spec.input_schema["properties"]["tail_lines"]["maximum"],
-        200
-    );
+    assert!(spec.input_schema["properties"]["tail_lines"]
+        .get("maximum")
+        .is_none());
+    assert!(spec.input_schema["properties"]["wait_secs"]
+        .get("maximum")
+        .is_none());
     assert_eq!(
         spec.input_schema["properties"]["items"]["items"]["additionalProperties"],
         false

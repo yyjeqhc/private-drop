@@ -599,22 +599,22 @@ pub(crate) const DEFAULT_CARGO_FMT_TIMEOUT_SECS: u64 = 120;
 /// hard ceiling so transport/result serialization retains substantial headroom.
 pub(crate) const SYNC_VALIDATION_WAIT_SECS: u64 = 60;
 
-/// Resolve a synchronous command timeout. Out-of-range values are rejected
-/// (not clamped) so callers cannot request longer waits than the sync path
-/// can honor.
+/// Resolve a synchronous command timeout. Zero remains invalid, while an
+/// oversized caller preference is clamped to the largest wait this path can
+/// actually honor so the model does not need a second decision just to retry
+/// with the documented ceiling.
 pub(crate) fn resolve_sync_timeout_secs(
     timeout_secs: Option<u64>,
     default: u64,
 ) -> Result<u64, String> {
     debug_assert!((MIN_SYNC_TIMEOUT_SECS..=MAX_SYNC_TIMEOUT_SECS).contains(&default));
     let value = timeout_secs.unwrap_or(default);
-    if !(MIN_SYNC_TIMEOUT_SECS..=MAX_SYNC_TIMEOUT_SECS).contains(&value) {
+    if value < MIN_SYNC_TIMEOUT_SECS {
         return Err(format!(
-            "timeout_secs must be between {} and {}",
-            MIN_SYNC_TIMEOUT_SECS, MAX_SYNC_TIMEOUT_SECS
+            "timeout_secs must be at least {MIN_SYNC_TIMEOUT_SECS}"
         ));
     }
-    Ok(value)
+    Ok(value.min(MAX_SYNC_TIMEOUT_SECS))
 }
 
 /// Structured pre-execution rejection for an out-of-range synchronous timeout.

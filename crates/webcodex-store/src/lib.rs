@@ -49,7 +49,7 @@ pub use self::communication::{
     ConversationParticipantRecord, ConversationSummaryRecord, DeliveryConsumeResult,
     DurableAgentIdentity, MessageAuthorRecord, MessageDeliveryRecord, MessageDeliveryState,
     NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
-    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_DURABLE_AGENTS,
+    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_COMMUNICATION_LIST_LIMIT, MAX_DURABLE_AGENTS,
 };
 pub use self::execution_model::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionKind,

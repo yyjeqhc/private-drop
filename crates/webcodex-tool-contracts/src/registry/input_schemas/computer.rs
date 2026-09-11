@@ -7,7 +7,7 @@ pub fn computer_list_windows_input_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose desktop is observed."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 64, "description": "Optional bounded window count; clamped to 64."}
+            "limit": {"type": "integer", "minimum": 1, "description": "Optional bounded window count; values above 64 are accepted and clamped to 64."}
         },
         "required": ["client_id"]
     })
@@ -19,7 +19,7 @@ pub fn computer_list_displays_input_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose full displays are observed."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 16, "description": "Optional bounded display count; defaults to 16."}
+            "limit": {"type": "integer", "minimum": 1, "description": "Optional bounded display count; defaults to 16 and values above 16 are accepted and clamped to 16."}
         },
         "required": ["client_id"]
     })
@@ -31,7 +31,7 @@ pub fn computer_list_applications_input_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact macOS or Windows Runner client_id whose installed applications are discovered."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 64, "description": "Optional bounded application count; defaults to 64."}
+            "limit": {"type": "integer", "minimum": 1, "description": "Optional bounded application count; defaults to 64 and values above 64 are accepted and clamped to 64."}
         },
         "required": ["client_id"]
     })
@@ -67,8 +67,8 @@ pub fn computer_accessibility_tree_input_schema() -> Value {
         "properties": {
             "client_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Exact Runner client_id whose desktop is inspected."},
             "surface_id": {"type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque process-local surface_id returned by computer_list_windows."},
-            "max_depth": {"type": "integer", "minimum": 0, "maximum": 8, "description": "Maximum AX descendant depth; clamped to 8."},
-            "max_nodes": {"type": "integer", "minimum": 1, "maximum": 256, "description": "Maximum semantic AX elements returned; clamped to 256."}
+            "max_depth": {"type": "integer", "minimum": 0, "description": "Maximum AX descendant depth; values above 8 are accepted and clamped to 8."},
+            "max_nodes": {"type": "integer", "minimum": 1, "description": "Maximum semantic AX elements returned; values above 256 are accepted and clamped to 256."}
         },
         "required": ["client_id", "surface_id"]
     })
@@ -86,7 +86,7 @@ pub fn computer_find_elements_input_schema() -> Value {
             "label": {"type": "string", "minLength": 1, "maxLength": 256, "description": "Optional case-sensitive literal substring matched only against title, description, or placeholder; AXValue is never searched."},
             "focused": {"type": "boolean", "description": "Optional exact focused-state match; unknown/null state does not match."},
             "enabled": {"type": "boolean", "description": "Optional exact enabled-state match; unknown/null state does not match."},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 32, "description": "Maximum matching elements returned; defaults to 8."}
+            "limit": {"type": "integer", "minimum": 1, "description": "Maximum matching elements returned; defaults to 8 and values above 32 are accepted and clamped to 32."}
         },
         "required": ["client_id", "surface_id"]
     })

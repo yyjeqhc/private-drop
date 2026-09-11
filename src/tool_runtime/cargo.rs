@@ -97,18 +97,20 @@ struct ValidationBudget {
 /// Resolve a read-only structured validation budget.
 ///
 /// `timeout_secs` is the total runtime budget of the command, not the tool
-/// call's synchronous wait. Explicit `sync_wait_secs` selects a 1..=60 grace
-/// that cannot exceed the effective total budget. When omitted, compatibility
-/// keeps `min(SYNC_VALIDATION_WAIT_SECS, effective_timeout)`; equal grace and
-/// total budget leaves no Cargo handoff headroom.
+/// call's synchronous wait. Positive values above the supported ceilings are
+/// caller preferences and are clamped before dispatch. Explicit
+/// `sync_wait_secs` is likewise clamped to both 60 seconds and the effective
+/// total budget. When omitted, compatibility keeps
+/// `min(SYNC_VALIDATION_WAIT_SECS, effective_timeout)`; equal grace and total
+/// budget leaves no Cargo handoff headroom.
 fn resolve_validation_budget(
     tool_name: &str,
     timeout_secs: Option<u64>,
     sync_wait_secs: Option<u64>,
     default: u64,
 ) -> Result<ValidationBudget, ToolResult> {
-    let value = timeout_secs.unwrap_or(default);
-    if !(MIN_VALIDATION_TIMEOUT_SECS..=MAX_VALIDATION_TIMEOUT_SECS).contains(&value) {
+    let requested_timeout_secs = timeout_secs.unwrap_or(default);
+    if requested_timeout_secs < MIN_VALIDATION_TIMEOUT_SECS {
         return Err(sync_timeout_out_of_range_result_with_range(
             tool_name,
             MIN_VALIDATION_TIMEOUT_SECS,
@@ -116,37 +118,51 @@ fn resolve_validation_budget(
             default,
         ));
     }
+    let effective_timeout_secs = requested_timeout_secs.min(MAX_VALIDATION_TIMEOUT_SECS);
     let sync_wait_secs = match sync_wait_secs {
-        Some(sync_wait)
-            if !(MIN_VALIDATION_TIMEOUT_SECS..=STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS)
-                .contains(&sync_wait) =>
-        {
+        Some(0) => {
             return Err(validation_sync_wait_rejection(
                 tool_name,
-                format!(
-                    "{tool_name} sync_wait_secs must be between 1 and {STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS}"
-                ),
-                format!(
-                    "pass sync_wait_secs between 1 and {STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS}, or omit it for the existing synchronous grace."
-                ),
+                format!("{tool_name} sync_wait_secs must be at least 1"),
+                "pass a positive sync_wait_secs, or omit it for the existing synchronous grace.",
             ));
         }
-        Some(sync_wait) if sync_wait > value => {
-            return Err(validation_sync_wait_rejection(
-                tool_name,
-                format!(
-                    "{tool_name} sync_wait_secs ({sync_wait}) must not exceed effective timeout_secs ({value})"
-                ),
-                "lower sync_wait_secs or raise timeout_secs within the validation budget; sync_wait_secs never extends total runtime.",
-            ));
-        }
-        Some(sync_wait) => sync_wait,
-        None => SYNC_VALIDATION_WAIT_SECS.min(value),
+        Some(sync_wait) => sync_wait
+            .min(STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS)
+            .min(effective_timeout_secs),
+        None => SYNC_VALIDATION_WAIT_SECS.min(effective_timeout_secs),
     };
     Ok(ValidationBudget {
-        effective_timeout_secs: value,
+        effective_timeout_secs,
         sync_wait_secs,
     })
+}
+
+#[cfg(test)]
+mod validation_budget_tests {
+    use super::*;
+
+    #[test]
+    fn oversized_validation_preferences_are_clamped_and_zero_is_rejected() {
+        let oversized =
+            resolve_validation_budget("cargo_check", Some(4_000), Some(600), 600).unwrap();
+        assert_eq!(
+            oversized.effective_timeout_secs,
+            MAX_VALIDATION_TIMEOUT_SECS
+        );
+        assert_eq!(
+            oversized.sync_wait_secs,
+            STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS
+        );
+
+        let over_total =
+            resolve_validation_budget("cargo_check", Some(30), Some(600), 600).unwrap();
+        assert_eq!(over_total.effective_timeout_secs, 30);
+        assert_eq!(over_total.sync_wait_secs, 30);
+
+        assert!(resolve_validation_budget("cargo_check", Some(0), None, 600).is_err());
+        assert!(resolve_validation_budget("cargo_check", Some(600), Some(0), 600).is_err());
+    }
 }
 
 fn validation_sync_wait_rejection(

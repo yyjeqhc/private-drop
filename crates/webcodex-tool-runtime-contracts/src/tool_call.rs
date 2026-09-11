@@ -25,7 +25,7 @@ use webcodex_core::plugin::{
 use webcodex_core::runner_protocol::ShellScriptLanguage;
 use webcodex_core::runtime_contract::{
     validate_project_op_path, DEFAULT_OBSERVE_JOBS_TAIL_LINES,
-    GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES, STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS,
+    GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES,
 };
 use webcodex_tool_contracts::{lookup_tool_definition, model_visible_tool_names_csv};
 use webcodex_workflow_session::{
@@ -364,10 +364,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let tail_lines = usize::deserialize(deserializer)?;
-    if !(1..=200).contains(&tail_lines) {
-        return Err(serde::de::Error::custom(
-            "tail_lines must be between 1 and 200",
-        ));
+    if tail_lines == 0 {
+        return Err(serde::de::Error::custom("tail_lines must be at least 1"));
     }
     Ok(tail_lines)
 }
@@ -377,10 +375,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let wait_secs = Option::<u64>::deserialize(deserializer)?;
-    if wait_secs.is_some_and(|wait_secs| !(1..=60).contains(&wait_secs)) {
-        return Err(serde::de::Error::custom(
-            "wait_secs must be between 1 and 60",
-        ));
+    if wait_secs == Some(0) {
+        return Err(serde::de::Error::custom("wait_secs must be at least 1"));
     }
     Ok(wait_secs)
 }
@@ -2462,9 +2458,9 @@ fn validate_structured_validation_sync_wait(name: &str, arguments: &Value) -> Re
     let Some(sync_wait_secs) = sync_wait_value.as_u64() else {
         return Ok(()); // serde reports the canonical type error below.
     };
-    if !(1..=STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS).contains(&sync_wait_secs) {
+    if sync_wait_secs == 0 {
         return Err(format!(
-            "invalid arguments for tool '{name}': sync_wait_secs must be between 1 and {STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS}"
+            "invalid arguments for tool '{name}': sync_wait_secs must be at least 1"
         ));
     }
     if name == "cargo_fmt" && object.get("check").and_then(Value::as_bool) != Some(true) {
@@ -2472,13 +2468,6 @@ fn validate_structured_validation_sync_wait(name: &str, arguments: &Value) -> Re
             "invalid arguments for tool 'cargo_fmt': sync_wait_secs is available only with check=true"
                 .to_string(),
         );
-    }
-    if let Some(timeout_secs) = object.get("timeout_secs").and_then(Value::as_u64) {
-        if sync_wait_secs > timeout_secs {
-            return Err(format!(
-                "invalid arguments for tool '{name}': sync_wait_secs ({sync_wait_secs}) must not exceed timeout_secs ({timeout_secs})"
-            ));
-        }
     }
     Ok(())
 }

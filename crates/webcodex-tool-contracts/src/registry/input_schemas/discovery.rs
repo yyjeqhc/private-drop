@@ -89,8 +89,7 @@ pub fn list_projects_input_schema() -> Value {
             "limit": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 100,
-                "description": "Maximum Projects returned after all filters. Omit to preserve the legacy full visible registry result."
+                "description": "Maximum Projects returned after all filters. Values above 100 are accepted and clamped to 100. Omit to preserve the legacy full visible registry result."
             },
             "summary_only": {
                 "type": "boolean",

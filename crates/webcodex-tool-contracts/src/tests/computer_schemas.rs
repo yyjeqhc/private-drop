@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn tool_specs_generic_sync_wait_is_bounded_and_scoped_to_process_and_script() {
+fn tool_specs_generic_sync_wait_is_runtime_clamped_and_scoped_to_process_and_script() {
     let specs = registered_tool_specs();
     for name in ["run_process", "run_script"] {
         let spec = spec_named(&specs, name);
@@ -9,13 +9,14 @@ fn tool_specs_generic_sync_wait_is_bounded_and_scoped_to_process_and_script() {
         let sync_wait = &props["sync_wait_secs"];
         assert_eq!(sync_wait["type"], "integer", "{name}");
         assert_eq!(sync_wait["minimum"], 1, "{name}");
-        assert_eq!(sync_wait["maximum"], 60, "{name}");
+        assert!(sync_wait.get("maximum").is_none(), "{name}");
         assert!(
             !required_fields(spec).contains(&"sync_wait_secs".to_string()),
             "{name} sync_wait_secs must remain optional"
         );
         let description = sync_wait["description"].as_str().unwrap();
         assert!(description.contains("Omit to use 10 seconds"), "{name}");
+        assert!(description.to_ascii_lowercase().contains("clamp"), "{name}");
         assert!(
             description.contains("does not extend the total runtime timeout"),
             "{name}"
@@ -48,7 +49,10 @@ fn tool_specs_computer_find_elements_is_bounded_semantic_observation() {
         present: ["client_id", "surface_id", "role", "subrole", "label", "focused", "enabled", "limit"]
     );
     assert_eq!(props["limit"]["minimum"], 1);
-    assert_eq!(props["limit"]["maximum"], 32);
+    assert!(props["limit"].get("maximum").is_none());
+    assert!(props["limit"]["description"]
+        .as_str()
+        .is_some_and(|description| description.to_ascii_lowercase().contains("clamp")));
     assert!(props["label"]["description"]
         .as_str()
         .is_some_and(|description| description.contains("AXValue is never searched")));
@@ -161,7 +165,12 @@ fn tool_specs_full_display_observation_is_closed_and_bounded() {
     let specs = registered_tool_specs();
     let list = spec_named(&specs, "computer_list_displays");
     assert_eq!(list.input_schema["additionalProperties"], false);
-    assert_eq!(list.input_schema["properties"]["limit"]["maximum"], 16);
+    assert!(list.input_schema["properties"]["limit"]
+        .get("maximum")
+        .is_none());
+    assert!(list.input_schema["properties"]["limit"]["description"]
+        .as_str()
+        .is_some_and(|description| description.to_ascii_lowercase().contains("clamp")));
     let display = &list.output_schema["properties"]["output"]["properties"]["displays"]["items"];
     assert_eq!(display["additionalProperties"], false);
     assert_schema_fields!(

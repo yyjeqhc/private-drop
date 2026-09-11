@@ -99,7 +99,7 @@ pub fn list_agent_tasks_input_schema() -> Value {
         "properties": {
             "assignee_agent_id": nullable_id(AGENT_ID_PATTERN, "Optional assignee filter within Tasks visible to the current owner principal."),
             "offset": {"type": "integer", "minimum": 0, "default": 0},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+            "limit": {"type": "integer", "minimum": 1, "default": 50, "description": "Maximum AgentTasks returned. Values above 100 are accepted and clamped to 100."}
         },
         "required": [],
         "additionalProperties": false

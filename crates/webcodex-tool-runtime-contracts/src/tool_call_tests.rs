@@ -434,7 +434,7 @@ fn from_tool_name_parses_run_shell_with_required_fields() {
 fn from_tool_name_parses_run_shell_with_optional_fields() {
     let call = ToolCall::from_tool_name(
         "run_shell",
-        json!({"project": "demo", "command": "ls", "timeout_secs": 5, "cwd": "sub"}),
+        json!({"project": "demo", "command": "ls", "timeout_secs": 180, "cwd": "sub"}),
     )
     .unwrap();
     match call {
@@ -447,7 +447,7 @@ fn from_tool_name_parses_run_shell_with_optional_fields() {
         } => {
             assert_eq!(project, "demo");
             assert_eq!(command, "ls");
-            assert_eq!(timeout_secs, Some(5));
+            assert_eq!(timeout_secs, Some(180));
             assert_eq!(cwd, Some("sub".to_string()));
         }
         other => panic!("expected RunShell, got {:?}", other),
@@ -473,6 +473,14 @@ fn structured_validation_sync_wait_parser_enforces_lifecycle_bounds() {
             "cargo_fmt",
             json!({"project": "demo", "check": true, "timeout_secs": 60, "sync_wait_secs": 60}),
         ),
+        (
+            "cargo_test",
+            json!({"project": "demo", "timeout_secs": 600, "sync_wait_secs": 61}),
+        ),
+        (
+            "go_test",
+            json!({"project": "demo", "timeout_secs": 30, "sync_wait_secs": 31}),
+        ),
     ] {
         ToolCall::from_tool_name(name, arguments)
             .unwrap_or_else(|error| panic!("{name} valid sync wait should parse: {error}"));
@@ -484,14 +492,6 @@ fn structured_validation_sync_wait_parser_enforces_lifecycle_bounds() {
             json!({"project": "demo", "timeout_secs": 600, "sync_wait_secs": 0}),
         ),
         (
-            "cargo_test",
-            json!({"project": "demo", "timeout_secs": 600, "sync_wait_secs": 61}),
-        ),
-        (
-            "go_test",
-            json!({"project": "demo", "timeout_secs": 30, "sync_wait_secs": 31}),
-        ),
-        (
             "cargo_fmt",
             json!({"project": "demo", "check": false, "timeout_secs": 60, "sync_wait_secs": 1}),
         ),
@@ -501,7 +501,7 @@ fn structured_validation_sync_wait_parser_enforces_lifecycle_bounds() {
         ),
     ] {
         let error = ToolCall::from_tool_name(name, arguments)
-            .expect_err("invalid structured validation sync wait must fail closed");
+            .expect_err("zero or semantically unavailable sync wait must fail closed");
         assert!(error.contains("sync_wait_secs"), "{name}: {error}");
     }
 }

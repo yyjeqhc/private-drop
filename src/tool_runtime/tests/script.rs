@@ -1346,30 +1346,6 @@ async fn run_script_shared_bounds_reject_before_enqueue_with_full_prestart_tuple
             cwd: None,
             purpose: None,
         },
-        ToolCall::RunScript {
-            project: project.clone(),
-            language: ShellScriptLanguage::Sh,
-            script: "true".to_string(),
-            args: Vec::new(),
-            stdin: None,
-            session_id: None,
-            timeout_secs: Some(60),
-            sync_wait_secs: Some(61),
-            cwd: None,
-            purpose: None,
-        },
-        ToolCall::RunScript {
-            project: project.clone(),
-            language: ShellScriptLanguage::Sh,
-            script: "true".to_string(),
-            args: Vec::new(),
-            stdin: None,
-            session_id: None,
-            timeout_secs: Some(5),
-            sync_wait_secs: Some(6),
-            cwd: None,
-            purpose: None,
-        },
     ];
     for call in invalid_calls {
         let result = runtime

@@ -548,6 +548,66 @@ fn removed_legacy_edit_tools_are_not_known_tools() {
 }
 
 #[test]
+fn model_preference_upper_bounds_are_clamped_by_runtime_not_rejected_by_schema() {
+    let specs = registered_tool_specs();
+    let cases: &[(&str, &[&str])] = &[
+        ("run_process", &["timeout_secs", "sync_wait_secs"]),
+        ("run_detached_process", &["timeout_secs"]),
+        ("run_script", &["timeout_secs", "sync_wait_secs"]),
+        ("run_shell", &["timeout_secs"]),
+        ("session_shell_exec", &["timeout_secs"]),
+        ("observe_jobs", &["tail_lines", "wait_secs"]),
+        ("list_jobs", &["limit"]),
+        ("cargo_fmt", &["timeout_secs", "sync_wait_secs"]),
+        ("cargo_check", &["timeout_secs", "sync_wait_secs"]),
+        ("cargo_test", &["timeout_secs", "sync_wait_secs"]),
+        ("go_test", &["timeout_secs", "sync_wait_secs"]),
+        ("session_discussion_summary", &["limit"]),
+        ("workspace_hygiene_check", &["max_findings"]),
+        ("list_projects", &["limit"]),
+        ("list_session_messages", &["limit"]),
+        ("observe_session_messages", &["wait_secs", "limit"]),
+        ("validation_summary", &["limit"]),
+        ("session_handoff_summary", &["limit"]),
+        ("document_symbols", &["limit"]),
+        ("document_diagnostics", &["limit"]),
+        ("workspace_symbols", &["limit"]),
+        ("goto_definition", &["limit"]),
+        ("find_references", &["limit"]),
+        ("computer_list_windows", &["limit"]),
+        ("computer_list_displays", &["limit"]),
+        ("computer_list_applications", &["limit"]),
+        ("computer_accessibility_tree", &["max_depth", "max_nodes"]),
+        ("computer_find_elements", &["limit"]),
+        ("coding_agent_observe", &["wait_secs"]),
+        ("list_agent_tasks", &["limit"]),
+        ("list_agent_identities", &["limit"]),
+        ("list_conversations", &["limit"]),
+        ("read_conversation", &["limit"]),
+        ("list_agent_inbox", &["limit"]),
+    ];
+
+    for (tool_name, fields) in cases {
+        let spec = spec_named(&specs, tool_name);
+        for field in *fields {
+            let property = &spec.input_schema["properties"][*field];
+            assert!(
+                property.get("maximum").is_none(),
+                "{tool_name}.{field} must let the runtime clamp oversized preferences: {property}"
+            );
+            let description = property["description"]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            assert!(
+                description.contains("clamp"),
+                "{tool_name}.{field} should document runtime clamping: {description}"
+            );
+        }
+    }
+}
+
+#[test]
 fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
     let specs = registered_tool_specs();
     let names: std::collections::BTreeSet<&str> =

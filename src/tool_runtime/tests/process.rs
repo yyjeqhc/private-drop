@@ -1286,13 +1286,13 @@ async fn run_process_slow_handoff_is_queryable_once_and_keeps_the_original_budge
 }
 
 #[tokio::test]
-async fn run_process_sync_wait_validation_fails_before_execution_start() {
+async fn run_process_zero_sync_wait_fails_before_execution_start() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime();
     let project =
         register_process_job_agent(&runtime, "process-sync-wait-bounds", temp.path()).await;
 
-    for (timeout_secs, sync_wait_secs) in [(60, 0), (60, 61), (5, 6)] {
+    for (timeout_secs, sync_wait_secs) in [(60, 0)] {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunProcess {

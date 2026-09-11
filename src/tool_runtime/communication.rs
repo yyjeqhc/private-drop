@@ -4,12 +4,19 @@ use crate::db::{
     AgentEndpointLifecycle, AgentProfilePatch, AgentWakeState, CommunicationPrincipal,
     CommunicationStoreError, ConversationAccess, NewAgentEndpoint, NewAgentIdentity,
     NewConversation, NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
+    MAX_COMMUNICATION_LIST_LIMIT,
 };
 use serde::Serialize;
 use serde_json::{json, to_value};
 use sha2::{Digest, Sha256};
 
 const DEFAULT_COMMUNICATION_LIST_LIMIT: usize = 50;
+
+fn communication_list_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(DEFAULT_COMMUNICATION_LIST_LIMIT)
+        .min(MAX_COMMUNICATION_LIST_LIMIT)
+}
 
 pub(super) fn communication_principal(
     auth: Option<&AuthContext>,
@@ -229,7 +236,7 @@ impl ToolRuntime {
             &principal,
             agent_id.as_deref(),
             offset.unwrap_or(0),
-            limit.unwrap_or(DEFAULT_COMMUNICATION_LIST_LIMIT),
+            communication_list_limit(limit),
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
@@ -481,7 +488,7 @@ impl ToolRuntime {
             &principal,
             &access,
             offset.unwrap_or(0),
-            limit.unwrap_or(DEFAULT_COMMUNICATION_LIST_LIMIT),
+            communication_list_limit(limit),
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
@@ -516,7 +523,7 @@ impl ToolRuntime {
             &access,
             &conversation_id,
             after_seq.unwrap_or(0),
-            limit.unwrap_or(DEFAULT_COMMUNICATION_LIST_LIMIT),
+            communication_list_limit(limit),
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
@@ -604,7 +611,7 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
             after_delivery_order.unwrap_or(0),
-            limit.unwrap_or(DEFAULT_COMMUNICATION_LIST_LIMIT),
+            communication_list_limit(limit),
         ) {
             Ok(result) => serialized_success(result),
             Err(error) => communication_error(error, RecoveryKind::RetrySame),

@@ -8,18 +8,14 @@ use webcodex_core::workflow_session_contract::TOOL_RESULT_EXPECTATION_FIELD;
 /// grace before same-execution Job handoff; omission preserves the existing
 /// grace capped by the effective timeout.
 const VALIDATION_TIMEOUT_SECS_DESCRIPTION: &str =
-    "Total validation runtime budget in seconds (1..=3600). Short validation returns immediately; longer validation keeps the same execution and returns job_id for observation. Defaults vary per tool; invalid values are rejected before start.";
+    "Total validation runtime budget in seconds (minimum 1). Values above 3600 are accepted and clamped to 3600. Short validation returns immediately; longer validation keeps the same execution and returns job_id for observation. Defaults vary per tool.";
 const VALIDATION_TIMEOUT_MIN: u64 = 1;
-const VALIDATION_TIMEOUT_MAX: u64 = 3600;
 const VALIDATION_SYNC_WAIT_SECS_DESCRIPTION: &str =
-    "Optional synchronous grace in seconds (1..=60), no greater than the effective timeout_secs. Omission uses min(60, effective timeout_secs). It bounds the wait for the submitted validation, which may still be queued; unfinished work returns as the same execution Job when handoff is available. It never extends timeout_secs or starts a second validation. For cargo_fmt, accepted only with check=true.";
+    "Optional synchronous grace in seconds. Positive values above 60 or above the effective timeout_secs are accepted and clamped to the smaller bound. Omission uses min(60, effective timeout_secs). It bounds the wait for the submitted validation, which may still be queued; unfinished work returns as the same execution Job when handoff is available. It never extends timeout_secs or starts a second validation. For cargo_fmt, accepted only with check=true.";
 const VALIDATION_SYNC_WAIT_MIN: u64 = 1;
-const VALIDATION_SYNC_WAIT_MAX: u64 =
-    webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 
 fn with_validation_timeout_bounds(mut schema: Value, default: u64) -> Value {
     schema["properties"]["timeout_secs"]["minimum"] = json!(VALIDATION_TIMEOUT_MIN);
-    schema["properties"]["timeout_secs"]["maximum"] = json!(VALIDATION_TIMEOUT_MAX);
     schema["properties"]["timeout_secs"]["default"] = json!(default);
     schema["properties"]["timeout_secs"]["description"] =
         json!(VALIDATION_TIMEOUT_SECS_DESCRIPTION);
@@ -30,7 +26,6 @@ fn with_validation_sync_wait(mut schema: Value) -> Value {
     schema["properties"]["sync_wait_secs"] = json!({
         "type": "integer",
         "minimum": VALIDATION_SYNC_WAIT_MIN,
-        "maximum": VALIDATION_SYNC_WAIT_MAX,
         "description": VALIDATION_SYNC_WAIT_SECS_DESCRIPTION,
     });
     schema
@@ -67,7 +62,7 @@ pub fn cargo_fmt_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "For mutating format, synchronous timeout in seconds (1..=120, default 120). With check=true, total validation budget is 1..=3600 and a long check keeps the same execution and returns job_id.",
+            "For mutating format, synchronous timeout has minimum 1 and defaults to 120; values above 120 are accepted and clamped to 120. With check=true, values above the 3600-second total validation budget are accepted and clamped to 3600, and a long check keeps the same execution and returns job_id.",
             false,
         ),
         (
@@ -78,10 +73,8 @@ pub fn cargo_fmt_input_schema() -> Value {
         ),
     ]));
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
-    schema["properties"]["timeout_secs"]["maximum"] = json!(3600);
     schema["properties"]["timeout_secs"]["default"] = json!(120);
     schema["properties"]["sync_wait_secs"]["minimum"] = json!(VALIDATION_SYNC_WAIT_MIN);
-    schema["properties"]["sync_wait_secs"]["maximum"] = json!(VALIDATION_SYNC_WAIT_MAX);
     schema["allOf"] = json!([{
         "if": {
             "required": ["check"],
@@ -89,12 +82,12 @@ pub fn cargo_fmt_input_schema() -> Value {
         },
         "then": {
             "properties": {
-                "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 3600 }
+                "timeout_secs": { "type": "integer", "minimum": 1 }
             }
         },
         "else": {
             "properties": {
-                "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 120 },
+                "timeout_secs": { "type": "integer", "minimum": 1 },
                 "sync_wait_secs": { "type": "null" }
             }
         }

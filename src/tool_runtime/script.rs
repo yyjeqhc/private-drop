@@ -63,7 +63,7 @@ impl ToolRuntime {
                 return process_tool_failure_result(
                     command_rejected_message(
                         format!("run_script {error}"),
-                        "pass timeout_secs between 1 and 3600 and sync_wait_secs between 1 and 60 without exceeding timeout_secs; both may be omitted for their defaults.",
+                        "pass positive timeout_secs/sync_wait_secs values or omit them for defaults; oversized values are clamped to the supported runtime and synchronous-wait ceilings.",
                     ),
                     "invalid_arguments",
                     ShellCommandExecutionState::NotStarted,

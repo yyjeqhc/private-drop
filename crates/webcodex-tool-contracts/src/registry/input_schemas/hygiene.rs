@@ -13,8 +13,7 @@ pub fn workspace_hygiene_check_input_schema() -> Value {
             "max_findings": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 200,
-                "description": "Maximum findings to return (default 50, clamped to 1..200)."
+                "description": "Maximum findings to return. Defaults to 50; values above 200 are accepted and clamped to 200."
             },
             "include_tracked": {
                 "type": "boolean",
