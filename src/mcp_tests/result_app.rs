@@ -997,6 +997,8 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "validation_summary",
         "Cargo Test",
         "Array.from",
+        "receivedToolResult",
+        "Cargo test zero tests",
     ] {
         assert!(html.contains(expected), "missing {expected}");
     }

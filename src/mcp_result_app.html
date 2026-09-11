@@ -18,6 +18,7 @@
   const cardsEl = document.getElementById("cards");
   const pending = new Map();
   let nextId = 1;
+  let receivedToolResult = false;
 
   function boundedString(value) {
     if (typeof value !== "string") return null;
@@ -238,6 +239,13 @@
         addRow(body, "History resolved", typeof historical.resolved === "boolean" ? (historical.resolved ? "yes" : "no") : null);
         addRow(body, "History unresolved", typeof historical.unresolved === "boolean" ? (historical.unresolved ? "yes" : "no") : null);
       }
+      const resolved = validation.resolved_failures && typeof validation.resolved_failures === "object" ? validation.resolved_failures : null;
+      const unresolved = validation.unresolved_failures && typeof validation.unresolved_failures === "object" ? validation.unresolved_failures : null;
+      const gaps = validation.evidence_gaps && typeof validation.evidence_gaps === "object" ? validation.evidence_gaps : null;
+      addRow(body, "Resolved failures (all)", resolved && Number.isInteger(resolved.count) ? resolved.count : null);
+      addRow(body, "Unresolved failures (all)", unresolved && Number.isInteger(unresolved.count) ? unresolved.count : null);
+      addRow(body, "Evidence gaps (all)", gaps && Number.isInteger(gaps.count) ? gaps.count : null);
+      addRow(body, "Cargo test zero tests", typeof validation.cargo_test_zero_tests_run === "boolean" ? (validation.cargo_test_zero_tests_run ? "yes" : "no") : null);
       const events = Array.isArray(validation.events) ? validation.events.slice(0, MAX_ITEMS) : [];
       events.forEach((event) => addEvidenceEvent(body, event));
       if (validation.events_truncated === true) addRow(body, "Event detail", "card subset bounded");
@@ -314,6 +322,7 @@
   }
 
   function renderToolResult(result) {
+    receivedToolResult = true;
     const meta = result && typeof result === "object" && result._meta && typeof result._meta === "object"
       ? result._meta
       : null;
@@ -344,7 +353,7 @@
       });
       const protocol = result && typeof result === "object" ? boundedString(result.protocolVersion) : null;
       notify("ui/notifications/initialized", {});
-      if (stateEl.textContent !== "result received") {
+      if (!receivedToolResult) {
         stateEl.textContent = "initialized";
         summaryEl.textContent = "MCP Apps initialized" + (protocol ? " · " + protocol : "") + " · waiting for a supported result";
       }
