@@ -11,9 +11,10 @@ use super::config::{
 use super::shell::{PreparedExecutionEnvironment, PreparedShellProfileCache};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock, TryLockError};
@@ -23,8 +24,10 @@ use webcodex_core::plugin::{
     validate_request, validate_tool_result, validate_tools, PluginCatalog, PluginCheckDiagnostic,
     PluginCheckPhase, PluginCheckReport, PluginCheckToolSummary, PluginDispatchState,
     PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload, PluginProviderView,
-    PluginReloadFailure, PluginSchemaObservation, PluginTool, PluginToolResult,
-    PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_PROTOCOL_VERSION,
+    PluginReloadFailure, PluginSchemaObservation, PluginSelectionAnnotations, PluginTool,
+    PluginToolResult, ProjectPluginCatalog, ProjectPluginCatalogEntry, PLUGIN_MAX_MESSAGE_BYTES,
+    PLUGIN_MAX_PROJECT_CATALOG_DESCRIPTION_BYTES, PLUGIN_PROJECT_CATALOG_REVISION_PREFIX,
+    PLUGIN_PROTOCOL_VERSION,
 };
 use webcodex_process::ManagedChild;
 
@@ -386,6 +389,111 @@ impl PluginManager {
             .cloned()
     }
 
+    pub(crate) fn handle_project_catalog(
+        &self,
+        project_id: &str,
+        project_registry_dir: &Path,
+    ) -> PluginGatewayResponse {
+        let request = PluginGatewayRequest::ProjectCatalog {
+            project_id: project_id.to_string(),
+        };
+        if let Err(error) = validate_request(&request) {
+            tracing::warn!(error = %error, "rejected invalid Plugin project catalog request");
+            return gateway_error(
+                PluginDispatchState::NotStarted,
+                "invalid_plugin_request",
+                "Plugin project catalog request was invalid and was not dispatched",
+            );
+        }
+        if self.stopping.load(Ordering::SeqCst) {
+            return gateway_error(
+                PluginDispatchState::NotStarted,
+                "plugin_manager_stopping",
+                "Plugin manager is stopping; request was not dispatched",
+            );
+        }
+        let Some(project) =
+            super::projects::find_project_shell_context_by_id(project_registry_dir, project_id)
+        else {
+            return gateway_error(
+                PluginDispatchState::NotStarted,
+                "project_target_unavailable",
+                "The authoritative Runner Project target is unavailable",
+            );
+        };
+        let Ok(project_root) = Path::new(&project.path).canonicalize() else {
+            return gateway_error(
+                PluginDispatchState::NotStarted,
+                "project_target_unavailable",
+                "The authoritative Runner Project root is unavailable",
+            );
+        };
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::ProjectCatalog {
+            catalog: self.project_catalog_for_root(&project_root),
+        })
+    }
+
+    fn project_catalog_for_root(&self, project_root: &Path) -> ProjectPluginCatalog {
+        let committed = self
+            .committed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut entries = Vec::new();
+        let mut hasher = Sha256::new();
+        hasher.update(b"webcodex.project-plugin-catalog.v1\0");
+        for provider in committed.providers.values() {
+            if provider.failed.load(Ordering::SeqCst) {
+                continue;
+            }
+            let Some(configured_cwd) = provider.config.cwd.as_deref() else {
+                continue;
+            };
+            let Ok(provider_root) = Path::new(configured_cwd).canonicalize() else {
+                continue;
+            };
+            if !webcodex_runner_config::paths::paths_equal(&provider_root, project_root) {
+                continue;
+            }
+            let Some(catalog) = provider.catalog.get() else {
+                continue;
+            };
+
+            // Provider-instance and frozen schema/catalog identity participate in
+            // the opaque revision without entering the model-facing projection.
+            for value in [
+                provider.config.id.as_str(),
+                provider.instance_id.as_str(),
+                provider.config.name.as_str(),
+                catalog.digest(),
+            ] {
+                hasher.update((value.len() as u64).to_le_bytes());
+                hasher.update(value.as_bytes());
+            }
+            for tool in catalog.tools() {
+                entries.push(ProjectPluginCatalogEntry {
+                    plugin: provider.config.id.clone(),
+                    name: provider.config.name.clone(),
+                    tool: tool.name.clone(),
+                    title: tool.title.clone(),
+                    description: tool
+                        .description
+                        .as_deref()
+                        .map(bounded_project_catalog_description),
+                    annotations: PluginSelectionAnnotations::from_value(tool.annotations.as_ref()),
+                });
+            }
+        }
+        let catalog_revision = format!(
+            "{PLUGIN_PROJECT_CATALOG_REVISION_PREFIX}{:x}",
+            hasher.finalize()
+        );
+        ProjectPluginCatalog {
+            catalog_revision,
+            total_count: entries.len(),
+            entries,
+        }
+    }
+
     pub(crate) fn handle(&self, request: PluginGatewayRequest) -> PluginGatewayResponse {
         if let Err(error) = validate_request(&request) {
             tracing::warn!(error = %error, "rejected invalid Plugin gateway request");
@@ -405,6 +513,11 @@ impl PluginManager {
         match request {
             PluginGatewayRequest::Check { provider_id } => self.check_candidate(&provider_id),
             PluginGatewayRequest::Reload => self.reload_from_path(),
+            PluginGatewayRequest::ProjectCatalog { .. } => gateway_error(
+                PluginDispatchState::NotStarted,
+                "project_target_unavailable",
+                "Plugin project catalog discovery requires an authoritative Runner Project target",
+            ),
             PluginGatewayRequest::ProvidersList => {
                 PluginGatewayResponse::success(PluginGatewayResponsePayload::Providers {
                     providers: self.provider_views(),
@@ -785,6 +898,17 @@ impl Drop for PluginManager {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+fn bounded_project_catalog_description(value: &str) -> String {
+    if value.len() <= PLUGIN_MAX_PROJECT_CATALOG_DESCRIPTION_BYTES {
+        return value.to_string();
+    }
+    let mut end = PLUGIN_MAX_PROJECT_CATALOG_DESCRIPTION_BYTES;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
 }
 
 impl ProviderEntry {
