@@ -50,9 +50,11 @@ pub(crate) use artifacts::{
 };
 #[cfg(test)]
 pub(crate) use artifacts::{MAX_PROJECT_ARTIFACT_BYTES, MAX_PROJECT_ARTIFACT_UPLOAD_BYTES};
+#[cfg(all(test, windows))]
+pub(crate) use inspection::LIST_TRACKED_STDERR_MAX_CHARS;
 #[cfg(test)]
 pub(crate) use inspection::{
-    page_file_list_entries, parse_file_list_entries, LIST_TRACKED_STDERR_MAX_CHARS,
+    page_file_list_entries, parse_file_list_entries, LIST_TRACKED_SOURCE_MAX_BYTES,
 };
 #[cfg(test)]
 pub(crate) use mutations::{apply_text_edits_to_string, validate_edit_file_path};

@@ -438,10 +438,24 @@ fn has_leading_runner_result_retention_truncation_marker(value: &str) -> bool {
 /// reporting a sick repository, not a big one.
 const LIST_TRACKED_TIMEOUT_SECS: u64 = 20;
 
-/// Transport cap on raw `git ls-files -z` output. Roughly 25k paths at typical
-/// lengths; beyond it the listing reports `list_truncated` rather than
-/// pretending the index ended there.
-const LIST_TRACKED_MAX_BYTES: usize = 1024 * 1024;
+/// Producer-side source-acquisition budget for raw `git ls-files -z` output.
+/// Keep this comfortably below the ordinary 256 KiB-per-stream Runner capture
+/// and Server result-retention defaults; those are retention contracts, not
+/// polling/WebSocket/QUIC wire ceilings. One extra byte is requested below so
+/// hitting this budget is detectable even when the byte boundary lands on NUL.
+pub(crate) const LIST_TRACKED_SOURCE_MAX_BYTES: usize = 192 * 1024;
+const LIST_TRACKED_SOURCE_PROBE_BYTES: usize = LIST_TRACKED_SOURCE_MAX_BYTES + 1;
+
+fn bounded_tracked_source(raw: &str) -> (&str, bool) {
+    if raw.len() <= LIST_TRACKED_SOURCE_MAX_BYTES {
+        return (raw, false);
+    }
+    let mut end = LIST_TRACKED_SOURCE_MAX_BYTES;
+    while end > 0 && !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&raw[..end], true)
+}
 
 /// Structured failure shaped like the other file-tool errors, so a caller can
 /// branch on `code` instead of matching prose.
@@ -489,7 +503,7 @@ pub(crate) fn list_tracked_files_command_with_head_fallbacks(
     };
     format!(
         r#"{head_setup}if git rev-parse --git-dir >/dev/null 2>&1; then
-  git ls-files -z --cached{pathspec} | "$head_cmd" -c {LIST_TRACKED_MAX_BYTES}
+  git ls-files -z --cached{pathspec} | "$head_cmd" -c {LIST_TRACKED_SOURCE_PROBE_BYTES}
 else
   exit 3
 fi"#
@@ -1107,7 +1121,16 @@ impl ToolRuntime {
             }
         }
 
-        let (paths, list_truncated) = super::file_listing::parse_nul_separated(&raw);
+        if has_leading_runner_result_retention_truncation_marker(&raw) {
+            return list_tracked_error(
+                "source_incomplete",
+                "Runner tracked-file source was truncated by ordinary result retention; narrow path before retrying because offset pagination cannot recover a retained tail"
+                    .to_string(),
+            );
+        }
+        let (bounded_raw, producer_budget_hit) = bounded_tracked_source(&raw);
+        let (paths, unterminated_record) = super::file_listing::parse_nul_separated(bounded_raw);
+        let list_truncated = producer_budget_hit || unterminated_record;
         let listing =
             super::file_listing::build_listing(&paths, &scope, &globs, depth, limit, offset);
         ToolResult::ok(listing.to_json(&project, &scope, list_truncated))

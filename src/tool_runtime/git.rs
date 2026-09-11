@@ -472,9 +472,9 @@ fn non_git_show_changes_payload_with_observation(
 /// (`modified/added/deleted/renamed/copied/untracked/conflicted/staged/unstaged`).
 ///
 /// When `include_diff` is set, the `git diff` is likewise bounded in the command
-/// by `max_hunks` hunks and `max_hunk_lines` lines per hunk before it ever
-/// reaches the transport, so transport tail-retention cannot drop the first
-/// selected hunks. A trailing diff metadata frame reports the returned count,
+/// by `max_hunks` hunks and `max_hunk_lines` lines per hunk before it leaves the
+/// producer, so ordinary Runner/Server result retention does not need to drop
+/// the first selected hunks. A trailing diff metadata frame reports the returned count,
 /// emitted bytes, and independent count/line/byte truncation flags.
 ///
 /// The shell script is held in a raw string with literal placeholders and
@@ -4909,12 +4909,13 @@ impl ToolRuntime {
         apply_show_changes_session(&mut payload, session_id.as_deref(), session_summary);
         // Success requires the command/result envelope, status, diff-stat, and
         // (when requested) full diff inspections all to be proven successful.
-        // `transport_safe` only describes bounded transport integrity and must
-        // never mask an observed or unavailable inspection failure.
+        // `transport_safe` is a legacy field name: it describes bounded
+        // command/result-envelope integrity, not polling/WebSocket/QUIC wire
+        // capacity, and must never mask an observed or unavailable inspection failure.
         let diff_stat_ok = frames.diff_stat_exit == Some(0);
         let diff_ok = if include_diff {
             // `diff_exit == None` means the exit code could not be captured
-            // (e.g. legacy/transport-truncated stdout); treat as not proven-ok.
+            // (e.g. legacy/result-retention-truncated stdout); treat as not proven-ok.
             frames.diff_exit == Some(0)
         } else {
             true

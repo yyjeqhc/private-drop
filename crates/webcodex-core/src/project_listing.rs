@@ -10,6 +10,10 @@
 //! *does* fit is chosen automatically and reported back, so one call always
 //! returns a complete picture at some resolution instead of an arbitrary
 //! prefix of an incomplete one.
+//!
+//! That guarantee depends on complete source acquisition. Callers that hit a
+//! producer/source bound must expose `list_truncated=true` and must not present
+//! this ordinary offset pagination as a way to traverse the full repository.
 
 use serde_json::{json, Value};
 
@@ -58,8 +62,8 @@ pub struct Listing {
 /// Split a `git ls-files -z` byte stream into paths.
 ///
 /// Returns `(paths, truncated)`. Every complete record ends with NUL, so a
-/// non-empty tail without one is a transport-truncated final path and is
-/// dropped rather than reported as a real file — a half path would send the
+/// non-empty tail without one is an incomplete source-acquisition final path
+/// and is dropped rather than reported as a real file — a half path would send the
 /// model to read something that does not exist.
 pub fn parse_nul_separated(raw: &str) -> (Vec<String>, bool) {
     if raw.is_empty() {
@@ -309,6 +313,16 @@ fn auto_depth(relatives: &[&str], limit: usize) -> usize {
 
 impl Listing {
     pub fn to_json(&self, project: &str, scope: &str, list_truncated: bool) -> Value {
+        // Offset pagination is authoritative only when the source acquisition
+        // was complete. A bounded source prefix may still provide useful
+        // structure, but advertising `next_offset` over that prefix would imply
+        // the caller can eventually traverse files that were never acquired.
+        let page_truncated = self.truncated && !list_truncated;
+        let next_offset = if list_truncated {
+            None
+        } else {
+            self.next_offset
+        };
         json!({
             "project": project,
             "path": scope.trim_end_matches('/'),
@@ -328,10 +342,11 @@ impl Listing {
             "total_entries": self.total_entries,
             "depth": self.depth,
             "depth_auto": self.depth_auto,
-            "truncated": self.truncated,
-            "next_offset": self.next_offset,
-            // The git output itself hit the transport cap, so `total_files`
-            // undercounts. Distinct from `truncated`, which is pagination.
+            "truncated": page_truncated,
+            "next_offset": next_offset,
+            // Source acquisition ended before the Git index did, so the totals
+            // undercount. Distinct from `truncated`, which is safe paging over a
+            // complete source and is therefore suppressed while this is true.
             "list_truncated": list_truncated,
             "source": "git_index",
         })
@@ -602,6 +617,20 @@ mod tests {
         assert_eq!(listing.entries.len(), 10);
         assert!(listing.truncated);
         assert_eq!(listing.next_offset, Some(10));
+    }
+
+    #[test]
+    fn source_incomplete_json_never_advertises_offset_continuation() {
+        let files: Vec<String> = (0..10).map(|index| format!("f{index:02}.rs")).collect();
+        let listing = build_listing(&files, "", &[], None, 4, 0);
+        assert!(listing.truncated);
+        assert_eq!(listing.next_offset, Some(4));
+
+        let value = listing.to_json("proj", "", true);
+        assert_eq!(value["returned"], 4);
+        assert_eq!(value["list_truncated"], true);
+        assert_eq!(value["truncated"], false);
+        assert_eq!(value["next_offset"], Value::Null);
     }
 
     #[test]

@@ -3,8 +3,8 @@ use super::state::{
     ShellJobRecord,
 };
 use super::{
-    now_ts, RunnerFeature, MAX_OUTPUT_BYTES, MAX_QUEUED_REQUESTS_PER_RUNNER,
-    RUNNER_ONLINE_WINDOW_SECS,
+    now_ts, RunnerFeature, LIVE_JOB_STREAM_RETENTION_BYTES, MAX_QUEUED_REQUESTS_PER_RUNNER,
+    ORDINARY_RESULT_STREAM_RETENTION_BYTES, RUNNER_ONLINE_WINDOW_SECS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -175,11 +175,15 @@ mod select_lines_tests {
     }
 }
 
-pub(super) fn truncate_output(value: Option<String>) -> Option<String> {
-    truncate_output_to(value, MAX_OUTPUT_BYTES)
+pub(super) fn retain_ordinary_result_stream(value: Option<String>) -> Option<String> {
+    retain_result_stream_to(value, ORDINARY_RESULT_STREAM_RETENTION_BYTES)
 }
 
-pub(super) fn truncate_output_to(value: Option<String>, max_bytes: usize) -> Option<String> {
+fn retain_live_job_stream(value: Option<String>) -> Option<String> {
+    retain_result_stream_to(value, LIVE_JOB_STREAM_RETENTION_BYTES)
+}
+
+pub(super) fn retain_result_stream_to(value: Option<String>, max_bytes: usize) -> Option<String> {
     value.map(|s| {
         if s.len() <= max_bytes {
             s
@@ -310,11 +314,11 @@ pub(super) fn append_log_limited(target: &mut ShellJobLogState, chunk: Option<St
         return;
     };
     target.tail.push_str(&chunk);
-    if target.tail.len() > MAX_OUTPUT_BYTES {
+    if target.tail.len() > LIVE_JOB_STREAM_RETENTION_BYTES {
         let observed_next = target
             .first_retained_line
             .saturating_add(retained_line_count(&target.tail));
-        let minimum_start = target.tail.len() - MAX_OUTPUT_BYTES;
+        let minimum_start = target.tail.len() - LIVE_JOB_STREAM_RETENTION_BYTES;
         if let Some(relative_newline) = target.tail[minimum_start..].find('\n') {
             let drop_end = minimum_start + relative_newline + 1;
             let dropped_lines = target.tail[..drop_end]
@@ -345,7 +349,7 @@ pub(super) fn append_log_limited(target: &mut ShellJobLogState, chunk: Option<St
         .saturating_add(retained_line_count(&target.tail));
 }
 
-fn has_leading_transport_truncation_marker(value: &str) -> bool {
+fn has_leading_result_retention_truncation_marker(value: &str) -> bool {
     if value.starts_with("[output truncated]\n") || value.starts_with("[...]\n") {
         return true;
     }
@@ -367,11 +371,11 @@ pub(super) fn replace_log_limited(target: &mut ShellJobLogState, value: Option<S
     let Some(value) = value else {
         return;
     };
-    let value = truncate_output(Some(value)).unwrap_or_default();
+    let value = retain_live_job_stream(Some(value)).unwrap_or_default();
     target.tail = value;
     target.first_retained_line = 1;
     target.next_line = 1usize.saturating_add(retained_line_count(&target.tail));
-    target.truncated = has_leading_transport_truncation_marker(&target.tail);
+    target.truncated = has_leading_result_retention_truncation_marker(&target.tail);
 }
 
 #[cfg(test)]
@@ -379,7 +383,7 @@ mod replace_log_limited_tests {
     use super::*;
 
     #[test]
-    fn recognizes_all_supported_transport_truncation_markers() {
+    fn recognizes_all_supported_result_retention_truncation_markers() {
         for marker in [
             "[output truncated to last 12000 bytes]\n",
             "[output truncated]\n",

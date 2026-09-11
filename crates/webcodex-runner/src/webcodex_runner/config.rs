@@ -346,6 +346,8 @@ pub(crate) struct RunnerPolicy {
     pub(crate) allowed_roots: Vec<PathBuf>,
     #[serde(default = "default_max_timeout_secs")]
     pub(crate) max_timeout_secs: u64,
+    /// Per-stream Runner capture/presentation policy for stdout and stderr.
+    /// Independent from transport envelope sizes and model-facing result caps.
     #[serde(default = "default_max_output_bytes")]
     pub(crate) max_output_bytes: usize,
 }

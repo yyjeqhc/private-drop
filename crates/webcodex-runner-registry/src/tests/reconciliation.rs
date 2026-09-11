@@ -9,7 +9,7 @@ use super::state::{
 };
 use super::{
     clamp_grace, job_recovery_grace_secs, now_ts, RunnerRegistry, RUNNER_ONLINE_WINDOW_SECS,
-    JOB_RECOVERY_GRACE_SECS, MAX_OUTPUT_BYTES,
+    JOB_RECOVERY_GRACE_SECS, LIVE_JOB_STREAM_RETENTION_BYTES,
 };
 use webcodex_core::runner_operation::{
     RunnerInvocationMetadata, RunnerJobOperation, RunnerOperation,
@@ -2871,7 +2871,7 @@ fn job_reconciliation_inventory_validation_is_bounded_and_atomic() {
             .unwrap()
             .contains_key(forbidden_field));
     }
-    assert!(serde_json::to_vec(&encoded).unwrap().len() < MAX_OUTPUT_BYTES);
+    assert!(serde_json::to_vec(&encoded).unwrap().len() < LIVE_JOB_STREAM_RETENTION_BYTES);
 }
 
 #[tokio::test]

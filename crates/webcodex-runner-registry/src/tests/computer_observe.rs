@@ -244,7 +244,7 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
         .expect("queued display snapshot request");
     assert_eq!(request.kind, "computer_snapshot_display");
 
-    let stdout = "x".repeat(super::super::MAX_OUTPUT_BYTES + 1024);
+    let stdout = "x".repeat(super::super::ORDINARY_RESULT_STREAM_RETENTION_BYTES + 1024);
     assert!(stdout.len() < crate::artifact_policy::MAX_MCP_IMAGE_RESPONSE_BYTES);
     registry
         .complete(RunnerResultRequest {

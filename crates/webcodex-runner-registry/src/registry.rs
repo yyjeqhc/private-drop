@@ -4,7 +4,17 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use tokio::sync::Mutex;
 
-pub(crate) const MAX_OUTPUT_BYTES: usize = 256 * 1024;
+/// Server-side retained bytes for one stdout or stderr stream in an ordinary
+/// completed Runner result. This is not a polling/WebSocket/QUIC wire limit.
+pub(crate) const ORDINARY_RESULT_STREAM_RETENTION_BYTES: usize = 256 * 1024;
+/// Server-side retained bytes for one live Job stdout or stderr stream. Kept
+/// separate from ordinary results because Job cursors/truncation semantics are
+/// independently owned even though the current value is the same.
+pub(crate) const LIVE_JOB_STREAM_RETENTION_BYTES: usize = 256 * 1024;
+/// Server-side retained bytes for one stdout or stderr stream returned by a
+/// persistent-shell operation. This is an observation-retention bound, not a
+/// transport envelope limit.
+pub(crate) const PERSISTENT_SHELL_STREAM_RETENTION_BYTES: usize = 256 * 1024;
 pub const RUNNER_ONLINE_WINDOW_SECS: i64 = 60;
 pub(crate) const MAX_SHARED_KEY_RUNNERS_PER_GROUP: usize = 16;
 pub(crate) const MAX_SHARED_KEY_RUNNERS_GLOBAL: usize = 1024;

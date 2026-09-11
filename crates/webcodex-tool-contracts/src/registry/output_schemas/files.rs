@@ -102,17 +102,23 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "truncated",
-                schema_type("boolean", "Whether more entries remain on a later page."),
+                schema_type(
+                    "boolean",
+                    "Whether a safe normal page remains on the completely acquired source. False when list_truncated=true because offset pagination cannot recover files absent from the source acquisition.",
+                ),
             ),
             (
                 "next_offset",
-                nullable_schema("integer", "Offset that continues the listing; null when complete."),
+                nullable_schema(
+                    "integer",
+                    "Offset that safely continues a completely acquired source; null when complete or when list_truncated=true.",
+                ),
             ),
             (
                 "list_truncated",
                 schema_type(
                     "boolean",
-                    "True when the raw index listing hit the transport cap, so total_files undercounts. Distinct from truncated, which is paging.",
+                    "True when bounded source acquisition ended before the Git index did, so totals undercount. Distinct from normal page truncation; next_offset is null and the caller should narrow path rather than treating offset as full-repository recovery.",
                 ),
             ),
             (

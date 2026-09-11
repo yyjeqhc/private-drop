@@ -1,6 +1,6 @@
 use super::jobs::{
     assert_active_instance_locked, observe_job_terminal, replace_log_limited, request_preview,
-    truncate_output, truncate_output_to,
+    retain_ordinary_result_stream, retain_result_stream_to,
 };
 use super::requests::{remove_pending_request_locked, take_pending_request_locked};
 use super::state::JobLifecycleState;
@@ -833,15 +833,21 @@ impl RunnerRegistry {
         let request_id = body.request_id.clone();
         let client_id = body.client_id.clone();
         let error = body.error.clone();
+        // Ordinary command responses and durable Job logs are distinct retained
+        // projections of the same Runner result. Keep the raw streams until both
+        // projections have been derived so either retention contract can evolve
+        // independently without silently constraining the other first.
+        let raw_stdout = body.stdout;
+        let raw_stderr = body.stderr;
         let stdout = if pending.operation.is_large_native_image_request() {
-            truncate_output_to(
-                body.stdout,
+            retain_result_stream_to(
+                raw_stdout.clone(),
                 webcodex_core::artifact_policy::MAX_MCP_IMAGE_RESPONSE_BYTES,
             )
         } else {
-            truncate_output(body.stdout)
+            retain_ordinary_result_stream(raw_stdout.clone())
         };
-        let stderr = truncate_output(body.stderr);
+        let stderr = retain_ordinary_result_stream(raw_stderr.clone());
         let success = matches!(
             command_execution_state,
             None | Some(ShellCommandExecutionState::Completed)
@@ -861,8 +867,8 @@ impl RunnerRegistry {
                 job.ended_at = Some(terminal_now);
                 job.exit_code = body.exit_code;
                 job.duration_ms = body.duration_ms;
-                replace_log_limited(&mut job.stdout, stdout.clone());
-                replace_log_limited(&mut job.stderr, stderr.clone());
+                replace_log_limited(&mut job.stdout, raw_stdout);
+                replace_log_limited(&mut job.stderr, raw_stderr);
                 job.error = error.clone();
                 super::jobs::notify_job_update(job);
             }
@@ -1006,13 +1012,41 @@ fn normalize_persistent_shell_result(
 }
 
 fn truncate_persistent_shell_stream(value: &mut String) -> bool {
-    if value.len() <= crate::registry::MAX_OUTPUT_BYTES {
+    if value.len() <= crate::registry::PERSISTENT_SHELL_STREAM_RETENTION_BYTES {
         return false;
     }
-    let mut start = value.len() - crate::registry::MAX_OUTPUT_BYTES;
+    let mut start = value.len() - crate::registry::PERSISTENT_SHELL_STREAM_RETENTION_BYTES;
     while start < value.len() && !value.is_char_boundary(start) {
         start += 1;
     }
     *value = value[start..].to_string();
     true
+}
+
+#[cfg(test)]
+mod retention_contract_tests {
+    use super::*;
+
+    #[test]
+    fn server_stream_retention_contracts_remain_256_kib_and_independent() {
+        assert_eq!(
+            crate::registry::ORDINARY_RESULT_STREAM_RETENTION_BYTES,
+            256 * 1024
+        );
+        assert_eq!(crate::registry::LIVE_JOB_STREAM_RETENTION_BYTES, 256 * 1024);
+        assert_eq!(
+            crate::registry::PERSISTENT_SHELL_STREAM_RETENTION_BYTES,
+            256 * 1024
+        );
+
+        let limit = crate::registry::PERSISTENT_SHELL_STREAM_RETENTION_BYTES;
+        let mut exact = "x".repeat(limit);
+        assert!(!truncate_persistent_shell_stream(&mut exact));
+        assert_eq!(exact.len(), limit);
+
+        let mut oversized = format!("🙂{}", "x".repeat(limit));
+        assert!(truncate_persistent_shell_stream(&mut oversized));
+        assert_eq!(oversized.len(), limit);
+        assert!(oversized.bytes().all(|byte| byte == b'x'));
+    }
 }

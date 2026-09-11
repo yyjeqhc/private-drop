@@ -72,7 +72,8 @@ async fn windows_list_project_tracked_files_uses_internal_posix_and_preserves_sc
     assert!(root.success, "{:?}", root.error);
     assert!(script.contains("git ls-files -z --cached"));
     assert!(
-        script.contains("head_cmd") && script.contains("-c 1048576"),
+        script.contains("head_cmd")
+            && script.contains(&format!("-c {}", LIST_TRACKED_SOURCE_MAX_BYTES + 1)),
         "tracked listing lost its raw-output cap: {script}"
     );
     let root_paths = root.output["entries"]
@@ -162,6 +163,95 @@ async fn tracked_listing_failure_keeps_bounded_multiline_stderr() {
         "bounded stderr grew unexpectedly: {} chars",
         error.chars().count()
     );
+}
+
+async fn run_mocked_tracked_listing(
+    client_id: &str,
+    stdout: String,
+    depth: Option<usize>,
+    limit: usize,
+    offset: usize,
+) -> (ToolResult, String) {
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            internal_posix_script: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .list_project_tracked_files(project, None, None, depth, Some(limit), Some(offset))
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    let script = request
+        .script
+        .as_ref()
+        .expect("tracked listing must use the typed internal POSIX path")
+        .script
+        .clone();
+    complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, &stdout, "").await;
+    (task.await.unwrap(), script)
+}
+
+#[tokio::test]
+async fn tracked_listing_source_budget_is_below_default_retention_and_disables_fake_paging() {
+    const ORDINARY_RESULT_RETENTION_COMPATIBILITY_FLOOR_BYTES: usize = 256 * 1024;
+    assert!(
+        LIST_TRACKED_SOURCE_MAX_BYTES + 1 < ORDINARY_RESULT_RETENTION_COMPATIBILITY_FLOOR_BYTES,
+        "producer source probe must keep headroom below ordinary per-stream result retention"
+    );
+
+    let mut raw = String::new();
+    let mut index = 0usize;
+    while raw.len() <= LIST_TRACKED_SOURCE_MAX_BYTES + 4096 {
+        raw.push_str(&format!("src/file-{index:05}-{}.rs\0", "x".repeat(20)));
+        index += 1;
+    }
+    assert!(raw.len() < ORDINARY_RESULT_RETENTION_COMPATIBILITY_FLOOR_BYTES);
+
+    let (result, script) =
+        run_mocked_tracked_listing("tracked-source-budget", raw, Some(16), 10, 0).await;
+    assert!(result.success, "{:?}", result.error);
+    assert!(script.contains(&format!("-c {}", LIST_TRACKED_SOURCE_MAX_BYTES + 1)));
+    assert_eq!(result.output["list_truncated"], true);
+    assert_eq!(result.output["truncated"], false);
+    assert_eq!(result.output["next_offset"], Value::Null);
+    assert_eq!(result.output["returned"], 10);
+    assert!(result.output["total_files"].as_u64().unwrap() >= 10);
+}
+
+#[tokio::test]
+async fn tracked_listing_fails_closed_when_server_retains_only_stdout_tail() {
+    let mut raw = String::new();
+    let mut index = 0usize;
+    while raw.len() <= 300 * 1024 {
+        raw.push_str(&format!("src/file-{index:05}-{}.rs\0", "y".repeat(32)));
+        index += 1;
+    }
+
+    let (result, _) =
+        run_mocked_tracked_listing("tracked-retained-tail", raw, Some(16), 10, 0).await;
+    assert!(!result.success);
+    assert_eq!(result.output["code"], "source_incomplete");
+    assert!(result.output.get("next_offset").is_none());
+    assert!(result.output.get("total_files").is_none());
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("ordinary result retention"));
 }
 
 #[tokio::test]

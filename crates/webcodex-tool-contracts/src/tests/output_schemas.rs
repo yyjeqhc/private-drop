@@ -137,6 +137,30 @@ fn git_log_and_directory_listing_expose_parser_ready_next_pages() {
 }
 
 #[test]
+fn tracked_listing_schema_separates_source_incomplete_from_safe_page_truncation() {
+    let specs = registered_tool_specs();
+    let properties = output_schema_properties(&specs, "list_project_tracked_files");
+    let truncated = properties["truncated"]["description"]
+        .as_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    let next_offset = properties["next_offset"]["description"]
+        .as_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    let list_truncated = properties["list_truncated"]["description"]
+        .as_str()
+        .unwrap()
+        .to_ascii_lowercase();
+    assert!(truncated.contains("completely acquired source"));
+    assert!(truncated.contains("list_truncated=true"));
+    assert!(next_offset.contains("null"));
+    assert!(next_offset.contains("list_truncated=true"));
+    assert!(list_truncated.contains("source acquisition"));
+    assert!(list_truncated.contains("narrow path"));
+}
+
+#[test]
 fn continuation_feedback_output_schemas_are_synchronized() {
     let specs = registered_tool_specs();
     for name in ["finish_coding_task", "session_handoff_summary"] {

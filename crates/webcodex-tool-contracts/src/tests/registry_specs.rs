@@ -162,6 +162,20 @@ fn tool_specs_describe_default_coding_loop_preferences() {
             "list_project_files: {phrase}"
         );
     }
+    let tracked_files_desc = desc("list_project_tracked_files");
+    for phrase in [
+        "bounded producer source",
+        "source acquisition is complete",
+        "list_truncated=true",
+        "next_offset is null",
+        "narrow path",
+        "retained-tail source truncation fails closed",
+    ] {
+        assert!(
+            tracked_files_desc.contains(phrase),
+            "list_project_tracked_files: {phrase}"
+        );
+    }
 
     let show_changes_desc = desc("show_changes");
     for phrase in [

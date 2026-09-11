@@ -25,6 +25,9 @@ pub const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 /// 30 seconds leaves one full interval of scheduling/network slack.
 pub const MAX_POLL_INTERVAL_MS: u64 = 30_000;
 pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
+/// Default Runner policy for captured/presented bytes in each stdout or stderr
+/// stream. It is a per-stream execution-retention policy, not a protocol
+/// request/body/frame ceiling and not the model-facing ToolResult ceiling.
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 /// Config value selecting the polling transport (HTTP `/api/shell/agent/poll`).
 pub const TRANSPORT_POLLING: &str = "polling";
