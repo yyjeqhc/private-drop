@@ -97,6 +97,9 @@ class PathRiskFixtureTests(unittest.TestCase):
             "plugins/repo-info/src/plugin.ts",
             "plugins/repo-info/plugin.test.mjs",
             "plugins/repo-info/package-lock.json",
+            "plugins/repo-context/src/plugin.ts",
+            "plugins/repo-context/plugin.test.mjs",
+            "plugins/repo-context/package-lock.json",
         ):
             with self.subTest(path=path):
                 result = classify(path)

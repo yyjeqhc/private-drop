@@ -133,6 +133,7 @@ jobs:
             npm/plugin-sdk/package-lock.json
             plugins/safe-delete/package-lock.json
             plugins/repo-info/package-lock.json
+            plugins/repo-context/package-lock.json
       - name: Install frontend dependencies
         if: needs.changes.outputs.needs_frontend == 'true'
         run: npm ci --prefix frontend
@@ -157,6 +158,7 @@ jobs:
           npm ci --prefix npm/plugin-sdk
           npm ci --prefix plugins/safe-delete
           npm ci --prefix plugins/repo-info
+          npm ci --prefix plugins/repo-context
       - name: Check Plugin SDK contracts and first-party dogfood
         if: needs.changes.outputs.needs_plugin_sdk == 'true'
         run: |
@@ -168,6 +170,8 @@ jobs:
           npm --prefix plugins/safe-delete test
           npm --prefix plugins/repo-info run typecheck
           npm --prefix plugins/repo-info test
+          npm --prefix plugins/repo-context run typecheck
+          npm --prefix plugins/repo-context test
       - name: Verify workspace boundaries
         run: |
           bash scripts/workspace_boundary_check.sh --self-test
