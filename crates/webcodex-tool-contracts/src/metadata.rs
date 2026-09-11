@@ -247,9 +247,9 @@ pub fn tool_metadata(name: &str) -> ToolMetadata {
 mod tests {
     use super::*;
     use crate::known_tool_names;
-    use webcodex_core::authority::{
-        SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
-    };
+    #[cfg(feature = "workspace-checkpoints")]
+    use webcodex_core::authority::SCOPE_PROJECT_READ;
+    use webcodex_core::authority::{SCOPE_JOB_RUN, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ};
 
     #[test]
     fn tool_metadata_covers_all_known_tools() {

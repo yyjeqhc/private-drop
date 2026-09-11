@@ -286,11 +286,17 @@ fn record_read(store: &SessionStore, session_id: &str, path: &str) {
     let start = store.record_tool_call_started(
         Some(session_id),
         SessionTransport::Api,
-        "read_file",
-        &json!({"project": PROJECT, "path": path}),
+        "read_files",
+        &json!({"project": PROJECT, "items": [{"path": path}]}),
         synthetic_read_contract(),
     );
-    store.record_tool_call_finished(start, true, &json!({"path": path}), None, None);
+    store.record_tool_call_finished(
+        start,
+        true,
+        &json!({"items": [{"index": 0, "success": true, "output": {"path": path}}]}),
+        None,
+        None,
+    );
 }
 
 #[test]
@@ -712,7 +718,7 @@ fn mutate_feedback_to_worst_case(feedback: &mut Value) {
         |prefix: &str, index: usize| format!("{prefix}/{index:03}_{}.rs", "x".repeat(470));
     feedback["status"] = json!("available");
     feedback["attempt"]["changes"] = json!({"changed_paths": (0..100).map(|i| json!(long_path("src/quoted_\\segment", i))).collect::<Vec<_>>(), "total_changed_paths": 100, "truncated": false});
-    feedback["attempt"]["exploration"] = json!({"observed_paths": (0..100).map(|i| json!(long_path("src/recent_\\segment", i))).collect::<Vec<_>>(), "total_observed_paths": 100, "truncated": false, "read_count": 100, "search_count": 0, "navigation_count": 0, "latest_tool": "read_file", "complete": true});
+    feedback["attempt"]["exploration"] = json!({"observed_paths": (0..100).map(|i| json!(long_path("src/recent_\\segment", i))).collect::<Vec<_>>(), "total_observed_paths": 100, "truncated": false, "read_count": 100, "search_count": 0, "navigation_count": 0, "latest_tool": "read_files", "complete": true});
     feedback["attempt"]["validation"] = json!({"latest_status": "failed", "unresolved_failure_count": 20, "open_failures": (0..20).map(|i| json!({"kind": "test", "name": format!("tests::{}", format!("failure_{i}_").repeat(18))})).collect::<Vec<_>>(), "total_open_failures": 20, "failures_truncated": false, "delta_available": false});
 }
 
