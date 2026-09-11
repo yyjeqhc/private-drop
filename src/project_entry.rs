@@ -62,6 +62,12 @@ fn remove_npm_wrapper_network_environment(command: &mut Command) {
     }
 }
 
+fn remove_runner_parent_credentials(command: &mut Command) {
+    for key in ["WEBCODEX_TOKEN", "WEBCODEX_PAT", "WEBCODEX_AGENT_TOKEN"] {
+        command.env_remove(key);
+    }
+}
+
 fn configure_connector_project_registry_environment(command: &mut Command, path: &Path) {
     // `Command` inherits the parent environment. Clear the pre-0.4 alias before
     // setting the canonical variable so a stale shell/service environment cannot
@@ -865,12 +871,11 @@ pub(super) async fn start_local_runtime(
     for name in &runtime_options.child_environment_remove {
         runner_command.env_remove(name);
     }
+    remove_runner_parent_credentials(&mut runner_command);
     runner_command
         .arg("--config")
         .arg(&runner_config)
         .current_dir(&paths.state)
-        .env_remove("WEBCODEX_TOKEN")
-        .env_remove("WEBCODEX_AGENT_TOKEN")
         .stdout(Stdio::from(runner_log))
         .stderr(Stdio::from(runner_error))
         .kill_on_drop(true);
