@@ -278,6 +278,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn coding_intent_tools_are_all_adaptive_reachable_with_expected_routes() {
+        let expected_gateway = [
+            "project_overview",
+            "document_symbols",
+            "document_diagnostics",
+            "hover",
+            "workspace_symbols",
+            "goto_definition",
+            "find_references",
+            "call_hierarchy",
+            "apply_patch",
+            "run_script",
+            "cargo_fmt",
+            "go_test",
+        ];
+        for tool_name in crate::tool_runtime::tool_definition::CODING_INTENT_TOOL_NAMES {
+            let (availability, via) =
+                ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(tool_name);
+            assert_ne!(
+                availability, TOOL_SURFACE_AVAILABILITY_UNAVAILABLE,
+                "coding intent tool {tool_name} must remain Adaptive reachable"
+            );
+            if expected_gateway.contains(tool_name) {
+                assert_eq!(
+                    (availability, via),
+                    (
+                        TOOL_SURFACE_AVAILABILITY_GATEWAY,
+                        Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+                    ),
+                    "coding specialist {tool_name} must remain gateway-routed"
+                );
+            } else {
+                assert_eq!(
+                    (availability, via),
+                    (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+                    "ordinary coding tool {tool_name} should use the Adaptive direct path"
+                );
+            }
+        }
+    }
+
     const EXPECTED_ADAPTIVE_RUNTIME_DIRECT_TOOL_NAMES: &[&str] = &[
         "work_on_project",
         "session_discussion_summary",

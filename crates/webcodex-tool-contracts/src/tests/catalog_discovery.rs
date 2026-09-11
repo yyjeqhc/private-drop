@@ -583,43 +583,129 @@ fn project_overview_manifest_profiles_match_intended_workflows() {
 }
 
 #[test]
-fn coding_intent_matches_local_coding_canonical_tools() {
+fn local_coding_compatibility_surface_stays_exact_and_ordered() {
+    assert_eq!(
+        LOCAL_CODING_TOOL_NAMES,
+        &[
+            "work_on_project",
+            "list_projects",
+            "plugin_tool",
+            "get_session_assignment",
+            "complete_session_message",
+            "coding_agent_start",
+            "coding_agent_observe",
+            "coding_agent_cancel",
+            "project_overview",
+            "list_project_tracked_files",
+            "list_project_files",
+            "search_project_text",
+            "search_project_texts",
+            "read_file",
+            "read_files",
+            "lsp_status",
+            "document_symbols",
+            "document_diagnostics",
+            "hover",
+            "workspace_symbols",
+            "goto_definition",
+            "find_references",
+            "call_hierarchy",
+            "apply_text_edits",
+            "apply_patch",
+            "apply_unified_diff",
+            "run_process",
+            "run_script",
+            "run_shell",
+            "run_job",
+            "observe_jobs",
+            "job_status",
+            "job_log",
+            "list_jobs",
+            "stop_job",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "go_test",
+            "validation_summary",
+            "git_status",
+            "git_log",
+            "git_review_summary",
+            "git_diff",
+            "git_diff_hunks",
+            "show_changes",
+            "workspace_hygiene_check",
+            "finish_coding_task",
+        ]
+    );
+}
+
+#[test]
+fn coding_intent_has_independent_ordered_canonical_selection_surface() {
     let coding = TOOL_MANIFEST_INTENTS
         .iter()
         .find(|intent| intent.name == "coding")
         .expect("coding intent");
-    assert_eq!(coding.tools, LOCAL_CODING_TOOL_NAMES);
+    assert_eq!(coding.tools, CODING_INTENT_TOOL_NAMES);
+    assert_ne!(coding.tools, LOCAL_CODING_TOOL_NAMES);
     assert_eq!(coding.tools.first().copied(), Some("work_on_project"));
     assert_eq!(coding.tools.last().copied(), Some("finish_coding_task"));
-    assert!(!coding.tools.contains(&"start_coding_task"));
-    let apply_patch_position = coding
-        .tools
-        .iter()
-        .position(|tool| *tool == "apply_patch")
-        .unwrap();
+
+    let mut seen = BTreeSet::new();
+    for tool in CODING_INTENT_TOOL_NAMES {
+        assert!(seen.insert(*tool), "duplicate coding intent tool {tool}");
+    }
+    for required in [
+        "work_on_project",
+        "search_project_texts",
+        "read_files",
+        "apply_text_edits",
+        "run_process",
+        "run_shell",
+        "observe_jobs",
+        "cargo_check",
+        "cargo_test",
+        "show_changes",
+        "git_diff_hunks",
+        "workspace_hygiene_check",
+        "finish_coding_task",
+        "apply_patch",
+        "run_script",
+        "cargo_fmt",
+        "go_test",
+        "goto_definition",
+        "find_references",
+    ] {
+        assert!(coding.tools.contains(&required), "missing {required}");
+    }
+    for compatibility_or_overlap in [
+        "read_file",
+        "search_project_text",
+        "git_diff",
+        "git_diff_summary",
+        "job_status",
+        "job_log",
+        "run_job",
+        "apply_unified_diff",
+        "coding_agent_start",
+        "coding_agent_observe",
+        "coding_agent_cancel",
+        "get_session_assignment",
+        "complete_session_message",
+    ] {
+        assert!(
+            !coding.tools.contains(&compatibility_or_overlap),
+            "coding intent should not recommend {compatibility_or_overlap}"
+        );
+    }
     let apply_text_edits_position = coding
         .tools
         .iter()
         .position(|tool| *tool == "apply_text_edits")
         .unwrap();
+    let apply_patch_position = coding
+        .tools
+        .iter()
+        .position(|tool| *tool == "apply_patch")
+        .unwrap();
     assert!(apply_text_edits_position < apply_patch_position);
-    for middle in [
-        "project_overview",
-        "apply_patch",
-        "apply_text_edits",
-        "apply_unified_diff",
-        "cargo_test",
-        "show_changes",
-    ] {
-        let position = coding
-            .tools
-            .iter()
-            .position(|tool| *tool == middle)
-            .unwrap();
-        assert!(position > 0 && position + 1 < coding.tools.len());
-    }
-    assert!(coding.tools.contains(&"run_shell"));
-    assert!(coding.tools.contains(&"run_job"));
-    assert!(!coding.tools.contains(&"git_restore_paths"));
-    assert!(!coding.tools.contains(&"discard_untracked"));
 }

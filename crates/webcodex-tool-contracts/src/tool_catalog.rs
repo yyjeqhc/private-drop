@@ -456,9 +456,9 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
 ];
 
-/// Single ordered, unique source of truth for the `local_coding` MCP surface
-/// and `tool_manifest(intent="coding")`. The order is both the MCP tools/list
-/// order and the coding manifest ranking.
+/// Single ordered, unique source of truth for the fixed `local_coding` MCP
+/// compatibility surface. This list intentionally does not drive Adaptive
+/// Runtime intent discovery.
 pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     // entry
     "work_on_project",
@@ -520,6 +520,47 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "finish_coding_task",
 ];
 
+/// Ordered selection surface for ordinary coding work under Adaptive Runtime.
+///
+/// This is intentionally smaller and more canonical than the fixed Local Coding
+/// compatibility surface. It may include distinct gateway-routed specialists
+/// that are worth explicit discovery, but excludes singular/legacy peers when a
+/// preferred batch, structured review, or Job-continuation path exists.
+pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
+    "work_on_project",
+    "project_overview",
+    "search_project_texts",
+    "read_files",
+    // Distinct semantic navigation capabilities remain useful even though they
+    // are long-tail Adaptive gateway targets.
+    "document_symbols",
+    "document_diagnostics",
+    "hover",
+    "workspace_symbols",
+    "goto_definition",
+    "find_references",
+    "call_hierarchy",
+    // Canonical edit plus contextual/multi-hunk specialist.
+    "apply_text_edits",
+    "apply_patch",
+    // Ordinary execution plus program-like multi-stage specialist.
+    "run_process",
+    "run_script",
+    "run_shell",
+    "observe_jobs",
+    // Structured validation.
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_test",
+    "go_test",
+    // Worktree and committed-range review.
+    "git_review_summary",
+    "git_diff_hunks",
+    "show_changes",
+    "workspace_hygiene_check",
+    "finish_coding_task",
+];
+
 /// Stable task-intent views for `tool_manifest(intent=...)`.
 /// Ordered lists are ranked for model selection; not a substitute for category.
 /// Intent views only filter and rank discovery output; they do not change tool
@@ -528,7 +569,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
     ToolManifestIntent {
         name: "coding",
         purpose: "Default coding loop: start, inspect, structured edit, validate, review, report.",
-        tools: LOCAL_CODING_TOOL_NAMES,
+        tools: CODING_INTENT_TOOL_NAMES,
     },
     ToolManifestIntent {
         name: "audit",

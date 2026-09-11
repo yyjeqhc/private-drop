@@ -37,8 +37,8 @@ use super::registry::input_schemas::list_tools_input_schema;
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_catalog::TOOL_MANIFEST_INTENTS;
 pub use super::tool_catalog::{
-    available_tool_manifest_intent_names, resolve_tool_manifest_intent, LOCAL_CODING_TOOL_NAMES,
-    TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
+    available_tool_manifest_intent_names, resolve_tool_manifest_intent, CODING_INTENT_TOOL_NAMES,
+    LOCAL_CODING_TOOL_NAMES, TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_catalog::{
