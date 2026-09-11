@@ -346,8 +346,9 @@
       if (scope) {
         const base = boundedString(scope.base);
         const head = boundedString(scope.head);
-        addRow(body, "Range", base && head ? base + " → " + head : base || head);
-        addRow(body, "Merge base", boundedString(scope.merge_base));
+        const mergeBase = boundedString(scope.merge_base);
+        addRow(body, "Requested range", base && head ? base + " → " + head : base || head);
+        addRow(body, "Diff range", mergeBase && head ? mergeBase + " → " + head : null);
         addRow(body, "Base is ancestor", typeof scope.base_is_ancestor === "boolean" ? (scope.base_is_ancestor ? "yes" : "no") : null);
       }
       addRow(body, "Deterministic", typeof presentation.deterministic === "boolean" ? (presentation.deterministic ? "yes" : "no") : null);

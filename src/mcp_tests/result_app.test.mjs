@@ -98,6 +98,32 @@ test("git review renders bounded committed-range metadata", () => {
   assert.equal(view.nodes.cards.children.length, 1);
 });
 
+test("git review distinguishes requested commits from the actual merge-base diff", () => {
+  const view = app();
+  view.result({
+    ...partialReview,
+    scope: { base: "aaaaaaaa", head: "bbbbbbbb", merge_base: "cccccccc", base_is_ancestor: false, commit_count: 1 },
+  });
+  const text = node => [node.textContent, ...node.children.map(text)].join(" ");
+  const details = text(view.nodes.cards);
+  assert.match(details, /Requested range aaaaaaaa → bbbbbbbb/);
+  assert.match(details, /Diff range cccccccc → bbbbbbbb/);
+  assert.match(details, /Base is ancestor no/);
+});
+
+test("git review does not infer a diff range when merge-base observation failed", () => {
+  const view = app();
+  view.result({
+    version: 1, kind: "git_review", reason_code: "no_merge_base", deterministic: true,
+    scope: { base: "aaaaaaaa", head: "bbbbbbbb" },
+  });
+  const text = node => [node.textContent, ...node.children.map(text)].join(" ");
+  const details = text(view.nodes.cards);
+  assert.equal(view.nodes.state.textContent, "Unavailable");
+  assert.match(details, /Requested range aaaaaaaa → bbbbbbbb/);
+  assert.doesNotMatch(details, /Diff range/);
+});
+
 test("untrusted messages are ignored and later results replace earlier cards", () => {
   const view = app();
   view.result(passed, {});
