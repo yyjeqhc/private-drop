@@ -141,6 +141,18 @@ pub(crate) fn normalize_git_log_skip(skip: Option<usize>) -> usize {
     skip.unwrap_or(0).min(MAX_GIT_LOG_SKIP)
 }
 
+pub(crate) fn git_log_next_skip(
+    skip: usize,
+    returned_count: usize,
+    truncated: bool,
+) -> Option<usize> {
+    if !truncated || returned_count == 0 {
+        return None;
+    }
+    skip.checked_add(returned_count)
+        .filter(|next| *next > skip && *next <= MAX_GIT_LOG_SKIP)
+}
+
 pub(crate) fn git_log_command(limit: usize, skip: usize) -> String {
     let limit_plus_one = limit.saturating_add(1);
     format!(
@@ -4570,12 +4582,14 @@ impl ToolRuntime {
             Err(e) => return ToolResult::err(e),
         };
         let (commits, truncated) = parse_git_log_commits(&output.stdout, limit);
+        let next_skip = git_log_next_skip(skip, commits.len(), truncated);
         let payload = json!({
             "project": project,
             "limit": limit,
             "skip": skip,
             "count": commits.len(),
             "truncated": truncated,
+            "next_skip": next_skip,
             "commits": commits,
         });
         if output.exit_code == Some(0) || git_log_empty_repo(&output.stderr) {
@@ -4589,6 +4603,7 @@ impl ToolRuntime {
                     "skip": payload["skip"],
                     "count": payload["count"],
                     "truncated": payload["truncated"],
+                    "next_skip": payload["next_skip"],
                     "commits": payload["commits"],
                     "exit_code": output.exit_code,
                     "stderr": output.stderr,

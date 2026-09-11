@@ -1240,17 +1240,23 @@ fn project_overview_tool_call_parses() {
 
 #[test]
 fn from_tool_name_parses_phase_a_tools() {
-    let call = ToolCall::from_tool_name("list_project_files", json!({"project": "demo"})).unwrap();
+    let call = ToolCall::from_tool_name(
+        "list_project_files",
+        json!({"project": "demo", "limit": 50, "offset": 75}),
+    )
+    .unwrap();
     match call {
         ToolCall::ListProjectFiles {
             project,
             path,
             limit,
+            offset,
             ..
         } => {
             assert_eq!(project, "demo");
             assert_eq!(path, None);
-            assert_eq!(limit, None);
+            assert_eq!(limit, Some(50));
+            assert_eq!(offset, Some(75));
         }
         other => panic!("expected ListProjectFiles, got {:?}", other),
     }

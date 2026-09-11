@@ -174,6 +174,29 @@ fn git_diff_hunks_page_budget_schema_is_producer_scoped_and_bounded() {
 }
 
 #[test]
+fn list_project_files_paging_schema_keeps_cardinality_bounded() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "list_project_files").input_schema;
+    let properties = &schema["properties"];
+    assert_eq!(properties["limit"]["default"], 200);
+    assert!(properties["limit"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("1..500"));
+    assert_eq!(properties["offset"]["minimum"], 0);
+    assert_eq!(properties["offset"]["default"], 0);
+    assert!(properties["offset"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("next_offset"));
+    assert!(test_support::validate_schema_instance(
+        &json!({"project":"demo","limit":200,"offset":500}),
+        schema,
+    )
+    .is_ok());
+}
+
+#[test]
 fn sync_validation_and_run_shell_timeout_schema_bounds() {
     let specs = registered_tool_specs();
     for (name, default) in [

@@ -201,7 +201,7 @@ pub(super) const GET_PROJECT_GIT_DIFF_SUMMARY: OpenApiOperationSpec = operation(
 pub(super) const LIST_PROJECT_FILES: OpenApiOperationSpec = operation(
     "listProjectFiles",
     "List project files",
-    "Read-only bounded file listing of a Runner-registered Project directory. Returns project-relative paths plus a file/dir kind. Optional `path` scopes a subdirectory; `limit` bounds the entry count. Routes to the owning Runner.",
+    "Read-only deterministic paged file listing of a Runner-registered Project directory. Returns project-relative paths plus a file/dir kind; optional `path` scopes a subdirectory, `limit` bounds the page, and `offset` resumes from `next_offset`. Routes to the owning Runner.",
     "ListProjectFilesRequest",
     "ToolResult",
     NonConsequential,

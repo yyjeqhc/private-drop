@@ -371,14 +371,12 @@ pub(crate) fn relative_entry_path(rel_path: &str, name: &str) -> String {
     }
 }
 
-/// Parse Runner `file_list` stdout (one entry per line, dirs suffixed with
-/// `/`) into bounded project-relative entries with a file/dir kind. Returns
-/// the entries and whether the source exceeded `max_entries`.
-pub(crate) fn parse_file_list_entries(
-    stdout: &str,
-    rel_path: &str,
-    max_entries: usize,
-) -> (Vec<Value>, bool) {
+/// Parse a complete Runner `file_list` source (one entry per line, directories
+/// suffixed with `/`) into deterministically sorted project-relative entries.
+/// Paging is deliberately applied only after the complete source has reached
+/// the Server so `total_entries` and `next_offset` never describe a retained
+/// tail as if it were the full directory.
+pub(crate) fn parse_file_list_entries(stdout: &str, rel_path: &str) -> Vec<Value> {
     let mut all: Vec<Value> = Vec::new();
     for line in stdout.lines() {
         let line = line.trim_end_matches('\r');
@@ -404,9 +402,35 @@ pub(crate) fn parse_file_list_entries(
             .unwrap_or("")
             .cmp(b["path"].as_str().unwrap_or(""))
     });
-    let truncated = all.len() > max_entries;
-    all.truncate(max_entries);
-    (all, truncated)
+    all
+}
+
+pub(crate) fn page_file_list_entries(
+    all: &[Value],
+    offset: usize,
+    max_entries: usize,
+) -> (Vec<Value>, Option<usize>) {
+    let start = offset.min(all.len());
+    let end = start.saturating_add(max_entries).min(all.len());
+    let page = all[start..end].to_vec();
+    let next_offset = (end < all.len()).then_some(end);
+    (page, next_offset)
+}
+
+fn has_leading_runner_result_retention_truncation_marker(value: &str) -> bool {
+    if value.starts_with("[output truncated]\n") || value.starts_with("[...]\n") {
+        return true;
+    }
+    let Some(rest) = value.strip_prefix("[output truncated to last ") else {
+        return false;
+    };
+    let Some(newline) = rest.find('\n') else {
+        return false;
+    };
+    let Some(byte_count) = rest[..newline].strip_suffix(" bytes]") else {
+        return false;
+    };
+    !byte_count.is_empty() && byte_count.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// Wall-clock budget for one tracked-file listing. `git ls-files` reads the
@@ -873,6 +897,7 @@ impl ToolRuntime {
         project: String,
         path: Option<String>,
         limit: Option<usize>,
+        offset: Option<usize>,
     ) -> ToolResult {
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
@@ -886,6 +911,7 @@ impl ToolRuntime {
             return ToolResult::err(e);
         }
         let max_entries = limit.unwrap_or(200).clamp(1, 500);
+        let offset = offset.unwrap_or(0);
         let client_id = proj.client_id.clone();
         let wait_timeout = 30;
         let (request_id, rx) = match self
@@ -918,12 +944,29 @@ impl ToolRuntime {
         match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
             Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
                 let stdout = resp.stdout.unwrap_or_default();
-                let (entries, truncated) = parse_file_list_entries(&stdout, &rel_path, max_entries);
+                if has_leading_runner_result_retention_truncation_marker(&stdout) {
+                    return ToolResult::err_with_output(
+                        "Runner directory listing was truncated by ordinary result retention; narrow path before paging",
+                        json!({
+                            "error_kind": "source_incomplete",
+                            "reason_code": "runner_result_retention_truncated",
+                            "state_changed": false,
+                        }),
+                    );
+                }
+                let all = parse_file_list_entries(&stdout, &rel_path);
+                let total_entries = all.len();
+                let (entries, next_offset) = page_file_list_entries(&all, offset, max_entries);
+                let returned = entries.len();
                 ToolResult::ok(json!({
                     "project": project,
                     "path": rel_path,
                     "entries": entries,
-                    "truncated": truncated,
+                    "returned": returned,
+                    "total_entries": total_entries,
+                    "offset": offset,
+                    "next_offset": next_offset,
+                    "truncated": next_offset.is_some(),
                 }))
             }
             Ok(Ok(resp)) => ToolResult::err(

@@ -1548,6 +1548,8 @@ pub enum ToolCall {
         path: Option<String>,
         #[serde(default)]
         limit: Option<usize>,
+        #[serde(default)]
+        offset: Option<usize>,
     },
 
     /// List the project's tracked files from the Git index, with glob

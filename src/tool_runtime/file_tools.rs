@@ -56,7 +56,8 @@ impl ToolRuntime {
                 session_id: _,
                 path,
                 limit,
-            } => self.list_project_files(project, path, limit).await,
+                offset,
+            } => self.list_project_files(project, path, limit, offset).await,
             ToolCall::ListProjectTrackedFiles {
                 project,
                 session_id: _,

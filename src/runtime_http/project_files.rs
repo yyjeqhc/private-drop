@@ -69,6 +69,8 @@ struct ListProjectFilesRequest {
     pub path: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,6 +299,7 @@ pub async fn projects_list_files(req: &mut Request, depot: &mut Depot, res: &mut
                 session_id: body.session_id,
                 path: body.path,
                 limit: body.limit,
+                offset: body.offset,
             },
             auth.as_ref(),
         )

@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use super::common::{object_schema, with_optional_session_id};
 
 pub fn list_project_files_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
+    let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Runner-registered project id.", true),
         (
             "path",
@@ -14,10 +14,20 @@ pub fn list_project_files_input_schema() -> Value {
         (
             "limit",
             "integer",
-            "Maximum number of entries to return.",
+            "Maximum number of entries to return; runtime clamps to 1..500 (default 200).",
             false,
         ),
-    ]))
+        (
+            "offset",
+            "integer",
+            "Zero-based entry offset for deterministic paging; use next_offset from the previous page.",
+            false,
+        ),
+    ]));
+    schema["properties"]["limit"]["default"] = json!(200);
+    schema["properties"]["offset"]["minimum"] = json!(0);
+    schema["properties"]["offset"]["default"] = json!(0);
+    schema
 }
 
 pub fn list_project_tracked_files_input_schema() -> Value {

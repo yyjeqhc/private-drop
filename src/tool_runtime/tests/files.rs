@@ -1112,39 +1112,160 @@ async fn artifact_upload_begin_policy_rejection_is_classified() {
     assert!(event.permission.is_none());
 }
 
-#[test]
-fn parse_file_list_entries_is_bounded_and_marks_truncation() {
-    // Simulate agent file_list stdout: dirs suffixed with '/'.
-    let stdout = "Cargo.toml\nsrc/\nREADME.md\ntarget/\nCargo.lock\n";
-    // First, without truncation, verify kinds and project-relative paths.
-    let (all, truncated_full) = parse_file_list_entries(stdout, ".", 10);
-    assert!(!truncated_full);
-    assert_eq!(all.len(), 5);
-    let src = all.iter().find(|e| e["path"] == "src").expect("src entry");
-    assert_eq!(src["kind"], "dir");
-    let cargo = all
-        .iter()
-        .find(|e| e["path"] == "Cargo.toml")
-        .expect("Cargo.toml entry");
-    assert_eq!(cargo["kind"], "file");
+async fn run_list_project_files_page(
+    client_id: &str,
+    stdout: &str,
+    limit: usize,
+    offset: usize,
+) -> ToolResult {
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .list_project_files(project, None, Some(limit), Some(offset))
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "file_list");
+    assert_eq!(request.path.as_deref(), Some("."));
+    complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, stdout, "").await;
+    task.await.unwrap()
+}
 
-    // With a tight bound, output is truncated and sorted alphabetically.
-    let (bounded, truncated) = parse_file_list_entries(stdout, ".", 3);
-    assert_eq!(bounded.len(), 3);
-    assert!(truncated);
-    let paths: Vec<&str> = bounded
+#[tokio::test]
+async fn list_project_files_pages_complete_source_without_gap_or_duplicate() {
+    let stdout = "zeta.txt\nsrc/\nREADME.md\nCargo.toml\n.alpha\n";
+
+    let first = run_list_project_files_page("list-files-pages", stdout, 2, 0).await;
+    assert!(first.success, "{:?}", first.error);
+    assert_eq!(first.output["returned"], 2);
+    assert_eq!(first.output["total_entries"], 5);
+    assert_eq!(first.output["offset"], 0);
+    assert_eq!(first.output["next_offset"], 2);
+    assert_eq!(first.output["truncated"], true);
+
+    let second = run_list_project_files_page(
+        "list-files-pages",
+        stdout,
+        2,
+        first.output["next_offset"].as_u64().unwrap() as usize,
+    )
+    .await;
+    assert_eq!(second.output["returned"], 2);
+    assert_eq!(second.output["next_offset"], 4);
+
+    let final_page = run_list_project_files_page(
+        "list-files-pages",
+        stdout,
+        2,
+        second.output["next_offset"].as_u64().unwrap() as usize,
+    )
+    .await;
+    assert_eq!(final_page.output["returned"], 1);
+    assert_eq!(final_page.output["next_offset"], Value::Null);
+    assert_eq!(final_page.output["truncated"], false);
+
+    let reconstructed = first.output["entries"]
+        .as_array()
+        .unwrap()
         .iter()
-        .map(|e| e["path"].as_str().unwrap())
-        .collect();
-    // Sorted: Cargo.lock, Cargo.toml, README.md come first.
-    assert_eq!(paths, vec!["Cargo.lock", "Cargo.toml", "README.md"]);
+        .chain(second.output["entries"].as_array().unwrap())
+        .chain(final_page.output["entries"].as_array().unwrap())
+        .map(|entry| entry["path"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reconstructed,
+        vec![".alpha", "Cargo.toml", "README.md", "src", "zeta.txt"]
+    );
+
+    let past_end = run_list_project_files_page("list-files-pages", stdout, 2, 99).await;
+    assert!(past_end.success);
+    assert_eq!(past_end.output["returned"], 0);
+    assert_eq!(past_end.output["total_entries"], 5);
+    assert_eq!(past_end.output["offset"], 99);
+    assert_eq!(past_end.output["next_offset"], Value::Null);
+    assert_eq!(past_end.output["truncated"], false);
+}
+
+#[tokio::test]
+async fn list_project_files_fails_closed_when_runner_retained_source_is_incomplete() {
+    let stdout = "[output truncated to last 262144 bytes]\nzeta.txt\nsrc/\n";
+    let result = run_list_project_files_page("list-files-retained-tail", stdout, 200, 0).await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "source_incomplete");
+    assert_eq!(
+        result.output["reason_code"],
+        "runner_result_retention_truncated"
+    );
+    assert!(result.output.get("next_offset").is_none());
+    assert!(result.output.get("total_entries").is_none());
+}
+
+#[test]
+fn parse_and_page_file_list_entries_is_sorted_gap_free_and_unicode_safe() {
+    let long_name = format!("long-{}-终.rs", "x".repeat(180));
+    let stdout = format!(
+        "zeta.txt\nsrc/\nREADME [draft].md\n{}\n.alpha\n目录/\n",
+        long_name
+    );
+    let all = parse_file_list_entries(&stdout, ".");
+    assert_eq!(all.len(), 6);
+    assert_eq!(
+        all.iter()
+            .map(|entry| entry["path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            ".alpha",
+            "README [draft].md",
+            long_name.as_str(),
+            "src",
+            "zeta.txt",
+            "目录",
+        ]
+    );
+    assert_eq!(all[3]["kind"], "dir");
+    assert_eq!(all[5]["kind"], "dir");
+
+    let (first, next) = page_file_list_entries(&all, 0, 2);
+    assert_eq!(next, Some(2));
+    let (middle, next) = page_file_list_entries(&all, next.unwrap(), 2);
+    assert_eq!(next, Some(4));
+    let (final_page, next) = page_file_list_entries(&all, next.unwrap(), 2);
+    assert_eq!(next, None);
+    let reconstructed = first
+        .into_iter()
+        .chain(middle)
+        .chain(final_page)
+        .map(|entry| entry["path"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reconstructed,
+        all.iter()
+            .map(|entry| entry["path"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    );
+    let (past_end, next) = page_file_list_entries(&all, 99, 2);
+    assert!(past_end.is_empty());
+    assert_eq!(next, None);
 }
 
 #[test]
 fn parse_file_list_entries_prepends_subpath_for_relative_paths() {
     let stdout = "main.rs\nlib.rs\n";
-    let (entries, truncated) = parse_file_list_entries(stdout, "src", 10);
-    assert!(!truncated);
+    let entries = parse_file_list_entries(stdout, "src");
     let paths: Vec<&str> = entries
         .iter()
         .map(|e| e["path"].as_str().unwrap())
@@ -3861,6 +3982,7 @@ async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch
                 session_id: None,
                 path: Some("/etc".to_string()),
                 limit: None,
+                offset: None,
             },
             None,
         ),
@@ -3871,6 +3993,7 @@ async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch
                 session_id: None,
                 path: Some("../outside".to_string()),
                 limit: None,
+                offset: None,
             },
             None,
         ),
@@ -4073,6 +4196,7 @@ async fn list_project_files_rejects_non_agent_project_id() {
             session_id: None,
             path: None,
             limit: None,
+            offset: None,
         })
         .await;
     assert!(!result.success);

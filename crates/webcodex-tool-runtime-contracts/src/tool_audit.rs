@@ -3909,11 +3909,13 @@ impl ToolCall {
                 project,
                 path,
                 limit,
+                offset,
                 ..
             } => serde_json::json!({
                 "project": project,
                 "path": path,
                 "limit": limit,
+                "offset": offset,
             }),
             Self::ProjectOverview {
                 project,

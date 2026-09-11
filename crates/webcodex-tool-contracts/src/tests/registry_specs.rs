@@ -146,6 +146,23 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
+    let git_log_desc = desc("git_log");
+    for phrase in ["next_skip", "parser-ready", "10000 skip bound"] {
+        assert!(git_log_desc.contains(phrase), "git_log: {phrase}");
+    }
+    let list_files_desc = desc("list_project_files");
+    for phrase in [
+        "deterministic page",
+        "next_offset",
+        "complete directory source",
+        "retained-tail truncation fails closed",
+    ] {
+        assert!(
+            list_files_desc.contains(phrase),
+            "list_project_files: {phrase}"
+        );
+    }
+
     let show_changes_desc = desc("show_changes");
     for phrase in [
         "default inspect/review tool",

@@ -104,6 +104,39 @@ fn git_diff_hunks_output_schema_keeps_page_and_model_budgets_distinct() {
 }
 
 #[test]
+fn git_log_and_directory_listing_expose_parser_ready_next_pages() {
+    let specs = registered_tool_specs();
+
+    let git_log =
+        &spec_named(&specs, "git_log").output_schema["properties"]["output"]["properties"];
+    assert!(git_log["next_skip"]["anyOf"].is_array());
+    assert!(git_log["next_skip"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("Exact skip value"));
+
+    let files = &spec_named(&specs, "list_project_files").output_schema["properties"]["output"]
+        ["properties"];
+    for field in [
+        "returned",
+        "total_entries",
+        "offset",
+        "next_offset",
+        "truncated",
+    ] {
+        assert!(
+            files.get(field).is_some(),
+            "missing list_project_files.{field}"
+        );
+    }
+    assert!(files["next_offset"]["anyOf"].is_array());
+    assert!(files["total_entries"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("fully acquired"));
+}
+
+#[test]
 fn continuation_feedback_output_schemas_are_synchronized() {
     let specs = registered_tool_specs();
     for name in ["finish_coding_task", "session_handoff_summary"] {

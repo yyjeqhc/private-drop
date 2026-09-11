@@ -35,10 +35,32 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
             (
+                "returned",
+                schema_type("integer", "Number of entries returned in this page."),
+            ),
+            (
+                "total_entries",
+                schema_type(
+                    "integer",
+                    "Exact entry count in the fully acquired, deterministically sorted directory source.",
+                ),
+            ),
+            (
+                "offset",
+                schema_type("integer", "Zero-based offset used for this page."),
+            ),
+            (
+                "next_offset",
+                nullable_schema(
+                    "integer",
+                    "Exact offset for the next page, or null when this page reaches the end of the complete source.",
+                ),
+            ),
+            (
                 "truncated",
                 schema_type(
                     "boolean",
-                    "Whether more entries were available than returned.",
+                    "Whether another deterministic page remains after this page.",
                 ),
             ),
         ])),

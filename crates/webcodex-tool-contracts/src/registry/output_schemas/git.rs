@@ -300,6 +300,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "Whether more commits were available."),
             ),
             (
+                "next_skip",
+                nullable_schema(
+                    "integer",
+                    "Exact skip value for the next page when another parser-ready page exists inside the bounded skip domain; null on the final page or when the 10000 skip ceiling prevents a safe forward page.",
+                ),
+            ),
+            (
                 "commits",
                 array_schema(open_object_schema("Git commit summary."), "Recent commits."),
             ),

@@ -1340,6 +1340,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
             session_id: None,
             path: None,
             limit: Some(20),
+            offset: None,
         },
         Vec::new(),
         ToolCallRecorderMetadata::default(),
@@ -1359,6 +1360,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
             session_id: None,
             path: None,
             limit: Some(20),
+            offset: None,
         },
         vec!["skills.catalog".to_string()],
         ToolCallRecorderMetadata::default(),
@@ -1416,6 +1418,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
             session_id: Some(session.session_id.clone()),
             path: None,
             limit: Some(20),
+            offset: None,
         },
         vec!["skills.catalog".to_string()],
         ToolCallRecorderMetadata {

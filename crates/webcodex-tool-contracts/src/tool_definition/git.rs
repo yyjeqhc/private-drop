@@ -274,7 +274,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Return bounded structured recent git commit history for a project. Does not return commit bodies or modify the worktree.",
+        "Return bounded structured recent git commit history for a project. When truncated, next_skip is the exact parser-ready offset for the next page when it can advance within the existing 10000 skip bound; null means no safe forward page is available. Does not return commit bodies or modify the worktree.",
         git_log_input_schema,
     ))),
 ];
