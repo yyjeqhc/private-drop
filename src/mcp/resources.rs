@@ -53,8 +53,10 @@ pub(super) const MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
 // resource for every card so resource reuse/cache is not an unobserved variable.
 pub(super) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
 pub(super) const MCP_COMPUTER_UI_DOMAIN: &str = "https://sg4.yyjeqhc.cn";
+pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/result/v1";
 pub(super) const MCP_UI_RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
 pub(super) const MCP_COMPUTER_APP_HTML: &str = include_str!("../mcp_computer_app.html");
+pub(super) const MCP_RESULT_APP_HTML: &str = include_str!("../mcp_result_app.html");
 
 pub(super) fn request_supports_mcp_apps(params: &Value) -> bool {
     let Some(extension) = request_client_capabilities(params)
@@ -72,8 +74,12 @@ pub(super) fn request_supports_mcp_apps(params: &Value) -> bool {
     }
 }
 
-pub(super) fn model_surface_supports_computer_app(model_surface: ModelSurface) -> bool {
+pub(super) fn model_surface_supports_mcp_apps(model_surface: ModelSurface) -> bool {
     model_surface.supports_operator_extensions()
+}
+
+pub(super) fn model_surface_supports_computer_app(model_surface: ModelSurface) -> bool {
+    model_surface_supports_mcp_apps(model_surface)
 }
 
 pub(super) fn mcp_computer_app_resource_meta() -> Value {
@@ -101,6 +107,33 @@ pub(super) fn mcp_computer_app_resources_list() -> Value {
     })
 }
 
+pub(super) fn mcp_result_app_resource_meta() -> Value {
+    json!({
+        "ui": {
+            "prefersBorder": true,
+            "csp": {
+                "connectDomains": [],
+                "resourceDomains": []
+            }
+        }
+    })
+}
+
+pub(super) fn mcp_app_resources_list() -> Value {
+    let mut result = mcp_computer_app_resources_list();
+    result["resources"]
+        .as_array_mut()
+        .expect("computer App resource list must be an array")
+        .push(json!({
+            "uri": MCP_RESULT_UI_RESOURCE_URI,
+            "name": "WebCodex Result",
+            "description": "Read-only WebCodex structured result presentation for supported Job tools. The App renders bounded presentation metadata and never performs tool calls or owns runtime state.",
+            "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
+            "_meta": mcp_result_app_resource_meta()
+        }));
+    result
+}
+
 pub(super) fn is_mcp_computer_app_resource_uri(uri: &str) -> bool {
     uri == MCP_COMPUTER_UI_RESOURCE_URI || MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS.contains(&uri)
 }
@@ -121,6 +154,23 @@ pub(super) fn mcp_computer_app_resource_read(uri: &str) -> Option<Value> {
             }]
         })
     })
+}
+
+pub(super) fn mcp_result_app_resource_read(uri: &str) -> Option<Value> {
+    (uri == MCP_RESULT_UI_RESOURCE_URI).then(|| {
+        json!({
+            "contents": [{
+                "uri": uri,
+                "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
+                "text": MCP_RESULT_APP_HTML,
+                "_meta": mcp_result_app_resource_meta()
+            }]
+        })
+    })
+}
+
+fn mcp_static_app_resource_read(uri: &str) -> Option<Value> {
+    mcp_computer_app_resource_read(uri).or_else(|| mcp_result_app_resource_read(uri))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1321,7 +1371,7 @@ pub(super) fn mcp_app_enabled(
     params: &Value,
 ) -> bool {
     stateless_2026
-        && model_surface_supports_computer_app(model_surface)
+        && model_surface_supports_mcp_apps(model_surface)
         && request_supports_mcp_apps(params)
 }
 
@@ -1342,7 +1392,7 @@ pub(super) fn resource_read_bypasses_runtime_read(params: &Value) -> bool {
 
 pub(super) fn handle_list(id: Option<Value>, app_enabled: bool) -> McpOutcome {
     let result = if app_enabled {
-        mcp_computer_app_resources_list()
+        mcp_app_resources_list()
     } else {
         json!({ "resources": [] })
     };
@@ -1421,14 +1471,14 @@ pub(super) async fn handle_read(
 
     // Tool descriptors advertise the App resource independently of whether a
     // later resource fetch repeats UI client-capability metadata.
-    if !model_surface_supports_computer_app(model_surface) {
+    if !model_surface_supports_mcp_apps(model_surface) {
         return McpOutcome::BadRequest(rpc_error(
             id,
             -32602,
             "MCP App resource is unavailable on this model surface",
         ));
     }
-    let Some(result) = mcp_computer_app_resource_read(uri) else {
+    let Some(result) = mcp_static_app_resource_read(uri) else {
         return McpOutcome::BadRequest(rpc_error(id, -32602, format!("Resource not found: {uri}")));
     };
     let mut result = mcp_stateless_result(result, true);

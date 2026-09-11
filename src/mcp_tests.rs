@@ -215,6 +215,8 @@ mod plugin_tools;
 mod project_connector;
 #[path = "mcp_tests/protocol.rs"]
 mod protocol;
+#[path = "mcp_tests/result_app.rs"]
+mod result_app;
 #[path = "mcp_tests/runtime_tools.rs"]
 mod runtime_tools;
 #[path = "mcp_tests/ssh_resource.rs"]

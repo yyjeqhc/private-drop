@@ -1,4 +1,5 @@
 mod http_metadata;
+mod presentation;
 mod protocol;
 mod resources;
 mod response;
@@ -1086,7 +1087,15 @@ async fn handle_mcp_request_with_lifecycle(
         ),
         "ping" if !stateless_2026 => rpc_result(id, json!({})),
         "tools/list" => {
-            return tools::handle_list(runtime, id, auth, stateless_2026, compact_schemas).await;
+            return tools::handle_list(
+                runtime,
+                id,
+                auth,
+                stateless_2026,
+                compact_schemas,
+                mcp_app_enabled,
+            )
+            .await;
         }
         "resources/list" if stateless_2026 && runtime_resource_method => {
             return resources::handle_list(id, mcp_app_enabled);
@@ -1117,6 +1126,7 @@ async fn handle_mcp_request_with_lifecycle(
                 id,
                 auth,
                 stateless_2026,
+                mcp_app_enabled,
                 host_file_import_trust,
                 window,
                 lifecycle.as_deref_mut(),

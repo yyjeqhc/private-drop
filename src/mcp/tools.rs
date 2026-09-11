@@ -1,3 +1,4 @@
+use super::presentation;
 use super::resources;
 use super::response::{
     connector_call_tool_result, mcp_runtime_tool_result_fallback, mcp_stateless_result, rpc_error,
@@ -514,7 +515,29 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
     }
 }
 
-fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, _app_enabled: bool) -> Value {
+fn tool_meta_object(value: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
+    let object = value.as_object_mut()?;
+    let meta = object
+        .entry("_meta".to_string())
+        .or_insert_with(|| json!({}));
+    meta.as_object_mut()
+}
+
+pub(super) fn attach_app_metadata(value: &mut Value, resource_uri: &str) {
+    let Some(meta) = tool_meta_object(value) else {
+        return;
+    };
+    let ui = meta.entry("ui".to_string()).or_insert_with(|| json!({}));
+    let Some(ui) = ui.as_object_mut() else {
+        return;
+    };
+    ui.insert(
+        "resourceUri".to_string(),
+        Value::String(resource_uri.to_string()),
+    );
+}
+
+fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
     if matches!(
         tool_name.as_str(),
@@ -556,12 +579,12 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, _app_enabled: bool) -> 
         }
     }
     if tool_name == "import_conversation_files_to_project" {
-        if let Some(object) = value.as_object_mut() {
-            object.insert(
-                "_meta".to_string(),
-                json!({"openai/fileParams": ["openaiFileIdRefs"]}),
-            );
+        if let Some(meta) = tool_meta_object(&mut value) {
+            meta.insert("openai/fileParams".to_string(), json!(["openaiFileIdRefs"]));
         }
+    }
+    if app_enabled && matches!(tool_name.as_str(), "list_jobs" | "observe_jobs") {
+        attach_app_metadata(&mut value, resources::MCP_RESULT_UI_RESOURCE_URI);
     }
     value
 }
@@ -594,6 +617,7 @@ pub(super) async fn handle_list(
     auth: Option<&AuthContext>,
     stateless_2026: bool,
     compact_schemas: bool,
+    app_enabled: bool,
 ) -> McpOutcome {
     let result = match runtime.runtime_exposure() {
         RuntimeExposure::ProjectConnector => {
@@ -603,7 +627,7 @@ pub(super) async fn handle_list(
             let mut result = mcp_tools_list_payload_with_features_for_auth(
                 model_surface,
                 compact_schemas,
-                stateless_2026 && resources::model_surface_supports_computer_app(model_surface),
+                app_enabled,
                 stateless_2026,
                 stateless_2026,
                 auth,
@@ -1118,6 +1142,7 @@ pub(super) async fn handle_call(
     id: Option<Value>,
     auth: Option<&AuthContext>,
     stateless_2026: bool,
+    app_enabled: bool,
     host_file_import_trust: HostFileImportTrust,
     window: Option<&crate::client_window::ClientWindow>,
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
@@ -1807,7 +1832,7 @@ pub(super) async fn handle_call(
             lc.dispatch_finished(true, Some(false), category);
         }
     }
-    let result = match resources::adapt_tool_result(
+    let mut result = match resources::adapt_tool_result(
         &params.name,
         as_image_requested,
         result,
@@ -1818,6 +1843,9 @@ pub(super) async fn handle_call(
             mcp_runtime_tool_result_fallback(result)
         }
     };
+    if app_enabled {
+        presentation::attach_result_app_presentation(&params.name, &mut result);
+    }
     let model_ergonomics = model_ergonomics_completion.as_ref().and_then(|completion| {
         result
             .get("structuredContent")

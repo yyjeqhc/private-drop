@@ -1,0 +1,172 @@
+<div id="app" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;border:1px solid var(--color-border-primary,rgba(127,127,127,.35));border-radius:12px;max-width:760px;color:var(--color-text-primary,inherit);background:var(--color-background-primary,transparent)">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <strong id="title" style="font-size:17px">WebCodex Job</strong>
+    <span id="state" style="font-size:12px">HTML loaded</span>
+  </div>
+  <div id="summary" style="margin-top:8px;font-size:13px">Minimal MCP Apps handshake · waiting for a supported Job result</div>
+  <div id="cards" style="display:grid;gap:10px;margin-top:12px"></div>
+</div>
+<script>
+(() => {
+  const APP_PROTOCOL = "2026-01-26";
+  const PRESENTATION_KEY = "webcodex/presentation";
+  const MAX_ITEMS = 8;
+  const MAX_TEXT = 256;
+  const stateEl = document.getElementById("state");
+  const titleEl = document.getElementById("title");
+  const summaryEl = document.getElementById("summary");
+  const cardsEl = document.getElementById("cards");
+  const pending = new Map();
+  let nextId = 1;
+
+  function boundedString(value) {
+    if (typeof value !== "string") return null;
+    return value.length <= MAX_TEXT ? value : value.slice(0, MAX_TEXT - 1) + "…";
+  }
+
+  function request(method, params, timeoutMs = 10000) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(method + " timed out"));
+      }, timeoutMs);
+      pending.set(id, { resolve, reject, timeout });
+      try {
+        window.parent.postMessage({ jsonrpc: "2.0", id, method, params: params || {} }, "*");
+      } catch (error) {
+        pending.delete(id);
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
+  }
+
+  function notify(method, params) {
+    window.parent.postMessage({ jsonrpc: "2.0", method, ...(params === undefined ? {} : { params }) }, "*");
+  }
+
+  function clearCards() {
+    while (cardsEl.firstChild) cardsEl.removeChild(cardsEl.firstChild);
+  }
+
+  function addRow(card, label, value) {
+    if (value === undefined || value === null || value === "") return;
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "minmax(100px, 140px) 1fr";
+    row.style.gap = "10px";
+    row.style.fontSize = "13px";
+    const key = document.createElement("span");
+    key.style.opacity = ".68";
+    key.textContent = label;
+    const text = document.createElement("span");
+    text.style.overflowWrap = "anywhere";
+    text.textContent = typeof value === "string" ? (boundedString(value) || "") : String(value);
+    row.appendChild(key);
+    row.appendChild(text);
+    card.appendChild(row);
+  }
+
+  function renderItem(item) {
+    if (!item || typeof item !== "object") return;
+    const card = document.createElement("div");
+    card.style.border = "1px solid var(--color-border-secondary,rgba(127,127,127,.25))";
+    card.style.borderRadius = "10px";
+    card.style.padding = "12px";
+    addRow(card, "Job", boundedString(item.job_id));
+    addRow(card, "Status", boundedString(item.status));
+    addRow(card, "Project", boundedString(item.project));
+    addRow(card, "Terminal", typeof item.terminal === "boolean" ? (item.terminal ? "yes" : "no") : null);
+    addRow(card, "Execution", boundedString(item.command_execution_state));
+    addRow(card, "Duration", Number.isFinite(item.duration_ms) ? String(item.duration_ms) + " ms" : null);
+    addRow(card, "Elapsed", Number.isFinite(item.elapsed_secs) ? String(item.elapsed_secs) + " s" : null);
+    addRow(card, "Recovery", boundedString(item.recovery_state));
+    addRow(card, "Recovery reason", boundedString(item.recovery_reason));
+    addRow(card, "Wait/log update", boundedString(item.log_delta_status));
+    addRow(card, "stdout lines", Number.isInteger(item.stdout_lines) ? item.stdout_lines : null);
+    addRow(card, "stderr lines", Number.isInteger(item.stderr_lines) ? item.stderr_lines : null);
+    addRow(card, "Error", boundedString(item.error_kind));
+    addRow(card, "Recovery action", boundedString(item.recovery_kind));
+    addRow(card, "Re-observe with", boundedString(item.recovery_tool));
+    addRow(card, "Guidance", boundedString(item.guidance));
+    cardsEl.appendChild(card);
+  }
+
+  function renderPresentation(presentation) {
+    if (!presentation || typeof presentation !== "object" || presentation.version !== 1) {
+      stateEl.textContent = "result unavailable";
+      summaryEl.textContent = "No bounded WebCodex Job presentation metadata was attached.";
+      clearCards();
+      return;
+    }
+    const items = Array.isArray(presentation.items) ? presentation.items.slice(0, MAX_ITEMS) : [];
+    clearCards();
+    if (presentation.kind === "job_list") {
+      titleEl.textContent = "WebCodex Jobs";
+      const count = Number.isInteger(presentation.count) ? presentation.count : items.length;
+      const matched = Number.isInteger(presentation.matched_count) ? presentation.matched_count : count;
+      summaryEl.textContent = String(count) + " shown · " + String(matched) + " matched"
+        + (presentation.truncated === true ? " · canonical result truncated" : "")
+        + (presentation.items_truncated === true ? " · card subset bounded" : "");
+    } else if (presentation.kind === "job_observation") {
+      titleEl.textContent = items.length === 1 ? "WebCodex Job" : "WebCodex Jobs";
+      const wait = presentation.wait && typeof presentation.wait === "object" ? boundedString(presentation.wait.outcome) : null;
+      const terminal = Number.isInteger(presentation.terminal_count) ? presentation.terminal_count : null;
+      summaryEl.textContent = (wait ? "Observation: " + wait : "Job observation")
+        + (terminal === null ? "" : " · " + String(terminal) + " terminal")
+        + (presentation.output_truncated === true ? " · canonical result truncated" : "")
+        + (presentation.items_truncated === true ? " · card subset bounded" : "");
+    } else {
+      stateEl.textContent = "result rejected";
+      summaryEl.textContent = "Unsupported WebCodex presentation kind.";
+      return;
+    }
+    items.forEach(renderItem);
+    stateEl.textContent = "result received";
+  }
+
+  function renderToolResult(result) {
+    const meta = result && typeof result === "object" && result._meta && typeof result._meta === "object"
+      ? result._meta
+      : null;
+    renderPresentation(meta ? meta[PRESENTATION_KEY] : null);
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || typeof message !== "object" || message.jsonrpc !== "2.0") return;
+    if (message.id !== undefined && pending.has(message.id)) {
+      const item = pending.get(message.id);
+      pending.delete(message.id);
+      clearTimeout(item.timeout);
+      if (message.error !== undefined) item.reject(message.error);
+      else item.resolve(message.result);
+      return;
+    }
+    if (message.method === "ui/notifications/tool-result") renderToolResult(message.params);
+  }, { passive: true });
+
+  async function initialize() {
+    try {
+      const result = await request("ui/initialize", {
+        protocolVersion: APP_PROTOCOL,
+        appInfo: { name: "webcodex-result-app", title: "WebCodex Result", version: "1.0.0" },
+        appCapabilities: {}
+      });
+      const protocol = result && typeof result === "object" ? boundedString(result.protocolVersion) : null;
+      notify("ui/notifications/initialized", {});
+      if (stateEl.textContent !== "result received") {
+        stateEl.textContent = "initialized";
+        summaryEl.textContent = "MCP Apps initialized" + (protocol ? " · " + protocol : "") + " · waiting for a supported Job result";
+      }
+    } catch (error) {
+      stateEl.textContent = "init failed";
+      summaryEl.textContent = "ui/initialize failed: " + boundedString(String(error && error.message ? error.message : error));
+    }
+  }
+
+  void initialize();
+})();
+</script>
