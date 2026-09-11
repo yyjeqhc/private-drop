@@ -258,10 +258,8 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         | "read_project_artifact"
         | "read_project_artifact_metadata"
         | "save_project_artifact" => Some(&["edit", "file_transfer"]),
-        "git_diff" => Some(&["git", "inspect", "review"]),
         "git_diff_hunks" => Some(&["git", "inspect", "review"]),
         "git_review_summary" => Some(&["git", "inspect", "review"]),
-        "git_diff_summary" => Some(&["git", "inspect", "review"]),
         "git_log" => Some(&["git", "inspect", "review"]),
         "git_restore_paths" => Some(&["cleanup", "git"]),
         "git_status" => Some(&["git", "inspect", "review"]),
@@ -364,10 +362,20 @@ fn tool_discovery_groups_drive_tool_categories() {
         );
     }
 
+    let exact_discovery_only = [
+        "read_file",
+        "search_project_text",
+        "git_diff",
+        "git_diff_summary",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    let mut omitted_from_groups = BTreeSet::new();
     for definition in model_visible_tool_definitions() {
-        let groups = memberships
-            .get(definition.name)
-            .unwrap_or_else(|| panic!("{} missing from discovery groups", definition.name));
+        let Some(groups) = memberships.get(definition.name) else {
+            omitted_from_groups.insert(definition.name);
+            continue;
+        };
         if groups.len() == 1 {
             continue;
         }
@@ -386,6 +394,10 @@ fn tool_discovery_groups_drive_tool_categories() {
             definition.name
         );
     }
+    assert_eq!(
+        omitted_from_groups, exact_discovery_only,
+        "only exact-discovery compatibility primitives may stay out of ordinary discovery groups"
+    );
 
     for allowed in [
         "apply_unified_diff",
@@ -394,9 +406,7 @@ fn tool_discovery_groups_drive_tool_categories() {
         "cargo_test",
         "discard_untracked",
         "finish_coding_task",
-        "git_diff",
         "git_diff_hunks",
-        "git_diff_summary",
         "git_log",
         "git_restore_paths",
         "git_status",
@@ -1046,10 +1056,10 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
             for required in [
                 "work_on_project",
                 "project_overview",
-                "read_file",
-                "search_project_text",
+                "read_files",
+                "search_project_texts",
                 "git_status",
-                "git_diff_summary",
+                "git_review_summary",
                 "git_diff_hunks",
                 "git_log",
                 "show_changes",
@@ -1061,6 +1071,17 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
                 assert!(
                     names.contains(&required),
                     "audit intent must include {required}: {names:?}"
+                );
+            }
+            for compatibility_primitive in [
+                "read_file",
+                "search_project_text",
+                "git_diff",
+                "git_diff_summary",
+            ] {
+                assert!(
+                    !names.contains(&compatibility_primitive),
+                    "audit intent should keep {compatibility_primitive} exact-discovery-only: {names:?}"
                 );
             }
             for tool in result.output["tools"].as_array().unwrap() {
