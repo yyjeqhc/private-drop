@@ -89,11 +89,14 @@ class PathRiskFixtureTests(unittest.TestCase):
                 self.assertEqual(result["needs_desktop_frontend"], "false")
                 self.assertIn("plugin-sdk", result["categories"])
 
-    def test_safe_delete_dogfood_uses_plugin_sdk_contract_lane(self) -> None:
+    def test_first_party_plugin_dogfood_uses_plugin_sdk_contract_lane(self) -> None:
         for path in (
             "plugins/safe-delete/plugin.ts",
             "plugins/safe-delete/domain.ts",
             "plugins/safe-delete/package-lock.json",
+            "plugins/repo-info/src/plugin.ts",
+            "plugins/repo-info/plugin.test.mjs",
+            "plugins/repo-info/package-lock.json",
         ):
             with self.subTest(path=path):
                 result = classify(path)

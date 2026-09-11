@@ -282,8 +282,9 @@ invocation path，并继续拥有原有 binding、effect、retry 和 `OutcomeUnk
 Phase 1 曾有意暂缓 `webcodex plugin init`，直到 SDK 建立真实 external dependency contract。
 这个前置条件现在已经满足：`@yyjeqhc/webcodex-plugin-sdk@0.1.0` 已通过 npm 公开分发，Phase 3
 因此加入使用该**精确兼容版本**的本地 scaffold。生成项目不依赖 WebCodex 源码 checkout。
-仓库内 first-party dogfood（例如 `plugins/safe-delete`）仍有意使用同 checkout 的 local SDK
-source，以持续测试正在开发的 SDK；外部 `plugin init` 项目则使用 published package。
+仓库内 first-party dogfood（例如 `plugins/safe-delete` 和
+[`plugins/repo-info`](../plugins/repo-info/README.zh-CN.md)）仍有意使用同 checkout 的 local
+SDK source，以持续测试正在开发的 SDK；外部 `plugin init` 项目则使用 published package。
 
 ## TypeScript Plugin SDK
 
@@ -379,10 +380,12 @@ keyword 会在 provider admission 时明确拒绝，不会 silently ignore。v1 
 `oneOf`、`allOf`、`not` 或任意 draft-specific keyword。
 
 最小无依赖 Node 示例见
-[`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs)。仓库还提供可选的
-[`plugins/safe-delete`](../plugins/safe-delete/README.zh-CN.md)：它把删除权限限制在配置的
-项目根内，只把单个文件或目录移入系统 Trash / Recycle Bin，不会把永久删除能力加入
-WebCodex 内建工具面。
+[`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs)。仓库还提供两个
+first-party SDK dogfood Plugin：[`plugins/safe-delete`](../plugins/safe-delete/README.zh-CN.md)
+把删除权限限制在配置的项目根内，只把单个文件或目录移入系统 Trash / Recycle Bin，
+不会把永久删除能力加入 WebCodex 内建工具面；
+[`plugins/repo-info`](../plugins/repo-info/README.zh-CN.md) 是只读 authoring 示例，它唯一的
+`git_summary` 只观察 provider 配置的 repository `cwd`。
 
 ## 调用与失败语义
 

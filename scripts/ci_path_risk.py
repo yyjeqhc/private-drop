@@ -205,7 +205,11 @@ def _classify_path(risk: Risk, path: str) -> None:
     name = PurePosixPath(lower).name
     tokens = {token for token in re.split(r"[/_.-]+", lower) if token}
 
-    if path.startswith("npm/plugin-sdk/") or path.startswith("plugins/safe-delete/"):
+    if (
+        path.startswith("npm/plugin-sdk/")
+        or path.startswith("plugins/safe-delete/")
+        or path.startswith("plugins/repo-info/")
+    ):
         risk.needs_plugin_sdk = True
         risk.categories.add(
             "plugin-sdk" if path.startswith("npm/plugin-sdk/") else "plugin-sdk-dogfood"
