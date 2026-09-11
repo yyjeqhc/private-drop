@@ -182,6 +182,7 @@ fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
         flow.tools,
         &[
             "run_process",
+            "run_shell",
             "run_job",
             "run_detached_process",
             "observe_jobs",
@@ -190,11 +191,12 @@ fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
     );
     let text = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_ascii_lowercase();
     for phrase in [
-        "runner-owned",
-        "outlive the current runner process",
+        "run_process/run_shell",
+        "same runner-owned job",
+        "immediate asynchronous shell start",
         "run_detached_process",
-        "supervisor-owned",
-        "replacement runner",
+        "outlive the runner",
+        "supervisor",
     ] {
         assert!(
             text.contains(phrase),
@@ -250,10 +252,8 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     assert!(review.iter().any(|value| value == "git_log"));
     let inspect = categories[TOOL_DISCOVERY_GROUP_INSPECT].as_array().unwrap();
     for name in [
-        "read_file",
         "read_files",
         "run_shell",
-        "search_project_text",
         "search_project_texts",
         "show_changes",
     ] {
@@ -262,6 +262,26 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             "inspect category: {name}"
         );
     }
+    for compatibility_primitive in [
+        "read_file",
+        "search_project_text",
+        "git_diff",
+        "git_diff_summary",
+    ] {
+        assert!(
+            !inspect.iter().any(|value| value == compatibility_primitive),
+            "inspect category should prefer canonical tools over {compatibility_primitive}"
+        );
+    }
+    let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
+    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
+        assert!(
+            !git.iter().any(|value| value == compatibility_primitive),
+            "git category should not recommend {compatibility_primitive}"
+        );
+    }
+    assert!(!review.iter().any(|value| value == "git_diff"));
+    assert!(!review.iter().any(|value| value == "git_diff_summary"));
     let edit = categories[TOOL_DISCOVERY_GROUP_EDIT].as_array().unwrap();
     let edit_prefix = edit
         .iter()
@@ -314,10 +334,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "ssh_resource list/register -> restart -> list -> bind -> open/reuse",
         "local persistent shell is only for true same-process state",
         "one-shot ssh uses run_process",
-        "execution lifetime: run_process/run_job stay runner-owned",
-        "outlive the current runner process",
-        "discover run_detached_process",
-        "supervisor-owned job",
+        "execution lifetime: start ordinary work with run_process/run_shell or structured validation",
+        "same runner-owned job",
+        "run_job only for intentional immediate asynchronous shell start",
+        "run_detached_process only when work must outlive the runner",
         "inspect: on adaptive runtime prefer search_project_texts/read_files even for one query/range",
         "run_shell for a short tightly related shell chain",
         "run_script for program-like shell content",
@@ -463,6 +483,9 @@ fn tool_categories_include_projects_with_management_tools() {
 
 #[test]
 fn tool_manifest_intents_reference_only_known_model_visible_tools() {
+    // High-level intent views rank canonical choices; exact compatibility
+    // primitives remain discoverable by tool_name without becoming peer choices.
+
     let expected = [
         "coding",
         "audit",
@@ -497,6 +520,50 @@ fn tool_manifest_intents_reference_only_known_model_visible_tools() {
             }
         }
     }
+}
+
+#[test]
+fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
+    for intent_name in ["audit", "exploration"] {
+        let intent = TOOL_MANIFEST_INTENTS
+            .iter()
+            .find(|intent| intent.name == intent_name)
+            .unwrap();
+        assert!(intent.tools.contains(&"read_files"), "{intent_name}");
+        assert!(
+            intent.tools.contains(&"search_project_texts"),
+            "{intent_name}"
+        );
+        assert!(!intent.tools.contains(&"read_file"), "{intent_name}");
+        assert!(
+            !intent.tools.contains(&"search_project_text"),
+            "{intent_name}"
+        );
+    }
+    let audit = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "audit")
+        .unwrap();
+    assert!(audit.tools.contains(&"show_changes"));
+    assert!(audit.tools.contains(&"git_diff_hunks"));
+    assert!(!audit.tools.contains(&"git_diff_summary"));
+
+    let release = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "release")
+        .unwrap();
+    assert!(release.tools.contains(&"show_changes"));
+    assert!(!release.tools.contains(&"git_diff_summary"));
+}
+
+#[test]
+fn validate_flow_uses_observe_jobs_without_recommending_job_status() {
+    let validate = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "validate")
+        .unwrap();
+    assert!(validate.tools.contains(&"observe_jobs"));
+    assert!(!validate.tools.contains(&"job_status"));
 }
 
 #[test]

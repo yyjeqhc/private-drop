@@ -48,7 +48,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::DiffReview).diff_review(super::ToolDiffReviewEvidence::Always),
         ),
-        "Read-only git diff summary for a project: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Does not modify the worktree.",
+        "Read-only compatibility summary primitive: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Ordinary agent-facing worktree review should prefer show_changes, then git_diff_hunks when focused or paged diff inspection is needed. Does not modify the worktree.",
         git_diff_summary_input_schema,
     )))),
     adaptive_runtime_direct(
@@ -202,7 +202,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::DiffReview).diff_review(super::ToolDiffReviewEvidence::Always),
         ),
-        "Run git diff for a project, optionally scoped to paths.",
+        "Raw git diff compatibility primitive, optionally scoped to paths. Ordinary agent-facing review should prefer show_changes for worktree overview and git_diff_hunks for focused or paged diff inspection.",
         git_diff_input_schema,
     ))),
     adaptive_runtime_direct(
