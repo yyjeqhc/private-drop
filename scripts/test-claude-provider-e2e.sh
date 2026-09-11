@@ -286,7 +286,7 @@ python3 - "$TOOLS_BEFORE" <<'PY' || fail "public MCP tools exposed Claude intern
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     names = {t["name"] for t in json.load(stream)["result"]["tools"]}
-assert {"read_file", "search_project_text"} <= names
+assert {"read_files", "search_project_texts"} <= names
 # replace_in_file was removed entirely and must never re-enter the surface.
 assert "replace_in_file" not in names
 assert not ({"Edit", "Read", "Bash", "Write", "NotebookEdit", "Agent"} & names)
@@ -357,14 +357,20 @@ write_runner_config claude_code
 start_runner
 ok "strict Claude agent registered"
 
-# Strict `claude_code` cannot map a compatible search tool (Claude Code builds
-# do not necessarily expose a Grep), so search must surface a deterministic
-# provider capability error instead of routing through Claude Edit or Bash.
-# No file writes are ever routed to the provider. A failed tool result renders
-# as HTTP 400 with a ToolResult body, so curl must not `-f` fail on that status.
+# Strict `claude_code` cannot map a compatible search capability (Claude Code
+# builds do not necessarily expose a Grep), so a one-query search_project_texts
+# batch must preserve the deterministic provider capability error on that item
+# instead of routing through Claude Edit or Bash. No file writes are routed to
+# the provider; batch item failures remain isolated inside a successful batch.
 SEARCH_STRICT_BODY="$(python3 - "$RUNTIME_PROJECT" <<'PY'
 import json, sys
-print(json.dumps({"tool": "search_project_text", "project": sys.argv[1], "pattern": "needle", "path": "."}))
+print(json.dumps({
+    "tool": "search_project_texts",
+    "params": {
+        "project": sys.argv[1],
+        "queries": [{"pattern": "needle", "path": "."}],
+    },
+}))
 PY
 )"
 STRICT_RESPONSE="$(curl -sS --max-time 15 \
@@ -375,8 +381,10 @@ STRICT_RESPONSE="$(curl -sS --max-time 15 \
 printf '%s' "$STRICT_RESPONSE" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-assert not d["success"]
-out = d.get("output") or {}
+assert d["success"]
+items = (d.get("output") or {}).get("items") or []
+assert len(items) == 1 and not items[0]["success"]
+out = items[0].get("output") or {}
 assert out.get("format") == "webcodex.external_provider_error.v1"
 assert out.get("code") == "provider_capability_unavailable"
 ' || fail "strict Claude search did not surface a deterministic capability error"

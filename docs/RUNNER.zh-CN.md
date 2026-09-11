@@ -206,7 +206,7 @@ Windows structured process 支持 `.cmd`/`.bat`，由 Runner 内部转换 argv�
 空格、`&`、`|`、括号；双引号、`%`、`!`、`^`、控制字符和尾部反斜杠在启动前拒绝，
 命令上限为 8000 UTF-16 units；UNC cwd 会在启动前拒绝，避免 cmd.exe 静默切换工作目录。这些参数应改用 native runtime。进程树和 Job 契约不变。
 
-精确 read_file 可读取 node_modules/target，普通搜索仍跳过它们，structured edit 仍拒绝。
+`read_files` 的精确单条目读取可读取 node_modules/target，普通搜索仍跳过它们，structured edit 仍拒绝。
 `.env*`、凭据、Runner 配置及 `.git` 控制数据继续保护。
 
 `runner.toml` 中的 Rust/Cargo 示例：

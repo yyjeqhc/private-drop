@@ -228,7 +228,6 @@ fn build_projects_router(
                 .push(Router::with_path("projects/list").post(projects_list))
                 .push(Router::with_path("projects/register").post(projects_register))
                 .push(Router::with_path("projects/create").post(projects_create))
-                .push(Router::with_path("projects/read_file").post(projects_read_file))
                 .push(Router::with_path("projects/git_status").post(projects_git_status))
                 .push(Router::with_path("projects/git_diff").post(projects_git_diff))
                 .push(
@@ -246,7 +245,6 @@ fn build_projects_router(
                 )
                 .push(Router::with_path("projects/run_job").post(projects_run_job))
                 .push(Router::with_path("projects/list_files").post(projects_list_files))
-                .push(Router::with_path("projects/search_text").post(projects_search_text))
                 .push(
                     Router::with_path("projects/git_diff_summary").post(projects_git_diff_summary),
                 )
@@ -445,10 +443,6 @@ async fn all_project_endpoints_require_bearer_auth() {
 
     let endpoints: Vec<(&str, Value)> = vec![
         ("/api/projects/list", json!({})),
-        (
-            "/api/projects/read_file",
-            json!({"project": "demo", "path": "README.md"}),
-        ),
         ("/api/projects/git_status", json!({"project": "demo"})),
         ("/api/projects/git_diff", json!({"project": "demo"})),
         (
@@ -1877,8 +1871,8 @@ async fn oauth2_tools_call_scope_matrix() {
             crate::auth::SCOPE_RUNTIME_READ,
         ),
         (
-            "read_file",
-            json!({"project": "demo", "path": "README.md"}),
+            "read_files",
+            json!({"project": "demo", "items": [{"path": "README.md"}]}),
             project_read,
             runtime_read,
             crate::auth::SCOPE_PROJECT_READ,
@@ -2039,8 +2033,8 @@ async fn bridge_oauth2_tools_call_still_requires_project_read_and_job_run_scopes
     let (status, body, challenge) = oauth_tools_call(
         &service,
         &token,
-        "read_file",
-        json!({"project": "demo", "path": "README.md"}),
+        "read_files",
+        json!({"project": "demo", "items": [{"path": "README.md"}]}),
     )
     .await;
     assert_oauth_scope_rejected(
@@ -2101,7 +2095,7 @@ async fn http_tools_list_includes_phase4_edit_tools() {
     assert!(names.iter().any(|n| n == "write_project_file"));
     assert_eq!(body["count"], names.len());
     let tools = body["tools"].as_array().unwrap();
-    for name in ["read_file", "run_shell", "write_project_file"] {
+    for name in ["read_files", "run_shell", "write_project_file"] {
         let tool = tools
             .iter()
             .find(|tool| tool["name"] == name)

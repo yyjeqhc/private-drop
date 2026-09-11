@@ -147,9 +147,7 @@ fn openapi_consequential_flags_match_operation_risk() {
         "listRuntimeTools",
         "listProjects",
         "getRuntimeStatus",
-        "readProjectFile",
         "listProjectFiles",
-        "searchProjectText",
         "getProjectGitStatus",
         "getProjectGitDiff",
         "getProjectGitDiffSummary",
@@ -180,7 +178,7 @@ fn openapi_consequential_flags_match_operation_risk() {
     for id in consequential {
         assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
     }
-    assert_eq!(flags.len(), 22);
+    assert_eq!(flags.len(), 20);
 }
 
 #[test]
@@ -521,7 +519,7 @@ fn openapi_call_runtime_tool_lists_accepted_tool_names() {
         .collect::<Vec<_>>();
     assert!(!operation_ids.contains(&"hover"));
     assert!(!operation_ids.contains(&"workspaceSymbols"));
-    assert_eq!(operation_ids.len(), 22);
+    assert_eq!(operation_ids.len(), 20);
 }
 
 #[test]
@@ -531,7 +529,6 @@ fn openapi_read_files_is_available_through_strict_flattened_runtime_fields() {
     let description = tool_call["properties"][TOOL_CALL_TOOL_FIELD]["description"]
         .as_str()
         .unwrap();
-    assert!(description.contains("read_file"));
     assert!(description.contains("read_files"));
     assert!(description.contains("observe_jobs"));
 
@@ -594,7 +591,6 @@ fn openapi_search_project_texts_is_available_through_strict_flattened_runtime_fi
     let description = tool_call["properties"][TOOL_CALL_TOOL_FIELD]["description"]
         .as_str()
         .unwrap();
-    assert!(description.contains("search_project_text"));
     assert!(description.contains("search_project_texts"));
 
     let queries = &tool_call["properties"]["queries"];
@@ -630,12 +626,10 @@ fn openapi_key_actions_have_examples() {
     for (path, label) in [
         ("/api/jobs/status", "getRuntimeJobStatus"),
         ("/api/jobs/log", "getRuntimeJobLog"),
-        ("/api/projects/read_file", "readProjectFile"),
         ("/api/projects/git_status", "getProjectGitStatus"),
         ("/api/projects/git_diff", "getProjectGitDiff"),
         ("/api/projects/git_diff_summary", "getProjectGitDiffSummary"),
         ("/api/projects/list_files", "listProjectFiles"),
-        ("/api/projects/search_text", "searchProjectText"),
         ("/api/projects/apply_unified_diff", "applyUnifiedDiff"),
         ("/api/projects/run_shell", "runProjectShellCommand"),
         ("/api/projects/git_restore_paths", "gitRestorePaths"),
@@ -741,14 +735,6 @@ fn openapi_external_action_contract_matches_compatibility_golden() {
             "ToolResult",
         ),
         (
-            "/api/projects/read_file",
-            "post",
-            "readProjectFile",
-            false,
-            "ReadProjectFileRequest",
-            "ToolResult",
-        ),
-        (
             "/api/projects/git_status",
             "post",
             "getProjectGitStatus",
@@ -778,14 +764,6 @@ fn openapi_external_action_contract_matches_compatibility_golden() {
             "listProjectFiles",
             false,
             "ListProjectFilesRequest",
-            "ToolResult",
-        ),
-        (
-            "/api/projects/search_text",
-            "post",
-            "searchProjectText",
-            false,
-            "SearchProjectTextRequest",
             "ToolResult",
         ),
         (
@@ -977,12 +955,10 @@ fn openapi_readonly_actions_describe_readonly() {
         "/api/jobs/log",
         "/api/jobs/list",
         "/api/jobs/tail",
-        "/api/projects/read_file",
         "/api/projects/git_status",
         "/api/projects/git_diff",
         "/api/projects/git_diff_summary",
         "/api/projects/list_files",
-        "/api/projects/search_text",
     ] {
         let desc = spec["paths"][path]["post"]["description"]
             .as_str()
@@ -1035,14 +1011,9 @@ fn openapi_request_body_schemas_have_additional_properties_false() {
 }
 
 #[test]
-fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
+fn openapi_file_list_and_shell_schemas_include_ergonomics_fields() {
     let spec = build_openapi_spec();
     let schemas = &spec["components"]["schemas"];
-    let read_props = schemas["ReadProjectFileRequest"]["properties"]
-        .as_object()
-        .unwrap();
-    assert!(read_props.contains_key("with_line_numbers"));
-
     let list_props = &schemas["ListProjectFilesRequest"]["properties"];
     assert_eq!(list_props["offset"]["type"], "integer");
     assert_eq!(list_props["offset"]["minimum"], 0);
@@ -1052,59 +1023,6 @@ fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
         .as_str()
         .unwrap()
         .contains("next_offset"));
-
-    let search_props = schemas["SearchProjectTextRequest"]["properties"]
-        .as_object()
-        .unwrap();
-    assert!(search_props.contains_key("context_before"));
-    assert!(search_props.contains_key("context_after"));
-    assert!(search_props.contains_key("include_globs"));
-    assert!(search_props.contains_key("exclude_globs"));
-    assert!(search_props.contains_key("result_mode"));
-    assert!(search_props.contains_key("pattern_mode"));
-    assert!(search_props.contains_key("timeout_secs"));
-    assert_eq!(search_props["include_globs"]["maxItems"], 32);
-    assert_eq!(search_props["include_globs"]["items"]["maxLength"], 256);
-    assert_eq!(
-        search_props["result_mode"]["enum"],
-        json!(["matches", "files_with_matches", "count"])
-    );
-    assert_eq!(
-        search_props["pattern_mode"]["enum"],
-        json!(["regex", "literal"])
-    );
-    assert_eq!(search_props["pattern_mode"]["default"], "regex");
-    let flattened_props = schemas["ToolCallRequest"]["properties"]
-        .as_object()
-        .unwrap();
-    assert_eq!(flattened_props["include_globs"]["maxItems"], 32);
-    assert_eq!(flattened_props["include_globs"]["items"]["maxLength"], 256);
-    assert_eq!(
-        flattened_props["result_mode"]["enum"],
-        json!(["matches", "files_with_matches", "count"])
-    );
-    assert_eq!(
-        flattened_props["pattern_mode"]["enum"],
-        json!(["regex", "literal"])
-    );
-    assert!(
-        flattened_schema_alternatives(&flattened_props["timeout_secs"])
-            .iter()
-            .all(|schema| schema["type"] == "integer")
-    );
-    // Search timeout is server-clamped; the dedicated SearchProjectTextRequest
-    // schema must not reject out-of-range integers with minimum/maximum.
-    // ToolCallRequest.timeout_secs is a shared flattened field also used by
-    // cargo_*/run_shell (which declare 1..120); do not require it to omit bounds.
-    assert!(search_props["timeout_secs"].get("minimum").is_none());
-    assert!(search_props["timeout_secs"].get("maximum").is_none());
-    let search_timeout_desc = search_props["timeout_secs"]["description"]
-        .as_str()
-        .unwrap_or("");
-    assert!(
-        search_timeout_desc.to_ascii_lowercase().contains("clamp"),
-        "SearchProjectTextRequest.timeout_secs should document clamp: {search_timeout_desc}"
-    );
 
     let run_shell_description = schemas["RunShellRequest"]["description"]
         .as_str()
@@ -1133,11 +1051,9 @@ fn openapi_dedicated_project_action_schemas_include_optional_session_id() {
     let spec = build_openapi_spec();
     let schemas = &spec["components"]["schemas"];
     for name in [
-        "ReadProjectFileRequest",
         "RunShellRequest",
         "ProjectIdRequest",
         "ProjectGitDiffRequest",
-        "SearchProjectTextRequest",
         "ApplyUnifiedDiffRequest",
         "GitRestorePathsRequest",
         "DiscardUntrackedRequest",
@@ -1424,7 +1340,7 @@ fn openapi_tool_call_request_exposes_canonical_closeout_and_visible_runtime_fiel
     );
 
     let count = operation_ids(&spec).len();
-    assert_eq!(count, 22, "GPT Actions operation count must stay 22");
+    assert_eq!(count, 20, "GPT Actions operation count must stay 20");
 }
 
 #[test]
@@ -1483,7 +1399,7 @@ fn openapi_call_runtime_tool_declares_checkpoint_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 22, "operation count must stay 22");
+    assert_eq!(count, 20, "operation count must stay 20");
 }
 
 #[test]
@@ -1565,7 +1481,7 @@ fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 22, "operation count must stay 22");
+    assert_eq!(count, 20, "operation count must stay 20");
 }
 
 #[test]
@@ -1676,7 +1592,7 @@ fn openapi_artifact_upload_tools_remain_generic_and_under_action_limit() {
         );
     }
     let count = ids.len();
-    assert_eq!(count, 22, "GPT Actions operation count must stay 22");
+    assert_eq!(count, 20, "GPT Actions operation count must stay 20");
     assert!(count <= 30, "GPT Actions operation count must stay <= 30");
 
     let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];

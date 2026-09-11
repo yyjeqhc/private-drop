@@ -511,6 +511,7 @@ fi"#
 }
 
 impl ToolRuntime {
+    #[cfg(test)]
     pub(crate) async fn read_file(
         &self,
         project: String,
@@ -520,51 +521,15 @@ impl ToolRuntime {
         with_line_numbers: Option<bool>,
     ) -> ToolResult {
         let with_line_numbers = with_line_numbers.unwrap_or(false);
-        // Bound the request to the project before it can reach an executor.
-        // The Runner branch below forwards `path` to a remote host that scopes
-        // file ops to `allowed_roots` — which is broader than the project — so
-        // the project boundary has to be enforced here, as `list_project_files`
-        // and `project_overview` already do.
         if let Some(failure) = validate_read_file_path(&path) {
             return failure;
         }
-        // Every other surface already refuses credentials: search excludes
-        // them, artifacts and edits reject them. Reading was the one way left
-        // to get a `.env` or a private key back verbatim. Only the narrow
-        // secret policy applies here — reading `.git/HEAD` or a file under
-        // `target/` by explicit path stays allowed.
         let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
-            Err(e) => return ToolResult::err(e),
+            Ok(project) => project,
+            Err(error) => return ToolResult::err(error),
         };
         self.read_one_validated_project_file(
             &proj,
-            path,
-            start_line,
-            limit,
-            with_line_numbers,
-            None,
-        )
-        .await
-    }
-
-    pub(crate) async fn read_file_resolved(
-        &self,
-        resolved: &ResolvedProject,
-        path: String,
-        start_line: Option<usize>,
-        limit: Option<usize>,
-        with_line_numbers: Option<bool>,
-    ) -> ToolResult {
-        let with_line_numbers = with_line_numbers.unwrap_or(false);
-        // Reuse the same path/sensitive checks as the legacy direct helper,
-        // but consume the authoritative Project resolved by dispatch instead
-        // of performing another registry lookup.
-        if let Some(failure) = validate_read_file_path(&path) {
-            return failure;
-        }
-        self.read_one_validated_project_file(
-            &resolved.config,
             path,
             start_line,
             limit,

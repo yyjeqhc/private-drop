@@ -4869,13 +4869,16 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
             let bootstrap = auth_context(None, true);
             runtime
                 .dispatch_with_auth(
-                    ToolCall::ReadFile {
-                        project,
-                        path: "README.md".to_string(),
+                    ToolCall::ReadFiles {
+                        project: project,
+                        items: vec![crate::tool_runtime::ReadFilesItem {
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: Some(1),
+                        }],
                         session_id: Some(session_id),
-                        start_line: None,
-                        limit: Some(1),
                         with_line_numbers: None,
+                        max_result_bytes: None,
                     },
                     Some(&bootstrap),
                 )
@@ -4948,7 +4951,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|event| event["tool_name"] == "read_file"));
+        .any(|event| event["tool_name"] == "read_files"));
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))

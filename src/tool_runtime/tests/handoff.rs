@@ -200,42 +200,22 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
         .start_session(Some(project.clone()), Some("failed calls".to_string()));
     let sid = session.session_id.clone();
 
-    // Dispatch a read_file that will fail (agent file_read succeeds but path
-    // validation / response handling makes it a failed tool call).
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        let project = project.clone();
-        let sid = sid.clone();
-        async move {
-            let bootstrap = auth_context(None, true);
-            runtime
-                .dispatch_with_auth(
-                    ToolCall::ReadFile {
-                        project,
-                        path: "definitely_does_not_exist.md".to_string(),
-                        session_id: Some(sid),
-                        start_line: None,
-                        limit: None,
-                        with_line_numbers: None,
-                    },
-                    Some(&bootstrap),
-                )
-                .await
-        }
-    });
-    let req = wait_for_runner_request_for_instance(&runtime, "handoff-fail", "inst").await;
-    // Return an error to simulate a failed read.
-    complete_patch_agent_request(
-        &runtime,
-        "handoff-fail",
-        &req.request_id,
-        1,
-        "",
-        "file not found",
-    )
-    .await;
-    let read_result = task.await.unwrap();
-    assert!(!read_result.success, "read_file should have failed");
+    // Dispatch an invalid canonical read_files request so the public tool call
+    // itself fails. Per-item file-not-found is intentionally isolated inside a
+    // successful batch and therefore is not a failed ToolCall.
+    let read_result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFiles {
+                project: project.clone(),
+                items: Vec::new(),
+                session_id: Some(sid.clone()),
+                with_line_numbers: None,
+                max_result_bytes: None,
+            },
+            Some(&auth_context(None, true)),
+        )
+        .await;
+    assert!(!read_result.success, "read_files should have failed");
 
     // Now call handoff.
     let result = runtime
@@ -258,13 +238,7 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
         !failed.is_empty(),
         "should include at least one failed tool"
     );
-    assert_eq!(failed[0]["tool_name"], "read_file");
-    // Must not leak raw sensitive input.
-    let serialized = serde_json::to_string(&result.output).unwrap();
-    assert!(
-        !serialized.contains("definitely_does_not_exist.md"),
-        "raw input path must not leak: {serialized}"
-    );
+    assert_eq!(failed[0]["tool_name"], "read_files");
 }
 
 #[tokio::test]
@@ -1730,13 +1704,13 @@ async fn early_failure_paths_preserve_failure_expectation_metadata() {
 
     let invalid = call_kernel_tool(
         &runtime,
-        "read_file",
+        "read_files",
         json!({
             "project": "demo",
             "session_id": &invalid_sid,
             "expected_failure": true,
             "expected_failure_kind": "invalid_arguments",
-            "assertion_name": "missing read_file path"
+            "assertion_name": "missing read_files items"
         }),
         Some(&invalid_sid),
         None,
@@ -1750,7 +1724,7 @@ async fn early_failure_paths_preserve_failure_expectation_metadata() {
         .iter()
         .find(|event| {
             event.kind == "tool_call_finished"
-                && event.assertion_name.as_deref() == Some("missing read_file path")
+                && event.assertion_name.as_deref() == Some("missing read_files items")
         })
         .expect("invalid arguments finished event");
     assert_eq!(event.expected_failure, Some(true));
@@ -2241,8 +2215,8 @@ async fn session_handoff_summary_validation_unavailable_without_validation_event
     record_handoff_tool_event(
         &runtime,
         &sid,
-        "read_file",
-        json!({"project": "agent:eval:demo", "path": "src/lib.rs"}),
+        "read_files",
+        json!({"project": "agent:eval:demo", "items": [{"path": "src/lib.rs"}]}),
         true,
         json!({}),
     );
@@ -2284,7 +2258,7 @@ async fn session_handoff_summary_validation_unavailable_without_validation_event
     assert_eq!(review_evidence["workspace_review_count"], 0);
     assert_eq!(review_evidence["hygiene_review_count"], 0);
     assert_eq!(review_evidence["total"], 1);
-    assert_eq!(review_evidence["tools"][0], "read_file");
+    assert_eq!(review_evidence["tools"][0], "read_files");
 }
 
 #[tokio::test]
@@ -2299,16 +2273,16 @@ async fn session_handoff_summary_only_warns_with_review_evidence_when_validation
     record_handoff_tool_event(
         &runtime,
         &sid,
-        "read_file",
-        json!({"project": "agent:eval:demo", "path": "docs/OPERATIONS.md"}),
+        "read_files",
+        json!({"project": "agent:eval:demo", "items": [{"path": "docs/OPERATIONS.md"}]}),
         true,
         json!({}),
     );
     record_handoff_tool_event(
         &runtime,
         &sid,
-        "search_project_text",
-        json!({"project": "agent:eval:demo", "query": "validation"}),
+        "search_project_texts",
+        json!({"project": "agent:eval:demo", "queries": [{"pattern": "validation"}]}),
         true,
         json!({}),
     );
@@ -2339,7 +2313,7 @@ async fn session_handoff_summary_only_warns_with_review_evidence_when_validation
     assert_eq!(result.output["review_evidence"]["hygiene_review_count"], 0);
     assert_eq!(
         result.output["review_evidence"]["tools"],
-        json!(["read_file", "search_project_text", "show_changes"])
+        json!(["read_files", "search_project_texts", "show_changes"])
     );
     assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     let verdict = &result.output["verdict"];
@@ -3093,8 +3067,8 @@ async fn session_handoff_summary_only_verdict_fails_for_failed_validation() {
     record_handoff_tool_event(
         &runtime,
         &sid,
-        "search_project_text",
-        json!({"project": "agent:eval:demo", "query": "cargo"}),
+        "search_project_texts",
+        json!({"project": "agent:eval:demo", "queries": [{"pattern": "cargo"}]}),
         true,
         json!({}),
     );
@@ -3568,7 +3542,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 22, "OpenAPI operation count must remain 22");
+    assert_eq!(count, 20, "OpenAPI operation count must remain 20");
 }
 
 // =========================================================================
@@ -4027,9 +4001,8 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
         assert!(
             matches!(
                 tool,
-                "read_file"
+                "read_files"
                     | "list_project_files"
-                    | "search_project_text"
                     | "search_project_texts"
                     | "git_diff"
                     | "git_diff_summary"

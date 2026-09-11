@@ -323,13 +323,13 @@ No project discovery or runtime identifier belongs in this prompt.
 
 ## Read and search bounds
 
-- `read_file` is a bounded streaming range reader: `start_line` (default 1),
-  `limit` (default 2000, max 2000), returns the range plus the complete-file
-  SHA-256 and line metadata, and a `next_start_line` to continue.
-- `read_files` batches up to 8 single-file reads with independent item
-  results.
-- `search_project_text` is the default search tool (ripgrep first, bounded in
-  work and bytes); `search_project_texts` batches up to 8 queries.
+- `read_files` is the canonical bounded range reader for one to eight files. A
+  one-item batch is the single-range path. Each successful item returns the
+  complete-file SHA-256 and bounded line metadata; partial items carry a
+  positional one-item `read_files` continuation and are not snapshot-stable.
+- `search_project_texts` is the canonical bounded search surface for one to
+  eight independent queries (ripgrep first with the existing bounded fallback).
+  A one-query batch is the single-query path.
 
 An empty search result is affirmative no-match evidence only after a recognized
 backend reports a successful completed/no-match status. Missing or malformed

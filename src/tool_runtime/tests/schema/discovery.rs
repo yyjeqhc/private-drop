@@ -362,14 +362,9 @@ fn tool_discovery_groups_drive_tool_categories() {
         );
     }
 
-    let exact_discovery_only = [
-        "read_file",
-        "search_project_text",
-        "git_diff",
-        "git_diff_summary",
-    ]
-    .into_iter()
-    .collect::<BTreeSet<_>>();
+    let exact_discovery_only = ["git_diff", "git_diff_summary"]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let mut omitted_from_groups = BTreeSet::new();
     for definition in model_visible_tool_definitions() {
         let Some(groups) = memberships.get(definition.name) else {
@@ -1516,7 +1511,7 @@ async fn tool_manifest_projects_canonical_semantic_contracts() {
     let runtime = test_runtime();
     for (tool_name, effect, risk, approval, idempotency, read_only) in [
         (
-            "read_file",
+            "read_files",
             "observe",
             "read_only",
             "none",

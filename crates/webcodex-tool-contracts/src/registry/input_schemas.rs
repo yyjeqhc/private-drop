@@ -84,8 +84,7 @@ pub use discovery::{
 };
 pub use files::{
     list_project_files_input_schema, list_project_tracked_files_input_schema,
-    project_overview_input_schema, read_file_input_schema, read_files_input_schema,
-    search_project_text_input_schema, search_project_texts_input_schema,
+    project_overview_input_schema, read_files_input_schema, search_project_texts_input_schema,
 };
 pub use git::{
     git_commit_paths_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,

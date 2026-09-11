@@ -819,13 +819,16 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
     let read = dispatch_coding_call_in_window(
         &runtime1,
         "rules-restart",
-        ToolCall::ReadFile {
+        ToolCall::ReadFiles {
             project: project.clone(),
-            path: "src/restart.rs".to_string(),
+            items: vec![crate::tool_runtime::ReadFilesItem {
+                path: "src/restart.rs".to_string(),
+                start_line: None,
+                limit: None,
+            }],
             session_id: Some(session_id.clone()),
-            start_line: None,
-            limit: None,
             with_line_numbers: None,
+            max_result_bytes: None,
         },
         Some(&auth),
         "rules-restart-window",
@@ -883,7 +886,7 @@ async fn restart_restored_coding_task_session_reloads_rules_without_persisting_b
             .iter()
             .filter(|event| {
                 event.kind == "tool_call_finished"
-                    && event.tool_name == "read_file"
+                    && event.tool_name == "read_files"
                     && event.status.as_deref() == Some("succeeded")
             })
             .count(),

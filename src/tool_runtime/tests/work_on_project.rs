@@ -1692,15 +1692,15 @@ async fn managed_worktree_bootstrap_recovers_same_operation_and_binds_session_to
         .any(|item| item["id"] == project));
 
     let read = ToolCall::from_tool_name(
-        "read_file",
-        json!({"project": project, "session_id": session_id, "path": "hello.txt"}),
+        "read_files",
+        json!({"project": project, "session_id": session_id, "items": [{"path": "hello.txt"}]}),
     )
     .unwrap();
     let read =
         dispatch_startup_without_window(&runtime, client_id, read, Some(&auth_context(None, true)))
             .await;
     assert!(read.success, "{:?}", read.error);
-    assert!(read.output["text"]
+    assert!(read.output["items"][0]["output"]["text"]
         .as_str()
         .is_some_and(|text| text.contains("committed")));
     assert_eq!(
@@ -2026,11 +2026,11 @@ async fn path_source_auto_registers_reuses_and_supports_canonical_coding_entry()
             && project["source"] == "auto_registered"));
 
     let read = ToolCall::from_tool_name(
-        "read_file",
+        "read_files",
         json!({
             "project": "agent:wop-path:repo-a1b2c3d4",
             "session_id": session_id,
-            "path": "hello.txt"
+            "items": [{"path": "hello.txt"}]
         }),
     )
     .unwrap();
@@ -2045,7 +2045,7 @@ async fn path_source_auto_registers_reuses_and_supports_canonical_coding_entry()
     )
     .await;
     assert!(read.success, "{:?}", read.error);
-    assert!(read.output["text"]
+    assert!(read.output["items"][0]["output"]["text"]
         .as_str()
         .is_some_and(|content| content.contains("hello")));
 }

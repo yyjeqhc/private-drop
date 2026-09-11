@@ -6,24 +6,6 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
 
-    let read_file_desc = desc("read_file");
-    for phrase in [
-        "simple single-range utf-8 read primitive",
-        "local-coding contract",
-        "adaptive runtime prefer batch-capable read_files even for one known range",
-        "line numbers",
-        "read_range",
-        "not snapshot-stable",
-        "sha256",
-        "exact resolved project",
-        "business session_id",
-    ] {
-        assert!(
-            read_file_desc.contains(phrase),
-            "read_file description should mention {phrase}: {read_file_desc}"
-        );
-    }
-
     let read_files_desc = desc("read_files");
     for phrase in [
         "adaptive runtime preferred batch-capable inspect tool",
@@ -42,26 +24,6 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         assert!(
             read_files_desc.contains(phrase),
             "read_files description should mention {phrase}: {read_files_desc}"
-        );
-    }
-
-    let search_desc = desc("search_project_text");
-    for phrase in [
-        "simple single-query project-text search primitive",
-        "local-coding contract",
-        "adaptive runtime prefer batch-capable search_project_texts even for one query",
-        "rg-first",
-        "grep fallback",
-        "pattern_mode=literal",
-        "matches",
-        "context",
-        "truncated",
-        "no safe match cursor",
-        "refine",
-    ] {
-        assert!(
-            search_desc.contains(phrase),
-            "search_project_text description should mention {phrase}: {search_desc}"
         );
     }
 
@@ -274,7 +236,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let apply_text_edits_desc = desc("apply_text_edits");
     for phrase in [
         "canonical default guarded edit path",
-        "after read_file/read_files",
+        "after read_files",
         "current worktree",
         "ordinary model-generated changes",
         "many changed lines alone are not a reason to choose apply_patch",
@@ -302,7 +264,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "external raw unified-diff mutation path",
         "input is already a standard unified diff",
         "ordinary model-generated edits",
-        "read_file/read_files followed by apply_text_edits",
+        "read_files followed by apply_text_edits",
         "contextual or large patch-shaped changes use apply_patch",
         "bounded preflight",
         "never needs a separate validation call",
@@ -319,7 +281,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "create new files",
         "whole-file rewrites",
         "ordinary model-generated changes",
-        "after read_file/read_files",
+        "after read_files",
         "prefer apply_text_edits",
         "returned current sha",
         "use apply_patch only when",

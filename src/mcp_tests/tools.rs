@@ -1693,7 +1693,7 @@ async fn session_tools_exposed_in_registry_and_mcp() {
         validation_summary["inputSchema"]["additionalProperties"],
         false
     );
-    for name in ["read_file", "run_shell", "write_project_file"] {
+    for name in ["read_files", "run_shell", "write_project_file"] {
         let tool = tools
             .iter()
             .find(|tool| tool["name"] == name)

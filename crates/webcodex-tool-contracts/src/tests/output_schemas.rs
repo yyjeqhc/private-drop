@@ -360,45 +360,6 @@ fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
 
 #[test]
 fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
-    let read_file = output_schema_for_tool("read_file");
-    test_support::validate_schema_instance(
-        &json!({
-            "success": true,
-            "output": {
-                "text": "two",
-                "format": "plain",
-                "path": "src/lib.rs",
-                "sha256": "a".repeat(64),
-                "start_line": 2,
-                "limit": 1,
-                "total_lines": 3,
-                "returned_lines": 1,
-                "end_line": 2,
-                "has_more": true,
-                "next_start_line": 3,
-                "continuation": {
-                    "kind": "read_range",
-                    "safe_cursor": true,
-                    "source_sha256": "a".repeat(64),
-                    "snapshot_stable": false,
-                    "suggested_call": {
-                        "tool": "read_file",
-                        "arguments": {
-                            "project": "agent:oe:demo",
-                            "path": "src/lib.rs",
-                            "session_id": "wc_sess_demo",
-                            "start_line": 3,
-                            "limit": 1
-                        }
-                    }
-                }
-            },
-            "error": null
-        }),
-        &read_file,
-    )
-    .unwrap();
-
     let read_files = output_schema_for_tool("read_files");
     test_support::validate_schema_instance(
         &json!({
@@ -435,12 +396,14 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
                         "source_sha256": "b".repeat(64),
                         "snapshot_stable": false,
                         "suggested_call": {
-                            "tool": "read_file",
+                            "tool": "read_files",
                             "arguments": {
                                 "project": "agent:oe:demo",
-                                "path": "src/0.rs",
-                                "start_line": 51,
-                                "limit": 50
+                                "items": [{
+                                    "path": "src/0.rs",
+                                    "start_line": 51,
+                                    "limit": 50
+                                }]
                             }
                         }
                     }
@@ -509,7 +472,7 @@ fn read_continuation_output_schemas_accept_actionable_recovery_shapes() {
 
 #[test]
 fn read_recovery_schemas_keep_transport_and_recorder_identifiers_private() {
-    for tool in ["read_file", "read_files"] {
+    for tool in ["read_files"] {
         let schema = output_schema_for_tool(tool);
         let serialized = serde_json::to_string(&schema).unwrap();
         for forbidden in ["window_id", "client_window", "recording_session_id"] {
@@ -1141,52 +1104,6 @@ fn key_tool_output_schemas_include_expected_fields() {
         assert!(
             summary_props.contains_key(field),
             "cargo_test diagnostics.test_summary missing {field}"
-        );
-    }
-    for field in [
-        "text",
-        "format",
-        "start_line",
-        "limit",
-        "total_lines",
-        "returned_lines",
-        "end_line",
-        "has_more",
-        "next_start_line",
-        "sha256",
-        "continuation",
-    ] {
-        assert!(
-            has_output_field("read_file", field),
-            "read_file missing {field}"
-        );
-    }
-    for removed in ["content", "numbered_text"] {
-        assert!(
-            !has_output_field("read_file", removed),
-            "read_file must not duplicate its primary text as {removed}"
-        );
-    }
-    for field in [
-        "backend",
-        "result_mode",
-        "effective_timeout_secs",
-        "matches",
-        "count",
-        "files",
-        "returned_file_count",
-        "returned_match_count",
-        "count_complete",
-        "total_matches",
-        "truncated",
-        "truncation_reason",
-        "continuation",
-        "context_before",
-        "context_after",
-    ] {
-        assert!(
-            has_output_field("search_project_text", field),
-            "search_project_text missing {field}"
         );
     }
     for field in ["project", "path", "entries", "truncated"] {
@@ -1848,7 +1765,6 @@ fn model_facing_output_schemas_do_not_publish_recorder_only_telemetry() {
     }
 
     for tool in [
-        "read_file",
         "read_files",
         "search_project_texts",
         "apply_patch",

@@ -98,25 +98,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                 }
             }
         })),
-        OpenApiExampleSet::ReadProjectFile => Some(json!({
-            "readme": {
-                "summary": "Read a project README",
-                "value": {
-                    "project": "webcodex",
-                    "path": "README.md"
-                }
-            },
-            "paginated": {
-                "summary": "Read a slice of a source file",
-                "value": {
-                    "project": "webcodex",
-                    "path": "src/main.rs",
-                    "start_line": 1,
-                    "limit": 100,
-                    "with_line_numbers": true
-                }
-            }
-        })),
         OpenApiExampleSet::GitStatus => Some(json!({
             "byProject": {
                 "summary": "Check git status of a project",
@@ -161,18 +142,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                     "project": "webcodex",
                     "path": "src",
                     "limit": 100
-                }
-            }
-        })),
-        OpenApiExampleSet::SearchProjectText => Some(json!({
-            "byPattern": {
-                "summary": "Search for a pattern",
-                "value": {
-                    "project": "webcodex",
-                    "pattern": "fn main",
-                    "limit": 20,
-                    "context_before": 2,
-                    "context_after": 4
                 }
             }
         })),
@@ -319,15 +288,6 @@ pub(super) fn request_examples(example_set: OpenApiExampleSet) -> Option<Value> 
                     "session_id": "wc_sess_example",
                     "include_diff": false,
                     "session_event_limit": 30
-                }
-            },
-            "readFile": {
-                "summary": "Call read_file via flattened GPT Action fields",
-                "value": {
-                    "tool": "read_file",
-                    "project": "webcodex",
-                    "path": "README.md",
-                    "with_line_numbers": true
                 }
             },
             "readFiles": {

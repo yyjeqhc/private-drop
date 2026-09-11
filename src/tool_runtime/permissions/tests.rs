@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 const WRITE_TOOL: &str = "write_project_file";
-const READ_TOOL: &str = "read_file";
+const READ_TOOL: &str = "read_files";
 
 #[test]
 fn trusted_agent_auto_authorizes_permission_bearing_tools() {

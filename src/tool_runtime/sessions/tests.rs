@@ -20,7 +20,11 @@ fn record_model_facing_result(
     success: bool,
     output: Value,
 ) -> RecordedModelFacingToolCall {
-    let arguments = json!({"project": "proj"});
+    let arguments = match tool_name {
+        "read_files" => read_files_input("proj", "src/lib.rs"),
+        "search_project_texts" => search_project_texts_input("proj", "needle", Some("src")),
+        _ => json!({"project": "proj"}),
+    };
     let start = store
         .record_tool_call_started_with_metadata(
             Some(session_id),
@@ -54,6 +58,29 @@ fn persistent_store(path: PathBuf) -> SessionStore {
 fn flush_and_restore(store: &SessionStore, path: PathBuf) -> SessionStore {
     store.flush_persistence();
     SessionStore::with_persistence(path, 10, 10)
+}
+
+fn read_files_input(project: &str, path: &str) -> Value {
+    json!({"project": project, "items": [{"path": path}]})
+}
+
+fn search_project_texts_input(project: &str, pattern: &str, path: Option<&str>) -> Value {
+    let mut query = json!({"pattern": pattern});
+    if let Some(path) = path {
+        query["path"] = json!(path);
+    }
+    json!({"project": project, "queries": [query]})
+}
+
+fn single_search_batch_output(output: Value) -> Value {
+    json!({
+        "items": [{
+            "index": 0,
+            "success": true,
+            "output": output,
+            "error": null
+        }]
+    })
 }
 
 fn record_console_tool(
@@ -177,11 +204,9 @@ fn changed_paths_single_path_and_path_list_from_metadata() {
         ),
         vec!["out/image.png".to_string()]
     );
-    assert!(changed_paths_for_tool(
-        "read_file",
-        &json!({"project": "demo", "path": "src/lib.rs"}),
-    )
-    .is_empty());
+    assert!(
+        changed_paths_for_tool("read_files", &read_files_input("demo", "src/lib.rs"),).is_empty()
+    );
     assert!(changed_paths_for_tool(
         "apply_unified_diff",
         &json!({"project": "demo", "diff": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n"}),
@@ -307,9 +332,9 @@ fn successful_reads_record_input_paths_but_failed_reads_do_not_finish_with_evide
     let successful = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "read_file",
-        &json!({"project": "demo", "path": "src\\lib.rs"}),
-        crate::tool_runtime::sessions::session_tool_contract("read_file"),
+        "read_files",
+        &read_files_input("demo", "src\\lib.rs"),
+        crate::tool_runtime::sessions::session_tool_contract("read_files"),
     );
     store.record_tool_call_finished(
         successful,
@@ -322,9 +347,9 @@ fn successful_reads_record_input_paths_but_failed_reads_do_not_finish_with_evide
     let failed = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "read_file",
-        &json!({"project": "demo", "path": "src/failed.rs"}),
-        crate::tool_runtime::sessions::session_tool_contract("read_file"),
+        "read_files",
+        &read_files_input("demo", "src/failed.rs"),
+        crate::tool_runtime::sessions::session_tool_contract("read_files"),
     );
     store.record_tool_call_finished(
         failed,
@@ -395,19 +420,22 @@ fn search_result_modes_extract_only_known_structured_file_paths() {
     ];
 
     for (mode, output, expected) in cases {
-        let paths =
-            observed_paths_for_successful_result("search_project_text", Vec::new(), &output);
+        let paths = observed_paths_for_successful_result(
+            "search_project_texts",
+            Vec::new(),
+            &single_search_batch_output(output),
+        );
         assert_eq!(paths, expected, "{mode}");
     }
 
     let bounded = observed_paths_for_successful_result(
-        "search_project_text",
+        "search_project_texts",
         Vec::new(),
-        &json!({
+        &single_search_batch_output(json!({
             "files": (0..MAX_OBSERVED_PATHS_PER_EVENT + 5)
                 .map(|index| json!({"path": format!("src/file-{index:03}.rs"), "match_count": 1}))
                 .collect::<Vec<_>>()
-        }),
+        })),
     );
     assert_eq!(bounded.len(), MAX_OBSERVED_PATHS_PER_EVENT);
 }
@@ -481,16 +509,15 @@ fn lsp_observations_use_path_metadata_and_known_typed_result_locations_only() {
 #[test]
 fn exploration_input_audit_omits_queries_and_shell_commands() {
     let search = session_input_summary_for_tool(
-        "search_project_text",
-        &json!({
-            "project": "demo",
-            "pattern": "RAW_SEARCH_PATTERN wc_pat_PRIVATE_TOKEN",
-            "pattern_present": true,
-            "path": "src"
-        }),
+        "search_project_texts",
+        &search_project_texts_input(
+            "demo",
+            "RAW_SEARCH_PATTERN wc_pat_PRIVATE_TOKEN",
+            Some("src"),
+        ),
     );
-    assert_eq!(search["pattern_present"], true);
-    assert!(search.get("pattern").is_none());
+    assert_eq!(search["queries"][0]["path"], "src");
+    assert!(search["queries"][0].get("pattern").is_none());
 
     let symbols = session_input_summary_for_tool(
         "workspace_symbols",
@@ -1037,9 +1064,9 @@ fn legacy_session_events_without_call_id_restore() {
     let start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "read_file",
+        "read_files",
         &json!({"project": "agent:eval:demo", "path": "src/legacy.rs"}),
-        crate::tool_runtime::sessions::session_tool_contract("read_file"),
+        crate::tool_runtime::sessions::session_tool_contract("read_files"),
     );
     store.record_tool_call_finished(start, true, &json!({"content": "omitted"}), None, None);
     store.flush_persistence();
@@ -1080,14 +1107,14 @@ fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progres
 
     for (tool, input, output) in [
         (
-            "read_file",
-            json!({"project": project, "path": "src/lib.rs"}),
+            "read_files",
+            read_files_input(project, "src/lib.rs"),
             json!({"content": "RAW_FILE_CONTENT"}),
         ),
         (
-            "search_project_text",
-            json!({"project": project, "pattern": "SECRET_PATTERN", "path": "src"}),
-            json!({"matches": [{"path": "src/lib.rs"}]}),
+            "search_project_texts",
+            search_project_texts_input(project, "SECRET_PATTERN", Some("src")),
+            single_search_batch_output(json!({"matches": [{"path": "src/lib.rs"}]})),
         ),
         (
             "goto_definition",
@@ -1286,8 +1313,8 @@ fn console_overview_marks_retained_event_history_truncated_without_claiming_tota
             &store,
             &session.session_id,
             project,
-            "read_file",
-            json!({"project": project, "path": path}),
+            "read_files",
+            read_files_input(project, path),
             true,
             json!({"content": "omitted"}),
         );
@@ -1468,14 +1495,14 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
 
     let completed = [
         (
-            "read_file",
-            json!({"project": project, "path": "src/lib.rs"}),
+            "read_files",
+            read_files_input(project, "src/lib.rs"),
             json!({"content": "RAW_FILE_CONTENT"}),
         ),
         (
-            "search_project_text",
-            json!({"project": project, "pattern": "SECRET_PATTERN", "path": "src"}),
-            json!({"matches": [{"path": "src/lib.rs"}]}),
+            "search_project_texts",
+            search_project_texts_input(project, "SECRET_PATTERN", Some("src")),
+            single_search_batch_output(json!({"matches": [{"path": "src/lib.rs"}]})),
         ),
         (
             "apply_text_edits",
@@ -1536,10 +1563,10 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
     if let Some(explored) = detail.activity.iter().find(|item| item.kind == "Explored") {
         assert_eq!(explored.group_count, Some(2));
         assert_eq!(explored.group_kinds, vec!["Read", "Searched"]);
-        assert!(explored.group_tools.contains(&"read_file".to_string()));
+        assert!(explored.group_tools.contains(&"read_files".to_string()));
         assert!(explored
             .group_tools
-            .contains(&"search_project_text".to_string()));
+            .contains(&"search_project_texts".to_string()));
     } else {
         // If Progress shares this coarse timestamp, conservative grouping keeps
         // the exploration facts separate rather than crossing an unordered
@@ -1664,9 +1691,9 @@ fn console_list_orders_recent_activity_first_with_deterministic_session_id_ties(
         .record_tool_call_started(
             Some(older),
             SessionTransport::Api,
-            "read_file",
+            "read_files",
             &json!({"project": project, "path": "src/lib.rs"}),
-            crate::tool_runtime::sessions::session_tool_contract("read_file"),
+            crate::tool_runtime::sessions::session_tool_contract("read_files"),
         )
         .expect("older Session activity should be recorded");
     assert_eq!(activity.session_id, older);
@@ -1691,9 +1718,9 @@ fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last()
     let read = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "read_file",
+        "read_files",
         &json!({"project": project, "path": "src/lib.rs"}),
-        crate::tool_runtime::sessions::session_tool_contract("read_file"),
+        crate::tool_runtime::sessions::session_tool_contract("read_files"),
     );
     store.record_tool_call_finished(read, true, &json!({"content": "omitted"}), None, None);
 
@@ -1909,7 +1936,7 @@ fn console_list_without_running_work_shows_last_meaningful_activity() {
     let session = store.start_session(Some(project.to_string()), Some("last activity".to_string()));
     for (tool, input, output) in [
         (
-            "read_file",
+            "read_files",
             json!({"project": project, "path": "src/lib.rs"}),
             json!({"content": "omitted"}),
         ),
@@ -1969,14 +1996,14 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
 
     for (tool, input, output) in [
         (
-            "read_file",
-            json!({"project": project, "path": "src/a.rs"}),
+            "read_files",
+            read_files_input(project, "src/a.rs"),
             json!({"content": "PRIVATE_CONTENT_A"}),
         ),
         (
-            "search_project_text",
-            json!({"project": project, "pattern": "PRIVATE_PATTERN", "path": "src"}),
-            json!({"matches": [{"path": "src/b.rs"}]}),
+            "search_project_texts",
+            search_project_texts_input(project, "PRIVATE_PATTERN", Some("src")),
+            single_search_batch_output(json!({"matches": [{"path": "src/b.rs"}]})),
         ),
         (
             "goto_definition",
@@ -2012,9 +2039,9 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
     let read = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "read_file",
-        &json!({"project": project, "path": "src/d.rs"}),
-        crate::tool_runtime::sessions::session_tool_contract("read_file"),
+        "read_files",
+        &read_files_input(project, "src/d.rs"),
+        crate::tool_runtime::sessions::session_tool_contract("read_files"),
     );
     store.record_tool_call_finished(
         read,
@@ -2026,9 +2053,9 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
     let failed = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "search_project_text",
-        &json!({"project": project, "pattern": "PRIVATE_FAILED_PATTERN", "path": "src"}),
-        crate::tool_runtime::sessions::session_tool_contract("search_project_text"),
+        "search_project_texts",
+        &search_project_texts_input(project, "PRIVATE_FAILED_PATTERN", Some("src")),
+        crate::tool_runtime::sessions::session_tool_contract("search_project_texts"),
     );
     store.record_tool_call_finished(
         failed,
@@ -2087,7 +2114,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
     assert_eq!(group.group_kinds, vec!["Read", "Searched", "Navigated"]);
     assert_eq!(
         group.group_tools,
-        vec!["read_file", "search_project_text", "goto_definition"]
+        vec!["read_files", "search_project_texts", "goto_definition"]
     );
     assert_eq!(group.paths, vec!["src/a.rs", "src/b.rs", "src/c.rs"]);
     assert_eq!(detail.activity[3].state, "failed");
@@ -2411,20 +2438,18 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
     let search = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "search_project_text",
-        &json!({
-            "project": "demo",
-            "pattern": "RAW_SEARCH_PATTERN wc_pat_PRIVATE_TOKEN",
-            "pattern_present": true,
-            "context_before": 2,
-            "context_after": 2
-        }),
-        crate::tool_runtime::sessions::session_tool_contract("search_project_text"),
+        "search_project_texts",
+        &search_project_texts_input(
+            "demo",
+            "RAW_SEARCH_PATTERN wc_pat_PRIVATE_TOKEN",
+            Some("src"),
+        ),
+        crate::tool_runtime::sessions::session_tool_contract("search_project_texts"),
     );
     store.record_tool_call_finished(
         search,
         true,
-        &json!({
+        &single_search_batch_output(json!({
             "matches": [{
                 "path": "src/search.rs",
                 "line": 3,
@@ -2436,7 +2461,7 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
                 "line": 4,
                 "preview": "ABSOLUTE_PATH_PREVIEW"
             }]
-        }),
+        })),
         None,
         None,
     );
@@ -2667,13 +2692,13 @@ fn persistence_snapshot_shares_payload_and_stays_stable_across_message_cow() {
         .record_tool_call_started(
             Some(&session.session_id),
             SessionTransport::Api,
-            "read_file",
+            "read_files",
             &json!({
                 "project": "demo",
                 "path": "src/lib.rs",
                 "query": "snapshot payload"
             }),
-            crate::tool_runtime::sessions::session_tool_contract("read_file"),
+            crate::tool_runtime::sessions::session_tool_contract("read_files"),
         )
         .is_some());
     let message = post_message(
@@ -2866,7 +2891,7 @@ fn raw_model_facing_events_do_not_consume_context_revisions() {
         Some("checkpoint loop".to_string()),
     );
 
-    for tool in ["read_file", "search_project_texts", "show_changes"] {
+    for tool in ["read_files", "search_project_texts", "show_changes"] {
         let observed = record_model_facing_result(
             &store,
             &session.session_id,
@@ -2954,7 +2979,7 @@ fn raw_model_facing_events_do_not_consume_context_revisions() {
         let expected = match event.tool_name.as_str() {
             "apply_text_edits" => Some(1),
             "run_process" => Some(2),
-            "read_file" | "search_project_texts" | "show_changes" | "read_files" => None,
+            "read_files" | "search_project_texts" | "show_changes" => None,
             other => panic!("unexpected finished tool {other}"),
         };
         assert_eq!(event.context_revision, expected, "{}", event.tool_name);
@@ -2982,7 +3007,7 @@ fn history_lost_counts_checkpoint_revisions_not_raw_events() {
         let read = record_model_facing_result(
             &store,
             &session.session_id,
-            "read_file",
+            "read_files",
             SessionContextRevisionAck::Revision(1),
             true,
             json!({"content": "re-observable"}),
@@ -3057,7 +3082,7 @@ fn history_lost_detects_evicted_checkpoint_after_raw_event_churn() {
         let read = record_model_facing_result(
             &store,
             &session.session_id,
-            "read_file",
+            "read_files",
             SessionContextRevisionAck::Revision(1),
             true,
             json!({"content": "raw churn"}),

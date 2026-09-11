@@ -70,7 +70,7 @@ or otherwise untrusted path fails with a bounded provider error (or uses the
 configured Native fallback); it is never silently converted into an empty
 successful search.
 
-WebCodex `read_file` always keeps its existing Native implementation in ordinary
+WebCodex `read_files` always keeps its Native file-read implementation in ordinary
 provider routing. That routing path does not discover, map, or call Claude's
 `Read` tool.
 

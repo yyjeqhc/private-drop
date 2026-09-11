@@ -88,14 +88,16 @@ fn tool_specs_input_schemas_are_objects() {
 }
 
 #[test]
-fn search_project_text_schema_declares_bounded_advanced_inputs() {
+fn search_project_texts_query_schema_declares_bounded_advanced_inputs() {
     let specs = registered_tool_specs();
-    let search = spec_named(&specs, "search_project_text");
-    let properties = search.input_schema["properties"].as_object().unwrap();
+    let search = spec_named(&specs, "search_project_texts");
+    let properties = search.input_schema["properties"]["queries"]["items"]["properties"]
+        .as_object()
+        .unwrap();
 
     assert_schema_fields!(
         properties,
-        "search_project_text input schema",
+        "search_project_texts query schema",
         present: ["include_globs", "exclude_globs", "result_mode", "timeout_secs"]
     );
     for field in ["include_globs", "exclude_globs"] {
@@ -256,10 +258,12 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
     assert_eq!(timeout["maximum"], 120);
     assert_eq!(timeout["default"], 60);
 
-    let search = spec_named(&specs, "search_project_text");
-    assert!(search.input_schema["properties"]["timeout_secs"]
-        .get("maximum")
-        .is_none());
+    let search = spec_named(&specs, "search_project_texts");
+    assert!(
+        search.input_schema["properties"]["queries"]["items"]["properties"]["timeout_secs"]
+            .get("maximum")
+            .is_none()
+    );
 }
 
 #[test]
@@ -491,24 +495,20 @@ fn tool_specs_optional_fields_are_not_required() {
         60
     );
 
-    let read_file = spec_named(&specs, "read_file");
-    let required = required_fields(read_file);
-    assert!(required.contains(&"project".to_string()));
-    assert!(required.contains(&"path".to_string()));
-    assert!(!required.contains(&"with_line_numbers".to_string()));
-
     let read_files = spec_named(&specs, "read_files");
     let required = required_fields(read_files);
     assert!(required.contains(&"project".to_string()));
     assert!(required.contains(&"items".to_string()));
     assert!(!required.contains(&"with_line_numbers".to_string()));
 
-    let search = spec_named(&specs, "search_project_text");
+    let search = spec_named(&specs, "search_project_texts");
     let required = required_fields(search);
     assert!(required.contains(&"project".to_string()));
-    assert!(required.contains(&"pattern".to_string()));
-    assert!(!required.contains(&"context_before".to_string()));
-    assert!(!required.contains(&"context_after".to_string()));
+    assert!(required.contains(&"queries".to_string()));
+    let query_required = search.input_schema["properties"]["queries"]["items"]["required"]
+        .as_array()
+        .unwrap();
+    assert!(query_required.iter().any(|value| value == "pattern"));
 }
 
 #[test]
@@ -535,7 +535,6 @@ fn tool_specs_covers_expected_tool_set() {
         "stop_job",
         "job_status",
         "job_log",
-        "read_file",
         "read_files",
         "git_status",
         "git_diff",
@@ -556,7 +555,6 @@ fn tool_specs_covers_expected_tool_set() {
         "discard_untracked",
         "project_overview",
         "list_project_tracked_files",
-        "search_project_text",
         "list_jobs",
         "write_project_file",
         "save_project_artifact",

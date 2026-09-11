@@ -51,5 +51,5 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 22, "OpenAPI operation count must remain 22");
+    assert_eq!(count, 20, "OpenAPI operation count must remain 20");
 }

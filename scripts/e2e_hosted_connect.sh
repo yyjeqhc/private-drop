@@ -225,8 +225,8 @@ process_active "$LOG_WRITER_PID" \
 PROJECTS_A="$(post "$SHARED_KEY_A" /api/projects/list '{}')"
 [ "$(printf '%s' "$PROJECTS_A" | json_field output.projects.0.id)" = "$RUNTIME_PROJECT" ] \
     || die "same-key project visibility failed"
-READ_RESPONSE="$(post "$SHARED_KEY_A" /api/projects/read_file \
-    "{\"project\":\"${RUNTIME_PROJECT}\",\"path\":\"README.md\"}")"
+READ_RESPONSE="$(post "$SHARED_KEY_A" /api/tools/call \
+    "{\"tool\":\"read_files\",\"params\":{\"project\":\"${RUNTIME_PROJECT}\",\"items\":[{\"path\":\"README.md\"}]}}")"
 if [ "$(printf '%s' "$READ_RESPONSE" | json_field success)" != "True" ]; then
     READ_ERROR="$(printf '%s' "$READ_RESPONSE" | python3 -c '
 import json,sys
@@ -237,10 +237,10 @@ print(json.dumps({
     "output": value.get("output"),
 }, separators=(",",":")))
 ')"
-    die "same-key read_file failed (${READ_ERROR})"
+    die "same-key read_files failed (${READ_ERROR})"
 fi
 printf '%s' "$READ_RESPONSE" | grep -q 'hosted connect smoke' \
-    || die "same-key read_file returned unexpected content"
+    || die "same-key read_files returned unexpected content"
 
 PROJECTS_B="$(post "$SHARED_KEY_B" /api/projects/list '{}')"
 [ "$(printf '%s' "$PROJECTS_B" | json_field output.count)" = "0" ] \

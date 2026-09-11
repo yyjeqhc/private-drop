@@ -282,7 +282,7 @@ pub fn search_match_schema() -> Value {
             "limit": {
                 "type": "integer",
                 "const": 80,
-                "description": "Deterministic bounded line count for read_file/read_files expansion."
+                "description": "Deterministic bounded line count for read_files expansion."
             }
         },
         "required": ["start_line", "limit"],
@@ -945,8 +945,8 @@ fn attempt_exploration_schema() -> Value {
             },
             "total_observed_paths": schema_type("integer", "Real unique path count before the 100-path projection cap."),
             "truncated": schema_type("boolean", "True when observed_paths was capped."),
-            "read_count": schema_type("integer", "Successful direct read_file calls in the attempt."),
-            "search_count": schema_type("integer", "Successful search_project_text/search_project_texts calls in the attempt."),
+            "read_count": schema_type("integer", "Successful read_files calls in the attempt."),
+            "search_count": schema_type("integer", "Successful search_project_texts calls in the attempt."),
             "navigation_count": schema_type("integer", "Successful LSP navigation calls in the attempt."),
             "latest_tool": exploration_tool_name_schema(),
             "complete": schema_type("boolean", "False when the attempt boundary was evicted and only a retained tail is available.")

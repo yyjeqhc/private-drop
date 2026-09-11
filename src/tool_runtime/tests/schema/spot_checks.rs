@@ -322,19 +322,14 @@ fn tool_specs_schema_spot_checks() {
         ),
         ("list_project_files", vec!["project"], vec!["path", "limit"]),
         (
-            "search_project_text",
-            vec!["project", "pattern"],
-            vec!["path", "limit", "context_before", "context_after"],
-        ),
-        (
-            "read_file",
-            vec!["project", "path"],
-            vec!["with_line_numbers"],
-        ),
-        (
             "read_files",
             vec!["project", "items"],
             vec!["with_line_numbers"],
+        ),
+        (
+            "search_project_texts",
+            vec!["project", "queries"],
+            vec!["max_result_bytes"],
         ),
         ("list_jobs", vec![], vec![]),
         (
@@ -372,18 +367,14 @@ fn tool_specs_schema_spot_checks() {
         );
     }
 
-    let spec = spec_named(&specs, "search_project_text");
+    let spec = spec_named(&specs, "search_project_texts");
     let props = spec.input_schema["properties"].as_object().unwrap();
-    assert!(props.contains_key("context_before"));
-    assert!(props.contains_key("context_after"));
+    assert!(props.contains_key("queries"));
+    assert!(props.contains_key("max_result_bytes"));
 
     let spec = spec_named(&specs, "job_status");
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert!(props.contains_key("include_command_preview"));
-
-    let spec = spec_named(&specs, "read_file");
-    let props = spec.input_schema["properties"].as_object().unwrap();
-    assert!(props.contains_key("with_line_numbers"));
 
     let spec = spec_named(&specs, "read_files");
     let props = spec.input_schema["properties"].as_object().unwrap();

@@ -714,7 +714,7 @@ async fn mcp_pre_result_invalid_arguments_still_records_generic_attempt() {
             "jsonrpc": "2.0",
             "id": 101,
             "method": "tools/call",
-            "params": {"name": "read_file", "arguments": {}}
+            "params": {"name": "read_files", "arguments": {}}
         }))
         .send(&service)
         .await;
@@ -725,14 +725,14 @@ async fn mcp_pre_result_invalid_arguments_still_records_generic_attempt() {
     let summary: String = db
         .conn_for_tests()
         .query_row(
-            "SELECT summary_json FROM action_events WHERE operation = 'read_file'",
+            "SELECT summary_json FROM action_events WHERE operation = 'read_files'",
             [],
             |row| row.get(0),
         )
         .unwrap();
     let summary: Value = serde_json::from_str(&summary).unwrap();
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["tool_name"], "read_file");
+    assert_eq!(telemetry["tool_name"], "read_files");
     assert_eq!(telemetry["success"], false);
     assert_eq!(telemetry["error_kind"], "invalid_arguments");
     assert!(telemetry["serialized_result_bytes"].is_null());

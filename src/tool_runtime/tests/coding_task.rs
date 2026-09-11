@@ -278,7 +278,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 22, "no dedicated OpenAPI operations added");
+    assert_eq!(operation_count, 20, "no dedicated OpenAPI operations added");
 }
 
 #[tokio::test]
@@ -1446,8 +1446,8 @@ async fn finish_coding_task_summary_only_uses_review_evidence_without_projecting
     record_coding_task_tool_event(
         &runtime,
         &session_id,
-        "search_project_text",
-        json!({"project": project, "query": "docs"}),
+        "search_project_texts",
+        json!({"project": project, "queries": [{"pattern": "docs"}]}),
         true,
         json!({}),
     );
@@ -1758,10 +1758,10 @@ async fn finish_coding_task_summary_only_passes_with_resolved_unexpected_cargo_f
         record_coding_task_tool_event(
             &fixture.runtime,
             &fixture.session_id,
-            "read_file",
+            "read_files",
             json!({
                 "project": fixture.project.clone(),
-                "path": format!("src/display-padding-{index}.rs")
+                "items": [{"path": format!("src/display-padding-{index}.rs")}]
             }),
             true,
             json!({}),
@@ -1915,10 +1915,10 @@ async fn handoff_display_limit_does_not_change_canonical_started_shell_failure_c
         record_coding_task_tool_event(
             &fixture.runtime,
             &fixture.session_id,
-            "read_file",
+            "read_files",
             json!({
                 "project": fixture.project.clone(),
-                "path": format!("src/benign-padding-{index}.rs")
+                "items": [{"path": format!("src/benign-padding-{index}.rs")}]
             }),
             true,
             json!({}),
@@ -2369,8 +2369,8 @@ async fn failure_history_fail_closed_attempts_do_not_block_clean_finish() {
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "read_file",
-        json!({"project": fixture.project.clone(), "path": "missing.rs"}),
+        "read_files",
+        json!({"project": fixture.project.clone(), "items": [{"path": "missing.rs"}]}),
         false,
         json!({"error_kind": "invalid_arguments"}),
     );
@@ -2984,8 +2984,8 @@ async fn finish_coding_task_summary_only_treats_read_failure_as_historical_non_a
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "read_file",
-        json!({"project": fixture.project.clone(), "path": "README.md"}),
+        "read_files",
+        json!({"project": fixture.project.clone(), "items": [{"path": "README.md"}]}),
         false,
         json!({
             "error_kind": "permission_denied"
@@ -3400,9 +3400,8 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
         assert!(
             matches!(
                 tool,
-                "read_file"
+                "read_files"
                     | "list_project_files"
-                    | "search_project_text"
                     | "search_project_texts"
                     | "git_diff"
                     | "git_diff_summary"

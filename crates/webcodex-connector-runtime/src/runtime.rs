@@ -1183,14 +1183,18 @@ impl ConnectorRuntime {
             }
             let args = json!({
                 "project": task.execution_executor_ref,
-                "path": file.path,
-                "start_line": file.start_line,
-                "limit": file.limit.unwrap_or(200),
-                "with_line_numbers": file.with_line_numbers.unwrap_or(true)
+                "items": [{
+                    "path": file.path,
+                    "start_line": file.start_line,
+                    "limit": file.limit.unwrap_or(200)
+                }],
+                "with_line_numbers": file.with_line_numbers.unwrap_or(true),
+                "max_result_bytes": 512 * 1024
             });
             match self
-                .invoke_kernel("read_file", args, &task, auth, transport)
+                .invoke_kernel("read_files", args, &task, auth, transport)
                 .await
+                .and_then(|output| Self::single_batch_item_output("read_files", output))
             {
                 Ok(mut output) => {
                     output["path"] = json!(file.path);
@@ -1355,19 +1359,23 @@ impl ConnectorRuntime {
             .min(CONNECTOR_SEARCH_WINDOW);
         let args = json!({
             "project": task.execution_executor_ref,
-            "pattern": input.pattern,
-            "path": input.path,
-            "limit": fetch_limit,
-            "context_before": input.context_before.unwrap_or(0),
-            "context_after": input.context_after.unwrap_or(0),
-            "include_globs": input.include_globs,
-            "exclude_globs": input.exclude_globs,
-            "result_mode": input.result_mode.unwrap_or(SearchResultMode::Matches),
-            "timeout_secs": 20
+            "queries": [{
+                "pattern": input.pattern,
+                "path": input.path,
+                "limit": fetch_limit,
+                "context_before": input.context_before.unwrap_or(0),
+                "context_after": input.context_after.unwrap_or(0),
+                "include_globs": input.include_globs,
+                "exclude_globs": input.exclude_globs,
+                "result_mode": input.result_mode.unwrap_or(SearchResultMode::Matches),
+                "timeout_secs": 20
+            }],
+            "max_result_bytes": 512 * 1024
         });
         match self
-            .invoke_kernel("search_project_text", args, &task, auth, transport)
+            .invoke_kernel("search_project_texts", args, &task, auth, transport)
             .await
+            .and_then(|output| Self::single_batch_item_output("search_project_texts", output))
         {
             Ok(output) => {
                 let output = paginate_search_output(
@@ -3297,6 +3305,38 @@ impl ConnectorRuntime {
                 now,
             )
             .map_err(|error| store_error_outcome(error, Some(task)))
+    }
+
+    fn single_batch_item_output(tool_name: &str, output: Value) -> Result<Value, KernelFailure> {
+        let Some(items) = output.get("items").and_then(Value::as_array) else {
+            return Err(KernelFailure::Adapter(format!(
+                "{tool_name} returned a malformed batch result without items"
+            )));
+        };
+        if items.len() != 1 {
+            return Err(KernelFailure::Adapter(format!(
+                "{tool_name} returned {} items for a one-item connector request",
+                items.len()
+            )));
+        }
+        let item = &items[0];
+        match item.get("success").and_then(Value::as_bool) {
+            Some(true) => item.get("output").cloned().ok_or_else(|| {
+                KernelFailure::Adapter(format!(
+                    "{tool_name} returned a successful item without output"
+                ))
+            }),
+            Some(false) => Err(KernelFailure::Tool {
+                error: item
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                output: item.get("output").cloned().unwrap_or(Value::Null),
+            }),
+            None => Err(KernelFailure::Adapter(format!(
+                "{tool_name} returned an item without a boolean success field"
+            ))),
+        }
     }
 
     async fn invoke_kernel(

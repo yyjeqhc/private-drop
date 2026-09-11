@@ -50,7 +50,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
     }
 
     let cases = [
-        ("read_file", ToolEffect::Observe, ToolIdempotency::PureRead),
+        ("read_files", ToolEffect::Observe, ToolIdempotency::PureRead),
         (
             "close_session",
             ToolEffect::Mutate,

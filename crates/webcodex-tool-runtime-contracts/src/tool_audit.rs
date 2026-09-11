@@ -1271,7 +1271,7 @@ mod computer_privacy_tests {
         let malformed = json!({"secret": "MALFORMED_READ_SECRET"});
         let malformed_before = malformed.clone();
         assert_eq!(
-            session_log_arguments_for_tool_request("read_file", &malformed),
+            session_log_arguments_for_tool_request("read_files", &malformed),
             json!({})
         );
         assert_eq!(malformed, malformed_before);
@@ -3360,20 +3360,6 @@ impl ToolCall {
                     "sync_wait_secs": sync_wait_secs,
                 }),
             ),
-            Self::ReadFile {
-                project,
-                path,
-                start_line,
-                limit,
-                with_line_numbers,
-                ..
-            } => serde_json::json!({
-                "project": project,
-                "path": path,
-                "start_line": start_line,
-                "limit": limit,
-                "with_line_numbers": with_line_numbers,
-            }),
             Self::ReadFiles {
                 project,
                 items,
@@ -3928,29 +3914,6 @@ impl ToolCall {
                 "path": path,
                 "max_depth": max_depth,
                 "limit": limit,
-            }),
-            Self::SearchProjectText {
-                project,
-                path,
-                limit,
-                context_before,
-                context_after,
-                include_globs,
-                exclude_globs,
-                result_mode,
-                timeout_secs,
-                ..
-            } => serde_json::json!({
-                "project": project,
-                "pattern_present": true,
-                "path": path,
-                "limit": limit,
-                "context_before": context_before,
-                "context_after": context_after,
-                "include_glob_count": include_globs.as_ref().map(Vec::len).unwrap_or(0),
-                "exclude_glob_count": exclude_globs.as_ref().map(Vec::len).unwrap_or(0),
-                "result_mode": result_mode,
-                "timeout_secs": timeout_secs,
             }),
             Self::SearchProjectTexts {
                 project, queries, ..

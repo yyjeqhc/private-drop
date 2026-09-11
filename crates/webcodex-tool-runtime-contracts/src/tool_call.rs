@@ -1054,20 +1054,6 @@ pub enum ToolCall {
         sync_wait_secs: Option<u64>,
     },
 
-    /// Read a file from a project.
-    ReadFile {
-        project: String,
-        path: String,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        start_line: Option<usize>,
-        #[serde(default)]
-        limit: Option<usize>,
-        #[serde(default)]
-        with_line_numbers: Option<bool>,
-    },
-
     /// Read up to eight UTF-8 files or file ranges under one bounded call.
     ReadFiles {
         project: String,
@@ -1586,35 +1572,6 @@ pub enum ToolCall {
         max_depth: Option<usize>,
         #[serde(default)]
         limit: Option<usize>,
-    },
-
-    /// Search text inside a project (bounded matches, rg-first with grep
-    /// fallback). Each match carries a project-relative path, 1-based line
-    /// number, preview line, and bounded context arrays. Sensitive/build
-    /// directories are excluded by default.
-    SearchProjectText {
-        project: String,
-        pattern: String,
-        #[serde(default)]
-        pattern_mode: Option<SearchPatternMode>,
-        #[serde(default)]
-        session_id: Option<String>,
-        #[serde(default)]
-        path: Option<String>,
-        #[serde(default)]
-        limit: Option<usize>,
-        #[serde(default)]
-        context_before: Option<usize>,
-        #[serde(default)]
-        context_after: Option<usize>,
-        #[serde(default)]
-        include_globs: Option<Vec<String>>,
-        #[serde(default)]
-        exclude_globs: Option<Vec<String>>,
-        #[serde(default)]
-        result_mode: Option<SearchResultMode>,
-        #[serde(default)]
-        timeout_secs: Option<i64>,
     },
 
     /// Run up to eight independent bounded project-text searches under one
@@ -2788,7 +2745,6 @@ impl ToolCall {
             Self::CargoCheck { .. } => "cargo_check",
             Self::CargoTest { .. } => "cargo_test",
             Self::GoTest { .. } => "go_test",
-            Self::ReadFile { .. } => "read_file",
             Self::ReadFiles { .. } => "read_files",
             Self::SkillList { .. } => "skill_list",
             Self::SkillReadFile { .. } => "skill_read_file",
@@ -2832,7 +2788,6 @@ impl ToolCall {
             Self::ListProjectFiles { .. } => "list_project_files",
             Self::ListProjectTrackedFiles { .. } => "list_project_tracked_files",
             Self::ProjectOverview { .. } => "project_overview",
-            Self::SearchProjectText { .. } => "search_project_text",
             Self::SearchProjectTexts { .. } => "search_project_texts",
             Self::GitDiffSummary { .. } => "git_diff_summary",
             Self::ShowChanges { .. } => "show_changes",
@@ -2915,7 +2870,6 @@ impl ToolCall {
             | Self::CargoCheck { session_id, .. }
             | Self::CargoTest { session_id, .. }
             | Self::GoTest { session_id, .. }
-            | Self::ReadFile { session_id, .. }
             | Self::ReadFiles { session_id, .. }
             | Self::SkillList { session_id, .. }
             | Self::SkillReadFile { session_id, .. }
@@ -2932,7 +2886,6 @@ impl ToolCall {
             | Self::ListProjectFiles { session_id, .. }
             | Self::ListProjectTrackedFiles { session_id, .. }
             | Self::ProjectOverview { session_id, .. }
-            | Self::SearchProjectText { session_id, .. }
             | Self::SearchProjectTexts { session_id, .. }
             | Self::GitDiffSummary { session_id, .. }
             | Self::ShowChanges { session_id, .. }
@@ -3049,7 +3002,6 @@ impl ToolCall {
             | Self::CargoCheck { project, .. }
             | Self::CargoTest { project, .. }
             | Self::GoTest { project, .. }
-            | Self::ReadFile { project, .. }
             | Self::ReadFiles { project, .. }
             | Self::SkillList { project, .. }
             | Self::SkillReadFile { project, .. }
@@ -3066,7 +3018,6 @@ impl ToolCall {
             | Self::ListProjectFiles { project, .. }
             | Self::ListProjectTrackedFiles { project, .. }
             | Self::ProjectOverview { project, .. }
-            | Self::SearchProjectText { project, .. }
             | Self::SearchProjectTexts { project, .. }
             | Self::GitDiffSummary { project, .. }
             | Self::ShowChanges { project, .. }

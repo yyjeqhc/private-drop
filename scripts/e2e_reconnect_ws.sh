@@ -359,7 +359,7 @@ assert_eq "replacement instance fences old recovering job to lost" "$JOB_STATE" 
 assert_eq "replacement loss reason is runner_instance_replaced" \
     "$(json_get "$JOBS_BODY" output.recovery_reason_code)" "runner_instance_replaced"
 
-READ_BODY="$(api_post /api/tools/call "{\"tool\":\"read_file\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"path\":\"README.md\"}}")"
+READ_BODY="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"items\":[{\"path\":\"README.md\"}]}}")"
 assert_eq "calls recover after runner restart (no server restart)" \
     "$(json_get "$READ_BODY" success)" "True"
 

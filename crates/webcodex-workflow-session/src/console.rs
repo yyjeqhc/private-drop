@@ -1053,14 +1053,13 @@ fn looks_like_absolute_path(value: &str) -> bool {
 
 fn semantic_kind(event: &SessionEvent) -> &'static str {
     match event.tool_name.as_str() {
-        "read_file"
-        | "read_files"
+        "read_files"
         | "list_project_files"
         | "list_project_tracked_files"
         | "project_overview"
         | "read_project_artifact"
         | "read_project_artifact_metadata" => "Read",
-        "search_project_text" | "search_project_texts" => "Searched",
+        "search_project_texts" => "Searched",
         "lsp_status"
         | "document_symbols"
         | "document_diagnostics"

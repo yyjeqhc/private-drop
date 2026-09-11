@@ -1759,7 +1759,7 @@ mod tests {
                     "read_count": 3,
                     "search_count": 2,
                     "navigation_count": 4,
-                    "latest_tool": "read_file",
+                    "latest_tool": "read_files",
                     "complete": true
                 }
             },
@@ -1783,7 +1783,7 @@ mod tests {
         assert_eq!(standard["exploration"]["read_count"], 3);
         assert_eq!(standard["exploration"]["search_count"], 2);
         assert_eq!(standard["exploration"]["navigation_count"], 4);
-        assert_eq!(standard["exploration"]["latest_tool"], "read_file");
+        assert_eq!(standard["exploration"]["latest_tool"], "read_files");
         assert_eq!(standard["exploration"]["complete"], true);
     }
 

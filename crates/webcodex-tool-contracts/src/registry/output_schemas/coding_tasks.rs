@@ -984,7 +984,7 @@ fn semantic_navigation_schema() -> Value {
                 "uniqueItems": true,
                 "items": {
                     "type": "string",
-                    "enum": ["document_symbols", "goto_definition", "find_references", "hover", "read_file", "search_project_text"]
+                    "enum": ["document_symbols", "goto_definition", "find_references", "hover", "read_files", "search_project_texts"]
                 }
             },
             "limitations": {

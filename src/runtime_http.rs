@@ -29,7 +29,7 @@ pub use jobs::{
 pub use project_files::{
     projects_apply_unified_diff, projects_discard_untracked, projects_git_diff,
     projects_git_diff_summary, projects_git_restore_paths, projects_git_status,
-    projects_list_files, projects_read_file, projects_search_text,
+    projects_list_files,
 };
 pub use projects::{
     projects_create, projects_list, projects_register, projects_resolve_or_register,

@@ -117,14 +117,14 @@ async fn api_pre_result_invalid_arguments_still_counts_without_fabricated_bytes(
     let mut response = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
         .add_header("x-action-session-id", "ergonomics-invalid", true)
-        .json(&json!({"tool": "read_file"}))
+        .json(&json!({"tool": "read_files"}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&response), StatusCode::BAD_REQUEST);
     let body: Value = response.take_json().await.unwrap();
     assert!(body["error"].is_string());
 
-    let telemetry = single_model_ergonomics(&db, "ergonomics-invalid", "read_file");
+    let telemetry = single_model_ergonomics(&db, "ergonomics-invalid", "read_files");
     assert_eq!(telemetry["success"], false);
     assert_eq!(telemetry["error_kind"], "invalid_arguments");
     assert!(telemetry["serialized_result_bytes"].is_null());

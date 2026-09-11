@@ -19,12 +19,10 @@ pub(crate) enum OpenApiExampleSet {
     JobLog,
     ListJobs,
     JobTail,
-    ReadProjectFile,
     GitStatus,
     GitDiff,
     GitDiffSummary,
     ListProjectFiles,
-    SearchProjectText,
     ApplyUnifiedDiff,
     RunShell,
     GitRestorePaths,
@@ -158,16 +156,6 @@ pub(super) const GET_RUNTIME_JOB_TAIL: OpenApiOperationSpec = operation(
     JobTail,
 );
 
-pub(super) const READ_PROJECT_FILE: OpenApiOperationSpec = operation(
-    "readProjectFile",
-    "Read a project file",
-    "Read-only. Reads a UTF-8 project file through its owning Runner. Output is bounded; use start_line and limit for pagination. The response carries one text representation only: plain by default or 1-based numbered text when with_line_numbers=true.",
-    "ReadProjectFileRequest",
-    "ToolResult",
-    NonConsequential,
-    ReadProjectFile,
-);
-
 pub(super) const GET_PROJECT_GIT_STATUS: OpenApiOperationSpec = operation(
     "getProjectGitStatus",
     "Get project git status",
@@ -206,16 +194,6 @@ pub(super) const LIST_PROJECT_FILES: OpenApiOperationSpec = operation(
     "ToolResult",
     NonConsequential,
     ListProjectFiles,
-);
-
-pub(super) const SEARCH_PROJECT_TEXT: OpenApiOperationSpec = operation(
-    "searchProjectText",
-    "Search project text",
-    "Read-only bounded project-text search. Regex is the default; prefer pattern_mode=literal for identifiers, snippets, paths, and other exact text. Results use project-relative paths and 1-based line numbers; optional context is bounded and sensitive/build directories are excluded.",
-    "SearchProjectTextRequest",
-    "ToolResult",
-    NonConsequential,
-    SearchProjectText,
 );
 
 pub(super) const APPLY_UNIFIED_DIFF: OpenApiOperationSpec = operation(

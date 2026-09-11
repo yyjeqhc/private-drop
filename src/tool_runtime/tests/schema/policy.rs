@@ -182,11 +182,6 @@ fn required_runner_capability_matches_metadata_risk_table() {
             RunnerCapabilityRequirement::OwnerOnly,
         ),
         (
-            "read_file",
-            ToolRisk::Read,
-            RunnerCapabilityRequirement::FileRead,
-        ),
-        (
             "read_files",
             ToolRisk::Read,
             RunnerCapabilityRequirement::FileRead,
@@ -248,11 +243,6 @@ fn required_runner_capability_matches_metadata_risk_table() {
         ),
         (
             "list_project_tracked_files",
-            ToolRisk::Read,
-            RunnerCapabilityRequirement::Shell,
-        ),
-        (
-            "search_project_text",
             ToolRisk::Read,
             RunnerCapabilityRequirement::Shell,
         ),

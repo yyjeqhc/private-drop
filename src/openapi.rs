@@ -129,12 +129,10 @@ const GPT_ACTION_OPS: &[&str] = &[
     "getRuntimeStatus",
     "getRuntimeJobStatus",
     "getRuntimeJobLog",
-    "readProjectFile",
     "getProjectGitStatus",
     "getProjectGitDiff",
     "getProjectGitDiffSummary",
     "listProjectFiles",
-    "searchProjectText",
     "applyUnifiedDiff",
     "runProjectShellCommand",
     "gitRestorePaths",
@@ -670,38 +668,6 @@ fn schemas() -> Value {
                 }
             }
         },
-        "ReadProjectFileRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "path"],
-            "description": "Read a UTF-8 file from a Runner-registered Project.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Project-relative file path. Absolute paths and traversal (..) are rejected."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "Optional 1-based line offset for pagination."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional maximum line count (bounded server-side)."
-                },
-                "with_line_numbers": {
-                    "type": "boolean",
-                    "description": "Optional. When true, the single text field uses numbered format with 1-based line numbers; plain and numbered content are never duplicated."
-                }
-            }
-        },
         "ProjectIdRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -863,71 +829,6 @@ fn schemas() -> Value {
                     "minimum": 0,
                     "default": 0,
                     "description": "Zero-based entry offset; use next_offset from the previous page."
-                }
-            }
-        },
-        "SearchProjectTextRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "pattern"],
-            "description": "Search text inside a Runner-registered Project. Read-only bounded matches.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Runner-registered runtime Project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "pattern": {
-                    "type": "string",
-                    "description": "Search pattern. Interpreted as a regular expression by default. For identifiers, source snippets, paths, and other exact text, prefer pattern_mode=literal; use regex when regex syntax is intentional."
-                },
-                "pattern_mode": {
-                    "type": "string",
-                    "enum": ["regex", "literal"],
-                    "default": "regex",
-                    "description": "Pattern interpretation: regex (default, backward compatible) or literal. Prefer literal unless regex syntax is intentional."
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": SESSION_ID_FIELD_DESCRIPTION
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Optional project-relative directory to scope the search (default: project root)."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Optional maximum number of matches to return."
-                },
-                "context_before": {
-                    "type": "integer",
-                    "description": "Optional context lines before each match; clamped server-side to 20."
-                },
-                "context_after": {
-                    "type": "integer",
-                    "description": "Optional context lines after each match; clamped server-side to 20."
-                },
-                "include_globs": {
-                    "type": "array",
-                    "maxItems": 32,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 256},
-                    "description": "Optional ripgrep include globs. Negated and protected-path globs are rejected."
-                },
-                "exclude_globs": {
-                    "type": "array",
-                    "maxItems": 32,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 256},
-                    "description": "Optional additive ripgrep exclude globs; built-in secret/build exclusions remain active."
-                },
-                "result_mode": {
-                    "type": "string",
-                    "enum": ["matches", "files_with_matches", "count"],
-                    "default": "matches",
-                    "description": "Result shape. limit applies to matches in matches mode and files in other modes."
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "default": 30,
-                    "description": "Optional search timeout in seconds. Server clamps the value to 1..120; out-of-range integers are accepted and clamped rather than schema-rejected."
                 }
             }
         },

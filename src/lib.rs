@@ -427,10 +427,6 @@ only for local/trusted-network demos."
                 .post(runtime_http::projects_resolve_or_register),
         )
         .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsReadFile))
-                .post(runtime_http::projects_read_file),
-        )
-        .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsGitStatus))
                 .post(runtime_http::projects_git_status),
         )
@@ -445,10 +441,6 @@ only for local/trusted-network demos."
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsListFiles))
                 .post(runtime_http::projects_list_files),
-        )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ProjectsSearchText))
-                .post(runtime_http::projects_search_text),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsApplyUnifiedDiff))

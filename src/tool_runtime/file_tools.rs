@@ -1,6 +1,5 @@
 //! Runtime dispatch adapters for file, artifact, and text-edit tool calls.
 
-use super::files::SearchRequest;
 use super::project_resolution::{ProjectResolverError, ResolvedProject};
 use super::{sessions::SessionTransport, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
@@ -19,24 +18,6 @@ impl ToolRuntime {
                 paths,
                 session_id: _,
             } => self.delete_project_files(project, paths).await,
-            ToolCall::ReadFile {
-                project,
-                path,
-                session_id: _,
-                start_line,
-                limit,
-                with_line_numbers,
-            } => match project_resolution {
-                Some(Ok(resolved)) => {
-                    self.read_file_resolved(&resolved, path, start_line, limit, with_line_numbers)
-                        .await
-                }
-                Some(Err(error)) => error.into_tool_result(),
-                None => {
-                    self.read_file(project, path, start_line, limit, with_line_numbers)
-                        .await
-                }
-            },
             ToolCall::ReadFiles {
                 project,
                 items,
@@ -77,57 +58,6 @@ impl ToolRuntime {
                 max_depth,
                 limit,
             } => self.project_overview(project, path, max_depth, limit).await,
-            ToolCall::SearchProjectText {
-                project,
-                pattern,
-                pattern_mode,
-                session_id: _,
-                path,
-                limit,
-                context_before,
-                context_after,
-                include_globs,
-                exclude_globs,
-                result_mode,
-                timeout_secs,
-            } => match project_resolution {
-                Some(Ok(resolved)) => {
-                    self.search_project_text_resolved(
-                        &resolved,
-                        &project,
-                        SearchRequest {
-                            pattern,
-                            path,
-                            limit,
-                            context_before,
-                            context_after,
-                            include_globs,
-                            exclude_globs,
-                            result_mode,
-                            timeout_secs,
-                        },
-                        pattern_mode,
-                    )
-                    .await
-                }
-                Some(Err(error)) => error.into_tool_result(),
-                None => {
-                    self.search_project_text(
-                        project,
-                        pattern,
-                        pattern_mode,
-                        path,
-                        limit,
-                        context_before,
-                        context_after,
-                        include_globs,
-                        exclude_globs,
-                        result_mode,
-                        timeout_secs,
-                    )
-                    .await
-                }
-            },
             ToolCall::SearchProjectTexts {
                 project,
                 queries,
