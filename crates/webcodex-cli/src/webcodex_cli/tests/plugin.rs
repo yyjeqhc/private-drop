@@ -971,7 +971,7 @@ async fn plugin_human_rendering_is_bounded_and_ignores_unknown_raw_stderr_field(
 
 #[tokio::test]
 async fn plugin_check_renders_canonical_initialize_eof_guidance_without_a_second_error_model() {
-    let detail = "Plugin process exited before initialize completed; verify the configured command and arguments. For a generated TypeScript Plugin, run npm run build and ensure dist/plugin.js exists on the Runner host before retrying.";
+    let detail = "Plugin protocol output ended before initialize completed; the process may have exited or closed stdout. Verify the configured command and arguments. For a generated TypeScript Plugin, run npm run build and ensure dist/plugin.js exists on the Runner host before retrying.";
     let canonical = json!({
         "runner":"special",
         "plugin":"my-plugin",

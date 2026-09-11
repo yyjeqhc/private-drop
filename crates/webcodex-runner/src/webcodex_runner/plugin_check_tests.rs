@@ -273,7 +273,8 @@ fn check_observes_edited_v2_without_replacing_current_v1() {
 #[test]
 fn initialize_eof_detail_is_actionable_without_inventing_a_root_cause() {
     let detail = initialize_failure_detail("plugin_eof");
-    assert!(detail.contains("Plugin process exited before initialize completed"));
+    assert!(detail.contains("Plugin protocol output ended before initialize completed"));
+    assert!(detail.contains("process may have exited or closed stdout"));
     assert!(detail.contains("configured command and arguments"));
     assert!(detail.contains("For a generated TypeScript Plugin"));
     assert!(detail.contains("npm run build"));

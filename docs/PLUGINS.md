@@ -330,13 +330,14 @@ Plugin schema. Human output renders only bounded canonical fields. A completed
 its phase/code/detail/diagnostic. Reload exits 0 only when its canonical `failures`
 array is empty; known rejection is non-zero.
 
-If `check` returns `phase=initialize` with `code=plugin_eof`, the provider process
-exited before initialize completed. Verify the configured command and arguments. For
-a Plugin created by `webcodex plugin init`, ensure `npm run build` has produced
-`dist/plugin.js` on the Runner host before retrying. This is conditional author
-guidance, not a root-cause classification: any provider that exits during initialize
-can produce `plugin_eof`, and WebCodex does not infer the cause from raw stderr or
-opaque argv.
+If `check` returns `phase=initialize` with `code=plugin_eof`, the provider's protocol
+output ended before initialize completed; the process may have exited or closed
+stdout. Verify the configured command and arguments. For a Plugin created by
+`webcodex plugin init`, ensure `npm run build` has produced `dist/plugin.js` on the
+Runner host before retrying. This is conditional author guidance, not a root-cause
+classification: any provider whose protocol output ends during initialize can
+produce `plugin_eof`, and WebCodex does not infer the cause from raw stderr or opaque
+argv.
 
 The CLI never auto-retries `check` or `reload`. Once a request has begun, an HTTP
 timeout, connection reset, malformed post-send response, or lost response cannot
