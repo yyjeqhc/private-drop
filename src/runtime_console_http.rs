@@ -4579,8 +4579,30 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn window_activity_lookup_is_principal_and_current_project_authority_bounded() {
+    #[test]
+    fn window_activity_lookup_is_principal_and_current_project_authority_bounded() {
+        // This multi-principal integration fixture overflows the default libtest
+        // stack in workspace builds, even when selected alone with one test thread.
+        // Match the bounded stack isolation used by the large MCP fixtures without
+        // changing production runtime stacks or weakening any authority assertions.
+        std::thread::Builder::new()
+            .name("runtime-console-window-authority".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("build window authority test runtime")
+                    .block_on(
+                        window_activity_lookup_is_principal_and_current_project_authority_bounded_body(),
+                    );
+            })
+            .expect("spawn window authority test thread")
+            .join()
+            .expect("window authority test thread panicked");
+    }
+
+    async fn window_activity_lookup_is_principal_and_current_project_authority_bounded_body() {
         let (_tmp, db, runtime) = test_runtime_with_window_db();
         let auth_a = crate::auth::shared_key_context("window-group-a");
         let auth_b = crate::auth::shared_key_context("window-group-b");
