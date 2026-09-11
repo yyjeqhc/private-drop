@@ -209,6 +209,7 @@ def _classify_path(risk: Risk, path: str) -> None:
         path.startswith("npm/plugin-sdk/")
         or path.startswith("plugins/safe-delete/")
         or path.startswith("plugins/repo-info/")
+        or path.startswith("plugins/repo-context/")
     ):
         risk.needs_plugin_sdk = True
         risk.categories.add(
