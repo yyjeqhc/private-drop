@@ -178,7 +178,19 @@ fn parse_git_log_refs(decorations: &str) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn parse_git_log_commits(stdout: &str, limit: usize) -> (Vec<Value>, bool) {
+pub(crate) fn parse_git_log_commits(
+    stdout: &str,
+    limit: usize,
+) -> Result<(Vec<Value>, bool), &'static str> {
+    // Offset continuation counts source records, so silently skipping a partial
+    // record (including a retained-tail prefix) would invent a page boundary.
+    if !stdout.trim_end_matches(['\n', '\r']).is_empty()
+        && !stdout
+            .trim_end_matches(['\n', '\r'])
+            .ends_with(GIT_LOG_RECORD_SEP)
+    {
+        return Err("git log source ended inside a record; retry with a smaller limit");
+    }
     let mut commits = Vec::new();
     let mut truncated = false;
     for record in stdout.split(GIT_LOG_RECORD_SEP) {
@@ -187,8 +199,8 @@ pub(crate) fn parse_git_log_commits(stdout: &str, limit: usize) -> (Vec<Value>, 
             continue;
         }
         let fields: Vec<&str> = record.splitn(7, GIT_LOG_UNIT_SEP).collect();
-        if fields.len() != 7 {
-            continue;
+        if fields.len() != 7 || !is_git_object_hex(fields[0]) {
+            return Err("git log source is incomplete or malformed; retry with a smaller limit");
         }
         if commits.len() >= limit {
             truncated = true;
@@ -204,7 +216,7 @@ pub(crate) fn parse_git_log_commits(stdout: &str, limit: usize) -> (Vec<Value>, 
             "refs": parse_git_log_refs(fields[2]),
         }));
     }
-    (commits, truncated)
+    Ok((commits, truncated))
 }
 
 fn git_log_empty_repo(stderr: &str) -> bool {
@@ -4581,7 +4593,19 @@ impl ToolRuntime {
             Ok(output) => output,
             Err(e) => return ToolResult::err(e),
         };
-        let (commits, truncated) = parse_git_log_commits(&output.stdout, limit);
+        let (commits, truncated) = match parse_git_log_commits(&output.stdout, limit) {
+            Ok(page) => page,
+            Err(error) => {
+                return ToolResult::err_with_output(
+                    error,
+                    json!({
+                        "project": project,
+                        "error_kind": "source_incomplete",
+                        "state_changed": false,
+                    }),
+                );
+            }
+        };
         let next_skip = git_log_next_skip(skip, commits.len(), truncated);
         let payload = json!({
             "project": project,

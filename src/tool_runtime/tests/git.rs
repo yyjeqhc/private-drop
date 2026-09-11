@@ -5081,12 +5081,22 @@ fn git_read_commands_are_non_mutating_and_log_is_bounded() {
 #[test]
 fn git_log_parser_splits_commits_refs_and_truncation() {
     let stdout = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{1f}aaaaaaa\u{1f}HEAD -> main, tag: v1\u{1f}Ada\u{1f}ada@example.com\u{1f}2026-06-30T00:00:00+00:00\u{1f}newest\u{1e}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\u{1f}bbbbbbb\u{1f}\u{1f}Ben\u{1f}ben@example.com\u{1f}2026-06-29T00:00:00+00:00\u{1f}older\u{1e}";
-    let (commits, truncated) = parse_git_log_commits(stdout, 1);
+    let (commits, truncated) = parse_git_log_commits(stdout, 1).unwrap();
     assert!(truncated);
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0]["short_hash"], "aaaaaaa");
     assert_eq!(commits[0]["subject"], "newest");
     assert_eq!(commits[0]["refs"], json!(["HEAD", "main", "v1"]));
+
+    for marker in [
+        "[output truncated]\n",
+        "[...]\n",
+        "[output truncated to last 262144 bytes]\n",
+    ] {
+        assert!(parse_git_log_commits(&format!("{marker}{stdout}"), 1).is_err());
+    }
+    assert!(parse_git_log_commits(stdout.trim_end_matches('\u{1e}'), 1).is_err());
+    assert!(parse_git_log_commits("partial record\u{1e}", 1).is_err());
 }
 
 #[tokio::test]

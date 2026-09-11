@@ -839,7 +839,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project"],
-            "description": "List files in a Runner-registered Project directory. Read-only bounded listing.",
+            "description": "List a deterministic page of files in a Runner-registered Project directory. Read-only; use next_offset to continue while the directory is unchanged.",
             "properties": {
                 "project": {
                     "type": "string",
@@ -855,7 +855,14 @@ fn schemas() -> Value {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Optional maximum number of entries to return."
+                    "description": "Maximum number of entries to return; runtime clamps to 1..500 (default 200).",
+                    "default": 200
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Zero-based entry offset; use next_offset from the previous page."
                 }
             }
         },

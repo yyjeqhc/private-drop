@@ -1043,6 +1043,16 @@ fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
         .unwrap();
     assert!(read_props.contains_key("with_line_numbers"));
 
+    let list_props = &schemas["ListProjectFilesRequest"]["properties"];
+    assert_eq!(list_props["offset"]["type"], "integer");
+    assert_eq!(list_props["offset"]["minimum"], 0);
+    assert_eq!(list_props["offset"]["default"], 0);
+    assert_eq!(list_props["limit"]["default"], 200);
+    assert!(list_props["offset"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("next_offset"));
+
     let search_props = schemas["SearchProjectTextRequest"]["properties"]
         .as_object()
         .unwrap();

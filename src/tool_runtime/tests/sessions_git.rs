@@ -174,6 +174,15 @@ async fn run_git_log_page(
     limit: usize,
     skip: usize,
 ) -> ToolResult {
+    run_git_log_page_with_stdout(client_id, git_log_stdout(root, limit, skip), limit, skip).await
+}
+
+async fn run_git_log_page_with_stdout(
+    client_id: &str,
+    stdout: String,
+    limit: usize,
+    skip: usize,
+) -> ToolResult {
     let runtime = runtime_with_agent_project(client_id);
     register_agent(
         &runtime,
@@ -186,7 +195,6 @@ async fn run_git_log_page(
     )
     .await;
     let project = agent_test_project_id(client_id);
-    let stdout = git_log_stdout(root, limit, skip);
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
@@ -209,6 +217,24 @@ async fn run_git_log_page(
     assert!(request.command.contains(&format!("--skip {skip}")));
     complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, &stdout, "").await;
     task.await.unwrap()
+}
+
+#[tokio::test]
+async fn git_log_retained_tail_never_advertises_a_complete_or_continuable_page() {
+    let record = |subject: &str| {
+        format!(
+            "{}\u{1f}aaaaaaa\u{1f}\u{1f}Ada\u{1f}ada@example.com\u{1f}2026-06-30T00:00:00+00:00\u{1f}{subject}\u{1e}",
+            "a".repeat(40)
+        )
+    };
+    // Exercise actual registry retention, which drops the oversized first
+    // record's prefix but leaves a perfectly parseable older commit behind.
+    let stdout = record(&"x".repeat(300 * 1024)) + &record("older");
+    let result = run_git_log_page_with_stdout("git-log-retained-tail", stdout, 2, 0).await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "source_incomplete");
+    assert!(result.output.get("next_skip").is_none());
+    assert!(result.output.get("commits").is_none());
 }
 
 #[tokio::test]
