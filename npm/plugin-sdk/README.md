@@ -12,6 +12,10 @@ The Rust Runner remains authoritative for Plugin admission, schema validation, a
 
 Using this SDK does not make a Plugin an MCP server, grant new WebCodex permissions, or sandbox the executable. Native Plugins are trusted local processes. WebCodex Server and Runner themselves do not require Node because of this SDK; only a Plugin that chooses this SDK needs a Node runtime on its Runner machine.
 
+## Stability
+
+The SDK is experimental while it is pre-1.0. Minor `0.x` releases may contain breaking authoring API changes; pin an exact version when a Plugin needs a stable build input. Native Plugin protocol versioning and SDK package versioning remain separate concerns.
+
 ## Example
 
 ```ts
@@ -81,4 +85,4 @@ The SDK does not truncate or rewrite results to fit Runner limits. When an `outp
 
 `definePlugin` rejects duplicate provider-local tool names before serving and freezes the authoring catalog. `tools/list` exposes only protocol definitions; executable handlers and local closures never enter the wire representation. Declaration order is preserved by the SDK; the WebCodex Runner independently admits and freezes its authoritative catalog.
 
-For the minimal protocol without any SDK dependency, see [`../../examples/native-tool-plugin.mjs`](../../examples/native-tool-plugin.mjs). The repository example [`examples/echo-plugin.ts`](examples/echo-plugin.ts) demonstrates SDK authoring.
+The published package includes [`examples/echo-plugin.ts`](examples/echo-plugin.ts) as a minimal SDK authoring example. For the raw protocol without any SDK dependency, see [`examples/native-tool-plugin.mjs`](https://github.com/yyjeqhc/webcodex/blob/main/examples/native-tool-plugin.mjs) in the WebCodex repository.

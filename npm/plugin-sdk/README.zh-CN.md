@@ -12,6 +12,10 @@ Rust Runner 继续权威拥有 Plugin admission、schema validation、authority�
 
 使用这个 SDK 不会把 Plugin 变成 MCP Server，不会增加 WebCodex 权限，也不会 sandbox executable。Native Plugin 仍然是受信任的本地进程。WebCodex Server / Runner 不会因为 SDK 而要求 Node；只有选择这个 SDK 的 Plugin 自己需要 Runner 机器提供 Node runtime。
 
+## 稳定性
+
+SDK 在 1.0 之前仍属于实验阶段。`0.x` 的 minor release 可能包含破坏性的 authoring API 调整；如果 Plugin 需要稳定的构建输入，应固定到精确版本。Native Plugin protocol version 与 SDK package version 仍然是两个独立概念。
+
 ## 示例
 
 ```ts
@@ -81,4 +85,4 @@ SDK 不会为了通过 Runner bounds 而截断或改写结果。声明 `outputSc
 
 `definePlugin` 会在 serve 前拒绝 provider-local duplicate tool name，并冻结 authoring catalog。`tools/list` 只暴露 protocol definition；execute handler、function source、closure/local state 不会进入 wire。SDK 保留声明顺序，WebCodex Runner 会独立 admission 并冻结自己的 authoritative catalog。
 
-完全不依赖 SDK 的最小 raw protocol reference 仍然是 [`../../examples/native-tool-plugin.mjs`](../../examples/native-tool-plugin.mjs)。仓库中的 [`examples/echo-plugin.ts`](examples/echo-plugin.ts) 展示 TypeScript SDK authoring。
+发布后的 package 会包含 [`examples/echo-plugin.ts`](examples/echo-plugin.ts) 作为最小 TypeScript SDK authoring 示例。完全不依赖 SDK 的 raw protocol reference 仍然位于 WebCodex 仓库的 [`examples/native-tool-plugin.mjs`](https://github.com/yyjeqhc/webcodex/blob/main/examples/native-tool-plugin.mjs)。
