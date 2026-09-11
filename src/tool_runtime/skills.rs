@@ -1,4 +1,7 @@
 use super::project_resolution::ResolvedProject;
+use super::startup_brief::{
+    bounded_extension_description, StartupSkillEntry, StartupSkillsCatalog,
+};
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::runner_http::RunnerFeature;
@@ -633,6 +636,34 @@ impl ToolRuntime {
             catalog.discovery_truncated,
         );
         Ok(catalog)
+    }
+
+    pub(crate) async fn startup_skills_catalog(
+        &self,
+        project: &ResolvedProject,
+        auth: Option<&AuthContext>,
+    ) -> StartupSkillsCatalog {
+        let catalog = match self.discover_skills(project, auth).await {
+            Ok(catalog) => catalog,
+            Err(_) => return StartupSkillsCatalog::unavailable("skills_catalog_unavailable"),
+        };
+        let entries = catalog
+            .skills
+            .iter()
+            .map(|skill| StartupSkillEntry {
+                skill_id: skill.descriptor.skill_id.clone(),
+                name: skill.descriptor.name.clone(),
+                description: bounded_extension_description(&skill.descriptor.description),
+                source_scope: skill.descriptor.source_scope.to_string(),
+                trust: skill.descriptor.trust.to_string(),
+                name_conflict: skill.descriptor.name_conflict,
+            })
+            .collect();
+        StartupSkillsCatalog::available(
+            catalog.catalog_revision,
+            catalog.discovery_truncated,
+            entries,
+        )
     }
 
     pub(crate) async fn skills_catalog_context_projection(

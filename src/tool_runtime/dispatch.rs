@@ -1553,14 +1553,17 @@ impl ToolRuntime {
             }
 
             call @ (ToolCall::WorkOnProject { .. } | ToolCall::FinishCodingTask { .. }) => {
-                self.dispatch_coding_task_tool(
+                // Startup/closeout aggregation retains relatively large typed workflow state.
+                // Keep that future off the shared dispatch future so unrelated tool calls do
+                // not inherit its stack cost as the coding startup contract evolves.
+                Box::pin(self.dispatch_coding_task_tool(
                     call,
                     auth,
                     transport,
                     trusted_recording_session_id,
                     trusted_recording_session_project,
                     correlation,
-                )
+                ))
                 .await
             }
 

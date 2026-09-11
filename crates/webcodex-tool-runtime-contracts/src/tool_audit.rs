@@ -4364,6 +4364,7 @@ impl ToolCall {
                 include_project_instructions,
                 include_workflow_guidance,
                 session_id,
+                include_extension_catalog,
             } => serde_json::json!({
                 "project": project,
                 "client_id": client_id,
@@ -4374,6 +4375,7 @@ impl ToolCall {
                 "instruction_summary": command_preview(instruction),
                 "include_project_instructions": include_project_instructions,
                 "include_workflow_guidance": include_workflow_guidance,
+                "include_extension_catalog": include_extension_catalog,
                 "session_id": session_id,
             }),
             Self::UpdateSessionContext {

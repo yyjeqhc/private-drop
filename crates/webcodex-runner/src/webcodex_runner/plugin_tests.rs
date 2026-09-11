@@ -213,6 +213,181 @@ fn runner_config(
 }
 
 #[test]
+fn project_affine_catalog_uses_exact_committed_cwd_without_process_side_effects() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_root = temp.path().join("repo");
+    let other_root = temp.path().join("tmp");
+    let project_registry_dir = temp.path().join("project-registry");
+    fs::create_dir_all(&project_root).unwrap();
+    fs::create_dir_all(&other_root).unwrap();
+    fs::create_dir_all(&project_registry_dir).unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let providers = vec![
+        PluginProviderConfig {
+            id: "repo-context".to_string(),
+            name: "Repo Context".to_string(),
+            command: fake.path.to_string_lossy().into_owned(),
+            args: vec![
+                "project_repo_context".to_string(),
+                marker.to_string_lossy().into_owned(),
+            ],
+            cwd: Some(project_root.to_string_lossy().into_owned()),
+            profile: None,
+            timeout_secs: Some(2),
+        },
+        PluginProviderConfig {
+            id: "safe-delete".to_string(),
+            name: "Safe Delete".to_string(),
+            command: fake.path.to_string_lossy().into_owned(),
+            args: vec![
+                "project_safe_delete".to_string(),
+                marker.to_string_lossy().into_owned(),
+            ],
+            cwd: Some(other_root.to_string_lossy().into_owned()),
+            profile: None,
+            timeout_secs: Some(2),
+        },
+    ];
+    let config = runner_config(
+        PluginConfig {
+            request_timeout_secs: 2,
+            providers,
+        },
+        ShellConfig::default(),
+        &project_registry_dir,
+    );
+    let manager = PluginManager::new(&config, temp.path().join("runner.toml"));
+    let project_toml = format!(
+        "id = \"repo\"\nname = \"Repo\"\npath = {:?}\nallow_patch = true\n",
+        project_root.to_string_lossy().as_ref()
+    );
+    fs::write(project_registry_dir.join("repo.toml"), project_toml).unwrap();
+
+    let before = fs::read_to_string(&marker).unwrap_or_default();
+    let response = manager.handle_project_catalog("repo", &project_registry_dir);
+    let after = fs::read_to_string(&marker).unwrap_or_default();
+    assert_eq!(
+        after, before,
+        "catalog reads must not interact with provider processes"
+    );
+    let Some(PluginGatewayResponsePayload::ProjectCatalog { catalog }) = response.payload else {
+        panic!("missing project catalog: {:?}", response.error);
+    };
+    assert_eq!(catalog.total_count, 1);
+    assert_eq!(catalog.entries.len(), 1);
+    let entry = &catalog.entries[0];
+    assert_eq!(entry.plugin, "repo-context");
+    assert_eq!(entry.name, "Repo Context");
+    assert_eq!(entry.tool, "repo_context");
+    assert_eq!(entry.title.as_deref(), Some("Repository context"));
+    assert_eq!(entry.annotations.read_only_hint, Some(true));
+    assert_eq!(entry.annotations.destructive_hint, Some(false));
+    assert_eq!(entry.annotations.idempotent_hint, Some(true));
+    assert_eq!(entry.annotations.open_world_hint, Some(false));
+    assert!(catalog.catalog_revision.starts_with("wc_plugcat_"));
+
+    let serialized = serde_json::to_string(&catalog).unwrap();
+    for forbidden in [
+        project_root.to_string_lossy().as_ref(),
+        other_root.to_string_lossy().as_ref(),
+        fake.path.to_string_lossy().as_ref(),
+        "provider_instance_id",
+        "inputSchema",
+        "outputSchema",
+        "command",
+        "argv",
+        "cwd",
+        "env",
+        "stderr",
+        "pid",
+        "binding",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "leaked {forbidden}: {serialized}"
+        );
+    }
+}
+
+#[test]
+fn project_affine_catalog_excludes_absent_cwd_and_retired_provider() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_root = temp.path().join("repo");
+    fs::create_dir_all(&project_root).unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let providers = vec![
+        PluginProviderConfig {
+            id: "no-cwd".to_string(),
+            name: "No Cwd".to_string(),
+            command: fake.path.to_string_lossy().into_owned(),
+            args: vec!["normal".to_string(), marker.to_string_lossy().into_owned()],
+            cwd: None,
+            profile: None,
+            timeout_secs: Some(2),
+        },
+        PluginProviderConfig {
+            id: "repo-context".to_string(),
+            name: "Repo Context".to_string(),
+            command: fake.path.to_string_lossy().into_owned(),
+            args: vec![
+                "project_repo_context".to_string(),
+                marker.to_string_lossy().into_owned(),
+            ],
+            cwd: Some(project_root.to_string_lossy().into_owned()),
+            profile: None,
+            timeout_secs: Some(2),
+        },
+    ];
+    let config = runner_config(
+        PluginConfig {
+            request_timeout_secs: 2,
+            providers,
+        },
+        ShellConfig::default(),
+        temp.path(),
+    );
+    let manager = PluginManager::new(&config, temp.path().join("runner.toml"));
+    let root = project_root.canonicalize().unwrap();
+    let before = manager.project_catalog_for_root(&root);
+    assert_eq!(before.entries.len(), 1);
+    assert_eq!(before.entries[0].plugin, "repo-context");
+
+    let provider = manager
+        .committed
+        .lock()
+        .unwrap()
+        .providers
+        .get("repo-context")
+        .unwrap()
+        .clone();
+    provider.retire("test_retired");
+    let after = manager.project_catalog_for_root(&root);
+    assert!(after.entries.is_empty());
+    assert_ne!(after.catalog_revision, before.catalog_revision);
+}
+
+#[test]
+fn project_affine_catalog_revision_changes_when_provider_is_replaced() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("marker.log");
+    let fake = fake_binary();
+    let config_path = temp.path().join("runner.toml");
+    write_runner_toml(&config_path, temp.path(), &fake.path, &marker, "normal");
+    let config = super::super::config::load_config(&config_path).unwrap();
+    let manager = PluginManager::new(&config, config_path);
+    let root = temp.path().canonicalize().unwrap();
+    let before = manager.project_catalog_for_root(&root);
+    assert_eq!(before.entries.len(), 1);
+    let reloaded = manager.handle(PluginGatewayRequest::Reload);
+    assert!(reloaded.error.is_none(), "{:?}", reloaded.error);
+    let after = manager.project_catalog_for_root(&root);
+    assert_eq!(after.entries.len(), 1);
+    assert_ne!(after.catalog_revision, before.catalog_revision);
+}
+
+#[test]
 fn initial_committed_provider_is_eager_persistent_and_reused() {
     let fixture = Fixture::new("normal", 2);
     assert_eq!(fixture.marker_count("start"), 1);

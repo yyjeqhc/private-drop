@@ -314,6 +314,7 @@ fn memory_tools_are_stateless_full_operator_only_scope_filtered_and_schema_stati
         "project.instructions",
         "webcodex.workflow",
         "skills.catalog",
+        "plugins.catalog",
         "memory.bootstrap",
     ] {
         assert!(description.contains(key));

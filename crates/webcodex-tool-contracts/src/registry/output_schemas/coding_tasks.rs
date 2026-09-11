@@ -180,6 +180,72 @@ fn add_startup_model_metadata(schema: &mut Value) {
     properties.insert("permission".to_string(), permission_decision_schema());
 }
 
+fn startup_extensions_schema() -> Value {
+    let annotations = json!({
+        "type": "object",
+        "properties": {
+            "readOnlyHint": {"type": "boolean"},
+            "destructiveHint": {"type": "boolean"},
+            "idempotentHint": {"type": "boolean"},
+            "openWorldHint": {"type": "boolean"}
+        },
+        "additionalProperties": false
+    });
+    let skill_entry = json!({
+        "type": "object",
+        "properties": {
+            "skill_id": {"type": "string", "pattern": "^wc_skill_[0-9a-f]{32}$"},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "source_scope": {"type": "string"},
+            "trust": {"type": "string"},
+            "name_conflict": {"type": "boolean"}
+        },
+        "required": ["skill_id", "name", "description", "source_scope", "trust", "name_conflict"],
+        "additionalProperties": false
+    });
+    let plugin_entry = json!({
+        "type": "object",
+        "properties": {
+            "plugin": {"type": "string"},
+            "name": {"type": "string"},
+            "tool": {"type": "string"},
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "annotations": annotations
+        },
+        "required": ["plugin", "name", "tool"],
+        "additionalProperties": false
+    });
+    let family = |entry: Value, revision_pattern: &str| {
+        json!({
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["available", "unavailable"]},
+                "reason_code": {"type": "string"},
+                "catalog_revision": {"type": "string", "pattern": revision_pattern},
+                "total_count": {"type": "integer", "minimum": 0},
+                "returned_count": {"type": "integer", "minimum": 0},
+                "truncated": {"type": "boolean"},
+                "entries": {"type": "array", "items": entry},
+                "discovery_hint": {"type": "string"}
+            },
+            "required": ["status", "total_count", "returned_count", "truncated", "entries"],
+            "additionalProperties": false
+        })
+    };
+    json!({
+        "type": "object",
+        "description": "Bounded selection-only extension metadata. It grants zero additional authority and contains no Skill body, Plugin schema, binding, provider path, process, or execution data.",
+        "properties": {
+            "skills": family(skill_entry, "^wc_skillcat_[0-9a-f]{64}$"),
+            "plugins": family(plugin_entry, "^wc_plugcat_[0-9a-f]{64}$")
+        },
+        "required": ["skills", "plugins"],
+        "additionalProperties": false
+    })
+}
+
 #[cfg(any(test, feature = "root-test-support"))]
 fn startup_brief_schema(detail: &str) -> Value {
     json!({
@@ -195,6 +261,7 @@ fn startup_brief_schema(detail: &str) -> Value {
             "instructions": startup_instructions_schema(),
             "continuation": startup_continuation_schema(detail),
             "semantic_navigation": startup_semantic_navigation_schema(),
+            "extensions": startup_extensions_schema(),
             "repository": startup_repository_schema(),
             "blockers": startup_issue_list_schema(true),
             "warnings": startup_issue_list_schema(false),
@@ -1213,6 +1280,7 @@ fn work_on_project_output_schema() -> Value {
         ),
         ("instructions", compact_instructions),
         ("semantic_navigation", compact_semantic_navigation),
+        ("extensions", startup_extensions_schema()),
         ("jobs", compact_jobs),
         (
             "blockers",

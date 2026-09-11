@@ -90,7 +90,9 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "content" => json!("fn main() {}\n"),
         "instruction" => json!("implement the requested change"),
         "title" => json!("Durable agent work"),
-        "include_project_instructions" | "include_workflow_guidance" => json!(false),
+        "include_project_instructions"
+        | "include_workflow_guidance"
+        | "include_extension_catalog" => json!(false),
         "content_base64" => json!("AA=="),
         "openaiFileIdRefs" => json!([{
             "download_url": "https://files.oaiusercontent.com/test",

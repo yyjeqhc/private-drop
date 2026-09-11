@@ -28,6 +28,9 @@ pub const PLUGIN_MAX_JSON_DEPTH: usize = 16;
 pub const PLUGIN_MAX_JSON_NODES: usize = 4_096;
 pub const PLUGIN_MAX_JSON_STRING_BYTES: usize = 512 * 1024;
 pub const PLUGIN_MAX_CHECK_DETAIL_BYTES: usize = 512;
+pub const PLUGIN_PROJECT_CATALOG_REVISION_PREFIX: &str = "wc_plugcat_";
+pub const PLUGIN_MAX_PROJECT_CATALOG_DESCRIPTION_BYTES: usize = 512;
+pub const PLUGIN_MAX_PROJECT_CATALOG_ENTRIES: usize = PLUGIN_MAX_PROVIDERS * PLUGIN_MAX_TOOL_COUNT;
 pub const PLUGIN_SCHEMA_MAX_PROPERTIES: usize = 128;
 pub const PLUGIN_SCHEMA_MAX_REQUIRED: usize = 128;
 pub const PLUGIN_SCHEMA_MAX_ENUM_VALUES: usize = 128;
@@ -40,6 +43,9 @@ pub enum PluginGatewayRequest {
         provider_id: String,
     },
     Reload,
+    ProjectCatalog {
+        project_id: String,
+    },
     ProvidersList,
     ToolsList {
         provider_id: String,
@@ -66,7 +72,10 @@ impl PluginGatewayRequest {
                 provider_instance_id,
                 ..
             } => Some((provider_id, provider_instance_id)),
-            Self::Check { .. } | Self::Reload | Self::ProvidersList => None,
+            Self::Check { .. }
+            | Self::Reload
+            | Self::ProjectCatalog { .. }
+            | Self::ProvidersList => None,
         }
     }
 }
@@ -185,6 +194,81 @@ pub struct PluginProviderView {
     pub error_code: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSelectionAnnotations {
+    #[serde(
+        default,
+        rename = "readOnlyHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub read_only_hint: Option<bool>,
+    #[serde(
+        default,
+        rename = "destructiveHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub destructive_hint: Option<bool>,
+    #[serde(
+        default,
+        rename = "idempotentHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotent_hint: Option<bool>,
+    #[serde(
+        default,
+        rename = "openWorldHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub open_world_hint: Option<bool>,
+}
+
+impl PluginSelectionAnnotations {
+    pub fn from_value(value: Option<&Value>) -> Self {
+        let boolean = |key| {
+            value
+                .and_then(Value::as_object)
+                .and_then(|object| object.get(key))
+                .and_then(Value::as_bool)
+        };
+        Self {
+            read_only_hint: boolean("readOnlyHint"),
+            destructive_hint: boolean("destructiveHint"),
+            idempotent_hint: boolean("idempotentHint"),
+            open_world_hint: boolean("openWorldHint"),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.read_only_hint.is_none()
+            && self.destructive_hint.is_none()
+            && self.idempotent_hint.is_none()
+            && self.open_world_hint.is_none()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectPluginCatalogEntry {
+    pub plugin: String,
+    pub name: String,
+    pub tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "PluginSelectionAnnotations::is_empty")]
+    pub annotations: PluginSelectionAnnotations,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectPluginCatalog {
+    pub catalog_revision: String,
+    pub total_count: usize,
+    pub entries: Vec<ProjectPluginCatalogEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginReloadFailure {
@@ -249,6 +333,9 @@ pub enum PluginGatewayResponsePayload {
     },
     Providers {
         providers: Vec<PluginProviderView>,
+    },
+    ProjectCatalog {
+        catalog: ProjectPluginCatalog,
     },
     Reloaded {
         providers: Vec<PluginProviderView>,
@@ -358,6 +445,16 @@ pub fn validate_request(request: &PluginGatewayRequest) -> Result<(), String> {
     match request {
         PluginGatewayRequest::Check { provider_id } => validate_provider_id(provider_id),
         PluginGatewayRequest::Reload | PluginGatewayRequest::ProvidersList => Ok(()),
+        PluginGatewayRequest::ProjectCatalog { project_id } => {
+            if project_id.trim().is_empty()
+                || project_id.len() > 512
+                || project_id.chars().any(char::is_control)
+            {
+                Err("project_id is invalid for Plugin project catalog discovery".to_string())
+            } else {
+                Ok(())
+            }
+        }
         PluginGatewayRequest::ToolsList {
             provider_id,
             provider_instance_id,
@@ -447,6 +544,22 @@ pub fn validate_plugin_catalog_digest(value: &str) -> Result<(), String> {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         return Err("plugin catalog digest must contain 64 lowercase hex digits".to_string());
+    }
+    Ok(())
+}
+
+pub fn validate_project_plugin_catalog_revision(value: &str) -> Result<(), String> {
+    let Some(hex) = value.strip_prefix(PLUGIN_PROJECT_CATALOG_REVISION_PREFIX) else {
+        return Err("project Plugin catalog revision has invalid namespace".to_string());
+    };
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(
+            "project Plugin catalog revision must contain 64 lowercase hex digits".to_string(),
+        );
     }
     Ok(())
 }
@@ -1110,6 +1223,9 @@ pub fn validate_response(response: &PluginGatewayResponse) -> Result<(), String>
             PluginGatewayResponsePayload::Providers { providers } => {
                 validate_provider_views(providers)?
             }
+            PluginGatewayResponsePayload::ProjectCatalog { catalog } => {
+                validate_project_plugin_catalog(catalog)?
+            }
             PluginGatewayResponsePayload::Reloaded {
                 providers,
                 failures,
@@ -1150,6 +1266,10 @@ pub fn validate_response_for_request(
         }
         (PluginGatewayRequest::Reload, Some(PluginGatewayResponsePayload::Reloaded { .. }))
         | (
+            PluginGatewayRequest::ProjectCatalog { .. },
+            Some(PluginGatewayResponsePayload::ProjectCatalog { .. }),
+        )
+        | (
             PluginGatewayRequest::ProvidersList,
             Some(PluginGatewayResponsePayload::Providers { .. }),
         )
@@ -1164,6 +1284,39 @@ pub fn validate_response_for_request(
         _ => {
             return Err("Plugin gateway response kind does not match request operation".to_string())
         }
+    }
+    Ok(())
+}
+
+pub fn validate_project_plugin_catalog(catalog: &ProjectPluginCatalog) -> Result<(), String> {
+    validate_project_plugin_catalog_revision(&catalog.catalog_revision)?;
+    if catalog.total_count != catalog.entries.len()
+        || catalog.entries.len() > PLUGIN_MAX_PROJECT_CATALOG_ENTRIES
+    {
+        return Err("project Plugin catalog count is invalid".to_string());
+    }
+    let mut previous: Option<(&str, &str)> = None;
+    for entry in &catalog.entries {
+        validate_provider_id(&entry.plugin)?;
+        validate_provider_name(&entry.name)?;
+        validate_tool_name(&entry.tool)?;
+        if let Some(title) = entry.title.as_deref() {
+            if title.is_empty() || title.len() > PLUGIN_MAX_PROVIDER_NAME_BYTES {
+                return Err("project Plugin catalog tool title is invalid".to_string());
+            }
+            validate_text_controls(title, "project Plugin catalog tool title")?;
+        }
+        if let Some(description) = entry.description.as_deref() {
+            if description.len() > PLUGIN_MAX_PROJECT_CATALOG_DESCRIPTION_BYTES {
+                return Err("project Plugin catalog description exceeds bound".to_string());
+            }
+            validate_text_controls(description, "project Plugin catalog description")?;
+        }
+        let current = (entry.plugin.as_str(), entry.tool.as_str());
+        if previous.is_some_and(|previous| previous >= current) {
+            return Err("project Plugin catalog entries are not strictly ordered".to_string());
+        }
+        previous = Some(current);
     }
     Ok(())
 }

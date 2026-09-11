@@ -23,6 +23,7 @@ impl ToolRuntime {
                 instruction,
                 include_project_instructions,
                 include_workflow_guidance,
+                include_extension_catalog,
                 session_id,
             } => {
                 self.work_on_project(
@@ -35,6 +36,7 @@ impl ToolRuntime {
                     session_id,
                     include_project_instructions,
                     include_workflow_guidance,
+                    include_extension_catalog,
                     auth,
                     trusted_recording_session_id,
                     trusted_recording_session_project,

@@ -8,7 +8,7 @@
 use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
 use crate::lsp_bridge::{RunnerLspRequest, RunnerLspResultEnvelope, AGENT_LSP_REQUEST_KIND};
-use crate::runner_protocol::RunnerCapabilities;
+use crate::runner_protocol::{RunnerCapabilities, RunnerResultPayload, RunnerResultRequest};
 use crate::tool_runtime::kernel::{
     HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport,
 };
@@ -18,7 +18,16 @@ use crate::tool_runtime::{
     registered_tool_specs, SessionMode, StartupDetail, ToolCall, ToolResult, ToolRuntime,
 };
 use serde_json::{json, Value};
+use std::fs;
 use std::path::Path;
+use webcodex_core::configured_skills::{
+    ConfiguredSkillDescriptor, ConfiguredSkillRootsListResponse, ConfiguredSkillRootsRequest,
+    CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT,
+};
+use webcodex_core::plugin::{
+    PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
+    PluginSelectionAnnotations, ProjectPluginCatalog, ProjectPluginCatalogEntry,
+};
 
 fn record_window_activity_fixture(
     db: &std::sync::Arc<crate::Database>,
@@ -139,6 +148,85 @@ fn work_on_project_call(project: &str, instruction: &str, session_id: Option<&st
     work_on_project_call_with_projections(project, instruction, session_id, true, true)
 }
 
+fn work_on_project_call_with_extensions(
+    project: &str,
+    instruction: &str,
+    include_extension_catalog: bool,
+) -> ToolCall {
+    ToolCall::WorkOnProject {
+        project: project.to_string(),
+        client_id: None,
+        path: None,
+        mode: None,
+        base_ref: None,
+        instruction: instruction.to_string(),
+        include_project_instructions: true,
+        include_workflow_guidance: true,
+        include_extension_catalog,
+        session_id: None,
+    }
+}
+
+fn write_project_skill(root: &Path, package: &str, name: &str, description: &str, body: &str) {
+    let dir = root.join(".agents/skills").join(package);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {description}\n---\n{body}"),
+    )
+    .unwrap();
+}
+
+fn startup_plugin_catalog_fixture() -> ProjectPluginCatalog {
+    ProjectPluginCatalog {
+        catalog_revision: format!("wc_plugcat_{}", "a".repeat(64)),
+        total_count: 1,
+        entries: vec![ProjectPluginCatalogEntry {
+            plugin: "repo-context".to_string(),
+            name: "Repo Context".to_string(),
+            tool: "repo_context".to_string(),
+            title: Some("Repository context".to_string()),
+            description: Some("Compact Git and Cargo context".to_string()),
+            annotations: PluginSelectionAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+            },
+        }],
+    }
+}
+
+async fn complete_startup_plugin_catalog_request(
+    runtime: &ToolRuntime,
+    request: crate::runner_protocol::RunnerRequest,
+) {
+    runtime
+        .runner_registry
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
+                client_id: request.client_id,
+                runner_instance_id: "inst".to_string(),
+                request_id: request.request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: None,
+            },
+            command_execution_state: None,
+            mcp_gateway: None,
+            plugin_gateway: Some(PluginGatewayResponse::success(
+                PluginGatewayResponsePayload::ProjectCatalog {
+                    catalog: startup_plugin_catalog_fixture(),
+                },
+            )),
+            coding_agent: None,
+        })
+        .await
+        .unwrap();
+}
+
 fn work_on_project_call_with_instruction_projection(
     project: &str,
     instruction: &str,
@@ -170,6 +258,7 @@ fn work_on_project_call_with_projections(
         instruction: instruction.to_string(),
         include_project_instructions,
         include_workflow_guidance,
+        include_extension_catalog: false,
         session_id: session_id.map(str::to_string),
     }
 }
@@ -189,6 +278,7 @@ fn path_work_on_project_call(
         instruction: instruction.to_string(),
         include_project_instructions: true,
         include_workflow_guidance: true,
+        include_extension_catalog: false,
         session_id: session_id.map(str::to_string),
     }
 }
@@ -209,6 +299,7 @@ fn worktree_work_on_project_call(
         instruction: instruction.to_string(),
         include_project_instructions: true,
         include_workflow_guidance: true,
+        include_extension_catalog: false,
         session_id: session_id.map(str::to_string),
     }
 }
@@ -478,6 +569,135 @@ async fn record_startup_requests(
     (task.await.unwrap(), request_kinds)
 }
 
+async fn dispatch_startup_with_plugin_catalog(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    auth: &crate::auth::AuthContext,
+) -> (ToolResult, Vec<String>) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move { runtime.dispatch_with_auth(call, Some(&auth)).await }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut request_kinds = Vec::new();
+    while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Plugin-aware startup did not finish within 10 seconds: {request_kinds:?}"
+        );
+        let Some(request) = probe_agent_request_for_instance(runtime, client_id, "inst").await
+        else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            continue;
+        };
+        if let Some(PluginGatewayRequest::ProjectCatalog { ref project_id }) =
+            request.plugin_gateway
+        {
+            assert_eq!(project_id, "demo");
+            request_kinds.push("plugin_project_catalog".to_string());
+            complete_startup_plugin_catalog_request(runtime, request).await;
+        } else if request.kind == AGENT_LSP_REQUEST_KIND {
+            request_kinds.push(request.kind.clone());
+            complete_patch_agent_request(
+                runtime,
+                client_id,
+                &request.request_id,
+                0,
+                &RunnerLspResultEnvelope::err(
+                    "lsp_status_unavailable",
+                    "fixture intentionally has no language server",
+                )
+                .to_stdout_json(),
+                "",
+            )
+            .await;
+        } else {
+            request_kinds.push(request.kind.clone());
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        }
+    }
+    (task.await.unwrap(), request_kinds)
+}
+
+async fn dispatch_startup_with_configured_skill_catalog(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    auth: &crate::auth::AuthContext,
+    configured_skill: ConfiguredSkillDescriptor,
+) -> (ToolResult, Vec<String>) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move { runtime.dispatch_with_auth(call, Some(&auth)).await }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut request_kinds = Vec::new();
+    while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "configured-Skill startup did not finish within 10 seconds: {request_kinds:?}"
+        );
+        let Some(request) = probe_patch_agent_request(runtime, client_id).await else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            continue;
+        };
+        request_kinds.push(request.kind.clone());
+        if request.kind == "configured_skill_roots" {
+            let operation: ConfiguredSkillRootsRequest = serde_json::from_str(
+                request
+                    .content
+                    .as_deref()
+                    .expect("typed configured Skill roots request"),
+            )
+            .unwrap();
+            assert!(matches!(operation, ConfiguredSkillRootsRequest::List));
+            runtime
+                .runner_registry
+                .complete(RunnerResultRequest {
+                    client_id: client_id.to_string(),
+                    runner_instance_id: "inst".to_string(),
+                    request_id: request.request_id,
+                    exit_code: Some(0),
+                    stdout: Some(
+                        serde_json::to_string(&ConfiguredSkillRootsListResponse {
+                            format: CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT.to_string(),
+                            skills: vec![configured_skill.clone()],
+                            invalid_count: 0,
+                            diagnostics: Vec::new(),
+                            discovery_truncated: true,
+                        })
+                        .unwrap(),
+                    ),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(1),
+                    error: None,
+                })
+                .await
+                .unwrap();
+        } else if request.kind == AGENT_LSP_REQUEST_KIND {
+            complete_patch_agent_request(
+                runtime,
+                client_id,
+                &request.request_id,
+                0,
+                &RunnerLspResultEnvelope::err(
+                    "lsp_status_unavailable",
+                    "fixture intentionally has no language server",
+                )
+                .to_stdout_json(),
+                "",
+            )
+            .await;
+        } else {
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        }
+    }
+    (task.await.unwrap(), request_kinds)
+}
+
 async fn dispatch_startup_without_window(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -717,6 +937,7 @@ fn work_on_project_schema_and_registration() {
         "instruction",
         "include_project_instructions",
         "include_workflow_guidance",
+        "include_extension_catalog",
         "session_id",
     ] {
         assert!(
@@ -740,6 +961,8 @@ fn work_on_project_schema_and_registration() {
     assert_eq!(props["include_project_instructions"]["default"], true);
     assert_eq!(props["include_workflow_guidance"]["type"], "boolean");
     assert_eq!(props["include_workflow_guidance"]["default"], true);
+    assert_eq!(props["include_extension_catalog"]["type"], "boolean");
+    assert_eq!(props["include_extension_catalog"]["default"], true);
     for keyword in [
         "oneOf",
         "anyOf",
@@ -794,6 +1017,7 @@ fn work_on_project_schema_and_registration() {
         "instruction",
         "include_project_instructions",
         "include_workflow_guidance",
+        "include_extension_catalog",
         "session_id",
     ] {
         assert!(
@@ -836,6 +1060,7 @@ fn work_on_project_schema_and_registration() {
         "workflow",
         "instructions",
         "semantic_navigation",
+        "extensions",
         "jobs",
         "blockers",
         "warnings",
@@ -878,11 +1103,13 @@ fn work_on_project_schema_and_registration() {
         ToolCall::WorkOnProject {
             include_project_instructions,
             include_workflow_guidance,
+            include_extension_catalog,
             session_id,
             ..
         } => {
             assert!(*include_project_instructions);
             assert!(*include_workflow_guidance);
+            assert!(*include_extension_catalog);
             assert_eq!(session_id.as_deref(), Some("wc_sess_target"));
         }
         _ => panic!("expected WorkOnProject"),
@@ -896,7 +1123,8 @@ fn work_on_project_schema_and_registration() {
             "project": SAMPLE_PROJECT,
             "instruction": "do the thing without repeating static context",
             "include_project_instructions": false,
-            "include_workflow_guidance": false
+            "include_workflow_guidance": false,
+            "include_extension_catalog": false
         }),
     )
     .unwrap();
@@ -904,10 +1132,12 @@ fn work_on_project_schema_and_registration() {
         ToolCall::WorkOnProject {
             include_project_instructions,
             include_workflow_guidance,
+            include_extension_catalog,
             ..
         } => {
             assert!(!include_project_instructions);
             assert!(!include_workflow_guidance);
+            assert!(!include_extension_catalog);
         }
         _ => panic!("expected WorkOnProject"),
     }
@@ -918,14 +1148,301 @@ fn work_on_project_schema_and_registration() {
             "project": SAMPLE_PROJECT,
             "instruction": "do not persist this full instruction body",
             "include_project_instructions": false,
-            "include_workflow_guidance": false
+            "include_workflow_guidance": false,
+            "include_extension_catalog": false
         }),
     );
     assert_eq!(audit["include_project_instructions"], false);
     assert_eq!(audit["include_workflow_guidance"], false);
+    assert_eq!(audit["include_extension_catalog"], false);
     assert_eq!(audit["instruction_present"], true);
     assert!(audit["instruction_summary"].is_string());
     assert!(audit.get("instruction").is_none());
+}
+
+#[tokio::test]
+async fn work_on_project_extension_catalog_is_defaulted_bounded_and_skips_all_extension_discovery_when_disabled(
+) {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    write_project_skill(
+        root.path(),
+        "00-alpha",
+        "duplicate-skill",
+        "Alpha selection metadata",
+        "ALPHA_PRIVATE_BODY_MUST_NOT_LEAK",
+    );
+    write_project_skill(
+        root.path(),
+        "01-beta",
+        "duplicate-skill",
+        "Beta selection metadata",
+        "BETA_PRIVATE_BODY_MUST_NOT_LEAK",
+    );
+    for index in 2..26 {
+        write_project_skill(
+            root.path(),
+            &format!("{index:02}-bulk"),
+            &format!("bulk-{index:02}"),
+            &format!("Bulk selection metadata {index:02} {}", "d".repeat(380)),
+            "BULK_PRIVATE_BODY_MUST_NOT_LEAK",
+        );
+    }
+
+    let runtime = ToolRuntime::new_for_tests();
+    let project =
+        register_runner_project_at_path(&runtime, "wop-ext-skills", "demo", root.path()).await;
+    let auth = bootstrap_auth_context();
+
+    let (without_extensions, without_requests) = dispatch_recording_startup_requests(
+        &runtime,
+        "wop-ext-skills",
+        work_on_project_call_with_extensions(&project, "without extensions", false),
+        Some(&auth),
+        "wop-ext-skills-off",
+    )
+    .await;
+    assert!(without_extensions.success, "{:?}", without_extensions.error);
+    assert!(without_extensions.output.get("extensions").is_none());
+    assert!(!without_requests.iter().any(|kind| matches!(
+        kind.as_str(),
+        "file_skill_list_packages" | "file_skill_read_file"
+    )));
+
+    let (with_extensions, with_requests) = dispatch_recording_startup_requests(
+        &runtime,
+        "wop-ext-skills",
+        work_on_project_call_with_extensions(&project, "with extensions", true),
+        Some(&auth),
+        "wop-ext-skills-on",
+    )
+    .await;
+    assert!(with_extensions.success, "{:?}", with_extensions.error);
+    assert!(with_requests
+        .iter()
+        .any(|kind| kind == "file_skill_list_packages"));
+    assert!(with_requests
+        .iter()
+        .any(|kind| kind == "file_skill_read_file"));
+
+    let skills = &with_extensions.output["extensions"]["skills"];
+    assert_eq!(skills["status"], "available");
+    assert_eq!(skills["total_count"], 26);
+    assert_eq!(skills["truncated"], true);
+    assert!(skills["returned_count"].as_u64().unwrap() < 26);
+    let entries = skills["entries"].as_array().unwrap();
+    assert!(
+        entries.len() >= 2,
+        "duplicate fixtures must fit the bounded prefix"
+    );
+    assert_eq!(entries[0]["name"], "duplicate-skill");
+    assert_eq!(entries[0]["name_conflict"], true);
+    assert_eq!(entries[0]["source_scope"], "project");
+    assert_eq!(entries[0]["trust"], "project_content");
+    assert_eq!(entries[1]["name"], "duplicate-skill");
+    assert_eq!(entries[1]["name_conflict"], true);
+
+    let plugins = &with_extensions.output["extensions"]["plugins"];
+    assert_eq!(plugins["status"], "unavailable");
+    assert_eq!(plugins["reason_code"], "plugin_runtime_unavailable");
+    let serialized = with_extensions.output.to_string();
+    for secret in [
+        "ALPHA_PRIVATE_BODY_MUST_NOT_LEAK",
+        "BETA_PRIVATE_BODY_MUST_NOT_LEAK",
+        "BULK_PRIVATE_BODY_MUST_NOT_LEAK",
+        "SKILL.md",
+    ] {
+        assert!(
+            !serialized.contains(secret),
+            "startup leaked Skill body/path marker: {secret}"
+        );
+    }
+    let extension_bytes = serde_json::to_vec(&with_extensions.output["extensions"])
+        .unwrap()
+        .len();
+    assert!(
+        extension_bytes
+            <= crate::tool_runtime::startup_brief::STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES,
+        "extension payload exceeded hard bound: {extension_bytes}"
+    );
+    let without_bytes = serde_json::to_vec(&without_extensions.output)
+        .unwrap()
+        .len();
+    let with_bytes = serde_json::to_vec(&with_extensions.output).unwrap().len();
+    assert!(with_bytes <= crate::tool_runtime::startup_brief::STANDARD_STARTUP_HARD_MAX_BYTES);
+    println!(
+        "work_on_project_extension_catalog_bytes without={without_bytes} with={with_bytes} increase={}",
+        with_bytes.saturating_sub(without_bytes)
+    );
+}
+
+#[tokio::test]
+async fn work_on_project_extension_catalog_includes_runner_configured_skill_roots() {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let runtime = ToolRuntime::new_for_tests();
+    let project = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "wop-ext-configured-skill",
+        "demo",
+        root.path(),
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            file_read: true,
+            configured_skill_roots_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let auth = bootstrap_auth_context();
+    let configured_id = format!("wc_skill_{}", "2".repeat(32));
+    let configured_revision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let (result, requests) = dispatch_startup_with_configured_skill_catalog(
+        &runtime,
+        "wop-ext-configured-skill",
+        work_on_project_call_with_extensions(&project, "discover configured Skill", true),
+        &auth,
+        ConfiguredSkillDescriptor {
+            skill_id: configured_id.clone(),
+            name: "operator-live-guidance".to_string(),
+            description: "Configured live Skill metadata".to_string(),
+            definition_revision: configured_revision.to_string(),
+        },
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert!(requests.iter().any(|kind| kind == "configured_skill_roots"));
+    let skills = &result.output["extensions"]["skills"];
+    assert_eq!(skills["status"], "available");
+    assert_eq!(skills["total_count"], 1);
+    assert_eq!(skills["returned_count"], 1);
+    assert_eq!(skills["truncated"], true);
+    assert!(skills["discovery_hint"].is_string());
+    let entry = &skills["entries"][0];
+    assert_eq!(entry["skill_id"], configured_id);
+    assert_eq!(entry["name"], "operator-live-guidance");
+    assert_eq!(entry["description"], "Configured live Skill metadata");
+    assert_eq!(entry["source_scope"], "runner");
+    assert_eq!(entry["trust"], "operator_configured_guidance");
+    assert_eq!(entry["name_conflict"], false);
+    assert!(!result.output.to_string().contains(configured_revision));
+}
+
+#[tokio::test]
+async fn work_on_project_plugin_extension_uses_project_catalog_without_binding_or_schema_leakage() {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let runtime = ToolRuntime::new_for_tests();
+    let project = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "wop-ext-plugin",
+        "demo",
+        root.path(),
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            file_read: true,
+            file_write: true,
+            internal_posix_script: true,
+            native_tool_plugins: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let auth = bootstrap_auth_context();
+    let bindings_before = runtime.plugin_gateway.binding_count();
+    let (result, requests) = dispatch_startup_with_plugin_catalog(
+        &runtime,
+        "wop-ext-plugin",
+        work_on_project_call_with_extensions(&project, "discover plugin", true),
+        &auth,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert!(requests.iter().any(|kind| kind == "plugin_project_catalog"));
+    assert_eq!(runtime.plugin_gateway.binding_count(), bindings_before);
+
+    let plugins = &result.output["extensions"]["plugins"];
+    assert_eq!(plugins["status"], "available");
+    assert_eq!(
+        plugins["catalog_revision"],
+        format!("wc_plugcat_{}", "a".repeat(64))
+    );
+    assert_eq!(plugins["total_count"], 1);
+    assert_eq!(plugins["returned_count"], 1);
+    assert_eq!(plugins["truncated"], false);
+    let entry = &plugins["entries"][0];
+    assert_eq!(entry["plugin"], "repo-context");
+    assert_eq!(entry["tool"], "repo_context");
+    assert_eq!(entry["annotations"]["readOnlyHint"], true);
+    assert_eq!(entry["annotations"]["destructiveHint"], false);
+    let serialized = result.output["extensions"].to_string();
+    for forbidden in [
+        root.path().to_string_lossy().as_ref(),
+        "inputSchema",
+        "outputSchema",
+        "provider_instance_id",
+        "binding",
+        "command",
+        "argv",
+        "cwd",
+        "env",
+        "stderr",
+        "pid",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "startup leaked {forbidden}: {serialized}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn work_on_project_plugin_extension_fails_closed_without_plugin_inspect_scope() {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    write_project_skill(
+        root.path(),
+        "alpha",
+        "alpha",
+        "Visible Skill metadata",
+        "PRIVATE_SCOPE_TEST_BODY",
+    );
+    let runtime = ToolRuntime::new_for_tests();
+    let auth = open_auth_context();
+    let project = register_runner_project_at_path_with_auth(
+        &runtime,
+        "wop-ext-scope",
+        "demo",
+        root.path(),
+        &auth,
+    )
+    .await;
+    assert!(!auth.has_scope(crate::auth::SCOPE_PLUGIN_INSPECT));
+    let (result, requests) = dispatch_recording_startup_requests(
+        &runtime,
+        "wop-ext-scope",
+        work_on_project_call_with_extensions(&project, "scope bounded startup", true),
+        Some(&auth),
+        "wop-ext-scope-window",
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["extensions"]["skills"]["status"], "available");
+    assert_eq!(
+        result.output["extensions"]["plugins"]["status"],
+        "unavailable"
+    );
+    assert_eq!(
+        result.output["extensions"]["plugins"]["reason_code"],
+        "plugin_inspect_scope_unavailable"
+    );
+    assert!(!requests.iter().any(|kind| kind == "plugin_gateway"));
+    assert!(!result
+        .output
+        .to_string()
+        .contains("PRIVATE_SCOPE_TEST_BODY"));
 }
 
 #[test]
@@ -1775,6 +2292,7 @@ async fn managed_worktree_invalid_arguments_and_authority_fail_before_runner_mut
             instruction: "must fail before resolution".to_string(),
             include_project_instructions: true,
             include_workflow_guidance: true,
+            include_extension_catalog: false,
             session_id: None,
         })
         .await;

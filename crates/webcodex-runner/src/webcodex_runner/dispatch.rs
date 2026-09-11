@@ -394,9 +394,18 @@ pub(crate) fn dispatch_request_with_outcome(
         RunnerOperation::McpGateway(operation) => sink
             .submit_mcp_gateway_result(request_id, runtime.mcp_gateway().handle(operation))
             .map(|_| true),
-        RunnerOperation::PluginGateway(operation) => sink
-            .submit_plugin_gateway_result(request_id, runtime.plugins().handle(operation))
-            .map(|_| true),
+        RunnerOperation::PluginGateway(operation) => {
+            let response = match operation {
+                webcodex_core::plugin::PluginGatewayRequest::ProjectCatalog { project_id } => {
+                    runtime
+                        .plugins()
+                        .handle_project_catalog(&project_id, project_registry_dir)
+                }
+                operation => runtime.plugins().handle(operation),
+            };
+            sink.submit_plugin_gateway_result(request_id, response)
+                .map(|_| true)
+        }
         RunnerOperation::RunnerConfig(operation) => {
             let result = handle_runner_config_operation(runtime, &operation);
             // A reload may have replaced the snapshot passed into dispatch_request.

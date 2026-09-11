@@ -743,6 +743,7 @@ async fn work_on_project_serviced(
                         session_id: None,
                         include_project_instructions: true,
                         include_workflow_guidance: true,
+                        include_extension_catalog: false,
                     },
                     Some(&auth),
                 )

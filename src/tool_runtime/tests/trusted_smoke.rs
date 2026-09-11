@@ -160,6 +160,7 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
             session_id: None,
             include_project_instructions: true,
             include_workflow_guidance: true,
+            include_extension_catalog: false,
         },
         &poll_calls,
     )

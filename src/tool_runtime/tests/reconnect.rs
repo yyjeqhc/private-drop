@@ -883,6 +883,7 @@ fn coding_start_call(project: &str, instruction: &str) -> ToolCall {
         session_id: None,
         include_project_instructions: true,
         include_workflow_guidance: true,
+        include_extension_catalog: false,
     }
 }
 
@@ -897,6 +898,7 @@ fn coding_resume_call(project: &str, instruction: &str, session_id: &str) -> Too
         session_id: Some(session_id.to_string()),
         include_project_instructions: true,
         include_workflow_guidance: true,
+        include_extension_catalog: false,
     }
 }
 

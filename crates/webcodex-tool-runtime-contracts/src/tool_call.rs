@@ -487,6 +487,8 @@ pub enum ToolCall {
         include_project_instructions: bool,
         #[serde(default = "default_true")]
         include_workflow_guidance: bool,
+        #[serde(default = "default_true")]
+        include_extension_catalog: bool,
         #[serde(default)]
         session_id: Option<String>,
     },

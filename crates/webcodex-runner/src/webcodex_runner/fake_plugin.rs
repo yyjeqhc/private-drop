@@ -231,7 +231,22 @@ fn main() -> io::Result<()> {
                 } else {
                     "string"
                 };
-                let tool_name = if scenario == "check_v2" { "echo_v2" } else { "echo" };
+                let tool_name = match scenario {
+                    "project_repo_context" => "repo_context",
+                    "project_safe_delete" => "safe_delete",
+                    "check_v2" => "echo_v2",
+                    _ => "echo",
+                };
+                let tool_title = if scenario == "project_repo_context" {
+                    r#","title":"Repository context""#
+                } else {
+                    ""
+                };
+                let annotations = match scenario {
+                    "project_repo_context" => r#","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}"#,
+                    "project_safe_delete" => r#","annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}"#,
+                    _ => "",
+                };
                 let startup_padding = if scenario == "check_startup_large_schema" {
                     "x".repeat(40 * 1024)
                 } else {
@@ -262,7 +277,7 @@ fn main() -> io::Result<()> {
                 send(
                     &mut writer,
                     &format!(
-                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"{tool_name}","description":"Native plugin echo","inputSchema":{{"type":"object","description":"{startup_padding}","properties":{{"value":{{"type":"{value_type}"}}}}}}{output_schema}}}]}}}}"#
+                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"{tool_name}"{tool_title},"description":"Native plugin echo","inputSchema":{{"type":"object","description":"{startup_padding}","properties":{{"value":{{"type":"{value_type}"}}}}}}{output_schema}{annotations}}}]}}}}"#
                     ),
                 )?;
                 if matches!(
