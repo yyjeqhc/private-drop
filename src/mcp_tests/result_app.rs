@@ -1250,7 +1250,7 @@ fn git_review_presentation_preserves_scope_stats_files_and_partial_state() {
             "file_classes": {"counts_observed": {"production": 70}, "partial": true},
             "coverage": {"production_changed": true, "tests_changed": null, "docs_changed": null, "partial": true},
             "truncation": {"files_total": 120, "files_returned": 80, "files_truncated": true, "classification_partial": true, "file_stats_partial": true, "file_modes_partial": false, "symbols_partial": true, "subsystems_partial": true, "signals_partial": true},
-            "files": [{"path": null, "previous_path": null, "path_omitted": true, "status": "modified", "additions": null, "deletions": null, "binary": null, "gitlink": null, "classes": []}],
+            "files": [{"path": "/private/must-not-render", "previous_path": null, "path_omitted": true, "status": "modified", "additions": null, "deletions": null, "binary": null, "gitlink": null, "classes": []}],
             "deterministic": true,
             "truncated": true
         }),
@@ -1264,6 +1264,10 @@ fn git_review_presentation_preserves_scope_stats_files_and_partial_state() {
     assert_eq!(partial_meta["truncation"]["files_truncated"], true);
     assert_eq!(partial_meta["truncation"]["classification_partial"], true);
     assert_eq!(partial_meta["files"][0]["path_omitted"], true);
+    assert!(
+        partial_meta["files"][0].get("path").is_none(),
+        "canonical path_omitted must suppress a contradictory path value"
+    );
 }
 
 #[test]

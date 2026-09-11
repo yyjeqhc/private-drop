@@ -712,10 +712,13 @@ fn review_file_presentation(file: &Value) -> Option<Value> {
         .get("path_omitted")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let path = match file.get("path") {
-        Some(value) if value.is_string() => Some(safe_repo_relative_path(value)?),
-        _ if path_omitted => None,
-        _ => return None,
+    let path = if path_omitted {
+        None
+    } else {
+        match file.get("path") {
+            Some(value) if value.is_string() => Some(safe_repo_relative_path(value)?),
+            _ => return None,
+        }
     };
     let mut item = Map::new();
     if let Some(path) = path {
