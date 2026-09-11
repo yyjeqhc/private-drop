@@ -1353,24 +1353,29 @@ pub(super) fn mcp_artifact_export_read_error_outcome(
     }
 }
 
-pub(super) fn server_capabilities() -> Value {
-    json!({
+pub(super) fn server_capabilities(apps_enabled: bool) -> Value {
+    let mut capabilities = json!({
         "tools": { "listChanged": false },
-        "resources": { "listChanged": false, "subscribe": false },
-        "extensions": {
+        "resources": { "listChanged": false, "subscribe": false }
+    });
+    if apps_enabled {
+        capabilities["extensions"] = json!({
             MCP_UI_EXTENSION: {
                 "mimeTypes": [MCP_UI_RESOURCE_MIME_TYPE]
             }
-        }
-    })
+        });
+    }
+    capabilities
 }
 
 pub(super) fn mcp_app_enabled(
+    server_apps_enabled: bool,
     stateless_2026: bool,
     model_surface: ModelSurface,
     params: &Value,
 ) -> bool {
-    stateless_2026
+    server_apps_enabled
+        && stateless_2026
         && model_surface_supports_mcp_apps(model_surface)
         && request_supports_mcp_apps(params)
 }
@@ -1405,6 +1410,7 @@ pub(super) async fn handle_read(
     id: Option<Value>,
     auth: Option<&AuthContext>,
     model_surface: ModelSurface,
+    apps_enabled: bool,
 ) -> McpOutcome {
     let Some(uri) = params.get("uri").and_then(Value::as_str) else {
         return McpOutcome::BadRequest(rpc_error(id, -32602, "Invalid params: uri is required"));
@@ -1467,6 +1473,16 @@ pub(super) async fn handle_read(
             }]
         });
         return McpOutcome::Ok(rpc_result(id, mcp_stateless_result(result, true)));
+    }
+
+    // Artifact/snapshot resources above remain available independently. The
+    // global switch controls only optional static MCP App presentation.
+    if !apps_enabled {
+        return McpOutcome::BadRequest(rpc_error(
+            id,
+            -32602,
+            "MCP App resources are disabled by Server configuration",
+        ));
     }
 
     // Tool descriptors advertise the App resource independently of whether a

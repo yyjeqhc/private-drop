@@ -324,6 +324,21 @@ pub(crate) fn mcp_compact_schemas_enabled() -> bool {
     env_flag("WEBCODEX_MCP_COMPACT_SCHEMAS").unwrap_or(false)
 }
 
+/// Global Server switch for optional MCP App presentation resources and metadata.
+///
+/// Apps are enabled by default. Setting `WEBCODEX_MCP_APPS_ENABLED=false` keeps
+/// canonical MCP tools/results and non-App resources available while suppressing
+/// App capability advertisement, tool linkage, presentation metadata, and static
+/// App resource reads. Invalid values follow `env_flag` and fall back to the
+/// default enabled behavior.
+fn mcp_apps_enabled_from_flag(flag: Option<bool>) -> bool {
+    flag.unwrap_or(true)
+}
+
+pub(crate) fn mcp_apps_enabled() -> bool {
+    mcp_apps_enabled_from_flag(env_flag("WEBCODEX_MCP_APPS_ENABLED"))
+}
+
 pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
     if let Ok(path) = std::env::var("WEBCODEX_ENV_FILE") {
         return Ok(vec![load_env_file(Path::new(&path))?]);
@@ -777,6 +792,13 @@ mod tests {
         // Invalid values are treated as unset by env_flag -> default false.
         assert!(!mcp_compact_schemas_enabled());
         env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    }
+
+    #[test]
+    fn mcp_apps_default_on_and_can_be_disabled() {
+        assert!(mcp_apps_enabled_from_flag(None));
+        assert!(mcp_apps_enabled_from_flag(Some(true)));
+        assert!(!mcp_apps_enabled_from_flag(Some(false)));
     }
 
     #[test]

@@ -372,20 +372,26 @@ The standing direction for model-facing execution is defined in
 3. **One execution may outlive one tool/model turn.** When work exceeds a short
    synchronous grace window, the same execution should continue as a durable Job;
    handoff must not be implemented as cancel-and-retry.
-4. **Job/observation is the continuation API.** Durable Job identity, lifecycle,
-   bounded logs, observation token, cancellation, ownership, and recovery/lost
-   semantics remain OS-, transport-, and presentation-neutral. Batch observation
-   should reuse this model rather than create a second scheduler or revision
-   system.
+4. **Job/observation is the execution continuation and observation API.** Durable
+   Job identity, lifecycle, bounded logs, observation token, cancellation,
+   ownership, and recovery/lost semantics remain OS-, transport-, and
+   presentation-neutral. This does not itself mean model/Host continuation; batch
+   observation should reuse this model rather than create a second scheduler or
+   revision system.
 5. **Optional host UI is an adapter, not an owner.** MCP Apps or another host may
    observe Jobs and later resume a model, but core execution cannot depend on
-   Apps, MCP Tasks, MRTR, elicitation, progress extensions, or iframe state. If
-   automatic model resume is provided, exactly one durable continuation domain
-   owns each logical resume event; independent Job Views, cards, or Host views do
-   not race to resume the model. For Agent-bound continuation, the Agent Wake /
-   Wake Delivery Attempt domain owns that logical continuation; Host/controller
-   state is adapter-local delivery state rather than a second WebCodex
-   continuation truth.
+   Apps, MCP Tasks, MRTR, elicitation, progress extensions, or iframe state. MCP
+   App presentation is a Server-level optional adapter: `WEBCODEX_MCP_APPS_ENABLED`
+   defaults on and may disable App capability advertisement, descriptor linkage,
+   presentation metadata, and static App resources without disabling canonical
+   MCP tools/results or non-App resource delivery. If automatic model resume is
+   provided, exactly one durable continuation domain owns each logical resume
+   event; independent Job Views, cards, or Host views do not race to resume the
+   model. A long build/watch reaching terminal state may be an explicit input to
+   Goal/AgentTask orchestration, but the card is never the trigger or continuation
+   owner. For Agent-bound continuation, the Agent Wake / Wake Delivery Attempt
+   domain owns that logical continuation; Host/controller state is adapter-local
+   delivery state rather than a second WebCodex continuation truth.
 6. **Transport fallback must preserve execution semantics.** Polling, WebSocket,
    and QUIC may differ in delivery behavior, but none may silently duplicate a
    command or turn a transport stall into a false pre-start rejection.

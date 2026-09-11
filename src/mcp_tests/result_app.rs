@@ -18,6 +18,30 @@ fn presentation<'a>(call_result: &'a Value) -> &'a Value {
     &call_result["_meta"][super::super::presentation::MCP_PRESENTATION_META_KEY]
 }
 
+async fn handle_with_server_apps_enabled(
+    runtime: &ToolRuntime,
+    request: JsonRpcRequest,
+    auth: Option<&crate::auth::AuthContext>,
+    server_mcp_apps_enabled: bool,
+) -> McpOutcome {
+    let protocol_era = super::super::inferred_protocol_era(&request);
+    super::super::handle_mcp_request_with_lifecycle(
+        runtime,
+        None,
+        request,
+        auth,
+        protocol_era,
+        super::super::HostFileImportTrust::Untrusted,
+        None,
+        None,
+        None,
+        crate::config::mcp_compact_schemas_enabled(),
+        server_mcp_apps_enabled,
+        None,
+    )
+    .await
+}
+
 #[test]
 fn job_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
     for compact in [false, true] {
@@ -196,9 +220,160 @@ async fn job_app_descriptor_and_resource_exposure_require_ui_operator_capability
 
     assert!(!mcp_app_enabled(
         true,
+        true,
         ModelSurface::LocalCoding,
         &mcp_2026_ui_params(json!({}))
     ));
+    assert!(!mcp_app_enabled(
+        false,
+        true,
+        ModelSurface::FullOperatorRuntime,
+        &mcp_2026_ui_params(json!({}))
+    ));
+}
+
+#[tokio::test]
+async fn server_mcp_apps_setting_disables_only_app_presentation() {
+    let runtime = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
+
+    let enabled = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(json!(3207)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        None,
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(enabled) = enabled else {
+        panic!("enabled MCP Apps tools/list failed");
+    };
+    assert_eq!(
+        tool(&enabled["result"], "list_jobs")["_meta"]["ui"]["resourceUri"],
+        MCP_RESULT_UI_RESOURCE_URI
+    );
+
+    let discover = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "server/discover",
+            Some(json!(3208)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        None,
+        false,
+    )
+    .await;
+    let McpOutcome::Ok(discover) = discover else {
+        panic!("MCP discovery with Apps disabled failed");
+    };
+    let capabilities = &discover["result"]["capabilities"];
+    assert_eq!(capabilities["resources"]["listChanged"], false);
+    assert!(capabilities["extensions"].get(MCP_UI_EXTENSION).is_none());
+
+    let tools = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(json!(3209)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        None,
+        false,
+    )
+    .await;
+    let McpOutcome::Ok(tools) = tools else {
+        panic!("tools/list with Apps disabled failed");
+    };
+    for name in ["list_jobs", "observe_jobs"] {
+        assert!(tool(&tools["result"], name)
+            .pointer("/_meta/ui/resourceUri")
+            .is_none());
+    }
+
+    let resources = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "resources/list",
+            Some(json!(3213)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        None,
+        false,
+    )
+    .await;
+    let McpOutcome::Ok(resources) = resources else {
+        panic!("resources/list with Apps disabled failed");
+    };
+    assert!(resources["result"]["resources"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+
+    let read = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "resources/read",
+            Some(json!(3214)),
+            mcp_2026_ui_params(json!({"uri": MCP_RESULT_UI_RESOURCE_URI})),
+        ),
+        None,
+        false,
+    )
+    .await;
+    match read {
+        McpOutcome::BadRequest(value) => {
+            assert_eq!(value["error"]["code"], -32602);
+            assert!(value["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("disabled by Server configuration")));
+        }
+        other => panic!("disabled static App resource must fail closed: {other:?}"),
+    }
+
+    let computer_read = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "resources/read",
+            Some(json!(3216)),
+            mcp_2026_ui_params(json!({"uri": MCP_COMPUTER_UI_RESOURCE_URI})),
+        ),
+        None,
+        false,
+    )
+    .await;
+    match computer_read {
+        McpOutcome::BadRequest(value) => {
+            assert_eq!(value["error"]["code"], -32602);
+            assert!(value["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("disabled by Server configuration")));
+        }
+        other => panic!("disabled Computer App resource must fail closed: {other:?}"),
+    }
+
+    let call = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(3215)),
+            mcp_2026_ui_params(json!({
+                "name": "list_jobs",
+                "arguments": {"limit": 1}
+            })),
+        ),
+        None,
+        false,
+    )
+    .await;
+    let McpOutcome::Ok(call) = call else {
+        panic!("canonical list_jobs call with Apps disabled failed");
+    };
+    assert!(call["result"]["structuredContent"].is_object());
+    assert!(call["result"]["_meta"]
+        .get(super::super::presentation::MCP_PRESENTATION_META_KEY)
+        .is_none());
 }
 
 #[test]
@@ -362,6 +537,7 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "webcodex/presentation",
         "textContent",
         "document.createElement",
+        "Array.from",
     ] {
         assert!(html.contains(expected), "missing {expected}");
     }
