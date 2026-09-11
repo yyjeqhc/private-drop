@@ -79,6 +79,11 @@ api_post() {
         -d "$body" 2>/dev/null
 }
 
+observe_job() {
+    local job_id="$1"
+    api_post /api/tools/call "{\"tool\":\"observe_jobs\",\"params\":{\"items\":[{\"job_id\":\"${job_id}\"}],\"tail_lines\":1}}"
+}
+
 json_get() {
     local json="$1"; local path="$2"
     python3 - "$json" "$path" <<'PY'
@@ -331,9 +336,8 @@ for layer_status in \
         "$(json_get "$BODY" ${LAYERS_PREFIX}.${layer}.status)" "$expected"
 done
 
-JOBS_BODY="$(api_post /api/tools/call "{\"tool\":\"job_status\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"job_id\":\"${JOB_ID}\"}}")"
-JOB_STATE="$(json_get "$JOBS_BODY" output.status)"
-if [ -z "$JOB_STATE" ]; then JOB_STATE="$(json_get "$JOBS_BODY" output.job.status)"; fi
+JOBS_BODY="$(observe_job "$JOB_ID")"
+JOB_STATE="$(json_get "$JOBS_BODY" output.items.0.output.status)"
 assert_eq "in-flight reconciliation-capable job is recovering after crash" "$JOB_STATE" "recovering"
 
 # ----------------------------------------------------------------------------
@@ -352,12 +356,11 @@ fi
 assert_eq "project re-registered after runner restart" \
     "$(json_get "$BODY" ${LAYERS_PREFIX}.project_registry.status)" "registered"
 
-JOBS_BODY="$(api_post /api/tools/call "{\"tool\":\"job_status\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"job_id\":\"${JOB_ID}\"}}")"
-JOB_STATE="$(json_get "$JOBS_BODY" output.status)"
-if [ -z "$JOB_STATE" ]; then JOB_STATE="$(json_get "$JOBS_BODY" output.job.status)"; fi
+JOBS_BODY="$(observe_job "$JOB_ID")"
+JOB_STATE="$(json_get "$JOBS_BODY" output.items.0.output.status)"
 assert_eq "replacement instance fences old recovering job to lost" "$JOB_STATE" "lost"
 assert_eq "replacement loss reason is runner_instance_replaced" \
-    "$(json_get "$JOBS_BODY" output.recovery_reason_code)" "runner_instance_replaced"
+    "$(json_get "$JOBS_BODY" output.items.0.output.recovery_reason_code)" "runner_instance_replaced"
 
 READ_BODY="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"items\":[{\"path\":\"README.md\"}]}}")"
 assert_eq "calls recover after runner restart (no server restart)" \

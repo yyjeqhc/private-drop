@@ -653,8 +653,8 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
     mcp_canonical_present=1
     for tname in work_on_project list_projects project_overview read_files \
         search_project_texts apply_text_edits apply_unified_diff run_shell \
-        run_job job_status job_log list_jobs stop_job cargo_fmt cargo_check \
-        cargo_test validation_summary git_status git_diff show_changes \
+        run_job observe_jobs list_jobs stop_job cargo_fmt cargo_check \
+        cargo_test validation_summary git_status git_diff_hunks show_changes \
         finish_coding_task; do
         if mcp_tool_present "$tname"; then
             :
@@ -672,7 +672,8 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
     # full-operator surface, never on local_coding.
     mcp_compat_absent=1
     for tname in write_project_file job_tail list_tools \
-        git_diff git_diff_summary job_status job_log start_coding_task; do
+        read_file search_project_text git_diff git_diff_summary job_status job_log \
+        start_coding_task; do
         if mcp_tool_present "$tname"; then
             mcp_compat_absent=0
             fail "MCP tools/list must not expose $tname on local_coding"
@@ -684,7 +685,7 @@ if [ "$EXPECTED_SURFACE" = "local_coding" ]; then
 elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
     adaptive_present=1
     for tname in work_on_project runtime_status tool_manifest \
-        search_project_texts read_files apply_text_edits apply_patch run_process run_shell observe_jobs list_jobs \
+        search_project_texts read_files apply_text_edits run_process run_shell observe_jobs list_jobs \
         cargo_check cargo_test git_review_summary git_diff_hunks \
         show_changes workspace_hygiene_check finish_coding_task call_runtime_tool; do
         if mcp_tool_present "$tname"; then
@@ -694,7 +695,7 @@ elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
             fail "MCP tools/list missing adaptive_runtime tool $tname"
         fi
     done
-    for tname in list_tools list_projects project_overview read_file search_project_text run_script apply_unified_diff \
+    for tname in list_tools list_projects project_overview apply_patch run_script apply_unified_diff \
         go_test validation_summary git_status goto_definition computer_list_windows \
         post_session_message coding_agent_start artifact_upload_begin; do
         if mcp_tool_present "$tname"; then
@@ -705,6 +706,12 @@ elif [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
     if [ "$adaptive_present" = "1" ]; then
         pass "MCP tools/list exposes only the adaptive typed core plus gateway"
     fi
+    for retired in read_file search_project_text job_status job_log git_diff git_diff_summary; do
+        if mcp_tool_present "$retired"; then
+            adaptive_present=0
+            fail "MCP tools/list must not expose retired tool $retired"
+        fi
+    done
 else
     # full_operator_runtime: the complete operator tool surface.
     mcp_operator_present=1
@@ -870,22 +877,24 @@ else
     fail "job_tail skipped: no JOB_ID available"
 fi
 
-# MCP tools/list must now expose the Phase A tool names only on expanded coding
-# surfaces. adaptive_runtime deliberately keeps these lower-frequency tools
-# behind call_runtime_tool rather than expanding their schemas.
+# list_project_files remains a lower-frequency Adaptive gateway tool, while
+# list_jobs is part of the direct Adaptive core. Compatibility/full surfaces
+# expose both directly.
 phase_a_present=1
 if [ "$EXPECTED_SURFACE" = "adaptive_runtime" ]; then
-    for tname in list_project_files list_jobs job_log git_diff; do
-        if mcp_tool_present "$tname"; then
-            phase_a_present=0
-            fail "MCP tools/list must keep Phase A long-tail tool $tname behind call_runtime_tool"
-        fi
-    done
+    if mcp_tool_present "list_project_files"; then
+        phase_a_present=0
+        fail "MCP tools/list must keep list_project_files behind call_runtime_tool"
+    fi
+    if ! mcp_tool_present "list_jobs"; then
+        phase_a_present=0
+        fail "MCP tools/list missing direct Adaptive tool list_jobs"
+    fi
     if [ "$phase_a_present" = "1" ]; then
-        pass "MCP adaptive_runtime keeps Phase A long-tail schemas behind the gateway"
+        pass "MCP adaptive_runtime keeps low-frequency file listing behind the gateway"
     fi
 else
-    for tname in list_project_files list_jobs job_log git_diff; do
+    for tname in list_project_files list_jobs; do
         if mcp_tool_present "$tname"; then
             :
         else
@@ -893,12 +902,8 @@ else
             fail "MCP tools/list missing $tname"
         fi
     done
-    if [ "$EXPECTED_SURFACE" = "local_coding" ] && mcp_tool_present "git_diff_summary"; then
-        phase_a_present=0
-        fail "MCP tools/list must not expose git_diff_summary on local_coding"
-    fi
     if [ "$phase_a_present" = "1" ]; then
-        pass "MCP tools/list exposes the Phase A console tools on the expanded model surface"
+        pass "MCP tools/list exposes the retained Phase A console tools"
     fi
 fi
 

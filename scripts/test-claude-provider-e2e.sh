@@ -303,13 +303,14 @@ ok "OpenAPI operation count remains below GPT Actions limit"
 
 READ_ARGS="$(python3 - "$RUNTIME_PROJECT" <<'PY'
 import json, sys
-print(json.dumps({"project": sys.argv[1], "path": "fixture.txt"}))
+print(json.dumps({"project": sys.argv[1], "items": [{"path": "fixture.txt"}]}))
 PY
 )"
-tool_call read_file "$READ_ARGS" | python3 -c '
+tool_call read_files "$READ_ARGS" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-assert d["success"] and "before" in d["output"]["text"]
+item = d["output"]["items"][0]
+assert d["success"] and item["success"] and "before" in item["output"]["text"]
 ' || fail "Native read failed"
 api_post /api/runtime/status '{}' | python3 -c '
 import json, sys
@@ -318,19 +319,20 @@ c = next(x for x in d["output"]["agents"]["clients"] if x["client_id"] == sys.ar
 claude = c["tool_providers"]["claude_code"]
 assert claude["process_state"] == "not_started"
 assert claude.get("last_call") is None
-' "$CLIENT_ID" || fail "read_file started Claude"
-ok "read_file stayed Native without starting Claude"
+' "$CLIENT_ID" || fail "read_files started Claude"
+ok "read_files stayed Native without starting Claude"
 
 SEARCH_ARGS="$(python3 - "$RUNTIME_PROJECT" <<'PY'
 import json, sys
-print(json.dumps({"project": sys.argv[1], "pattern": "needle", "path": "."}))
+print(json.dumps({"project": sys.argv[1], "queries": [{"pattern": "needle", "path": "."}]}))
 PY
 )"
-tool_call search_project_text "$SEARCH_ARGS" | python3 -c '
+tool_call search_project_texts "$SEARCH_ARGS" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-assert d["success"]
-assert d["output"]["backend"] in ("rg", "grep")
+item = d["output"]["items"][0]
+assert d["success"] and item["success"]
+assert item["output"]["backend"] in ("rg", "grep")
 ' || fail "Native search fallback failed"
 wait_for_provider_call native true success null || fail "search fallback evidence did not propagate"
 ok "search fallback recorded selected_provider=native"
