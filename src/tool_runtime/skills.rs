@@ -659,7 +659,11 @@ impl ToolRuntime {
                 name_conflict: skill.descriptor.name_conflict,
             })
             .collect();
-        StartupSkillsCatalog::available(catalog.catalog_revision, entries)
+        StartupSkillsCatalog::available(
+            catalog.catalog_revision,
+            catalog.discovery_truncated,
+            entries,
+        )
     }
 
     pub(crate) async fn skills_catalog_context_projection(

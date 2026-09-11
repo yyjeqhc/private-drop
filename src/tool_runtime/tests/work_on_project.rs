@@ -667,7 +667,7 @@ async fn dispatch_startup_with_configured_skill_catalog(
                             skills: vec![configured_skill.clone()],
                             invalid_count: 0,
                             diagnostics: Vec::new(),
-                            discovery_truncated: false,
+                            discovery_truncated: true,
                         })
                         .unwrap(),
                     ),
@@ -1317,7 +1317,8 @@ async fn work_on_project_extension_catalog_includes_runner_configured_skill_root
     assert_eq!(skills["status"], "available");
     assert_eq!(skills["total_count"], 1);
     assert_eq!(skills["returned_count"], 1);
-    assert_eq!(skills["truncated"], false);
+    assert_eq!(skills["truncated"], true);
+    assert!(skills["discovery_hint"].is_string());
     let entry = &skills["entries"][0];
     assert_eq!(entry["skill_id"], configured_id);
     assert_eq!(entry["name"], "operator-live-guidance");

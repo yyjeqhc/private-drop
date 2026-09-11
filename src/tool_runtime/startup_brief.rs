@@ -167,13 +167,17 @@ impl StartupSkillsCatalog {
         }
     }
 
-    pub(crate) fn available(catalog_revision: String, entries: Vec<StartupSkillEntry>) -> Self {
+    pub(crate) fn available(
+        catalog_revision: String,
+        discovery_truncated: bool,
+        entries: Vec<StartupSkillEntry>,
+    ) -> Self {
         let total_count = entries.len();
         let mut returned = Vec::new();
         for entry in entries {
             let mut candidate = returned.clone();
             candidate.push(entry);
-            let truncated = candidate.len() < total_count;
+            let truncated = discovery_truncated || candidate.len() < total_count;
             let projection = Self {
                 status: "available",
                 reason_code: None,
@@ -195,7 +199,7 @@ impl StartupSkillsCatalog {
                 break;
             }
         }
-        let truncated = returned.len() < total_count;
+        let truncated = discovery_truncated || returned.len() < total_count;
         Self {
             status: "available",
             reason_code: None,
@@ -2094,6 +2098,7 @@ mod tests {
         let extensions = StartupExtensions {
             skills: StartupSkillsCatalog::available(
                 format!("wc_skillcat_{}", "a".repeat(64)),
+                false,
                 (0..64)
                     .map(|index| StartupSkillEntry {
                         skill_id: format!("wc_skill_{index:032x}"),
