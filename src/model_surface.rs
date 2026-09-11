@@ -271,7 +271,6 @@ mod tests {
         "import_conversation_files_to_project",
         "export_project_artifact",
         "apply_text_edits",
-        "apply_patch",
         "run_process",
         "run_shell",
         "observe_jobs",
@@ -314,7 +313,6 @@ mod tests {
                 "changes.show_changes.diff_review_handoff.tool",
                 "git_diff_hunks",
             ),
-            ("apply_patch", "recovery.action", "read_files"),
         ] {
             assert_eq!(
                 ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(source_tool),
@@ -327,6 +325,20 @@ mod tests {
                 "{source_tool}.{edge} points to non-direct Adaptive target {target_tool}"
             );
         }
+
+        assert_eq!(
+            ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route("apply_patch"),
+            (
+                TOOL_SURFACE_AVAILABILITY_GATEWAY,
+                Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+            ),
+            "specialized patching should be discovered through the Adaptive gateway"
+        );
+        assert_eq!(
+            ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route("read_files"),
+            (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+            "apply_patch recovery must still point to a directly actionable read_files target"
+        );
     }
 
     #[test]
@@ -349,15 +361,29 @@ mod tests {
 
     #[test]
     fn ordinary_model_visible_tool_defaults_to_adaptive_gateway() {
-        assert!(is_model_visible_tool_name("run_script"));
-        assert!(!is_adaptive_runtime_direct_tool("run_script"));
-        assert_eq!(
-            ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route("run_script"),
-            (
-                TOOL_SURFACE_AVAILABILITY_GATEWAY,
-                Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
-            )
-        );
+        for tool_name in ["run_script", "apply_patch"] {
+            assert!(is_model_visible_tool_name(tool_name));
+            assert!(!is_adaptive_runtime_direct_tool(tool_name));
+            assert_eq!(
+                ModelSurface::AdaptiveRuntime.runtime_tool_invocation_route(tool_name),
+                (
+                    TOOL_SURFACE_AVAILABILITY_GATEWAY,
+                    Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn specialized_patch_remains_direct_on_compatibility_surfaces() {
+        assert!(LOCAL_CODING_TOOL_NAMES.contains(&"apply_patch"));
+        for surface in [ModelSurface::LocalCoding, ModelSurface::FullOperatorRuntime] {
+            assert_eq!(
+                surface.runtime_tool_invocation_route("apply_patch"),
+                (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
+                "apply_patch must remain directly callable on {surface:?}"
+            );
+        }
     }
 
     #[test]

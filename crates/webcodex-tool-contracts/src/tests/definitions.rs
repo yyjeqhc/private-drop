@@ -138,17 +138,18 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         assert!(pair[0].adaptive_runtime_direct_rank() < pair[1].adaptive_runtime_direct_rank());
     }
     assert_eq!(derived.len(), seen_ranks.len());
-    let apply_patch = derived
-        .iter()
-        .find(|definition| definition.name == "apply_patch")
-        .expect("apply_patch must be adaptive-direct");
-    let apply_text_edits = derived
-        .iter()
-        .find(|definition| definition.name == "apply_text_edits")
-        .expect("apply_text_edits must be adaptive-direct");
+    let apply_patch = lookup_tool_definition("apply_patch").expect("apply_patch definition");
+    assert!(apply_patch.visibility.is_model_visible());
+    assert_eq!(
+        apply_patch.adaptive_runtime_direct_rank(),
+        None,
+        "specialized patching should stay ModelVisible but use Adaptive discovery/gateway"
+    );
     assert!(
-        apply_text_edits.adaptive_runtime_direct_rank()
-            < apply_patch.adaptive_runtime_direct_rank()
+        derived
+            .iter()
+            .any(|definition| definition.name == "apply_text_edits"),
+        "canonical ordinary edits must remain adaptive-direct"
     );
 
     for (name, expected_rank) in [
@@ -176,6 +177,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         "session_shell_status",
         "close_session_shell",
         "run_script",
+        "apply_patch",
         "save_project_artifact",
         "read_project_artifact",
         "artifact_upload_begin",

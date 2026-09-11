@@ -149,7 +149,7 @@ async fn apply_text_edits_discriminated_schema_reaches_full_and_local_coding_mcp
 }
 
 #[tokio::test]
-async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
+async fn apply_patch_stays_full_local_direct_and_moves_to_adaptive_gateway() {
     let expected = registered_tool_specs()
         .into_iter()
         .find(|spec| spec.name == "apply_patch")
@@ -158,11 +158,7 @@ async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
     assert!(expected["properties"].get("patch").is_some());
     assert_eq!(expected["properties"]["dry_run"]["default"], false);
 
-    for surface in [
-        ModelSurface::FullOperatorRuntime,
-        ModelSurface::LocalCoding,
-        ModelSurface::AdaptiveRuntime,
-    ] {
+    for surface in [ModelSurface::FullOperatorRuntime, ModelSurface::LocalCoding] {
         let runtime = test_runtime_with_surface(surface);
         let outcome = handle_mcp_request(
             &runtime,
@@ -170,9 +166,8 @@ async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
             None,
         )
         .await;
-        let value = match outcome {
-            McpOutcome::Ok(value) => value,
-            other => panic!("expected tools/list success for {surface:?}, got {other:?}"),
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("expected tools/list success for {surface:?}");
         };
         let schema = &value["result"]["tools"]
             .as_array()
@@ -182,6 +177,105 @@ async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
             .unwrap_or_else(|| panic!("missing apply_patch on {surface:?}"))["inputSchema"];
         assert_eq!(schema, &expected, "schema drift on {surface:?}");
     }
+
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let listed = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(603)),
+            mcp_2026_params(json!({})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(listed) = listed else {
+        panic!("adaptive tools/list must succeed");
+    };
+    assert!(!listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "apply_patch"));
+
+    let manifest = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(604)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"tool_name": "apply_patch"}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(manifest) = manifest else {
+        panic!("apply_patch exact manifest must remain discoverable");
+    };
+    let contract = &manifest["result"]["structuredContent"]["output"];
+    assert_eq!(contract["name"], "apply_patch");
+    assert_eq!(contract["route"]["mode"], "gateway");
+    assert_eq!(
+        contract["route"]["via"],
+        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+    assert_eq!(contract["input_schema"], expected);
+    assert_eq!(contract["effect"], "mutate");
+    assert!(
+        crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test("apply_patch", true)
+    );
+
+    let patch_arguments = json!({
+        "project": "missing-project",
+        "patch": "*** Begin Patch\n*** Add File: gateway-probe.txt\n+probe\n*** End Patch",
+        "dry_run": true
+    });
+    let direct = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(605)),
+            mcp_2026_params(json!({
+                "name": "apply_patch",
+                "arguments": patch_arguments.clone()
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::BadRequest(value) = direct else {
+        panic!("direct Adaptive apply_patch must fail closed to the gateway");
+    };
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("not a direct adaptive_runtime tool"));
+    assert!(message.contains("adaptive runtime gateway"));
+
+    let gateway = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(606)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": "apply_patch",
+                    "arguments": patch_arguments
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = gateway else {
+        panic!("gateway-routed apply_patch must reach canonical runtime dispatch");
+    };
+    assert_eq!(value["result"]["structuredContent"]["success"], false);
+    assert_ne!(
+        value["result"]["structuredContent"]["output"]["error_kind"],
+        "wrong_invocation_route"
+    );
 }
 
 #[tokio::test]
@@ -338,6 +432,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "list_projects",
         "project_overview",
         "read_file",
+        "apply_patch",
         "run_script",
         "ssh_resource",
         "open_session_shell",
