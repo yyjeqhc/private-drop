@@ -47,6 +47,7 @@ const repoContextTool = defineTool({
       maxItems: AFFECTED_PACKAGE_LIMIT,
     }),
     affectedPackagesTruncated: schema.boolean(),
+    globalChange: schema.boolean(),
     warnings: schema.array(schema.string({ maxLength: WARNING_MAX_CHARS }), {
       maxItems: WARNING_LIMIT,
     }),

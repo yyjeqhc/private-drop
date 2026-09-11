@@ -6,9 +6,9 @@ It exposes exactly one tool, `repo_context`, with an empty input object. The pro
 
 ## Output
 
-The bounded structured result contains Git branch/HEAD/detached/dirty state, staged/unstaged/untracked counts, up to 128 changed paths, Cargo availability, up to 128 workspace member names, up to 128 advisory affected package names, at most 16 warnings, and `elapsedMs`.
+The bounded structured result contains Git branch/HEAD/detached/dirty state, staged/unstaged/untracked counts, up to 128 changed paths, Cargo availability, up to 128 workspace member names, up to 128 advisory affected package names, `globalChange`, at most 16 warnings, and `elapsedMs`.
 
-`affectedPackages` is deliberately advisory, not dependency-impact or validation evidence. Files under a concrete workspace package root map to the deepest package root. Root/shared files such as `Cargo.toml` conservatively mark all observed workspace packages affected. Paths outside Cargo package roots remain unmapped rather than being attributed to the root crate merely because its manifest lives at `.`.
+`affectedPackages` is deliberately advisory, not dependency-impact or validation evidence. Files under a concrete workspace package root map to the deepest package root. Root/shared files such as `Cargo.toml` conservatively mark all observed workspace packages affected and set `globalChange=true`. Paths outside Cargo package roots remain unmapped rather than being attributed to the root crate merely because its manifest lives at `.`.
 
 The Plugin never returns a Git diff, complete manifests, raw `cargo metadata`, absolute provider paths, remote URLs, credentials, validation verdicts, or merge/safety claims.
 

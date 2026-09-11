@@ -195,6 +195,7 @@ test("clean Git repository returns HEAD, branch, and Cargo workspace members", a
     assert.equal(result.structuredContent.workspaceMemberCount, 2);
     assert.deepEqual(result.structuredContent.workspaceMembers, ["pkg-a", "pkg-b"]);
     assert.deepEqual(result.structuredContent.affectedPackages, []);
+    assert.equal(result.structuredContent.globalChange, false);
     assert.equal(JSON.stringify(result).includes(root), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -252,6 +253,7 @@ test("root shared change conservatively affects all observed workspace packages"
     const result = await callRepoContext(root);
     assert.deepEqual(result.structuredContent.changedPaths, ["Cargo.toml"]);
     assert.deepEqual(result.structuredContent.affectedPackages, ["pkg-a", "pkg-b"]);
+    assert.equal(result.structuredContent.globalChange, true);
     assert.match(result.structuredContent.warnings.join("\n"), /conservatively mark all/u);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

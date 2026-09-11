@@ -52,6 +52,7 @@ export interface RepoContextStructured {
   readonly workspaceMembersTruncated: boolean;
   readonly affectedPackages: string[];
   readonly affectedPackagesTruncated: boolean;
+  readonly globalChange: boolean;
   readonly warnings: string[];
   readonly elapsedMs: number;
 }
@@ -360,17 +361,21 @@ function mapAffectedPackages(
   changedPaths: readonly string[],
   members: readonly WorkspaceMember[],
   warnings: string[],
-): readonly string[] {
-  if (members.length === 0 || changedPaths.length === 0) return [];
+): { packages: string[]; globalChange: boolean } {
+  if (members.length === 0 || changedPaths.length === 0) {
+    return { packages: [], globalChange: false };
+  }
   const affected = new Set<string>();
   const rootMember = members.find((member) => member.root === ".");
   const byDepth = members
     .filter((member) => member.root !== ".")
     .sort((left, right) => right.root.split("/").length - left.root.split("/").length);
   let sharedWarningAdded = false;
+  let globalChange = false;
 
   for (const changedPath of changedPaths) {
     if (isSharedWorkspacePath(changedPath)) {
+      globalChange = true;
       for (const member of members) affected.add(member.name);
       if (!sharedWarningAdded) {
         pushWarning(
@@ -396,7 +401,7 @@ function mapAffectedPackages(
       affected.add(rootMember.name);
     }
   }
-  return [...affected].sort();
+  return { packages: [...affected].sort(), globalChange };
 }
 
 export async function observeRepoContext(
@@ -409,7 +414,7 @@ export async function observeRepoContext(
   const cargo = await observeCargo(cwd, run, warnings);
   const affected = mapAffectedPackages(git.mappingPaths, cargo.members, warnings);
   const visibleMembers = cargo.members.slice(0, WORKSPACE_MEMBER_LIMIT);
-  const visibleAffected = affected.slice(0, AFFECTED_PACKAGE_LIMIT);
+  const visibleAffected = affected.packages.slice(0, AFFECTED_PACKAGE_LIMIT);
 
   return {
     gitAvailable: git.available,
@@ -429,7 +434,8 @@ export async function observeRepoContext(
       workspaceMembers: visibleMembers.map((member) => member.name),
       workspaceMembersTruncated: cargo.members.length > visibleMembers.length,
       affectedPackages: [...visibleAffected],
-      affectedPackagesTruncated: affected.length > visibleAffected.length,
+      affectedPackagesTruncated: affected.packages.length > visibleAffected.length,
+      globalChange: affected.globalChange,
       warnings: [...warnings],
       elapsedMs: Math.max(0, Date.now() - started),
     },

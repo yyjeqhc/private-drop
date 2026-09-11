@@ -6,9 +6,9 @@
 
 ## 输出
 
-bounded structured result 包含 Git branch/HEAD/detached/dirty 状态、staged/unstaged/untracked 计数、最多 128 个 changed paths、Cargo availability、最多 128 个 workspace member 名称、最多 128 个 advisory affected package 名称、最多 16 条 warning，以及 `elapsedMs`。
+bounded structured result 包含 Git branch/HEAD/detached/dirty 状态、staged/unstaged/untracked 计数、最多 128 个 changed paths、Cargo availability、最多 128 个 workspace member 名称、最多 128 个 advisory affected package 名称、`globalChange`、最多 16 条 warning，以及 `elapsedMs`。
 
-`affectedPackages` 明确只是 advisory context，不是 dependency impact analysis，也不是 validation evidence。位于明确 workspace package root 下的文件映射到最深 package root；`Cargo.toml` 等 root/shared change 会保守地标记全部已观察 workspace packages；位于 Cargo package roots 之外的路径不会因为 root crate 的 manifest 位于 `.` 就被误归到 root crate。
+`affectedPackages` 明确只是 advisory context，不是 dependency impact analysis，也不是 validation evidence。位于明确 workspace package root 下的文件映射到最深 package root；`Cargo.toml` 等 root/shared change 会保守地标记全部已观察 workspace packages，并令 `globalChange=true`；位于 Cargo package roots 之外的路径不会因为 root crate 的 manifest 位于 `.` 就被误归到 root crate。
 
 Plugin 不返回 Git diff、完整 manifest、raw `cargo metadata`、provider 绝对路径、remote URL、credential、validation verdict，也不会给出 verified/safe-to-merge 之类结论。
 
