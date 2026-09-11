@@ -284,7 +284,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Start one Runner-owned asynchronous shell Job and return its stable job_id. Queued execution keeps that identity; observe the existing Job before considering any retry. Server disconnect/restart can reconcile the same Job while the owning Runner process remains, but a replacement Runner does not inherit ordinary Jobs. If work must outlive the current Runner process, discover run_detached_process instead.",
+            "Start one Runner-owned asynchronous shell Job immediately and return its stable job_id. Use this only when asynchronous shell execution is intentional from the first call; ordinary work should start on its synchronous execution or structured validation tool and let long execution hand off as the same Job. Queued execution keeps its identity; observe before considering retry. Server disconnect/restart can reconcile the same Job while the owning Runner process remains, but a replacement Runner does not inherit ordinary Jobs. If work must outlive the current Runner process, discover run_detached_process instead.",
             run_job_input_schema,
         ),
         TOOL_CATEGORY_JOB,
@@ -337,7 +337,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Read bounded lifecycle state for one existing Job. Never starts or retries work; command preview is opt-in and log bodies are excluded.",
+        "Single-Job lifecycle compatibility primitive. Ordinary model continuation should prefer observe_jobs, which combines lifecycle and bounded log observation; use job_status only when one Job's status metadata is specifically needed without logs. Never starts or retries work; command preview is opt-in and log bodies are excluded.",
         job_status_input_schema,
     ),
     model_spec(

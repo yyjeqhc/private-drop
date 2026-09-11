@@ -320,6 +320,19 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .copied()
         .collect::<BTreeSet<_>>();
 
+    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
+        let definition = lookup_tool_definition(compatibility_primitive)
+            .unwrap_or_else(|| panic!("{compatibility_primitive} definition"));
+        assert!(
+            definition.is_git_like(),
+            "{compatibility_primitive} must retain Git ledger semantics"
+        );
+        assert!(
+            !git_group.contains(compatibility_primitive),
+            "{compatibility_primitive} should remain callable without being a canonical Git discovery recommendation"
+        );
+    }
+
     for definition in tool_definitions() {
         let metadata = definition.metadata();
         assert_eq!(
@@ -351,12 +364,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             definition.is_shell_like(),
             metadata.shell_like || metadata.risk == ToolRisk::JobRun,
             "{} shell-like guard policy must include job-run tools",
-            definition.name
-        );
-        assert_eq!(
-            definition.is_git_like(),
-            git_group.contains(definition.name),
-            "{} git-like ledger policy must mirror the git discovery group",
             definition.name
         );
         assert_eq!(

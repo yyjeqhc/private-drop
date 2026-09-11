@@ -258,10 +258,8 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         | "read_project_artifact"
         | "read_project_artifact_metadata"
         | "save_project_artifact" => Some(&["edit", "file_transfer"]),
-        "git_diff" => Some(&["git", "inspect", "review"]),
         "git_diff_hunks" => Some(&["git", "inspect", "review"]),
         "git_review_summary" => Some(&["git", "inspect", "review"]),
-        "git_diff_summary" => Some(&["git", "inspect", "review"]),
         "git_log" => Some(&["git", "inspect", "review"]),
         "git_restore_paths" => Some(&["cleanup", "git"]),
         "git_status" => Some(&["git", "inspect", "review"]),
@@ -364,10 +362,20 @@ fn tool_discovery_groups_drive_tool_categories() {
         );
     }
 
+    let exact_discovery_only = [
+        "read_file",
+        "search_project_text",
+        "git_diff",
+        "git_diff_summary",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    let mut omitted_from_groups = BTreeSet::new();
     for definition in model_visible_tool_definitions() {
-        let groups = memberships
-            .get(definition.name)
-            .unwrap_or_else(|| panic!("{} missing from discovery groups", definition.name));
+        let Some(groups) = memberships.get(definition.name) else {
+            omitted_from_groups.insert(definition.name);
+            continue;
+        };
         if groups.len() == 1 {
             continue;
         }
@@ -386,6 +394,10 @@ fn tool_discovery_groups_drive_tool_categories() {
             definition.name
         );
     }
+    assert_eq!(
+        omitted_from_groups, exact_discovery_only,
+        "only exact-discovery compatibility primitives may stay out of ordinary discovery groups"
+    );
 
     for allowed in [
         "apply_unified_diff",
@@ -394,9 +406,7 @@ fn tool_discovery_groups_drive_tool_categories() {
         "cargo_test",
         "discard_untracked",
         "finish_coding_task",
-        "git_diff",
         "git_diff_hunks",
-        "git_diff_summary",
         "git_log",
         "git_restore_paths",
         "git_status",
@@ -859,9 +869,10 @@ async fn tool_manifest_all_available_intents_parse_and_filter_through_tool_call(
 
 #[tokio::test]
 async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
+    use crate::model_surface::ModelSurface;
     use crate::tool_runtime::tool_definition::TOOL_MANIFEST_INTENTS;
 
-    let runtime = test_runtime();
+    let runtime = test_runtime().with_model_surface(ModelSurface::AdaptiveRuntime);
     let result = runtime
         .dispatch(ToolCall::ToolManifest {
             tool_name: None,
@@ -902,9 +913,62 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
     assert!(result.output["risk_summary"].is_object());
     assert_eq!(
         names,
-        crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES,
-        "coding manifest must use the canonical local_coding order"
+        crate::tool_runtime::tool_definition::CODING_INTENT_TOOL_NAMES,
+        "coding manifest must use its independent ordered selection surface"
     );
+    for compatibility_or_overlap in [
+        "read_file",
+        "search_project_text",
+        "git_diff",
+        "git_diff_summary",
+        "job_status",
+        "job_log",
+        "run_job",
+        "apply_unified_diff",
+    ] {
+        assert!(
+            !names.contains(&compatibility_or_overlap),
+            "coding intent should not recommend {compatibility_or_overlap}: {names:?}"
+        );
+    }
+    for gateway_specialist in ["apply_patch", "run_script", "cargo_fmt", "go_test"] {
+        let tool = result.output["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == gateway_specialist)
+            .unwrap_or_else(|| panic!("missing coding specialist {gateway_specialist}"));
+        assert_eq!(tool["availability"], "gateway", "{gateway_specialist}");
+        assert_eq!(
+            tool["gateway_tool"],
+            crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+            "{gateway_specialist}"
+        );
+    }
+    for direct in [
+        "work_on_project",
+        "search_project_texts",
+        "read_files",
+        "apply_text_edits",
+        "run_process",
+        "run_shell",
+        "observe_jobs",
+        "cargo_check",
+        "cargo_test",
+        "show_changes",
+        "git_diff_hunks",
+        "workspace_hygiene_check",
+        "finish_coding_task",
+    ] {
+        let tool = result.output["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == direct)
+            .unwrap_or_else(|| panic!("missing canonical coding tool {direct}"));
+        assert_eq!(tool["availability"], "direct", "{direct}");
+        assert!(tool["gateway_tool"].is_null(), "{direct}");
+    }
 }
 
 #[tokio::test]
@@ -992,16 +1056,11 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    // Structured validation tools and validation_summary are the entire validation category.
+    // Coding intent keeps executable validation choices, while the read-only
+    // validation_summary remains available through exact/category discovery.
     assert_eq!(
         names,
-        vec![
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test",
-            "validation_summary"
-        ]
+        vec!["cargo_fmt", "cargo_check", "cargo_test", "go_test"]
     );
 }
 
@@ -1046,10 +1105,10 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
             for required in [
                 "work_on_project",
                 "project_overview",
-                "read_file",
-                "search_project_text",
+                "read_files",
+                "search_project_texts",
                 "git_status",
-                "git_diff_summary",
+                "git_review_summary",
                 "git_diff_hunks",
                 "git_log",
                 "show_changes",
@@ -1061,6 +1120,17 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
                 assert!(
                     names.contains(&required),
                     "audit intent must include {required}: {names:?}"
+                );
+            }
+            for compatibility_primitive in [
+                "read_file",
+                "search_project_text",
+                "git_diff",
+                "git_diff_summary",
+            ] {
+                assert!(
+                    !names.contains(&compatibility_primitive),
+                    "audit intent should keep {compatibility_primitive} exact-discovery-only: {names:?}"
                 );
             }
             for tool in result.output["tools"].as_array().unwrap() {
@@ -1193,8 +1263,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         "coding intent tools should expose model-generated Codex patch mutation: {coding_names:?}"
     );
     assert!(
-        coding_names.contains(&"apply_unified_diff"),
-        "coding intent tools should expose canonical unified-diff mutation: {coding_names:?}"
+        !coding_names.contains(&"apply_unified_diff"),
+        "external raw unified-diff compatibility path should stay outside ordinary coding intent: {coding_names:?}"
     );
     assert!(
         !coding_names.contains(&"replace_line_range"),
@@ -1281,8 +1351,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         "with patch category, tools should include apply_patch: {with_patch_tools:?}"
     );
     assert!(
-        with_patch_tools.contains(&"apply_unified_diff"),
-        "with patch category, tools should include apply_unified_diff: {with_patch_tools:?}"
+        !with_patch_tools.contains(&"apply_unified_diff"),
+        "coding intent should keep external raw unified-diff mutation exact/category-only: {with_patch_tools:?}"
     );
     let edit_flow = with_patch["recommended_flows"]
         .as_array()
@@ -1303,8 +1373,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
             .as_array()
             .unwrap()
             .iter()
-            .any(|tool| tool == "apply_unified_diff"),
-        "with patch category, edit flow may include apply_unified_diff: {edit_flow}"
+            .all(|tool| tool != "apply_unified_diff"),
+        "filtered coding edit flow should not reintroduce apply_unified_diff: {edit_flow}"
     );
 
     // limit truncation after intent ordering

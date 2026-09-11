@@ -575,7 +575,10 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     } else {
         None
     };
-    let compact_schemas = crate::config::mcp_compact_schemas_enabled();
+    let compact_schemas = crate::model_surface::effective_mcp_compact_schemas(
+        runtime.runtime_exposure(),
+        crate::config::mcp_compact_schemas_override(),
+    );
     let server_mcp_apps_enabled = crate::config::mcp_apps_enabled();
 
     let config = crate::auth::get_config(depot);
@@ -948,7 +951,10 @@ async fn handle_mcp_request(
     auth: Option<&AuthContext>,
 ) -> McpOutcome {
     let protocol_era = inferred_protocol_era(&request);
-    let compact_schemas = crate::config::mcp_compact_schemas_enabled();
+    let compact_schemas = crate::model_surface::effective_mcp_compact_schemas(
+        runtime.runtime_exposure(),
+        crate::config::mcp_compact_schemas_override(),
+    );
     let server_mcp_apps_enabled = crate::config::mcp_apps_enabled();
     let outcome = handle_mcp_request_with_lifecycle(
         runtime,

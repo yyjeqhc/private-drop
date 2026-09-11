@@ -315,13 +315,14 @@ pub(crate) fn tool_request_trace_max_total_bytes() -> u64 {
         .unwrap_or(2 * 1024 * 1024 * 1024)
 }
 
-/// Experimental MCP `tools/list` compact schemas switch.
+/// Optional operator override for MCP `tools/list` compact schema projection.
 ///
-/// When true, MCP discovery omits `outputSchema` only (keeps name, description,
-/// inputSchema, annotations). Default false — production behavior unchanged.
-/// Invalid / unset values follow `env_flag` and default to false.
-pub(crate) fn mcp_compact_schemas_enabled() -> bool {
-    env_flag("WEBCODEX_MCP_COMPACT_SCHEMAS").unwrap_or(false)
+/// `true` omits `outputSchema` from MCP discovery while preserving name,
+/// description, inputSchema, annotations, and adapter metadata. `false` restores
+/// the full discovery schema. Unset or invalid values defer to the selected
+/// RuntimeExposure policy rather than choosing a process-wide default here.
+pub(crate) fn mcp_compact_schemas_override() -> Option<bool> {
+    env_flag("WEBCODEX_MCP_COMPACT_SCHEMAS")
 }
 
 /// Global Server switch for optional MCP App presentation resources and metadata.
@@ -759,38 +760,34 @@ mod tests {
         env.set("WEBCODEX_ENV_FILE", &env_file);
         env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
 
-        assert!(!mcp_compact_schemas_enabled());
+        assert_eq!(mcp_compact_schemas_override(), None);
         let from_file = load_startup_env_files().unwrap();
         assert_eq!(from_file[0].loaded_count, 1);
-        assert!(mcp_compact_schemas_enabled());
+        assert_eq!(mcp_compact_schemas_override(), Some(true));
 
         env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
         let with_process_override = load_startup_env_files().unwrap();
         assert_eq!(with_process_override[0].loaded_count, 0);
-        assert!(!mcp_compact_schemas_enabled());
+        assert_eq!(mcp_compact_schemas_override(), Some(false));
 
         env.remove("WEBCODEX_ENV_FILE");
         env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
     }
     #[test]
-    fn mcp_compact_schemas_defaults_off() {
+    fn mcp_compact_schemas_override_distinguishes_unset_true_and_false() {
         let mut env = crate::test_support::TestEnvGuard::new();
         env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
-        assert!(!mcp_compact_schemas_enabled());
-    }
-
-    #[test]
-    fn mcp_compact_schemas_true_enables() {
-        let mut env = crate::test_support::TestEnvGuard::new();
+        assert_eq!(mcp_compact_schemas_override(), None);
         env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
-        assert!(mcp_compact_schemas_enabled());
+        assert_eq!(mcp_compact_schemas_override(), Some(true));
         env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "1");
-        assert!(mcp_compact_schemas_enabled());
+        assert_eq!(mcp_compact_schemas_override(), Some(true));
         env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
-        assert!(!mcp_compact_schemas_enabled());
+        assert_eq!(mcp_compact_schemas_override(), Some(false));
         env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "maybe");
-        // Invalid values are treated as unset by env_flag -> default false.
-        assert!(!mcp_compact_schemas_enabled());
+        // Invalid values are treated as unset by env_flag and defer to the
+        // RuntimeExposure-specific default.
+        assert_eq!(mcp_compact_schemas_override(), None);
         env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
     }
 

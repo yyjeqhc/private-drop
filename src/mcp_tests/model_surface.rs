@@ -149,7 +149,7 @@ async fn apply_text_edits_discriminated_schema_reaches_full_and_local_coding_mcp
 }
 
 #[tokio::test]
-async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
+async fn apply_patch_stays_full_local_direct_and_moves_to_adaptive_gateway() {
     let expected = registered_tool_specs()
         .into_iter()
         .find(|spec| spec.name == "apply_patch")
@@ -158,11 +158,7 @@ async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
     assert!(expected["properties"].get("patch").is_some());
     assert_eq!(expected["properties"]["dry_run"]["default"], false);
 
-    for surface in [
-        ModelSurface::FullOperatorRuntime,
-        ModelSurface::LocalCoding,
-        ModelSurface::AdaptiveRuntime,
-    ] {
+    for surface in [ModelSurface::FullOperatorRuntime, ModelSurface::LocalCoding] {
         let runtime = test_runtime_with_surface(surface);
         let outcome = handle_mcp_request(
             &runtime,
@@ -170,9 +166,8 @@ async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
             None,
         )
         .await;
-        let value = match outcome {
-            McpOutcome::Ok(value) => value,
-            other => panic!("expected tools/list success for {surface:?}, got {other:?}"),
+        let McpOutcome::Ok(value) = outcome else {
+            panic!("expected tools/list success for {surface:?}");
         };
         let schema = &value["result"]["tools"]
             .as_array()
@@ -182,10 +177,109 @@ async fn apply_patch_schema_reaches_full_local_and_adaptive_surfaces() {
             .unwrap_or_else(|| panic!("missing apply_patch on {surface:?}"))["inputSchema"];
         assert_eq!(schema, &expected, "schema drift on {surface:?}");
     }
+
+    let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
+    let listed = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(603)),
+            mcp_2026_params(json!({})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(listed) = listed else {
+        panic!("adaptive tools/list must succeed");
+    };
+    assert!(!listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "apply_patch"));
+
+    let manifest = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(604)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"tool_name": "apply_patch"}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(manifest) = manifest else {
+        panic!("apply_patch exact manifest must remain discoverable");
+    };
+    let contract = &manifest["result"]["structuredContent"]["output"];
+    assert_eq!(contract["name"], "apply_patch");
+    assert_eq!(contract["route"]["mode"], "gateway");
+    assert_eq!(
+        contract["route"]["via"],
+        crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+    );
+    assert_eq!(contract["input_schema"], expected);
+    assert_eq!(contract["effect"], "mutate");
+    assert!(
+        crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test("apply_patch", true)
+    );
+
+    let patch_arguments = json!({
+        "project": "missing-project",
+        "patch": "*** Begin Patch\n*** Add File: gateway-probe.txt\n+probe\n*** End Patch",
+        "dry_run": true
+    });
+    let direct = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(605)),
+            mcp_2026_params(json!({
+                "name": "apply_patch",
+                "arguments": patch_arguments.clone()
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::BadRequest(value) = direct else {
+        panic!("direct Adaptive apply_patch must fail closed to the gateway");
+    };
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains("not a direct adaptive_runtime tool"));
+    assert!(message.contains("adaptive runtime gateway"));
+
+    let gateway = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(606)),
+            mcp_2026_params(json!({
+                "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
+                "arguments": {
+                    "tool": "apply_patch",
+                    "arguments": patch_arguments
+                }
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = gateway else {
+        panic!("gateway-routed apply_patch must reach canonical runtime dispatch");
+    };
+    assert_eq!(value["result"]["structuredContent"]["success"], false);
+    assert_ne!(
+        value["result"]["structuredContent"]["output"]["error_kind"],
+        "wrong_invocation_route"
+    );
 }
 
 #[tokio::test]
-async fn local_coding_default_initialize_and_discovery_report_local_coding() {
+async fn adaptive_runtime_default_initialize_and_discovery_report_adaptive() {
     // Preserve the unset-env integration path, but confine process env state
     // to synchronous runtime construction.
     let runtime = test_runtime_from_model_surface_env(None);
@@ -195,14 +289,40 @@ async fn local_coding_default_initialize_and_discovery_report_local_coding() {
         None,
     )
     .await;
-    let value = match outcome {
-        McpOutcome::Ok(v) => v,
-        other => panic!("expected Ok, got {:?}", other),
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("default initialize must succeed");
     };
     assert_eq!(
         value["result"]["serverInfo"]["runtimeExposure"],
-        crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+        crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
     );
+
+    let auth = model_surface_direct_auth();
+    let listed = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(62)),
+            mcp_2026_params(json!({})),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(listed) = listed else {
+        panic!("default adaptive tools/list must succeed");
+    };
+    let names = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    let mut expected = crate::model_surface::adaptive_runtime_direct_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
+    expected.push(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string());
+    assert_eq!(names, expected);
 }
 
 #[tokio::test]
@@ -280,25 +400,113 @@ async fn local_coding_allows_surface_tools_to_dispatch() {
 // adaptive_runtime model surface
 // =========================================================================
 
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
+    env.remove("WEBCODEX_MCP_APPS_ENABLED");
     let runtime = test_runtime_with_surface(ModelSurface::AdaptiveRuntime);
     let mut auth = model_surface_direct_auth();
     auth.scopes.push(crate::auth::SCOPE_SSH_LOCAL.to_string());
-    let outcome = handle_mcp_request(
+
+    let compact_outcome = handle_mcp_request(
         &runtime,
         rpc(
             "tools/list",
             Some(Value::from(720)),
-            mcp_2026_params(json!({})),
+            mcp_2026_ui_params(json!({})),
         ),
         Some(&auth),
     )
     .await;
-    let McpOutcome::Ok(value) = outcome else {
-        panic!("adaptive tools/list must succeed");
+    let McpOutcome::Ok(compact_value) = compact_outcome else {
+        panic!("default adaptive tools/list must succeed");
     };
-    let tools = value["result"]["tools"].as_array().unwrap();
+    let compact_tools = compact_value["result"]["tools"].as_array().unwrap();
+    assert!(
+        compact_tools
+            .iter()
+            .all(|tool| tool.get("outputSchema").is_none()),
+        "unset AdaptiveRuntime must use compact tools/list discovery"
+    );
+
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+    let full_outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(721)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(full_value) = full_outcome else {
+        panic!("explicit full adaptive tools/list must succeed");
+    };
+    let full_tools = full_value["result"]["tools"].as_array().unwrap();
+
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+    let explicit_compact_outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/list",
+            Some(Value::from(722)),
+            mcp_2026_ui_params(json!({})),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(explicit_compact_value) = explicit_compact_outcome else {
+        panic!("explicit compact adaptive tools/list must succeed");
+    };
+    assert_eq!(
+        explicit_compact_value["result"]["tools"], compact_value["result"]["tools"],
+        "explicit true and unset Adaptive compact projection must match"
+    );
+
+    let compact_names = compact_tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let full_names = full_tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        compact_names, full_names,
+        "compaction must not change tool names"
+    );
+    for (compact, full) in compact_tools.iter().zip(full_tools) {
+        for field in ["name", "description", "inputSchema", "annotations", "_meta"] {
+            assert_eq!(
+                compact.get(field),
+                full.get(field),
+                "compact discovery changed {field} for {}",
+                compact["name"]
+            );
+        }
+    }
+    let import = compact_tools
+        .iter()
+        .find(|tool| tool["name"] == "import_conversation_files_to_project")
+        .expect("Adaptive direct file import");
+    assert_eq!(
+        import["_meta"]["openai/fileParams"],
+        json!(["openaiFileIdRefs"])
+    );
+    for job_tool in ["list_jobs", "observe_jobs"] {
+        let tool = compact_tools
+            .iter()
+            .find(|tool| tool["name"] == job_tool)
+            .unwrap_or_else(|| panic!("missing {job_tool}"));
+        assert_eq!(
+            tool["_meta"]["ui"]["resourceUri"], MCP_RESULT_UI_RESOURCE_URI,
+            "compact projection lost MCP App metadata for {job_tool}"
+        );
+    }
+    let tools = compact_tools;
     let names: Vec<&str> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
@@ -316,16 +524,24 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         &names[..direct_names.len()],
         direct_names.iter().map(String::as_str).collect::<Vec<_>>()
     );
-    let serialized_tools_bytes = serde_json::to_vec(tools).unwrap().len();
-    // P5 admits directly actionable recovery targets and #317 adds the stable
-    // scope-gated plugin_tool gateway to the declared direct set. Measured
-    // post-#317 baseline is ~547,411 bytes (~534.6 KiB). Keep roughly the same
-    // ~13% schema-growth headroom without turning the exact tool count into an
-    // architectural lock.
-    const MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES: usize = 608 * 1024;
+    let compact_serialized_tools_bytes = serde_json::to_vec(compact_tools).unwrap().len();
+    let full_serialized_tools_bytes = serde_json::to_vec(full_tools).unwrap().len();
+    eprintln!(
+        "adaptive tools/list bytes: compact={compact_serialized_tools_bytes} full={full_serialized_tools_bytes}"
+    );
     assert!(
-        serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES,
-        "adaptive tools/list schema cost {serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_TOOLS_LIST_BYTES} bytes"
+        compact_serialized_tools_bytes < full_serialized_tools_bytes,
+        "Adaptive compact discovery must cost less than full schema discovery"
+    );
+    // Measured on this surface with Stateless 2026 wrappers, fileParams, and
+    // MCP App metadata: compact=107,089 bytes; full=565,453 bytes. Keep ~22%
+    // headroom over the compact baseline while retaining a guard far below the
+    // full-schema context cost. This is a model schema-cost budget, not an MCP
+    // transport limit and not the tools/call stable-readable result ceiling.
+    const MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES: usize = 128 * 1024;
+    assert!(
+        compact_serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES,
+        "adaptive compact tools/list schema cost {compact_serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES} bytes"
     );
     assert_eq!(
         names.last().copied(),
@@ -338,6 +554,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "list_projects",
         "project_overview",
         "read_file",
+        "apply_patch",
         "run_script",
         "ssh_resource",
         "open_session_shell",
@@ -381,6 +598,26 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         .iter()
         .find(|tool| tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
         .expect("adaptive gateway");
+    let full_gateway = full_tools
+        .iter()
+        .find(|tool| tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
+        .expect("full adaptive gateway");
+    assert!(full_gateway["outputSchema"].is_object());
+    assert_eq!(gateway["inputSchema"], full_gateway["inputSchema"]);
+    let gateway_input = gateway["inputSchema"]["properties"].as_object().unwrap();
+    for field in [
+        "recording_session_id",
+        "ack_session_message_ids",
+        "session_message_resolution",
+        "context_request",
+        "ack_session_context_revision",
+    ] {
+        assert!(
+            gateway_input.contains_key(field),
+            "compact gateway lost stateless wrapper field {field}"
+        );
+    }
+
     let gateway_description = gateway["description"].as_str().unwrap();
     assert!(gateway_description.contains("allowed fallback"));
     assert!(gateway_description.contains("preferred model exposure"));
@@ -1642,19 +1879,29 @@ async fn explicit_full_operator_v1_reports_full_operator_surface() {
 
 #[tokio::test]
 async fn selected_surface_is_immutable_after_environment_changes() {
-    let local = test_runtime_from_model_surface_env(None);
-    let local_auth = model_surface_direct_auth();
-    // Prove the already-built runtime stays local_coding while the process env
-    // actively requests the opposite surface; restore it before any await.
+    let adaptive = test_runtime_from_model_surface_env(None);
+    let adaptive_auth = model_surface_direct_auth();
+    // Prove the already-built runtime stays adaptive_runtime while the process
+    // env actively requests the opposite surface; restore it before any await.
     with_model_surface_env(
         Some(crate::model_surface::MCP_MODEL_SURFACE_FULL_OPERATOR_V1),
-        || assert_eq!(local.model_surface(), Some(ModelSurface::LocalCoding)),
+        || {
+            assert_eq!(
+                adaptive.model_surface(),
+                Some(ModelSurface::AdaptiveRuntime)
+            )
+        },
     );
     for method in ["initialize", "tools/list"] {
+        let params = if method == "tools/list" {
+            mcp_2026_params(json!({}))
+        } else {
+            json!({})
+        };
         let outcome = handle_mcp_request(
-            &local,
-            rpc(method, Some(json!(80)), json!({})),
-            Some(&local_auth),
+            &adaptive,
+            rpc(method, Some(json!(80)), params),
+            Some(&adaptive_auth),
         )
         .await;
         let McpOutcome::Ok(value) = outcome else {
@@ -1663,23 +1910,25 @@ async fn selected_surface_is_immutable_after_environment_changes() {
         if method == "initialize" {
             assert_eq!(
                 value["result"]["serverInfo"]["runtimeExposure"],
-                crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+                crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
             );
         } else {
-            let names: Vec<&str> = value["result"]["tools"]
+            let names = value["result"]["tools"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|tool| tool["name"].as_str().unwrap())
-                .collect();
-            assert_eq!(
-                names,
-                crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES
-            );
+                .map(|tool| tool["name"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            let mut expected = crate::model_surface::adaptive_runtime_direct_tool_specs()
+                .into_iter()
+                .map(|spec| spec.name)
+                .collect::<Vec<_>>();
+            expected.push(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME.to_string());
+            assert_eq!(names, expected);
         }
     }
     let denied = handle_mcp_request(
-        &local,
+        &adaptive,
         rpc(
             "tools/call",
             Some(json!(81)),
@@ -1689,10 +1938,10 @@ async fn selected_surface_is_immutable_after_environment_changes() {
     )
     .await;
     assert!(matches!(denied, McpOutcome::BadRequest(_)));
-    let status = local.runtime_status(None).await;
+    let status = adaptive.runtime_status(None).await;
     assert_eq!(
         status.output["runtime_exposure"],
-        crate::model_surface::MODEL_SURFACE_LOCAL_CODING
+        crate::model_surface::MODEL_SURFACE_ADAPTIVE_RUNTIME
     );
 
     let full = test_runtime_with_surface(ModelSurface::FullOperatorRuntime);
@@ -1730,7 +1979,7 @@ async fn selected_surface_is_immutable_after_environment_changes() {
 }
 
 #[tokio::test]
-async fn local_coding_list_manifest_and_catalog_are_identical() {
+async fn local_coding_list_and_coding_manifest_use_independent_exact_surfaces() {
     let runtime = test_runtime_with_surface(ModelSurface::LocalCoding);
     let auth = model_surface_direct_auth();
     let listed = handle_mcp_request(
@@ -1769,6 +2018,7 @@ async fn local_coding_list_manifest_and_catalog_are_identical() {
     );
     assert_eq!(
         manifest_names,
-        crate::tool_runtime::tool_definition::LOCAL_CODING_TOOL_NAMES
+        crate::tool_runtime::tool_definition::CODING_INTENT_TOOL_NAMES
     );
+    assert_ne!(listed_names, manifest_names);
 }

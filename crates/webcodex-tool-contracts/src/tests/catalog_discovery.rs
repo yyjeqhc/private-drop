@@ -182,6 +182,7 @@ fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
         flow.tools,
         &[
             "run_process",
+            "run_shell",
             "run_job",
             "run_detached_process",
             "observe_jobs",
@@ -190,11 +191,12 @@ fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
     );
     let text = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_ascii_lowercase();
     for phrase in [
-        "runner-owned",
-        "outlive the current runner process",
+        "run_process/run_shell",
+        "same runner-owned job",
+        "immediate asynchronous shell start",
         "run_detached_process",
-        "supervisor-owned",
-        "replacement runner",
+        "outlive the runner",
+        "supervisor",
     ] {
         assert!(
             text.contains(phrase),
@@ -250,10 +252,8 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     assert!(review.iter().any(|value| value == "git_log"));
     let inspect = categories[TOOL_DISCOVERY_GROUP_INSPECT].as_array().unwrap();
     for name in [
-        "read_file",
         "read_files",
         "run_shell",
-        "search_project_text",
         "search_project_texts",
         "show_changes",
     ] {
@@ -262,6 +262,26 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             "inspect category: {name}"
         );
     }
+    for compatibility_primitive in [
+        "read_file",
+        "search_project_text",
+        "git_diff",
+        "git_diff_summary",
+    ] {
+        assert!(
+            !inspect.iter().any(|value| value == compatibility_primitive),
+            "inspect category should prefer canonical tools over {compatibility_primitive}"
+        );
+    }
+    let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
+    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
+        assert!(
+            !git.iter().any(|value| value == compatibility_primitive),
+            "git category should not recommend {compatibility_primitive}"
+        );
+    }
+    assert!(!review.iter().any(|value| value == "git_diff"));
+    assert!(!review.iter().any(|value| value == "git_diff_summary"));
     let edit = categories[TOOL_DISCOVERY_GROUP_EDIT].as_array().unwrap();
     let edit_prefix = edit
         .iter()
@@ -314,10 +334,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "ssh_resource list/register -> restart -> list -> bind -> open/reuse",
         "local persistent shell is only for true same-process state",
         "one-shot ssh uses run_process",
-        "execution lifetime: run_process/run_job stay runner-owned",
-        "outlive the current runner process",
-        "discover run_detached_process",
-        "supervisor-owned job",
+        "execution lifetime: start ordinary work with run_process/run_shell or structured validation",
+        "same runner-owned job",
+        "run_job only for intentional immediate asynchronous shell start",
+        "run_detached_process only when work must outlive the runner",
         "inspect: on adaptive runtime prefer search_project_texts/read_files even for one query/range",
         "run_shell for a short tightly related shell chain",
         "run_script for program-like shell content",
@@ -463,6 +483,9 @@ fn tool_categories_include_projects_with_management_tools() {
 
 #[test]
 fn tool_manifest_intents_reference_only_known_model_visible_tools() {
+    // High-level intent views rank canonical choices; exact compatibility
+    // primitives remain discoverable by tool_name without becoming peer choices.
+
     let expected = [
         "coding",
         "audit",
@@ -500,6 +523,50 @@ fn tool_manifest_intents_reference_only_known_model_visible_tools() {
 }
 
 #[test]
+fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
+    for intent_name in ["audit", "exploration"] {
+        let intent = TOOL_MANIFEST_INTENTS
+            .iter()
+            .find(|intent| intent.name == intent_name)
+            .unwrap();
+        assert!(intent.tools.contains(&"read_files"), "{intent_name}");
+        assert!(
+            intent.tools.contains(&"search_project_texts"),
+            "{intent_name}"
+        );
+        assert!(!intent.tools.contains(&"read_file"), "{intent_name}");
+        assert!(
+            !intent.tools.contains(&"search_project_text"),
+            "{intent_name}"
+        );
+    }
+    let audit = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "audit")
+        .unwrap();
+    assert!(audit.tools.contains(&"show_changes"));
+    assert!(audit.tools.contains(&"git_diff_hunks"));
+    assert!(!audit.tools.contains(&"git_diff_summary"));
+
+    let release = TOOL_MANIFEST_INTENTS
+        .iter()
+        .find(|intent| intent.name == "release")
+        .unwrap();
+    assert!(release.tools.contains(&"show_changes"));
+    assert!(!release.tools.contains(&"git_diff_summary"));
+}
+
+#[test]
+fn validate_flow_uses_observe_jobs_without_recommending_job_status() {
+    let validate = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .find(|flow| flow.name == "validate")
+        .unwrap();
+    assert!(validate.tools.contains(&"observe_jobs"));
+    assert!(!validate.tools.contains(&"job_status"));
+}
+
+#[test]
 fn project_overview_manifest_profiles_match_intended_workflows() {
     for intent in ["coding", "audit", "exploration", "discovery"] {
         let profile = TOOL_MANIFEST_INTENTS
@@ -516,43 +583,129 @@ fn project_overview_manifest_profiles_match_intended_workflows() {
 }
 
 #[test]
-fn coding_intent_matches_local_coding_canonical_tools() {
+fn local_coding_compatibility_surface_stays_exact_and_ordered() {
+    assert_eq!(
+        LOCAL_CODING_TOOL_NAMES,
+        &[
+            "work_on_project",
+            "list_projects",
+            "plugin_tool",
+            "get_session_assignment",
+            "complete_session_message",
+            "coding_agent_start",
+            "coding_agent_observe",
+            "coding_agent_cancel",
+            "project_overview",
+            "list_project_tracked_files",
+            "list_project_files",
+            "search_project_text",
+            "search_project_texts",
+            "read_file",
+            "read_files",
+            "lsp_status",
+            "document_symbols",
+            "document_diagnostics",
+            "hover",
+            "workspace_symbols",
+            "goto_definition",
+            "find_references",
+            "call_hierarchy",
+            "apply_text_edits",
+            "apply_patch",
+            "apply_unified_diff",
+            "run_process",
+            "run_script",
+            "run_shell",
+            "run_job",
+            "observe_jobs",
+            "job_status",
+            "job_log",
+            "list_jobs",
+            "stop_job",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "go_test",
+            "validation_summary",
+            "git_status",
+            "git_log",
+            "git_review_summary",
+            "git_diff",
+            "git_diff_hunks",
+            "show_changes",
+            "workspace_hygiene_check",
+            "finish_coding_task",
+        ]
+    );
+}
+
+#[test]
+fn coding_intent_has_independent_ordered_canonical_selection_surface() {
     let coding = TOOL_MANIFEST_INTENTS
         .iter()
         .find(|intent| intent.name == "coding")
         .expect("coding intent");
-    assert_eq!(coding.tools, LOCAL_CODING_TOOL_NAMES);
+    assert_eq!(coding.tools, CODING_INTENT_TOOL_NAMES);
+    assert_ne!(coding.tools, LOCAL_CODING_TOOL_NAMES);
     assert_eq!(coding.tools.first().copied(), Some("work_on_project"));
     assert_eq!(coding.tools.last().copied(), Some("finish_coding_task"));
-    assert!(!coding.tools.contains(&"start_coding_task"));
-    let apply_patch_position = coding
-        .tools
-        .iter()
-        .position(|tool| *tool == "apply_patch")
-        .unwrap();
+
+    let mut seen = BTreeSet::new();
+    for tool in CODING_INTENT_TOOL_NAMES {
+        assert!(seen.insert(*tool), "duplicate coding intent tool {tool}");
+    }
+    for required in [
+        "work_on_project",
+        "search_project_texts",
+        "read_files",
+        "apply_text_edits",
+        "run_process",
+        "run_shell",
+        "observe_jobs",
+        "cargo_check",
+        "cargo_test",
+        "show_changes",
+        "git_diff_hunks",
+        "workspace_hygiene_check",
+        "finish_coding_task",
+        "apply_patch",
+        "run_script",
+        "cargo_fmt",
+        "go_test",
+        "goto_definition",
+        "find_references",
+    ] {
+        assert!(coding.tools.contains(&required), "missing {required}");
+    }
+    for compatibility_or_overlap in [
+        "read_file",
+        "search_project_text",
+        "git_diff",
+        "git_diff_summary",
+        "job_status",
+        "job_log",
+        "run_job",
+        "apply_unified_diff",
+        "coding_agent_start",
+        "coding_agent_observe",
+        "coding_agent_cancel",
+        "get_session_assignment",
+        "complete_session_message",
+    ] {
+        assert!(
+            !coding.tools.contains(&compatibility_or_overlap),
+            "coding intent should not recommend {compatibility_or_overlap}"
+        );
+    }
     let apply_text_edits_position = coding
         .tools
         .iter()
         .position(|tool| *tool == "apply_text_edits")
         .unwrap();
+    let apply_patch_position = coding
+        .tools
+        .iter()
+        .position(|tool| *tool == "apply_patch")
+        .unwrap();
     assert!(apply_text_edits_position < apply_patch_position);
-    for middle in [
-        "project_overview",
-        "apply_patch",
-        "apply_text_edits",
-        "apply_unified_diff",
-        "cargo_test",
-        "show_changes",
-    ] {
-        let position = coding
-            .tools
-            .iter()
-            .position(|tool| *tool == middle)
-            .unwrap();
-        assert!(position > 0 && position + 1 < coding.tools.len());
-    }
-    assert!(coding.tools.contains(&"run_shell"));
-    assert!(coding.tools.contains(&"run_job"));
-    assert!(!coding.tools.contains(&"git_restore_paths"));
-    assert!(!coding.tools.contains(&"discard_untracked"));
 }

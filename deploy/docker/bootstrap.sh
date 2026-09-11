@@ -399,7 +399,7 @@ validate_committed_env() {
         "WEBCODEX_HOST_IP=$HOST_IP" \
         "WEBCODEX_HOST_PORT=$HOST_PORT" \
         "RUST_LOG=info" \
-        "WEBCODEX_MCP_MODEL_SURFACE=local-coding-v1" \
+        "WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1" \
         "COMPOSE_FILE=$COMPOSE_FILE"; do
         [ "$(grep -Fxc "$expected" "$ENV_FILE" || true)" -eq 1 ] \
             || fail "$ENV_FILE does not match the installation receipt"
@@ -530,7 +530,7 @@ commit_secret_env() {
         printf 'WEBCODEX_HOST_IP=%s\n' "$HOST_IP"
         printf 'WEBCODEX_HOST_PORT=%s\n' "$HOST_PORT"
         printf 'RUST_LOG=info\n'
-        printf 'WEBCODEX_MCP_MODEL_SURFACE=local-coding-v1\n'
+        printf 'WEBCODEX_MCP_MODEL_SURFACE=adaptive-runtime-v1\n'
         printf 'COMPOSE_FILE=%s\n' "$COMPOSE_FILE"
         if [ "$MODE" = image ]; then
             printf 'WEBCODEX_SERVER_IMAGE=%s\n' "$SERVER_IMAGE"

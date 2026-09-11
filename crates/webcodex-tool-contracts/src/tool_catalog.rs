@@ -30,12 +30,10 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "work_on_project",
             "project_overview",
             "list_project_tracked_files",
-            "read_file",
             "read_files",
             "run_process",
             "run_script",
             "run_shell",
-            "search_project_text",
             "search_project_texts",
             "document_symbols",
             "document_diagnostics",
@@ -48,8 +46,6 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "list_project_files",
             "show_changes",
             "git_status",
-            "git_diff",
-            "git_diff_summary",
             "git_review_summary",
             "git_diff_hunks",
             "git_log",
@@ -124,8 +120,6 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         tools: &[
             "git_commit_paths",
             "git_status",
-            "git_diff",
-            "git_diff_summary",
             "git_review_summary",
             "git_diff_hunks",
             "git_log",
@@ -144,10 +138,8 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "git_review_summary",
             "git_diff_hunks",
             "workspace_hygiene_check",
-            "git_diff_summary",
             "git_log",
             "git_status",
-            "git_diff",
             "workspace_checkpoint_show",
             "workspace_checkpoint_list",
         ],
@@ -303,9 +295,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "list_runners",
             "list_projects",
             "project_overview",
-            "read_file",
             "read_files",
-            "search_project_text",
             "search_project_texts",
             "run_process",
             "run_script",
@@ -329,11 +319,12 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "execution_lifetime",
-        summary: "Execution lifetime: run_process/run_job stay Runner-owned. If accepted native work must outlive the current Runner process across exit, restart, upgrade, or replacement, discover run_detached_process and observe its supervisor-owned Job; never use an expired detached key as a retry token.",
+        summary: "Execution lifetime: start ordinary work with run_process/run_shell or structured validation; long work continues as the same Runner-owned Job. Use run_job only for intentional immediate asynchronous shell start, and run_detached_process only when work must outlive the Runner.",
         manifest_purpose:
-            "Choose execution by lifetime ownership: ordinary process/shell Jobs remain owned by the current Runner, while run_detached_process explicitly hands accepted native argv work to a narrow supervisor so it can outlive the initiating Runner and be recovered by a replacement Runner only under the detached reconciliation contract.",
+            "Choose execution by lifetime ownership: ordinary process/shell/validation work starts on its canonical tool and may hand off as the same Runner-owned Job; run_job is only for intentionally asynchronous shell launch from the first call. run_detached_process explicitly hands accepted native argv work to a supervisor so it can outlive Runner exit/restart/replacement.",
         tools: &[
             "run_process",
+            "run_shell",
             "run_job",
             "run_detached_process",
             "observe_jobs",
@@ -344,11 +335,9 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         name: "inspect",
         summary: "Inspect: on Adaptive Runtime prefer search_project_texts/read_files even for one query/range. Use run_process for native argv, run_shell for a short tightly related shell chain, run_script for program-like shell content, then show_changes to review.",
         manifest_purpose:
-            "Prefer batch-capable search_project_texts/read_files for Adaptive inspection even with one item; singular search_project_text/read_file remain valid simple primitives. Use run_process for one native argv call, run_shell only for shell semantics or one tightly related observation goal, and run_script for loops/conditionals/functions/traps/multi-stage logic before reviewing the worktree.",
+            "Prefer batch-capable search_project_texts/read_files for Adaptive inspection even with one item. Singular search_project_text/read_file remain exact compatibility primitives discoverable by tool_name, not ordinary peer choices. Use run_process for one native argv call, run_shell only for shell semantics or one tightly related observation goal, and run_script for loops/conditionals/functions/traps/multi-stage logic before reviewing the worktree.",
         tools: &[
-            "search_project_text",
             "search_project_texts",
-            "read_file",
             "read_files",
             "run_process",
             "run_script",
@@ -397,7 +386,6 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "cargo_test",
             "go_test",
             "observe_jobs",
-            "job_status",
             "validation_summary",
             "run_process",
             "run_script",
@@ -468,9 +456,9 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
 ];
 
-/// Single ordered, unique source of truth for the `local_coding` MCP surface
-/// and `tool_manifest(intent="coding")`. The order is both the MCP tools/list
-/// order and the coding manifest ranking.
+/// Single ordered, unique source of truth for the fixed `local_coding` MCP
+/// compatibility surface. This list intentionally does not drive Adaptive
+/// Runtime intent discovery.
 pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     // entry
     "work_on_project",
@@ -532,6 +520,47 @@ pub const LOCAL_CODING_TOOL_NAMES: &[&str] = &[
     "finish_coding_task",
 ];
 
+/// Ordered selection surface for ordinary coding work under Adaptive Runtime.
+///
+/// This is intentionally smaller and more canonical than the fixed Local Coding
+/// compatibility surface. It may include distinct gateway-routed specialists
+/// that are worth explicit discovery, but excludes singular/legacy peers when a
+/// preferred batch, structured review, or Job-continuation path exists.
+pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
+    "work_on_project",
+    "project_overview",
+    "search_project_texts",
+    "read_files",
+    // Distinct semantic navigation capabilities remain useful even though they
+    // are long-tail Adaptive gateway targets.
+    "document_symbols",
+    "document_diagnostics",
+    "hover",
+    "workspace_symbols",
+    "goto_definition",
+    "find_references",
+    "call_hierarchy",
+    // Canonical edit plus contextual/multi-hunk specialist.
+    "apply_text_edits",
+    "apply_patch",
+    // Ordinary execution plus program-like multi-stage specialist.
+    "run_process",
+    "run_script",
+    "run_shell",
+    "observe_jobs",
+    // Structured validation.
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_test",
+    "go_test",
+    // Worktree and committed-range review.
+    "git_review_summary",
+    "git_diff_hunks",
+    "show_changes",
+    "workspace_hygiene_check",
+    "finish_coding_task",
+];
+
 /// Stable task-intent views for `tool_manifest(intent=...)`.
 /// Ordered lists are ranked for model selection; not a substitute for category.
 /// Intent views only filter and rank discovery output; they do not change tool
@@ -540,7 +569,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
     ToolManifestIntent {
         name: "coding",
         purpose: "Default coding loop: start, inspect, structured edit, validate, review, report.",
-        tools: LOCAL_CODING_TOOL_NAMES,
+        tools: CODING_INTENT_TOOL_NAMES,
     },
     ToolManifestIntent {
         name: "audit",
@@ -549,15 +578,12 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "work_on_project",
             "project_overview",
             "list_project_tracked_files",
-            "read_file",
             "read_files",
-            "search_project_text",
             "search_project_texts",
             "list_project_files",
             "git_status",
             "git_log",
             "git_review_summary",
-            "git_diff_summary",
             "git_diff_hunks",
             "show_changes",
             "workspace_hygiene_check",
@@ -576,9 +602,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "project_overview",
             "list_project_tracked_files",
             "list_project_files",
-            "search_project_text",
             "search_project_texts",
-            "read_file",
             "read_files",
             "git_status",
             "git_log",
@@ -606,7 +630,6 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
         tools: &[
             "runtime_status",
             "git_status",
-            "git_diff_summary",
             "workspace_hygiene_check",
             "cargo_fmt",
             "cargo_check",
