@@ -60,6 +60,16 @@ injected by the pinned verified OpenAI `tunnel-client`.
 
 For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local `/readyz` is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
 
+## Result cards
+
+On operator surfaces, clients advertising MCP Apps HTML support can display
+read-only result cards for `list_jobs`, `observe_jobs`, `cargo_check`, `cargo_test`,
+`go_test`, and `validation_summary`. Validation cards show execution outcomes,
+bounded diagnostics, and current versus historical validation evidence.
+Cards do not poll, retry, or invoke tools; the canonical tool result remains
+available independently. `WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata
+and resources without disabling the underlying tools.
+
 ## Existing Server
 
 For an existing hosted Server intentionally configured for shared-key clients,

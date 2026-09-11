@@ -127,7 +127,7 @@ pub(super) fn mcp_app_resources_list() -> Value {
         .push(json!({
             "uri": MCP_RESULT_UI_RESOURCE_URI,
             "name": "WebCodex Result",
-            "description": "Read-only WebCodex structured result presentation for supported Job tools. The App renders bounded presentation metadata and never performs tool calls or owns runtime state.",
+            "description": "Read-only WebCodex structured result presentation for list_jobs, observe_jobs, cargo_check, cargo_test, go_test, and validation_summary. The App renders bounded presentation metadata and never performs tool calls or owns runtime state.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_result_app_resource_meta()
         }));

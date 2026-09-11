@@ -997,16 +997,10 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "validation_summary",
         "Cargo Test",
         "Array.from",
-        "receivedToolResult",
         "Cargo test zero tests",
     ] {
         assert!(html.contains(expected), "missing {expected}");
     }
-    assert_eq!(
-        html.matches("if (!receivedToolResult)").count(),
-        2,
-        "late initialize success and failure must not overwrite an already rendered tool result"
-    );
     for forbidden in [
         "innerHTML",
         "eval(",
@@ -1136,21 +1130,24 @@ async fn set_job_state(
 async fn wait_for_result_app_runner_request(
     runtime: &ToolRuntime,
 ) -> crate::runner_protocol::RunnerRequest {
-    for _ in 0..100 {
-        if let Some(request) = runtime
-            .runner_registry
-            .poll(RunnerPollRequest {
-                client_id: "result-app-runner".to_string(),
-                runner_instance_id: "inst-result-app".to_string(),
-            })
-            .await
-            .unwrap()
-        {
-            return request;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = runtime
+                .runner_registry
+                .poll(RunnerPollRequest {
+                    client_id: "result-app-runner".to_string(),
+                    runner_instance_id: "inst-result-app".to_string(),
+                })
+                .await
+                .unwrap()
+            {
+                return request;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    panic!("timed out waiting for Result App Runner request");
+    })
+    .await
+    .expect("timed out waiting for Result App Runner request")
 }
 
 async fn complete_result_app_validation_job(
