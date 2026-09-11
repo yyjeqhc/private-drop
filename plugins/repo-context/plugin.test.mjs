@@ -243,6 +243,26 @@ test("untracked file is counted and maps to its workspace package", async () => 
   }
 });
 
+
+test("cross-package rename marks both source and destination packages affected", async () => {
+  const root = initWorkspace();
+  try {
+    fs.writeFileSync(path.join(root, "crates", "a", "rename-me.txt"), "fixture\n");
+    git(root, ["add", "crates/a/rename-me.txt"]);
+    git(root, ["-c", "commit.gpgSign=false", "commit", "-qm", "rename fixture"]);
+    git(root, ["mv", "crates/a/rename-me.txt", "crates/b/moved-from-a.txt"]);
+    const result = await callRepoContext(root);
+    assert.equal(result.isError, false);
+    assert.equal(result.structuredContent.cargoAvailable, true);
+    assert.equal(result.structuredContent.stagedCount, 1);
+    assert.equal(result.structuredContent.totalChangedPaths, 1);
+    assert.deepEqual(result.structuredContent.changedPaths, ["crates/b/moved-from-a.txt"]);
+    assert.deepEqual(result.structuredContent.affectedPackages, ["pkg-a", "pkg-b"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("detached HEAD is reported without inventing a branch", async () => {
   const root = initWorkspace();
   try {

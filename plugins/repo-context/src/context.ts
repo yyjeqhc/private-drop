@@ -206,8 +206,18 @@ function parsePorcelainStatus(
     const x = field[0] ?? " ";
     const y = field[1] ?? " ";
     const normalized = field.slice(3).replaceAll("\\", "/");
-    const renameOrCopy = x === "R" || x === "C" || y === "R" || y === "C";
-    if (renameOrCopy && index + 1 < fields.length) index += 1;
+    const rename = x === "R" || y === "R";
+    const copy = x === "C" || y === "C";
+    let renameSource: string | undefined;
+    if (rename || copy) {
+      const source = fields[index + 1];
+      if (source === undefined || source.length === 0) {
+        pushWarning(warnings, "git status returned a rename/copy record without a source path");
+      } else {
+        if (rename) renameSource = source.replaceAll("\\", "/");
+        index += 1;
+      }
+    }
 
     if (x === "?" && y === "?") {
       untrackedCount += 1;
@@ -218,6 +228,11 @@ function parsePorcelainStatus(
 
     totalChangedPaths += 1;
     mappingPaths.push(normalized);
+    // A cross-package rename changes both the source and destination package.
+    // Copy sources remain unchanged, so only rename source paths participate in
+    // advisory affected-package mapping. changedPaths/totalChangedPaths still
+    // represent one Git status record rather than double-counting the rename.
+    if (renameSource !== undefined) mappingPaths.push(renameSource);
     if (visiblePaths.length >= CHANGED_PATH_LIMIT) continue;
     if (normalized.length <= PATH_MAX_CHARS && Buffer.byteLength(normalized, "utf8") <= PATH_MAX_CHARS) {
       visiblePaths.push(normalized);
