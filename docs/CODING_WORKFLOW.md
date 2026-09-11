@@ -18,6 +18,7 @@ work_on_project
 ```
 
 `work_on_project` is the canonical bootstrap for normal coding and review. Give it the current task instruction and then follow the project instructions and tools returned by the connected Server.
+By default it also returns a small bounded `extensions` catalog for selection: Skill metadata comes from the canonical project/configured/managed Skill union, and Plugin metadata is restricted to ready providers whose configured working directory matches the Project root. This metadata grants no authority and does not load Skill bodies or create Plugin bindings; use `skill_read_file` or `plugin_tool describe -> call` only after selecting a relevant entry. Set `include_extension_catalog=false` only when the current model context already retains that discovery metadata.
 
 ## Start or continue a task
 

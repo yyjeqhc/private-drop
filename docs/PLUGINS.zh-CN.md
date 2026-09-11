@@ -79,6 +79,7 @@ Server-global WebCodex tool namespace，也不会被追加到外层 MCP `tools/l
 其他 WebCodex 工具相同的 canonical metadata/registry 链路，schema 与 Runner 是否在线、
 安装了哪些 Plugin 无关。因此即使当前没有 Plugin-capable Runner，
 `tool_manifest(tool_name="plugin_tool")` 也能返回准确 gateway contract。
+`work_on_project` 还可以在 startup 中提供一个有界、Project-affine 的 Plugin selection catalog。它只包含 configured `cwd` 解析后与 authoritative Project root 一致且当前 ready/committed 的 provider tool；其他目录的 provider 不会自动进入 catalog。该 projection 不会暴露 provider path、command/argv/environment、schema、provider instance identity 或 invocation binding。模型选择后仍必须走 canonical `plugin_tool describe -> call`。在支持 context sidecar 的 surface 上，同时具备 `project:read` 与 `plugin:inspect` 的调用者也可以显式请求 `plugins.catalog` 获取同类 Project-affine metadata。
 
 MCP 与 OpenAPI/GPT Actions 使用的 generic Tool Runtime 都复用同一个 canonical
 `plugin_tool` parser 和 action-aware gateway executor；不存在 MCP Plugin 实现和 GPT

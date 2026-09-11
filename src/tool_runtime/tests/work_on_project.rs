@@ -20,6 +20,10 @@ use crate::tool_runtime::{
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
+use webcodex_core::configured_skills::{
+    ConfiguredSkillDescriptor, ConfiguredSkillRootsListResponse, ConfiguredSkillRootsRequest,
+    CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT,
+};
 use webcodex_core::plugin::{
     PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
     PluginSelectionAnnotations, ProjectPluginCatalog, ProjectPluginCatalogEntry,
@@ -617,6 +621,83 @@ async fn dispatch_startup_with_plugin_catalog(
     (task.await.unwrap(), request_kinds)
 }
 
+async fn dispatch_startup_with_configured_skill_catalog(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    call: ToolCall,
+    auth: &crate::auth::AuthContext,
+    configured_skill: ConfiguredSkillDescriptor,
+) -> (ToolResult, Vec<String>) {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move { runtime.dispatch_with_auth(call, Some(&auth)).await }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut request_kinds = Vec::new();
+    while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "configured-Skill startup did not finish within 10 seconds: {request_kinds:?}"
+        );
+        let Some(request) = probe_patch_agent_request(runtime, client_id).await else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            continue;
+        };
+        request_kinds.push(request.kind.clone());
+        if request.kind == "configured_skill_roots" {
+            let operation: ConfiguredSkillRootsRequest = serde_json::from_str(
+                request
+                    .content
+                    .as_deref()
+                    .expect("typed configured Skill roots request"),
+            )
+            .unwrap();
+            assert!(matches!(operation, ConfiguredSkillRootsRequest::List));
+            runtime
+                .runner_registry
+                .complete(RunnerResultRequest {
+                    client_id: client_id.to_string(),
+                    runner_instance_id: "inst".to_string(),
+                    request_id: request.request_id,
+                    exit_code: Some(0),
+                    stdout: Some(
+                        serde_json::to_string(&ConfiguredSkillRootsListResponse {
+                            format: CONFIGURED_SKILL_ROOTS_RESPONSE_FORMAT.to_string(),
+                            skills: vec![configured_skill.clone()],
+                            invalid_count: 0,
+                            diagnostics: Vec::new(),
+                            discovery_truncated: false,
+                        })
+                        .unwrap(),
+                    ),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(1),
+                    error: None,
+                })
+                .await
+                .unwrap();
+        } else if request.kind == AGENT_LSP_REQUEST_KIND {
+            complete_patch_agent_request(
+                runtime,
+                client_id,
+                &request.request_id,
+                0,
+                &RunnerLspResultEnvelope::err(
+                    "lsp_status_unavailable",
+                    "fixture intentionally has no language server",
+                )
+                .to_stdout_json(),
+                "",
+            )
+            .await;
+        } else {
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        }
+    }
+    (task.await.unwrap(), request_kinds)
+}
+
 async fn dispatch_startup_without_window(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -1193,6 +1274,58 @@ async fn work_on_project_extension_catalog_is_defaulted_bounded_and_skips_all_ex
         "work_on_project_extension_catalog_bytes without={without_bytes} with={with_bytes} increase={}",
         with_bytes.saturating_sub(without_bytes)
     );
+}
+
+#[tokio::test]
+async fn work_on_project_extension_catalog_includes_runner_configured_skill_roots() {
+    let root = tempfile::tempdir().unwrap();
+    init_git_repo(root.path());
+    let runtime = ToolRuntime::new_for_tests();
+    let project = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "wop-ext-configured-skill",
+        "demo",
+        root.path(),
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            file_read: true,
+            configured_skill_roots_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let auth = bootstrap_auth_context();
+    let configured_id = format!("wc_skill_{}", "2".repeat(32));
+    let configured_revision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let (result, requests) = dispatch_startup_with_configured_skill_catalog(
+        &runtime,
+        "wop-ext-configured-skill",
+        work_on_project_call_with_extensions(&project, "discover configured Skill", true),
+        &auth,
+        ConfiguredSkillDescriptor {
+            skill_id: configured_id.clone(),
+            name: "operator-live-guidance".to_string(),
+            description: "Configured live Skill metadata".to_string(),
+            definition_revision: configured_revision.to_string(),
+        },
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert!(requests.iter().any(|kind| kind == "configured_skill_roots"));
+    let skills = &result.output["extensions"]["skills"];
+    assert_eq!(skills["status"], "available");
+    assert_eq!(skills["total_count"], 1);
+    assert_eq!(skills["returned_count"], 1);
+    assert_eq!(skills["truncated"], false);
+    let entry = &skills["entries"][0];
+    assert_eq!(entry["skill_id"], configured_id);
+    assert_eq!(entry["name"], "operator-live-guidance");
+    assert_eq!(entry["description"], "Configured live Skill metadata");
+    assert_eq!(entry["source_scope"], "runner");
+    assert_eq!(entry["trust"], "operator_configured_guidance");
+    assert_eq!(entry["name_conflict"], false);
+    assert!(!result.output.to_string().contains(configured_revision));
 }
 
 #[tokio::test]
