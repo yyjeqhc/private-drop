@@ -7,8 +7,13 @@ use super::super::sessions::{
 };
 use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
+use crate::runner_protocol::{RunnerCapabilities, RunnerResultPayload, RunnerResultRequest};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
+use webcodex_core::plugin::{
+    PluginGatewayRequest, PluginGatewayResponse, PluginGatewayResponsePayload,
+    PluginSelectionAnnotations, ProjectPluginCatalog, ProjectPluginCatalogEntry,
+};
 
 fn context_material<'a>(result: &'a ToolResult, key: &str) -> &'a Value {
     result.output["context_projection"]["materials"]
@@ -17,6 +22,60 @@ fn context_material<'a>(result: &'a ToolResult, key: &str) -> &'a Value {
         .iter()
         .find(|material| material["key"] == key)
         .unwrap_or_else(|| panic!("missing context material {key}: {}", result.output))
+}
+
+async fn complete_plugin_catalog_request(
+    runtime: &ToolRuntime,
+    request: crate::runner_protocol::RunnerRequest,
+    catalog: ProjectPluginCatalog,
+) {
+    runtime
+        .runner_registry
+        .complete(RunnerResultPayload {
+            result: RunnerResultRequest {
+                client_id: request.client_id,
+                runner_instance_id: "inst".to_string(),
+                request_id: request.request_id,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: None,
+            },
+            command_execution_state: None,
+            mcp_gateway: None,
+            plugin_gateway: Some(PluginGatewayResponse::success(
+                PluginGatewayResponsePayload::ProjectCatalog { catalog },
+            )),
+            coding_agent: None,
+        })
+        .await
+        .unwrap();
+}
+
+fn plugin_catalog(entries: usize) -> ProjectPluginCatalog {
+    ProjectPluginCatalog {
+        catalog_revision: format!("wc_plugcat_{}", "a".repeat(64)),
+        total_count: entries,
+        entries: (0..entries)
+            .map(|index| ProjectPluginCatalogEntry {
+                plugin: format!("repo-tools-{index:03}"),
+                name: format!("Repo Tools {index:03}"),
+                tool: format!("repo_context_{index:03}"),
+                title: Some(format!("Repository context {index:03}")),
+                description: Some(format!(
+                    "Bounded selection description {index:03} {}",
+                    "x".repeat(256)
+                )),
+                annotations: PluginSelectionAnnotations {
+                    read_only_hint: Some(true),
+                    destructive_hint: Some(false),
+                    idempotent_hint: Some(true),
+                    open_world_hint: Some(false),
+                },
+            })
+            .collect(),
+    }
 }
 
 async fn dispatch_with_context_and_local_agent(
@@ -498,6 +557,182 @@ async fn mutation_context_projection_is_post_tool_and_does_not_change_authority_
     assert!(context_material(&result, "project.instructions")
         .to_string()
         .contains("RECOVER_BEFORE_MUTATION"));
+}
+
+#[tokio::test]
+async fn plugins_catalog_sidecar_requires_inspect_scope_without_affecting_main_result() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let mut capabilities = RunnerCapabilities::default();
+    capabilities.native_tool_plugins = true;
+    let project_id = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "plugin-sidecar-scope",
+        "repo",
+        root.path(),
+        capabilities,
+    )
+    .await;
+    let resolver_auth = auth_context(None, true);
+    let project = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&resolver_auth))
+        .await
+        .unwrap();
+    let mut auth = auth_context(None, false);
+    auth.scopes
+        .push(crate::auth::SCOPE_PROJECT_READ.to_string());
+    let mut result = ToolResult::ok(json!({"main_observation": "success"}));
+    runtime
+        .add_requested_context_projection(
+            &mut result,
+            &["plugins.catalog".to_string()],
+            Some(&project),
+            Some(&auth),
+            super::super::context_projection::ContextMaterialCapabilities::default(),
+        )
+        .await;
+    assert!(result.success);
+    assert_eq!(result.output["main_observation"], "success");
+    let material = context_material(&result, "plugins.catalog");
+    assert_eq!(material["status"], "unavailable");
+    assert_eq!(material["reason_code"], "plugin_inspect_scope_unavailable");
+    assert!(material.get("projection").is_none());
+    assert!(
+        probe_agent_request_for_instance(&runtime, "plugin-sidecar-scope", "inst")
+            .await
+            .is_none(),
+        "scope denial must fail closed before Plugin inventory dispatch"
+    );
+}
+
+#[tokio::test]
+async fn plugins_catalog_sidecar_is_project_scoped_bounded_and_creates_no_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let mut capabilities = RunnerCapabilities::default();
+    capabilities.native_tool_plugins = true;
+    let project_id = register_runner_project_at_path_with_capabilities(
+        &runtime,
+        "plugin-sidecar",
+        "repo",
+        root.path(),
+        capabilities,
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let project = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&auth))
+        .await
+        .unwrap();
+    let bindings_before = runtime.plugin_gateway.binding_count();
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        async move {
+            let mut result = ToolResult::ok(json!({"main_observation": "success"}));
+            runtime
+                .add_requested_context_projection(
+                    &mut result,
+                    &["plugins.catalog".to_string()],
+                    Some(&project),
+                    Some(&auth),
+                    super::super::context_projection::ContextMaterialCapabilities::default(),
+                )
+                .await;
+            result
+        }
+    });
+    let request = wait_for_runner_request_for_instance(&runtime, "plugin-sidecar", "inst").await;
+    assert!(matches!(
+        request.plugin_gateway,
+        Some(PluginGatewayRequest::ProjectCatalog { ref project_id }) if project_id == "repo"
+    ));
+    complete_plugin_catalog_request(&runtime, request, plugin_catalog(64)).await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["main_observation"], "success");
+    let material = context_material(&result, "plugins.catalog");
+    assert_eq!(material["status"], "available");
+    assert_eq!(material["projection"]["total_count"], 64);
+    assert_eq!(material["projection"]["truncated"], true);
+    assert!(material["projection"]["returned_count"].as_u64().unwrap() < 64);
+    assert!(material["projection"].get("next_cursor").is_none());
+    assert!(material["projection"]
+        .to_string()
+        .contains("plugin_tool list and describe"));
+    assert!(
+        serde_json::to_vec(&material["projection"]).unwrap().len()
+            <= crate::plugin_gateway::MAX_PLUGIN_CATALOG_CONTEXT_BYTES
+    );
+    assert_eq!(runtime.plugin_gateway.binding_count(), bindings_before);
+    let serialized = material.to_string();
+    for forbidden in [
+        root.path().to_string_lossy().as_ref(),
+        "inputSchema",
+        "outputSchema",
+        "provider_instance_id",
+        "binding",
+        "command",
+        "argv",
+        "cwd",
+        "env",
+        "stderr",
+        "pid",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "leaked {forbidden}: {serialized}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn plugins_catalog_sidecar_reports_plugin_runtime_unavailable_nonfatally() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let project_id =
+        register_runner_project_at_path(&runtime, "plugin-sidecar-no-runtime", "repo", root.path())
+            .await;
+    let auth = auth_context(None, true);
+    let project = runtime
+        .resolve_project_input_for_auth(&project_id, Some(&auth))
+        .await
+        .unwrap();
+    let mut result = ToolResult::ok(json!({"main_observation": "success"}));
+    runtime
+        .add_requested_context_projection(
+            &mut result,
+            &["plugins.catalog".to_string()],
+            Some(&project),
+            Some(&auth),
+            super::super::context_projection::ContextMaterialCapabilities::default(),
+        )
+        .await;
+    assert!(result.success);
+    assert_eq!(result.output["main_observation"], "success");
+    let material = context_material(&result, "plugins.catalog");
+    assert_eq!(material["status"], "unavailable");
+    assert_eq!(material["reason_code"], "plugin_runtime_unavailable");
+    assert!(material.get("projection").is_none());
+    assert!(
+        probe_agent_request_for_instance(&runtime, "plugin-sidecar-no-runtime", "inst")
+            .await
+            .is_none()
+    );
+}
+
+#[test]
+fn plugins_catalog_selection_projection_has_independent_hard_bound() {
+    let projection = crate::plugin_gateway::project_plugin_catalog_projection(
+        &plugin_catalog(128),
+        crate::plugin_gateway::MAX_PLUGIN_CATALOG_CONTEXT_BYTES,
+    );
+    let bytes = serde_json::to_vec(&projection).unwrap().len();
+    assert!(bytes <= crate::plugin_gateway::MAX_PLUGIN_CATALOG_CONTEXT_BYTES);
+    assert_eq!(projection["total_count"], 128);
+    assert_eq!(projection["truncated"], true);
+    assert!(projection["returned_count"].as_u64().unwrap() < 128);
+    assert!(projection.get("next_cursor").is_none());
 }
 
 #[tokio::test]

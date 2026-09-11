@@ -21,6 +21,7 @@ use std::time::Duration;
 pub(crate) const PLUGIN_TOOL_NAME: &str = "plugin_tool";
 const MAX_PLUGIN_BINDINGS: usize = 512;
 const GATEWAY_WAIT_TIMEOUT: Duration = Duration::from_secs(125);
+pub(crate) const MAX_PLUGIN_CATALOG_CONTEXT_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Clone)]
 struct PluginBinding {
@@ -899,6 +900,92 @@ fn response_tools(response: PluginGatewayResponse) -> Result<Vec<PluginTool>, Ga
             "invalid_plugin_response",
             "Runner returned an unexpected Plugin tools/list response",
         )),
+    }
+}
+
+fn response_project_catalog(
+    response: PluginGatewayResponse,
+) -> Result<ProjectPluginCatalog, GatewayError> {
+    if let Some(error) = response.error {
+        return Err(response_error(response.dispatch_state, error));
+    }
+    match response.payload {
+        Some(PluginGatewayResponsePayload::ProjectCatalog { catalog }) => Ok(catalog),
+        _ => Err(GatewayError::local(
+            "invalid_plugin_response",
+            "Runner returned an unexpected project Plugin catalog response",
+        )),
+    }
+}
+
+pub(crate) fn project_plugin_catalog_projection(
+    catalog: &ProjectPluginCatalog,
+    max_bytes: usize,
+) -> Value {
+    fn value(catalog: &ProjectPluginCatalog, entries: &[ProjectPluginCatalogEntry]) -> Value {
+        let truncated = entries.len() < catalog.total_count;
+        json!({
+            "catalog_revision": catalog.catalog_revision,
+            "total_count": catalog.total_count,
+            "returned_count": entries.len(),
+            "truncated": truncated,
+            "entries": entries,
+            "discovery_hint": truncated.then_some(
+                "Use explicit plugin_tool list and describe for broader or current schema discovery."
+            ),
+        })
+    }
+
+    let mut entries = Vec::new();
+    for entry in &catalog.entries {
+        let mut candidate = entries.clone();
+        candidate.push(entry.clone());
+        if serde_json::to_vec(&value(catalog, &candidate))
+            .map(|bytes| bytes.len() <= max_bytes)
+            .unwrap_or(false)
+        {
+            entries.push(entry.clone());
+        } else {
+            break;
+        }
+    }
+    value(catalog, &entries)
+}
+
+fn project_catalog_reason(error: &GatewayError) -> &'static str {
+    match error.code.as_str() {
+        "project_target_unavailable" => "project_target_unavailable",
+        _ => "plugin_runtime_unavailable",
+    }
+}
+
+impl ToolRuntime {
+    pub(crate) async fn plugin_project_catalog_context_projection(
+        &self,
+        project: &crate::tool_runtime::ResolvedProject,
+        auth: Option<&AuthContext>,
+    ) -> Result<Value, &'static str> {
+        let project_id = crate::tool_runtime::runner_local_project_id(&project.resolved_id)
+            .ok_or("project_target_unavailable")?;
+        let runner = resolve_runner(self, &project.config.client_id, auth)
+            .await
+            .map_err(|error| project_catalog_reason(&error))?;
+        let response = execute_exact(
+            self,
+            &runner,
+            PluginGatewayRequest::ProjectCatalog {
+                project_id: project_id.to_string(),
+            },
+            auth,
+        )
+        .await
+        .map_err(|error| project_catalog_reason(&error))?;
+        let catalog =
+            response_project_catalog(response).map_err(|error| project_catalog_reason(&error))?;
+        Ok(project_plugin_catalog_projection(
+            &catalog,
+            MAX_PLUGIN_CATALOG_CONTEXT_BYTES,
+        ))
     }
 }
 

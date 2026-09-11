@@ -11,6 +11,10 @@ pub(crate) const TOOL_CALL_CONTEXT_REQUEST_FIELD: &str = "context_request";
 pub(crate) const MAX_CONTEXT_REQUEST_ITEMS: usize = 8;
 pub(crate) const MAX_CONTEXT_REQUEST_KEY_CHARS: usize = 64;
 pub(crate) const MAX_CONTEXT_PROJECTION_BYTES: usize = 20 * 1024;
+const PLUGIN_CATALOG_SCOPES: &[&str] = &[
+    crate::auth::SCOPE_PROJECT_READ,
+    crate::auth::SCOPE_PLUGIN_INSPECT,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextMaterialScopePolicy {
@@ -58,6 +62,12 @@ pub(crate) const CONTEXT_MATERIAL_SPECS: &[ContextMaterialSpec] = &[
         project_required: true,
         scope_policy: ContextMaterialScopePolicy::Require(crate::auth::SCOPE_PROJECT_READ),
         surface: ContextMaterialSurface::SkillRuntime,
+    },
+    ContextMaterialSpec {
+        key: "plugins.catalog",
+        project_required: true,
+        scope_policy: ContextMaterialScopePolicy::RequireAll(PLUGIN_CATALOG_SCOPES),
+        surface: ContextMaterialSurface::AnySidecar,
     },
     ContextMaterialSpec {
         key: "memory.bootstrap",
@@ -130,6 +140,14 @@ fn unavailable(key: &str, reason_code: &str) -> Value {
     })
 }
 
+fn scope_unavailable_reason(key: &str) -> &'static str {
+    if key == "plugins.catalog" {
+        "plugin_inspect_scope_unavailable"
+    } else {
+        "context_material_scope_unavailable"
+    }
+}
+
 impl ToolRuntime {
     pub(crate) async fn add_requested_context_projection(
         &self,
@@ -159,7 +177,7 @@ impl ToolRuntime {
                 } else if spec.project_required && resolved_project.is_none() {
                     unavailable(key, "project_target_unavailable")
                 } else if !context_material_scope_available(spec.scope_policy, auth) {
-                    unavailable(key, "context_material_scope_unavailable")
+                    unavailable(key, scope_unavailable_reason(key))
                 } else {
                     match key {
                         "project.instructions" => {
@@ -187,6 +205,21 @@ impl ToolRuntime {
                             let project =
                                 resolved_project.expect("registry requires project target");
                             match self.skills_catalog_context_projection(project, auth).await {
+                                Ok(projection) => json!({
+                                    "key": key,
+                                    "status": "available",
+                                    "projection": projection,
+                                }),
+                                Err(reason_code) => unavailable(key, reason_code),
+                            }
+                        }
+                        "plugins.catalog" => {
+                            let project =
+                                resolved_project.expect("registry requires project target");
+                            match self
+                                .plugin_project_catalog_context_projection(project, auth)
+                                .await
+                            {
                                 Ok(projection) => json!({
                                     "key": key,
                                     "status": "available",
