@@ -269,25 +269,34 @@ corrected with focused regressions:
   suppression list. Its binding fence now receives the same trace exclusion as
   the other App coordination tools.
 
-**Open P2: reopening after the recovered successor also expires.** The original
-card's persisted tool input still names E1/g1; its accepted E2/g2 selector lives
-only in the iframe. If E2's lease also elapses before that original card is
-reopened, Store replay correctly finds the same authoritative E2, but
+**A4b prerequisite: repeated successor recovery is still open.** The original card's
+persisted tool input still names E1/g1; its accepted E2/g2 selector lives only in the
+iframe. If E2's lease also elapses before that original card is reopened, Store replay
+correctly finds the same authoritative E2, but
 `agent_continuation_recover_endpoint_for_window` then calls the ordinary live
-`bootstrap_agent_conversation`. This fails `endpoint_expired` before returning
-the replacement envelope, so the card cannot learn E2 and request E2 -> E3.
-Response loss lasting past E2's lease has the same failure.
+`bootstrap_agent_conversation`. This fails `endpoint_expired` before returning the
+replacement envelope, so the card cannot learn E2 and request E2 -> E3. Response loss
+lasting past E2's lease has the same failure.
 
 This was reproduced locally by setting only the successor's
 `lease_expires_at_unix_ms` to zero immediately before the replay in
 `mcp_app_expired_endpoint_replacement_replays_across_server_restart_without_extra_generation`:
-its expected successful replay instead returned `endpoint_expired`. The
-temporary fault injection was removed after verification; the regular test
-continues to cover replay while the successor is live. Fixing this requires an
-explicit successor-recovery protocol; ordinary live-Endpoint checks and the
-prohibition on retargeting an old replay after a later generation must remain
-intact. Until then, explicitly rotate and present a new Endpoint/card. This
-review does not claim repeated long-close recovery is complete.
+its expected successful replay instead returned `endpoint_expired`. The temporary
+fault injection was removed after verification; the regular test continues to cover
+replay while the successor is live.
+
+The next Endpoint-backed AgentTask slice should close this as an explicit
+successor-chain protocol rather than by extending leases or weakening stale binding.
+An old selector may discover only the authoritative replacement chain that was already
+committed for the same principal/Agent/ClientWindow lineage; it must not become a
+credential, skip a foreign/revoked successor, recreate fresh push authority from replay,
+or retarget after an unrelated later generation. If the authoritative successor is
+itself naturally expired and still eligible under the same exact recovery contract,
+the operation may advance that current successor to exactly its next generation and
+return the selector the card must adopt. The intended durability shape is therefore
+E1 -> E2 -> E3 -> ... while every superseded Endpoint remains permanently stale.
+Until that protocol lands, explicitly rotate and present a new Endpoint/card; repeated
+long-close recovery is not yet claimed complete.
 
 Focused validation passed: 113 App tests, 25 runtime/MCP continuation tests,
 11 Store communication tests, nine continuation contract/parser/privacy tests,

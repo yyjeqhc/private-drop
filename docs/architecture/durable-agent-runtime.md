@@ -531,7 +531,7 @@ Use concrete backends first.
 
 ### A3 — Agent Task + fenced TaskAttempt
 
-The current A3 implementation establishes durable Agent Task and TaskAttempt semantics only:
+A3 is implemented and establishes the durable work/ownership substrate:
 
 - explicit work creation;
 - explicit assignment/acceptance and atomic Attempt start/claim by that assignee;
@@ -545,33 +545,94 @@ The current A3 implementation establishes durable Agent Task and TaskAttempt sem
 A3 does **not** automatically choose an assignee, spawn workers, operate a global
 claimable queue, or choose execution capacity.
 
-A4a is intentionally not implemented in this foundation: `start_agent_task_attempt`
-creates durable ownership/fencing truth only and does not start a CodingAgentRun or
-any other execution backend.
+### A4a — TaskAttempt -> existing CodingAgentRun (implemented)
 
-### A4a — TaskAttempt -> existing CodingAgentRun
+A4a is implemented through `start_agent_task_coding_run` and
+`reconcile_agent_task_coding_run`. The runtime re-authorizes the exact TaskAttempt,
+Project, and CodingAgent backend; persists the prepared binding in
+`wc_agent_task_coding_runs`; durably claims dispatch before starting the backend;
+preserves uncertain dispatch as `outcome_unknown`; and reconciles the authoritative
+CodingAgentRun before terminalizing the exact TaskAttempt. The binding retains the
+run/provider/authority/intent identities needed to reject a changed or stale backend
+rather than weakening them into generic Task controller state.
 
-Use the existing ACP CodingAgentRun as the first real execution backend. It already
-has durable run identity, caller/project/provider intent binding, provider-instance
-fencing, uncertain-dispatch handling, and restart reconciliation.
+This first concrete backend proves that Agent Task execution is independent from
+ChatGPT browser windows and that TaskAttempt ownership can survive Server restart and
+backend-response uncertainty.
 
-This is deliberately the first backend because it proves that Agent Task execution
-is independent from ChatGPT browser windows.
+### A4b — TaskAttempt -> Agent Endpoint continuation (next)
 
-### A4b — TaskAttempt -> Agent Endpoint continuation
+The next concrete backend is a wake-capable durable Agent Endpoint. A4b should bind
+one exact live TaskAttempt to an explicit Agent Endpoint execution carrier, create a
+durable processing opportunity for that assigned Agent, resume through the existing
+Host continuation adapter, and require exact TaskAttempt completion after the resumed
+turn. The TaskAttempt remains the work/execution-ownership truth; the Endpoint remains
+a replaceable carrier; consuming a Wake proves only that one reasoning opportunity
+ran and never completes the TaskAttempt.
 
-After a production Host continuation adapter exists, allow a TaskAttempt to execute
-through a wake-capable Agent Endpoint. The TaskAttempt remains Agent-owned; the
-Endpoint remains a replaceable carrier.
+A4b must not fabricate a Conversation Message merely to reuse the existing
+`inbox_changed` Wake path. Wake should gain a second explicit source for TaskAttempt
+work (for example `agent_task_attempt`) with source-specific durable references. Inbox
+Message/Delivery high-watermarks remain owned by the Inbox-triggered source, while a
+Task-triggered Wake identifies the exact durable Task/Attempt that the resumed model
+must re-read and re-authorize. Wake remains "this Agent should receive another
+processing opportunity", not "this work is complete".
 
-Only after both backends reveal repeated common machinery should WebCodex extract a
+Endpoint replacement inside a live TaskAttempt reuses the existing Attempt-local
+controller-generation fence: the replacement carrier advances
+`attempt_controller_generation`, while the Attempt id/fence stay unchanged. Any turn
+or carrier holding the prior Attempt controller generation becomes permanently stale
+for heartbeat, further dispatch, and terminal completion. Endpoint lease expiry and
+TaskAttempt lease expiry remain independent correctness boundaries.
+
+Before A4b depends on long-lived Host execution, the continuation carrier must also
+close the current repeated-successor gap: an original card that moved E1/g1 -> E2/g2
+must be able, after E2 naturally expires, to learn the authoritative successor chain
+and safely advance E2/g2 -> E3/g3 (and later generations) without reviving E1,
+retargeting across ClientWindow/principal boundaries, extending Endpoint leases, or
+turning an old replay into fresh push authority. This successor-chain recovery is a
+prerequisite of the same A4b delivery, not a reason to relax stale Endpoint binding.
+
+If no wake-capable Endpoint is currently available, the TaskAttempt/work remains
+durable and pending; absence of a Host carrier is not Task failure. Server restart or
+carrier loss must not mint a second TaskAttempt or a second logical work item, and a
+post-dispatch `delivery_unknown` observation is never blindly re-dispatched.
+
+Only after A4a and A4b reveal repeated common machinery should WebCodex extract a
 minimal shared execution binding/adapter abstraction.
 
-## Scheduling is optional derived capability
+## Asynchronous events and scheduling are derived capabilities
+
+A4b should not introduce a generic event bus, Goal scheduler, DAG engine, or autonomous
+loop. The next architectural step after concrete Endpoint-backed work may be a small
+durable event/attention layer driven by real domain transitions such as TaskAttempt
+terminal/attention state, timers, or external completion signals.
+
+Keep the meanings separate:
+
+```text
+Event = a durable fact that something happened
+Wake  = a durable opportunity for one Agent to reason again
+Task  = durable work that may still be incomplete
+Goal  = durable high-level intent/control truth
+```
+
+An Event is therefore not automatically a Wake, and a Wake is not an Event log. Many
+durable events may coalesce into one reasoning opportunity; the resumed model reads
+the authoritative source domains rather than treating copied event payloads as
+execution truth. Event identity/reference must not transfer the source domain's
+authority.
+
+Goal should remain the deliberately small `active | completed | cancelled` lifecycle.
+States such as `implementing`, `waiting_ci`, `waiting_human`, `blocked`, or
+`validating` should be derived presentation/attention from correlated durable work and
+events unless a later product requirement proves they are independently authoritative
+Goal truth. Goal orchestration should create/associate explicit work and react to
+durable facts rather than becoming a second execution engine.
 
 Later dogfood may show that many durable Agent Tasks benefit from a runnable-frontier
-scheduler. If so, scheduling should derive from durable work, not from browser tabs
-or UI idle state.
+scheduler. If so, scheduling should derive from durable work and semantic state
+transitions, not from browser tabs or UI idle state.
 
 Useful future invariants include:
 
@@ -579,14 +640,15 @@ Useful future invariants include:
 - runnable work and live execution reservations drive capacity decisions;
 - active execution reservations form a floor only for the carrier class they
   actually consume;
-- semantic durable state transitions create wake pressure; visual UI state does not;
+- semantic durable state transitions may create bounded wake pressure; visual UI
+  state does not;
 - stale workers/carriers cannot renew expired leases or submit late results.
 
 Capacity is therefore potentially per execution class rather than simply
 "number of active Agent Tasks = number of ChatGPT windows".
 
-This is a possible A5 product slice, not an A3 requirement and not WebCodex's north
-star.
+This is a possible later product slice, not an A4b requirement and not WebCodex's
+north star.
 
 ## Dependencies and workflow graphs come later
 
@@ -605,9 +667,10 @@ Add an explicit workflow graph only after dependency plus conditional-routing us
 cases justify a third abstraction layer. Superstep/BSP-style coordination has no
 current roadmap commitment.
 
-## A3 acceptance matrix
+## Agent Task execution acceptance baseline
 
-The first Agent Task foundation should close at least these cases:
+A3 and the implemented A4a establish the existing baseline; A4b must preserve it and
+close the additional Endpoint-backed cases below:
 
 | Case | Required result |
 | --- | --- |
@@ -621,7 +684,14 @@ The first Agent Task foundation should close at least these cases:
 | authorized explicit reassignment, then new assignee starts | creates a new Attempt for the new current assignee |
 | Attempt 1 responds after Attempt 2 exists | Attempt 1 remains permanently stale |
 | Endpoint/carrier replacement inside one Attempt | old Attempt controller/binding is fenced |
-| Server restart | Agent Task/TaskAttempt truth and accepted replay identities survive |
+| CodingAgentRun dispatch response is uncertain | exact durable binding reconciles the authoritative run; no blind second run |
+| CodingAgentRun reaches terminal state | reconciliation terminalizes the exact current TaskAttempt once |
+| A4b TaskAttempt has no wake-capable Endpoint | work remains durable/pending; no Task failure and no fabricated Conversation Message |
+| A4b Wake is consumed | proves one resumed reasoning opportunity only; TaskAttempt remains active until exact completion |
+| A4b Endpoint E1 is replaced by E2 inside one Attempt | same Attempt/fence, incremented Attempt controller generation; old E1 turn is stale |
+| original continuation selector E1 has already advanced to expired E2 | same authorized Window can discover the authoritative chain and advance to E3 without reviving E1 |
+| A4b Host outcome is `delivery_unknown` after dispatch fence | no blind redispatch and no duplicate TaskAttempt |
+| Server restart | Agent Task/TaskAttempt truth and accepted replay identities survive; no second logical work item |
 | Endpoint detach | Task/Attempt durable state does not disappear |
 | duplicate completion | exact replay, no repeated terminal side effect |
 | changed replay | idempotency conflict |
@@ -629,9 +699,9 @@ The first Agent Task foundation should close at least these cases:
 | Agent Task references Project | receives no implicit Project authority |
 | unauthorized exact Agent Task/Attempt id | does not disclose foreign-resource existence |
 
-## Explicit non-goals for the next slice
+## Explicit non-goals for A4b
 
-The Agent Task foundation must not expand into:
+The Endpoint-backed execution slice must not expand into:
 
 - a generic swarm scheduler or worker pool;
 - automatic Agent spawning or autonomous delegation;
@@ -639,7 +709,8 @@ The Agent Task foundation must not expand into:
 - dependency DAG, fan-out/reducer, graph DSL, or superstep;
 - a universal execution-provider framework;
 - Agent parent/child hierarchy;
-- production ChatGPT continuation unless that is the dedicated A4b slice;
+- a generic durable event bus or Goal scheduler;
+- new Goal lifecycle states for execution/presentation phases;
 - Agent-scoped Memory migration or Agent Skills;
 - federation/A2A compatibility;
 - PostgreSQL/distributed multi-Server scheduling;
