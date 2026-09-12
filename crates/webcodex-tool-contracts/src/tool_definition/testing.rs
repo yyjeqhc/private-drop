@@ -34,7 +34,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.validation_identity(super::ToolValidationIdentityKind::CargoFmt),
         ),
-        "Run cargo fmt. With check=true it is read-only validation; optional sync_wait_secs shortens only the synchronous grace before the same execution is returned as a Job. Mutating format stays synchronous and rejects sync_wait_secs.",
+        "After source edits, use check=false (default) to ensure formatting: precheck first, mutate only for a proven rustfmt diff, and use changed/state_changed instead of reproducing rustfmt diffs with edit tools. Use check=true for pure read-only final validation; only that mode may hand off the same execution as a Job via sync_wait_secs. Ensure-format stays synchronous.",
         cargo_fmt_input_schema,
     )),
     adaptive_runtime_direct(

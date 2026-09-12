@@ -416,6 +416,15 @@ fn cargo_fmt_conditional_timeout_schema_matches_contract() {
     let specs = registered_tool_specs();
     let schema = &spec_named(&specs, "cargo_fmt").input_schema;
     let validates = |value: &Value| test_support::validate_schema_instance(value, schema).is_ok();
+    let check_description = schema["properties"]["check"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(check_description.contains("pure read-only"));
+    assert!(check_description.contains("ensure formatting"));
+    let timeout_description = schema["properties"]["timeout_secs"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(timeout_description.contains("precheck plus any required mutation"));
 
     assert!(validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3600})

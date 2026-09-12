@@ -2545,11 +2545,10 @@ async fn terminal_validation_result_fields_are_consistent_between_executors() {
     assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["passed"], true);
 }
-/// `cargo_fmt(check=false)` never auto-promotes: it keeps the existing
-/// synchronous execution semantics and must not modify source after the tool
-/// returns.
+/// `cargo_fmt(check=false)` first checks formatting and avoids a mutating
+/// subprocess entirely when the workspace is already formatted.
 #[tokio::test]
-async fn cargo_fmt_mutating_never_auto_promotes() {
+async fn cargo_fmt_ensure_formatted_skips_mutation_when_already_formatted() {
     let client_id = "vhandoff-fmt-mutate";
     let runtime = runtime_with_agent_project(client_id);
     let caps = RunnerCapabilities {
@@ -2570,6 +2569,7 @@ async fn cargo_fmt_mutating_never_auto_promotes() {
     });
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
     assert_ne!(request.kind, "start_validation_job");
+    assert_eq!(request.command, "cargo fmt -- --check");
     runtime
         .runner_registry
         .complete(crate::runner_protocol::RunnerResultRequest {
@@ -2588,12 +2588,97 @@ async fn cargo_fmt_mutating_never_auto_promotes() {
     assert!(result.success, "{:?}", result.error);
     assert_ne!(result.output["promoted_to_job"], true);
     assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["changed"], false);
+    assert_eq!(result.output["state_changed"], false);
     // No job was created.
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
 #[tokio::test]
-async fn cargo_fmt_mutating_post_spawn_uncertainty_forbids_blind_retry() {
+async fn cargo_fmt_ensure_formatted_mutates_only_after_stable_format_diff() {
+    let client_id = "vhandoff-fmt-ensure-diff";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(&runtime, client_id, None, RunnerCapabilities::default()).await;
+    let project = agent_test_project_id(client_id);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .cargo_fmt(project, None, Some(false), Some(120))
+                .await
+        }
+    });
+    let precheck = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(precheck.command, "cargo fmt -- --check");
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &precheck.request_id,
+        1,
+        "Diff in src/lib.rs:1:\n-old\n+new\n",
+        "",
+    )
+    .await;
+
+    let mutation = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(mutation.command, "cargo fmt");
+    complete_patch_agent_request(&runtime, client_id, &mutation.request_id, 0, "", "").await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["changed"], true);
+    assert_eq!(result.output["state_changed"], true);
+    assert_eq!(result.output["command_summary"], "cargo fmt");
+    assert_ne!(result.output["promoted_to_job"], true);
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+    assert_cargo_result_matches_schema("cargo_fmt", &result);
+}
+
+#[tokio::test]
+async fn cargo_fmt_ensure_formatted_non_format_precheck_failure_never_mutates() {
+    let client_id = "vhandoff-fmt-precheck-error";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(&runtime, client_id, None, RunnerCapabilities::default()).await;
+    let project = agent_test_project_id(client_id);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .cargo_fmt(project, None, Some(false), Some(120))
+                .await
+        }
+    });
+    let precheck = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(precheck.command, "cargo fmt -- --check");
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &precheck.request_id,
+        1,
+        "",
+        "error: rustfmt component is unavailable",
+    )
+    .await;
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        .await
+        .expect("non-format precheck failure must return without waiting for mutation")
+        .unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["changed"], false);
+    assert_eq!(result.output["state_changed"], false);
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("No source formatting was attempted")));
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+    assert_cargo_result_matches_schema("cargo_fmt", &result);
+}
+
+#[tokio::test]
+async fn cargo_fmt_ensure_formatted_mutation_uncertainty_forbids_blind_retry() {
     let client_id = "vhandoff-fmt-mutate-unknown";
     let runtime = runtime_with_agent_project(client_id);
     let caps = RunnerCapabilities {
@@ -2611,7 +2696,22 @@ async fn cargo_fmt_mutating_post_spawn_uncertainty_forbids_blind_retry() {
                 .await
         }
     });
+    let precheck = wait_for_runner_request(&runtime, client_id).await;
+    assert_eq!(precheck.command, "cargo fmt -- --check");
+    complete_sync_shell_lifecycle(
+        &runtime,
+        client_id,
+        precheck.request_id,
+        ShellCommandExecutionState::Completed,
+        Some(1),
+        "Diff in src/lib.rs:1:\n-old\n+new\n",
+        "",
+        None,
+    )
+    .await;
+
     let request = wait_for_runner_request(&runtime, client_id).await;
+    assert_eq!(request.command, "cargo fmt");
     complete_sync_shell_lifecycle(
         &runtime,
         client_id,
@@ -2633,8 +2733,14 @@ async fn cargo_fmt_mutating_post_spawn_uncertainty_forbids_blind_retry() {
     assert_eq!(result.output["terminal"], false);
     assert_eq!(result.output["promoted_to_job"], false);
     assert!(result.output.get("job_id").is_none());
+    assert!(result.output["changed"].is_null());
+    assert!(result.output["state_changed"].is_null());
     let error = result.error.as_deref().unwrap_or_default();
     assert!(error.contains("Do not automatically retry"), "{error}");
+    assert!(
+        error.contains("mutation may have changed source"),
+        "{error}"
+    );
     assert!(error.contains("inspect the actual Job, process, service, or target state"));
     assert_cargo_result_matches_schema("cargo_fmt", &result);
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());

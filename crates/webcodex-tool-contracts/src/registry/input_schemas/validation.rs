@@ -41,10 +41,9 @@ fn with_optional_result_expectation(mut schema: Value) -> Value {
 }
 
 pub fn cargo_fmt_input_schema() -> Value {
-    // `cargo_fmt(check=false)` mutates source and keeps the existing explicit
-    // synchronous semantics: it never auto-promotes to a Job, so its
-    // `timeout_secs` stays a synchronous command timeout. Only `check=true`
-    // accepts the long read-only budget.
+    // `cargo_fmt(check=false)` synchronously ensures formatting: a read-only
+    // precheck avoids mutation when already formatted, and a proven rustfmt diff
+    // triggers `cargo fmt`. Only `check=true` accepts the long read-only budget.
     let mut schema = object_schema(with_optional_session_id(vec![
         ("project", "string", "Runner-registered project id.", true),
         (
@@ -56,13 +55,13 @@ pub fn cargo_fmt_input_schema() -> Value {
         (
             "check",
             "boolean",
-            "Run cargo fmt -- --check instead of formatting.",
+            "When true, perform pure read-only `cargo fmt -- --check` validation. Omit or use false during coding to ensure formatting: WebCodex first checks, then runs mutating `cargo fmt` only when a stable rustfmt diff is proven.",
             false,
         ),
         (
             "timeout_secs",
             "integer",
-            "For mutating format, synchronous timeout has minimum 1 and defaults to 120; values above 120 are accepted and clamped to 120. With check=true, values above the 3600-second total validation budget are accepted and clamped to 3600, and a long check keeps the same execution and returns job_id.",
+            "For check=false ensure-format, this is the shared synchronous budget for precheck plus any required mutation; minimum 1, default 120, values above 120 clamp to 120. With check=true, values above the 3600-second read-only validation budget clamp to 3600 and a long check may return job_id.",
             false,
         ),
         (
@@ -104,7 +103,7 @@ pub fn cargo_fmt_input_schema() -> Value {
     }]);
     let mut schema = with_optional_result_expectation(schema);
     schema["properties"][TOOL_RESULT_EXPECTATION_FIELD]["description"] = json!(
-        "Optional pre-execution validation-result expectation, available only with check=true. Mutating cargo fmt never accepts result_expectation. The real ToolResult and process outcome remain unchanged."
+        "Optional pre-execution validation-result expectation, available only with check=true. Ensure-format mode (check=false) never accepts result_expectation. The real ToolResult and process outcome remain unchanged."
     );
     schema
 }
