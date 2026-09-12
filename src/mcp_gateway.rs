@@ -393,6 +393,13 @@ async fn call_upstream(
                 "Call mcp_tool with action=describe for this server and tool before calling again.",
             );
         }
+        if dispatch_state == McpGatewayDispatchState::OutcomeUnknown
+            && gateway_error.recovery.is_none()
+        {
+            gateway_error.recovery = Some(
+                "Do not automatically retry the uncertain call. Inspect target state first. The failed provider connection was retired; a later explicit request may establish a fresh connection under the same provider identity, and effectful calls revalidate tool schema before dispatch.",
+            );
+        }
         if error.code == "stale_provider" {
             gateway_error.code = "provider_replaced".to_string();
             gateway_error.recovery = Some(
@@ -540,17 +547,27 @@ async fn execute_exact(
 
 fn response_tools(response: McpGatewayResponse) -> Result<Vec<McpGatewayTool>, GatewayError> {
     if let Some(error) = response.error {
-        let code = if error.code == "stale_provider" {
+        let stale_provider = error.code == "stale_provider";
+        let code = if stale_provider {
             "provider_replaced".to_string()
         } else {
             error.code
         };
+        let recovery = if stale_provider {
+            Some(
+                "The exact provider instance changed. Re-list or re-describe; WebCodex did not retarget or replay the operation.",
+            )
+        } else if response.dispatch_state == McpGatewayDispatchState::OutcomeUnknown {
+            Some(
+                "The failed provider connection was retired. A later explicit list or describe request may establish a fresh connection under the same provider identity; WebCodex did not replay the failed request.",
+            )
+        } else {
+            None
+        };
         return Err(GatewayError {
             code,
             message: error.message,
-            recovery: Some(
-                "Re-list the MCP server; WebCodex did not retarget or replay the stale operation.",
-            ),
+            recovery,
             dispatch_state: Some(response.dispatch_state),
         });
     }

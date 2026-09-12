@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tempfile::TempDir;
 
 static FAKE_SERVER: OnceLock<Mutex<Weak<FakeBinary>>> = OnceLock::new();
+const TEST_PARALLEL_TIMEOUT_FLOOR_SECS: u64 = 10;
+const TEST_INTENTIONAL_TIMEOUT_SECS: u64 = 5;
 
 struct FakeBinary {
     _temp: TempDir,
@@ -63,7 +65,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(scenario: &str, timeout_secs: u64) -> Self {
-        Self::with_provider_timeout(scenario, timeout_secs, None)
+        // Windows CI can spawn many fake providers in parallel. Keep ordinary
+        // fixture deadlines above that startup jitter; timing-specific tests use
+        // with_provider_timeout directly to preserve a deliberately short bound.
+        Self::with_provider_timeout(
+            scenario,
+            timeout_secs.max(TEST_PARALLEL_TIMEOUT_FLOOR_SECS),
+            None,
+        )
     }
 
     fn with_provider_timeout(
@@ -257,7 +266,7 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
     let cwd = tempfile::tempdir().unwrap();
     let fixture = Fixture::with_execution_context(
         "execution_context",
-        2,
+        TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
         None,
         Some(cwd.path().to_string_lossy().into_owned()),
         BTreeMap::from([
@@ -404,15 +413,14 @@ fn provider_callback_after_dispatch_remains_unsupported_and_unknown() {
         response.error.as_ref().unwrap().code,
         "provider_callbacks_unsupported"
     );
-    assert_eq!(
-        fixture.call(&provider).error.as_ref().unwrap().code,
-        "stale_provider"
-    );
-    assert_eq!(fixture.marker_count("start"), 1);
+    let recovered = fixture.list(&provider);
+    assert!(recovered.error.is_none(), "{:?}", recovered.error);
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(fixture.marker_count("call"), 1);
 }
 
 #[test]
-fn provider_notification_flood_is_bounded_and_retires_after_dispatch() {
+fn provider_notification_flood_is_bounded_and_reconnects_on_next_request() {
     let fixture = Fixture::new("notification_flood", 2);
     let provider = fixture.provider();
 
@@ -425,15 +433,16 @@ fn provider_notification_flood_is_bounded_and_retires_after_dispatch() {
         response.error.as_ref().unwrap().code,
         "provider_notification_flood"
     );
+    let retried = fixture.list(&provider);
     assert_eq!(
-        fixture.list(&provider).error.as_ref().unwrap().code,
-        "stale_provider"
+        retried.error.as_ref().unwrap().code,
+        "provider_notification_flood"
     );
-    assert_eq!(fixture.marker_count("start"), 1);
+    assert_eq!(fixture.marker_count("start"), 2);
 }
 
 #[test]
-fn crash_is_outcome_unknown_and_never_restarted_or_replayed() {
+fn crash_is_outcome_unknown_but_later_request_reconnects_without_replay() {
     let fixture = Fixture::new("crash", 2);
     let provider = fixture.provider();
     assert!(fixture.list(&provider).error.is_none());
@@ -444,21 +453,29 @@ fn crash_is_outcome_unknown_and_never_restarted_or_replayed() {
     );
     assert_eq!(first.error.as_ref().unwrap().code, "provider_eof");
 
-    let second = fixture.call(&provider);
-    assert_eq!(second.dispatch_state, McpGatewayDispatchState::NotStarted);
-    assert_eq!(second.error.as_ref().unwrap().code, "stale_provider");
-    assert_eq!(fixture.marker_count("start"), 1);
+    let recovered = fixture.list(&provider);
+    assert!(recovered.error.is_none(), "{:?}", recovered.error);
+    assert_eq!(
+        fixture.provider().provider_instance_id,
+        provider.provider_instance_id
+    );
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(fixture.marker_count("initialize"), 2);
     assert_eq!(fixture.marker_count("call"), 1);
 }
 
 #[test]
-fn initialization_failure_is_not_misreported_as_tool_dispatch() {
+fn initialization_failure_is_not_tool_dispatch_and_later_requests_retry_spawn() {
     for (scenario, code) in [
         ("init_crash", "provider_eof"),
         ("init_timeout", "provider_timeout"),
         ("init_missing_tools", "provider_initialize_invalid"),
     ] {
-        let fixture = Fixture::new(scenario, 1);
+        let fixture = Fixture::with_provider_timeout(
+            scenario,
+            TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
+            Some(TEST_INTENTIONAL_TIMEOUT_SECS),
+        );
         let provider = fixture.provider();
         let response = fixture.call(&provider);
         assert_eq!(
@@ -469,13 +486,57 @@ fn initialization_failure_is_not_misreported_as_tool_dispatch() {
         assert_eq!(response.error.as_ref().unwrap().code, code, "{scenario}");
         assert_eq!(fixture.marker_count("call"), 0, "{scenario}");
         assert_eq!(fixture.marker_count("start"), 1, "{scenario}");
+        let retried = fixture.call(&provider);
         assert_eq!(
-            fixture.call(&provider).error.as_ref().unwrap().code,
-            "stale_provider",
+            retried.dispatch_state,
+            McpGatewayDispatchState::NotStarted,
             "{scenario}"
         );
-        assert_eq!(fixture.marker_count("start"), 1, "{scenario}");
+        assert_eq!(retried.error.as_ref().unwrap().code, code, "{scenario}");
+        assert_eq!(fixture.marker_count("start"), 2, "{scenario}");
     }
+}
+
+#[test]
+fn transient_initialization_failure_recovers_on_next_explicit_request() {
+    let fixture = Fixture::new("init_crash_once", 2);
+    let provider = fixture.provider();
+    let first = fixture.list(&provider);
+    assert_eq!(first.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(first.error.as_ref().unwrap().code, "provider_eof");
+
+    let second = fixture.list(&provider);
+    assert!(second.error.is_none(), "{:?}", second.error);
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(fixture.marker_count("initialize"), 2);
+}
+
+#[test]
+fn reconnect_revalidates_schema_before_effectful_dispatch() {
+    let fixture = Fixture::new("recover_schema_change", 2);
+    let provider = fixture.provider();
+    assert!(fixture.list(&provider).error.is_none());
+
+    let first = fixture.call(&provider);
+    assert_eq!(
+        first.dispatch_state,
+        McpGatewayDispatchState::OutcomeUnknown
+    );
+    assert_eq!(first.error.as_ref().unwrap().code, "provider_eof");
+    assert_eq!(fixture.marker_count("call"), 1);
+
+    let second = fixture.call(&provider);
+    assert_eq!(second.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(
+        second.error.as_ref().unwrap().code,
+        "provider_schema_changed"
+    );
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(
+        fixture.marker_count("call"),
+        1,
+        "unknown call must not be replayed"
+    );
 }
 
 #[test]
@@ -505,7 +566,11 @@ fn malformed_unknown_and_duplicate_responses_fail_closed() {
 
 #[test]
 fn timeout_and_invalid_untrusted_outputs_are_bounded() {
-    let timeout = Fixture::new("timeout", 1);
+    let timeout = Fixture::with_provider_timeout(
+        "timeout",
+        TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
+        Some(TEST_INTENTIONAL_TIMEOUT_SECS),
+    );
     let provider = timeout.provider();
     assert!(timeout.list(&provider).error.is_none());
     let response = timeout.call(&provider);
@@ -514,6 +579,10 @@ fn timeout_and_invalid_untrusted_outputs_are_bounded() {
         response.dispatch_state,
         McpGatewayDispatchState::OutcomeUnknown
     );
+    let recovered = timeout.list(&provider);
+    assert!(recovered.error.is_none(), "{:?}", recovered.error);
+    assert_eq!(timeout.marker_count("start"), 2);
+    assert_eq!(timeout.marker_count("call"), 1);
 
     for (scenario, operation, code, state) in [
         (
@@ -588,7 +657,11 @@ fn provider_timeout_override_and_default_fallback_are_enforced() {
     assert!(inherited.list(&inherited_provider).error.is_none());
     assert!(inherited.call(&inherited_provider).error.is_none());
 
-    let overridden = Fixture::with_provider_timeout("slow", 2, Some(1));
+    let overridden = Fixture::with_provider_timeout(
+        "slow",
+        TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
+        Some(TEST_INTENTIONAL_TIMEOUT_SECS),
+    );
     let overridden_provider = overridden.provider();
     assert!(overridden.list(&overridden_provider).error.is_none());
     let response = overridden.call(&overridden_provider);

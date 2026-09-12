@@ -1,8 +1,10 @@
 //! Persistent Runner-owned stdio MCP providers for the built-in MCP gateway.
 //!
-//! Each configured provider is initialized lazily at most once for this
-//! Runner process. A protocol/transport failure permanently closes that
-//! provider instance; it is never silently restarted under the same identity.
+//! Each configured provider has one process-lifetime logical identity. Its stdio
+//! connection is initialized lazily and reused while healthy. A fatal protocol/
+//! transport failure retires only that connection: the failed request is never
+//! replayed, while a later explicit request may establish a fresh connection
+//! under the same provider identity and revalidate tool schema before dispatch.
 
 use super::config::{McpGatewayConfig, McpGatewayProviderConfig, MCP_GATEWAY_MAX_CWD_BYTES};
 use super::shell::{env_keys_equal, is_sensitive_env_key};
@@ -15,14 +17,12 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_process::ManagedChild;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
-const PROVIDER_AVAILABLE: u8 = 0;
-const PROVIDER_FAILED: u8 = 1;
 const MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS: usize = 32;
 
 pub(crate) struct McpGatewayManager {
@@ -34,7 +34,6 @@ pub(crate) struct McpGatewayManager {
 struct ProviderEntry {
     config: McpGatewayProviderConfig,
     instance_id: String,
-    failed: AtomicU8,
     session: Mutex<Option<ProviderConnection>>,
 }
 
@@ -127,7 +126,6 @@ impl McpGatewayManager {
                     ProviderEntry {
                         config: provider.clone(),
                         instance_id: uuid::Uuid::new_v4().simple().to_string(),
-                        failed: AtomicU8::new(PROVIDER_AVAILABLE),
                         session: Mutex::new(None),
                     },
                 )
@@ -233,10 +231,9 @@ impl McpGatewayManager {
         provider_id: &str,
         provider_instance_id: &str,
     ) -> Option<&ProviderEntry> {
-        self.providers.get(provider_id).filter(|provider| {
-            provider.instance_id == provider_instance_id
-                && provider.failed.load(Ordering::SeqCst) == PROVIDER_AVAILABLE
-        })
+        self.providers
+            .get(provider_id)
+            .filter(|provider| provider.instance_id == provider_instance_id)
     }
 
     pub(crate) fn shutdown(&self) {
@@ -280,9 +277,6 @@ impl ProviderEntry {
         timeout: Duration,
         operation: impl FnOnce(&mut ProviderConnection, Duration) -> Result<T, ProviderFailure>,
     ) -> Result<T, ProviderFailure> {
-        if self.failed.load(Ordering::SeqCst) == PROVIDER_FAILED {
-            return Err(ProviderFailure::before_send("provider_unavailable"));
-        }
         let mut session = match self.session.try_lock() {
             Ok(session) => session,
             Err(TryLockError::WouldBlock) => {
@@ -293,7 +287,6 @@ impl ProviderEntry {
                 })
             }
             Err(TryLockError::Poisoned(_)) => {
-                self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
                 return Err(ProviderFailure::before_send("provider_unavailable"));
             }
         };
@@ -304,9 +297,9 @@ impl ProviderEntry {
                 Err(mut error) => {
                     // Initialization is provider lifecycle setup, not the
                     // requested tools/list or tools/call. Even if initialize
-                    // reached the child, the caller's operation did not.
+                    // reached the child, the caller's operation did not. A
+                    // later explicit request may attempt a fresh connection.
                     error.dispatch_state = McpGatewayDispatchState::NotStarted;
-                    self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
                     return Err(error);
                 }
             }
@@ -315,7 +308,6 @@ impl ProviderEntry {
             .checked_sub(started.elapsed())
             .filter(|remaining| !remaining.is_zero())
         else {
-            self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
             if let Some(mut connection) = session.take() {
                 connection.terminate();
             }
@@ -326,7 +318,9 @@ impl ProviderEntry {
             remaining,
         );
         if result.as_ref().is_err_and(|error| error.fatal) {
-            self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
+            // Retire only the desynchronized connection. Never replay the
+            // failed request here; a later explicit request may spawn a fresh
+            // connection under the same logical provider identity.
             if let Some(mut connection) = session.take() {
                 connection.terminate();
             }

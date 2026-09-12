@@ -196,7 +196,7 @@ Provider processes do not inherit the Runner environment wholesale. `env_from_en
 
 Mapping a credential delegates that credential to the configured provider process. The provider can use it according to its own implementation and can choose to return derived or raw values through normal tool results; WebCodex does not attempt to redact arbitrary provider output. Treat configured providers as credential recipients, use least-privilege provider credentials, and remember that any caller authorized for `mcp:local` can exercise the provider capabilities that those credentials enable.
 
-A provider starts on first real interaction and is then reused. The Server sees the logical provider `id`/`name`, not its executable path, environment values, PID, stderr, or Runner credential. `mcp_tool(action=list)` reports whether a provider id can be routed; `list(server=...)` and `describe` interact with the provider.
+A provider connection starts on first real interaction and is reused while healthy. A fatal stdio/protocol failure retires only that connection; WebCodex never replays the failed request. A later explicit request may start a fresh connection under the same logical provider identity, and an effectful `tools/call` re-lists and checks the bound tool schema before dispatch. The Server sees the logical provider `id`/`name`, not its executable path, environment values, PID, stderr, or Runner credential. `mcp_tool(action=list)` reports whether a provider id can be routed; `list(server=...)` and `describe` interact with the provider.
 
 ### Provider-side gateway V1 compatibility
 
