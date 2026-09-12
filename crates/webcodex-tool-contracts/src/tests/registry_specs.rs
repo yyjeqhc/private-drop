@@ -21,6 +21,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "plugin",
         "selection metadata",
         "current model context",
+        "does not require git",
         "never proves retention",
         "skill_read_file",
         "plugin_tool describe",
