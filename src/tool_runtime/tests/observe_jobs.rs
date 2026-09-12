@@ -8,6 +8,7 @@ use crate::runner_protocol::{
     ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
 };
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn item(job_id: &str, token: Option<String>) -> ObserveJobsItem {
@@ -1281,4 +1282,160 @@ fn observe_jobs_session_sanitizer_removes_nested_token_bodies() {
     assert!(!serialized.contains(opaque));
     assert_eq!(summary["items"][0]["job_id"], "job");
     assert!(summary["items"][0].get("after_observation_token").is_none());
+}
+
+#[tokio::test]
+async fn ordinary_receipts_production_sqlite_dual_restart_observe_and_list_filters() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("ordinary-receipts.db");
+    let db = Arc::new(crate::Database::open(&path).unwrap());
+    let registry = Arc::new(crate::job_receipts::production_registry(db.clone()).await);
+    let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
+    let client = "receipt-dual-restart";
+    register_agent(
+        &runtime,
+        client,
+        Some("tester"),
+        RunnerCapabilities {
+            async_jobs: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let auth = bootstrap_auth_context();
+    let project = agent_test_project_id(client);
+    let started = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: project.clone(),
+                command: "echo receipt".into(),
+                session_id: None,
+                timeout_secs: Some(60),
+                cwd: None,
+                purpose: Some(ExecutionPurpose::Diagnostic),
+                shell: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(started.success, "{:?}", started.error);
+    let job_id = started.output["job_id"].as_str().unwrap().to_string();
+    let request = wait_for_patch_agent_request(&runtime, client).await;
+    runtime
+        .runner_registry
+        .update_job(RunnerJobUpdateRequest {
+            client_id: client.into(),
+            runner_instance_id: "inst".into(),
+            update_seq: None,
+            job_id: job_id.clone(),
+            request_id: Some(request.request_id),
+            status: "completed".into(),
+            stdout_chunk: Some("bounded stdout\n".into()),
+            stderr_chunk: Some("bounded stderr\n".into()),
+            stdout_tail: None,
+            stderr_tail: None,
+            log_snapshot: None,
+            exit_code: Some(0),
+            duration_ms: Some(42),
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            activity: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
+    let old_token = observation_token(&runtime, &job_id, &auth).await;
+    let rows = db
+        .load_job_receipts(chrono::Utc::now().timestamp())
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "production wiring must persist through SQLite"
+    );
+    let deadline = rows[0].expires_at;
+    drop(runtime);
+    drop(db);
+    let db = Arc::new(crate::Database::open(&path).unwrap());
+    let registry = Arc::new(crate::job_receipts::production_registry(db.clone()).await);
+    let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
+    // No Runner registration/inventory exists in the replacement process.
+    let started = Instant::now();
+    let observed = runtime
+        .dispatch_with_auth(
+            ToolCall::ObserveJobs {
+                items: vec![item(&job_id, Some(old_token))],
+                tail_lines: 40,
+                wait_secs: Some(30),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(observed.success, "{:?}", observed.error);
+    let output = &observed.output["items"][0]["output"];
+    assert_eq!(
+        observed.output["items"][0]["success"], true,
+        "{}",
+        observed.output
+    );
+    assert_eq!(output["status"], "completed");
+    assert_eq!(output["exit_code"], 0);
+    assert_eq!(output["stdout_tail"], "bounded stdout\n");
+    assert_eq!(output["stderr_tail"], "bounded stderr\n");
+    assert_eq!(output["log_delta_status"], "reset");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    for (status, project_filter, session_id, expected) in [
+        (Some("completed".into()), Some(project.clone()), None, 1),
+        (Some("running".into()), Some(project.clone()), None, 0),
+        (None, Some("agent:other:project".into()), None, 0),
+        (None, None, Some("wc_sess_other".into()), 0),
+    ] {
+        let listed = runtime
+            .dispatch_with_auth(
+                ToolCall::ListJobs {
+                    limit: Some(1),
+                    status,
+                    project: project_filter,
+                    session_id,
+                },
+                Some(&auth),
+            )
+            .await;
+        assert!(listed.success, "{:?}", listed.error);
+        assert_eq!(
+            listed.output["jobs"].as_array().unwrap().len(),
+            expected,
+            "{}",
+            listed.output
+        );
+    }
+    assert_eq!(
+        db.load_job_receipts(chrono::Utc::now().timestamp())
+            .unwrap()[0]
+            .expires_at,
+        deadline
+    );
+    register_agent(
+        &runtime,
+        client,
+        Some("new-owner"),
+        RunnerCapabilities {
+            async_jobs: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        runtime
+            .runner_registry
+            .get_job(&job_id)
+            .await
+            .unwrap()
+            .status,
+        "completed"
+    );
+    assert!(probe_patch_agent_request(&runtime, client).await.is_none());
 }

@@ -28,7 +28,7 @@ pub use handlers::{
     runner_job_update, runner_offline, runner_persistent_shell_result, runner_poll,
     runner_register, runner_result,
 };
-pub(crate) use telemetry::registry_with_tool_request_trace;
+pub(crate) use telemetry::tool_request_trace_telemetry;
 pub(crate) use webcodex_runner_registry::{
     command_preview, process_preview, recovery_timeout_sweep, script_preview, EnqueueLspError,
     RunnerFeature, RunnerFeatureSet, RunnerRegistry, RunnerSemanticView, RunnerTransport,

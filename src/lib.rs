@@ -26,6 +26,7 @@ mod console_web;
 mod db;
 mod host_console_http;
 mod job_observation;
+mod job_receipts;
 mod mcp;
 mod mcp_gateway;
 mod model_surface;
@@ -259,7 +260,7 @@ only for local/trusted-network demos."
     // login form to the consent decision. PAT/bootstrap plaintext is never
     // stored here — only the resolved user identity.
     let authorize_session_store = Arc::new(oauth_http::AuthorizeSessionStore::new());
-    let runner_registry = Arc::new(runner_http::registry_with_tool_request_trace());
+    let runner_registry = Arc::new(job_receipts::production_registry(db.clone()).await);
     // Root HTTP admission consults this process-local state before any
     // side-effecting handler can run. It closes the small race between the
     // authoritative drain transition and Salvo consuming its stop command.

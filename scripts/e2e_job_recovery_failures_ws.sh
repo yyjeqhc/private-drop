@@ -621,26 +621,25 @@ assert_nonempty "E: no-reconciliation job ended_at set" "$E_END_AT"
 E_REASON_TEXT="$(json_get "$E_LOST_BODY" output.recovery_reason)"
 assert_nonempty "E: recovery_reason text surfaced" "$E_REASON_TEXT"
 
-# After a server restart the in-memory registry is cleared: there is no
-# durable record of the lost job, so it is unknown (it does NOT come back as a
-# new job and is not re-executed). This is the documented in-process model.
+# The terminal receipt survives coordinated process replacement within its
+# original retention window. It does not recreate execution authority.
 stop_server
 start_server
 wait_for_server || { fail "E: server did not restart"; dump_logs; exit 1; }
 sleep 2
 BODY_E2="$(job_status_call "$JOB_ID_E")"
-assert_eq "E: lost job has no durable record after restart (unknown)" "$(json_get "$BODY_E2" output.status)" ""
+assert_eq "E: lost receipt survives restart" "$(json_get "$BODY_E2" output.status)" "lost"
+assert_eq "E: receipt keeps original ended_at" "$(json_get "$BODY_E2" output.ended_at)" "$E_END_AT"
 E_START_COUNT="$(grep -c 'E-START' "$E_MARKER_FILE" || true)"
 assert_eq "E: command executed once (no re-execution)" "$E_START_COUNT" "1"
 
-# A same-client new no-reconciliation instance cannot take over the old job (it has no
-# durable record after the restart, and the new instance submits no inventory
-# for it).
+# A same-client replacement submits no old inventory and cannot take over the
+# execution represented by this read-only terminal receipt.
 WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$NO_RECONCILIATION_AGENT_TOML"
 wait_for_agent_online >/dev/null || { fail "E: second no-reconciliation Runner did not register"; dump_logs; exit 1; }
 sleep 2
 BODY_E3="$(job_status_call "$JOB_ID_E")"
-assert_eq "E: old job not revived by new same-client instance" "$(json_get "$BODY_E3" output.status)" ""
+assert_eq "E: old job stays terminal under new same-client instance" "$(json_get "$BODY_E3" output.status)" "lost"
 
 stop_server
 stop_runner

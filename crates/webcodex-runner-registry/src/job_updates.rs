@@ -1082,6 +1082,7 @@ impl RunnerRegistry {
         }
         let runner_instance_id = runner.runner_instance_id.clone();
         let auth_group = runner.auth_group.clone();
+        let owner_at_admission = runner.owner.clone();
         if let Some(intent) = detached_intent.as_ref() {
             if let Some(existing) = inner.jobs_by_id.get(&job_id) {
                 if existing.kind != "run_detached_process" {
@@ -1118,6 +1119,7 @@ impl RunnerRegistry {
             request_id: Some(request_id.clone()),
             client_id: client_id.clone(),
             auth_group,
+            owner_at_admission,
             runner_instance_id,
             kind: job_kind.to_string(),
             project_id: metadata.project_id,
@@ -1149,7 +1151,10 @@ impl RunnerRegistry {
             visibility: metadata.visibility,
 
             recovery: JobRecoveryState::default(),
-            observation: JobObservationState::new(self.observation_epoch.clone()),
+            observation: JobObservationState {
+                receipt_candidates: self.inner.capture_candidates(),
+                ..JobObservationState::new(self.observation_epoch.clone())
+            },
         };
         inner.request_to_job.insert(request_id, job_id.clone());
         inner.jobs_by_id.insert(job_id.clone(), job);

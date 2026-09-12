@@ -1,8 +1,7 @@
-use crate::state::RunnerRegistryInner;
+use crate::receipts::ReceiptRegistryState;
 use crate::{NoopRunnerRegistryTelemetry, RunnerAccess, RunnerRegistryTelemetry};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
-use tokio::sync::Mutex;
 
 /// Server-side retained bytes for one stdout or stderr stream in an ordinary
 /// completed Runner result. This is not a polling/WebSocket/QUIC wire limit.
@@ -68,7 +67,7 @@ impl Default for SharedKeyRegistrationLimits {
 
 #[derive(Debug, Clone)]
 pub struct RunnerRegistry {
-    pub(crate) inner: Arc<Mutex<RunnerRegistryInner>>,
+    pub(crate) inner: Arc<ReceiptRegistryState>,
     pub(crate) observation_epoch: Arc<str>,
     pub(crate) shared_key_limits: SharedKeyRegistrationLimits,
     pub(crate) telemetry: Arc<dyn RunnerRegistryTelemetry>,
@@ -86,7 +85,7 @@ impl Default for RunnerRegistry {
 impl RunnerRegistry {
     pub fn with_telemetry(telemetry: Arc<dyn RunnerRegistryTelemetry>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(RunnerRegistryInner::default())),
+            inner: Arc::new(ReceiptRegistryState::new(None)),
             observation_epoch: Arc::from(uuid::Uuid::new_v4().to_string()),
             shared_key_limits: SharedKeyRegistrationLimits::default(),
             telemetry,
