@@ -205,6 +205,67 @@ fn project_candidate_staging_is_index_only() {
 }
 
 #[tokio::test]
+async fn list_projects_batch_job_counts_join_exact_projects_and_skip_empty_selection() {
+    let runtime = test_runtime();
+    register_target_agent(
+        &runtime,
+        "batch",
+        vec![
+            registered_project("a", "/tmp/batch-a"),
+            registered_project("b", "/tmp/batch-b"),
+        ],
+        None,
+    )
+    .await;
+    for id in ["a", "a", "b"] {
+        runtime
+            .runner_registry
+            .start_job_with_metadata(
+                crate::runner_protocol::ShellJobOpRequest {
+                    op: "start".into(),
+                    client_id: Some("batch".into()),
+                    cwd: None,
+                    command: Some("echo fixture".into()),
+                    timeout_secs: Some(60),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "fixture".into(),
+                webcodex_runner_registry::ShellJobStartMetadata {
+                    project_id: Some(format!("agent:batch:{id}")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let listed = runtime
+        .dispatch_with_auth(
+            list_projects_call(Some("batch"), None, None, None, true),
+            None,
+        )
+        .await;
+    assert!(listed.success, "{:?}", listed.error);
+    assert_eq!(listed.output["projects"][0]["id"], "agent:batch:a");
+    assert_eq!(listed.output["projects"][0]["active_jobs"], 2);
+    assert_eq!(listed.output["projects"][1]["active_jobs"], 1);
+    assert_eq!(runtime.runner_registry.project_job_scan_count_for_test(), 1);
+    let empty = runtime
+        .dispatch_with_auth(
+            list_projects_call(Some("missing"), None, None, None, true),
+            None,
+        )
+        .await;
+    assert!(empty.success);
+    assert_eq!(empty.output["count"], 0);
+    assert_eq!(runtime.runner_registry.project_job_scan_count_for_test(), 1);
+}
+
+#[tokio::test]
 async fn list_projects_large_single_runner_inventory_preserves_linear_staging_contract() {
     for project_count in [256usize, 1024] {
         let runtime = test_runtime();
@@ -232,6 +293,7 @@ async fn list_projects_large_single_runner_inventory_preserves_linear_staging_co
         assert_eq!(exact.output["matched_count"], 1);
         assert_eq!(exact.output["truncated"], false);
         assert_eq!(exact.output["projects"][0]["id"], exact_id);
+        assert_eq!(runtime.runner_registry.project_job_scan_count_for_test(), 1);
 
         let broad = runtime
             .list_projects_with_visible_clients_for_test(
@@ -260,6 +322,7 @@ async fn list_projects_large_single_runner_inventory_preserves_linear_staging_co
             .map(|index| format!("agent:special:project-{index:04}"))
             .collect::<Vec<_>>();
         assert_eq!(broad_ids, expected_ids);
+        assert_eq!(runtime.runner_registry.project_job_scan_count_for_test(), 2);
 
         let full = runtime
             .list_projects_with_visible_clients_for_test(
@@ -272,6 +335,11 @@ async fn list_projects_large_single_runner_inventory_preserves_linear_staging_co
         assert_eq!(full.output["matched_count"], project_count);
         assert_eq!(full.output["count"], project_count);
         assert_eq!(full.output["truncated"], false);
+        assert_eq!(
+            runtime.runner_registry.project_job_scan_count_for_test(),
+            3,
+            "a full inventory must scan Jobs once, not once per Project"
+        );
         assert_eq!(
             full.output["projects"][0]["id"],
             "agent:special:project-0000"

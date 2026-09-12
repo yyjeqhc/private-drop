@@ -253,7 +253,7 @@ fn fake_adapter_recovers_same_wake_before_fence_and_exact_consume_is_idempotent(
     assert_eq!(envelope.controller_generation, 2);
     assert!(envelope
         .resume_hint
-        .contains("read the authoritative Agent Inbox"));
+        .contains("Re-read durable work from list_agent_inbox and read_conversation"));
     assert!(!envelope.resume_hint.contains(secret_body));
     assert!(!envelope
         .resume_hint

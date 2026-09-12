@@ -217,6 +217,7 @@ fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'stat
         "edit" => &["artifact", "edit", "patch"],
         "file_transfer" => &["artifact"],
         "git" => &["checkpoint", "cleanup", "file", "git"],
+        "goal" => &["goal"],
         "inspect" => &[
             "checkpoint",
             "computer",
