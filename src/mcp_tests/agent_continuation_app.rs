@@ -170,7 +170,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v9"
+        "ui://webcodex/agent-continuation/v10"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -369,6 +369,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v6"
                     | "ui://webcodex/agent-continuation/v7"
                     | "ui://webcodex/agent-continuation/v8"
+                    | "ui://webcodex/agent-continuation/v9"
             )
         )));
     for uri in [
@@ -381,6 +382,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v6",
         "ui://webcodex/agent-continuation/v7",
         "ui://webcodex/agent-continuation/v8",
+        "ui://webcodex/agent-continuation/v9",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -441,6 +443,14 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
             "App source contains forbidden marker {forbidden}"
         );
     }
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("host_binding_missing_in_process"),
+        "App recovery must key only on the explicit process-local binding-loss contract"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("MAX_RECOVERY_REBINDS = 1"),
+        "App restart recovery must remain bounded"
+    );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("function toolCallSucceeded(result)"),
         "App must distinguish a successful JSON-RPC exchange from a failed ToolResult"

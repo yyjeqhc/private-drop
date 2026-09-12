@@ -524,6 +524,63 @@ test("Host cancellation exposes only bounded bridge diagnostics", async () => {
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
 });
 
+test("server-restart binding loss performs one exact bounded rebind and resumes polling", async () => {
+  const view = await boundView();
+  const originalBinding = bindingId(view);
+  const state = view.calls("agent_continuation_state")[0];
+  await view.reply(state, { structuredContent: {
+    success: false,
+    output: { error_kind: "host_binding_missing_in_process", state_changed: false },
+  } });
+  assert.equal(view.nodes.binding.textContent, "Rebinding");
+  assert.equal(view.nodes.status.textContent, "Server restarted · restoring exact Host binding");
+  await view.fireTimers(3000);
+  const rebind = view.calls("agent_continuation_bind")[1];
+  assert.ok(rebind, "recoverable loss must issue one fresh bind");
+  assert.equal(rebind.params.arguments.binding_id, originalBinding, "View binding identity stays stable");
+  assert.deepEqual(businessArgs(rebind), { ...input, binding_id: originalBinding });
+  const quiet = { ...projection, wake: null, queued_delivery_count: 0 };
+  await view.reply(rebind, toolResult({ agent_continuation: quiet }));
+  assert.equal(view.calls("agent_continuation_state").length, 2);
+  assert.equal(view.calls("agent_continuation_state")[1].params.arguments.binding_id, originalBinding);
+  await view.reply(view.calls("agent_continuation_state")[1], toolResult({ agent_continuation: quiet }));
+  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(hostMessages(view).length, 0);
+});
+
+test("repeated missing-process binding loss is bounded and does not rebind-loop", async () => {
+  const view = await boundView();
+  const missing = { structuredContent: {
+    success: false,
+    output: { error_kind: "host_binding_missing_in_process", state_changed: false },
+  } };
+  await view.reply(view.calls("agent_continuation_state")[0], missing);
+  await view.fireTimers(3000);
+  await view.reply(view.calls("agent_continuation_bind")[1], toolResult({ agent_continuation: projection }));
+  await view.reply(view.calls("agent_continuation_state")[1], missing);
+  await view.fireTimers(3000);
+  assert.equal(view.calls("agent_continuation_bind").length, 2, "only one recovery rebind is allowed per View");
+});
+
+for (const failure of [
+  { name: "generic rpc error", kind: "rpc" },
+  { name: "endpoint expired business error", kind: "business", error_kind: "endpoint_expired" },
+  { name: "stale generation business error", kind: "business", error_kind: "endpoint_generation_stale" },
+  { name: "replaced View business error", kind: "business", error_kind: "host_binding_stale" },
+]) {
+  test(`${failure.name} never triggers recovery rebind`, async () => {
+    const view = await boundView();
+    const state = view.calls("agent_continuation_state")[0];
+    if (failure.kind === "rpc") await view.reject(state, { code: -32000, message: "PRIVATE generic bridge failure" });
+    else await view.reply(state, { structuredContent: {
+      success: false,
+      output: { error_kind: failure.error_kind, state_changed: false },
+    } });
+    await view.fireTimers(3000);
+    assert.equal(view.calls("agent_continuation_bind").length, 1);
+  });
+}
+
 test("heartbeat Host rejection keeps durable state authoritative with exact App call correlation", async () => {
   const view = await boundView();
   const state = view.calls("agent_continuation_state")[0];

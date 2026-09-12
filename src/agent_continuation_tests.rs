@@ -656,18 +656,56 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         old_process_registration.output["error_kind"], "endpoint_not_attached_in_process",
         "a successor process cannot assume a pre-restart Host callback survived"
     );
+    let recovered_binding = format!("wc_host_binding_{}", "a".repeat(32));
+    let missing_state = runtime.agent_continuation_state(
+        None,
+        agent_b.clone(),
+        endpoint_b.clone(),
+        generation_b,
+        recovered_binding.clone(),
+    );
+    assert!(!missing_state.success);
+    assert_eq!(
+        missing_state.output["error_kind"], "host_binding_missing_in_process",
+        "restart recovery must be distinguishable from a replaced/stale View"
+    );
+    let stale_generation_bind = runtime.agent_continuation_bind(
+        None,
+        agent_b.clone(),
+        endpoint_b.clone(),
+        generation_b + 1,
+        recovered_binding.clone(),
+    );
+    assert!(!stale_generation_bind.success);
+    assert_eq!(
+        stale_generation_bind.output["error_kind"], "endpoint_generation_stale",
+        "restart recovery must not bypass exact controller-generation fencing"
+    );
     let old_app_registration = runtime.agent_continuation_bind(
         None,
         agent_b.clone(),
         endpoint_b.clone(),
         generation_b,
-        format!("wc_host_binding_{}", "a".repeat(32)),
+        recovered_binding.clone(),
     );
-    assert!(!old_app_registration.success);
+    assert!(
+        old_app_registration.success,
+        "{:?}",
+        old_app_registration.output
+    );
     assert_eq!(
-        old_app_registration.output["error_kind"], "endpoint_not_attached_in_process",
-        "a successor process cannot resurrect a pre-restart MCP App View from endpoint_id alone"
+        old_app_registration.output["agent_continuation"]["host_binding"]["bound"],
+        true,
+        "the same exact durable Endpoint generation may recreate only its MCP App process-local binding after takeover"
     );
+    let recovered_state = runtime.agent_continuation_state(
+        None,
+        agent_b.clone(),
+        endpoint_b.clone(),
+        generation_b,
+        recovered_binding,
+    );
+    assert!(recovered_state.success, "{:?}", recovered_state.output);
 
     let (replacement_endpoint, replacement_generation) =
         attach(&runtime, &agent_b, "restart-endpoint-b2");
@@ -711,10 +749,20 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         replacement_adapter.latest_envelope().wake_id,
         logical_wake_id
     );
-    let (replayed_old_endpoint, replayed_old_generation) =
-        attach(&runtime, &agent_b, "restart-endpoint-b");
-    assert_eq!(replayed_old_endpoint, endpoint_b);
-    assert_eq!(replayed_old_generation, generation_b);
+    let replayed_old = runtime.attach_agent_endpoint(
+        None,
+        agent_b.clone(),
+        "Deterministic Host".to_string(),
+        Some("attachment-restart-endpoint-b".to_string()),
+        "restart-endpoint-b".to_string(),
+    );
+    assert!(replayed_old.success, "{:?}", replayed_old.output);
+    assert_eq!(replayed_old.output["replayed"], true);
+    assert_eq!(replayed_old.output["endpoint"]["endpoint_id"], endpoint_b);
+    assert_eq!(
+        replayed_old.output["endpoint"]["controller_generation"],
+        generation_b
+    );
     let stale_registration = runtime.register_agent_continuation_adapter(
         None,
         agent_b.clone(),

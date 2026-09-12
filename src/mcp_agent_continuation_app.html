@@ -51,6 +51,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result"]);
   const CALL_TIMEOUT_MS = 10000;
   const MAX_BIND_ATTEMPTS = 3;
+  const MAX_RECOVERY_REBINDS = 1;
   const MAX_AUTOMATIC_MESSAGE_CHARS = 4096;
   const VISIBLE_POLL_MS = 3000;
   const HIDDEN_HEARTBEAT_MS = 15000;
@@ -66,6 +67,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let hostInitialized = false;
   let bindingStarted = false;
   let bindAttempts = 0;
+  let recoveryRebinds = 0;
   let tornDown = false;
   const pending = new Map();
   // Coordination is serial and the Server owns one current claim per binding.
@@ -247,6 +249,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return !!(callResult && callResult.isError !== true && structured && structured.success === true);
   }
 
+  function businessErrorKind(result) {
+    const structured = structuredOf(result);
+    const output = structured && structured.success === false && structured.output;
+    return output && typeof output === "object" && !Array.isArray(output)
+      && typeof output.error_kind === "string" ? output.error_kind : null;
+  }
+
+  function recoverableBindingLoss(result) {
+    return businessErrorKind(result) === "host_binding_missing_in_process";
+  }
+
   function definitiveFailure() {
     return Object.assign(new Error("Host binding unavailable"), { definitive: true });
   }
@@ -393,6 +406,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
     const projection = projectionOf(response);
     if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) {
+      if (recoverableBindingLoss(response)) {
+        throw Object.assign(new Error("Process-local Host binding was lost"), { recoverableBindingLoss: true });
+      }
       const structured = structuredOf(response);
       if (structured && structured.success === false) throw new Error("Continuation state was not accepted");
       throw malformedResult(response);
@@ -501,6 +517,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     await finishAttempt(wake, outcome);
   }
 
+  function resetLostProcessBindingForRebind() {
+    bindingId = null;
+    bindingStarted = false;
+    pendingFinish = null;
+    dispatchStarted = null;
+    prepareUncertain = null;
+  }
+
   async function reconcile() {
     if (tornDown || !identity || !bindingId || coordinationInFlight) return scheduleNext();
     coordinationInFlight = true;
@@ -523,7 +547,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       }
       await dispatchWake(wake);
     } catch (error) {
-      if (!tornDown) {
+      if (!tornDown && error && error.recoverableBindingLoss === true && recoveryRebinds < MAX_RECOVERY_REBINDS) {
+        recoveryRebinds++;
+        resetLostProcessBindingForRebind();
+        el("binding").textContent = "Rebinding";
+        el("status").textContent = "Server restarted · restoring exact Host binding";
+      } else if (!tornDown) {
         const diagnostic = hostFailureDiagnostic(error);
         el("status").textContent = diagnostic
           ? `Host reconciliation ${diagnostic}; durable Wake remains authoritative`

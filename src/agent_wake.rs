@@ -372,7 +372,7 @@ impl AgentContinuationController {
             .binding_transitions
             .lock()
             .expect("Agent continuation binding transition mutex poisoned");
-        self.verify_registration_target(
+        self.verify_mcp_app_registration_target(
             &principal,
             &agent_id,
             &endpoint_id,
@@ -943,6 +943,60 @@ impl AgentContinuationController {
         }
     }
 
+    fn verify_mcp_app_registration_target(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        controller_generation: i64,
+    ) -> Result<(), CommunicationStoreError> {
+        let endpoint = self.state.db.verify_current_agent_endpoint(
+            principal,
+            agent_id,
+            endpoint_id,
+            controller_generation,
+        )?;
+        let attached_here = self
+            .state
+            .attached_endpoints
+            .lock()
+            .expect("Agent continuation attachment mutex poisoned")
+            .get(agent_id)
+            .is_some_and(|(attached_endpoint_id, attached_generation)| {
+                attached_endpoint_id == endpoint_id && *attached_generation == controller_generation
+            });
+        if attached_here {
+            return Ok(());
+        }
+        let bindings = self
+            .state
+            .bindings
+            .lock()
+            .expect("Agent continuation registry mutex poisoned");
+        let exact_mcp_app_binding = bindings.get(agent_id).is_some_and(|binding| {
+            binding.principal == *principal
+                && binding.endpoint_id == endpoint_id
+                && binding.controller_generation == controller_generation
+                && matches!(binding.carrier, EndpointContinuationCarrier::McpApp { .. })
+        });
+        if exact_mcp_app_binding {
+            // Preserve same-View response-loss retries and ordinary replacement
+            // fencing after a restart-recovered binding has been recreated.
+            return Ok(());
+        }
+        if !endpoint.wake_capable && !bindings.contains_key(agent_id) {
+            // Server takeover clears durable wake_capable together with every
+            // process-local carrier. An already-open MCP App may then prove the
+            // same exact current Endpoint/generation and recreate only its local
+            // binding. Push adapters still require a fresh attach in this process.
+            return Ok(());
+        }
+        Err(CommunicationStoreError::new(
+            "endpoint_not_attached_in_process",
+            "Registering a Host adapter requires a fresh Endpoint attach in this Server process",
+        ))
+    }
+
     fn disable_exact_binding_for_replacement(
         &self,
         principal: &CommunicationPrincipal,
@@ -982,7 +1036,7 @@ impl AgentContinuationController {
         binding_id: &str,
     ) -> Result<McpAppHostBindingObservation, CommunicationStoreError> {
         // Durable authorization deliberately runs before process-local probing.
-        self.state.db.verify_current_agent_endpoint(
+        let endpoint = self.state.db.verify_current_agent_endpoint(
             principal,
             agent_id,
             endpoint_id,
@@ -994,7 +1048,11 @@ impl AgentContinuationController {
             .lock()
             .expect("Agent continuation registry mutex poisoned");
         let Some(binding) = bindings.get(agent_id) else {
-            return Err(stale_host_binding());
+            return Err(if endpoint.wake_capable {
+                stale_host_binding()
+            } else {
+                missing_process_host_binding()
+            });
         };
         if binding.principal != *principal
             || binding.endpoint_id != endpoint_id
@@ -1146,6 +1204,13 @@ impl AgentContinuationController {
             bindings.remove(agent_id);
         }
     }
+}
+
+fn missing_process_host_binding() -> CommunicationStoreError {
+    CommunicationStoreError::new(
+        "host_binding_missing_in_process",
+        "MCP App Host binding is missing from this Server process; the exact current Endpoint generation may rebind",
+    )
 }
 
 fn stale_host_binding() -> CommunicationStoreError {
