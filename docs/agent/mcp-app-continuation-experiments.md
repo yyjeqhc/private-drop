@@ -139,7 +139,7 @@ Do not copy the temporary timer/map implementation into production. Reuse the au
 
 The static Result App follows the same sparsity rule: current tool descriptors bind it only to `list_jobs`, `validation_summary`, and `git_review_summary`. High-frequency observation, validation-run, and worktree-review calls keep native Host presentation; bounded legacy projections remain available only so already-cached older descriptors fail gracefully rather than forcing a compatibility break.
 
-The production Durable Goal G2 implementation applies the same presentation findings to a server-owned Goal: one explicit `present_goal_plan(goal_id)` binds `ui://webcodex/goal-plan/v1`, while the existing View uses the ModelHidden/app-only `goal_plan_state(goal_id)` exact read to converge on SQLite Goal revision. G3 does **not** change that contract: Goal still has no Wake, `ui/message`, model resume, dispatch fence, consume token, background model scheduler, Agent owner/controller relation, or automatic Goal/work execution transition.
+The production Durable Goal G2 implementation applies the same presentation findings to a server-owned Goal: one explicit `present_goal_plan(goal_id)` binds `ui://webcodex/goal-plan/v2`, while the existing View uses the ModelHidden/app-only `goal_plan_state(goal_id)` exact read to converge on SQLite Goal revision. G3 does **not** change that contract: Goal still has no Wake, `ui/message`, model resume, dispatch fence, consume token, background model scheduler, Agent owner/controller relation, or automatic Goal/work execution transition.
 
 ## Production G3 mapping
 
@@ -163,7 +163,7 @@ agent_continuation_wake_finish    # dispatch_accepted | delivery_unknown
 later model turn exact-consumes Wake
 ```
 
-The only card-creating entry is the explicit read `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)`, bound to `ui://webcodex/agent-continuation/v1`. Bind/state/acquire/prepare/finish/unbind are globally ModelHidden and are projected only as App-visible tools on eligible Stateless MCP 2026 operator surfaces. They do not bind the resource again, so polling/coordination does not create a stream of custom cards. Ordinary communication and coding tools keep native Host presentation.
+The only card-creating entry is the explicit read `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)`, bound to `ui://webcodex/agent-continuation/v2`. Bind/state/acquire/prepare/finish/unbind are globally ModelHidden and are projected only as App-visible tools on eligible Stateless MCP 2026 operator surfaces. They do not bind the resource again, so polling/coordination does not create a stream of custom cards. Ordinary communication and coding tools keep native Host presentation.
 
 The View binding is process-local fencing, not durable authority. Every App-only operation re-authorizes the normal communication principal and exact Agent/Endpoint/controller generation. Bind succeeds only for an Endpoint freshly attached in that Server process. A later View for the same exact Endpoint/generation replaces the previous process binding; the stale iframe cannot heartbeat, acquire, prepare, finish, or teardown the new controller. On replacement/loss, existing Store reconciliation handles the durable state: pre-fence claim -> revoked Attempt + pending Wake; post-fence prepared/delivered -> `delivery_unknown`. Server restart forgets the View binding and cannot revive it from an old endpoint id alone.
 
@@ -172,6 +172,39 @@ The App keeps claim fences entirely Server-side. The bounded automatic message i
 `ui/message` success is recorded only as `dispatch_accepted`. Timeout, reload, View loss, or any post-fence outcome that cannot prove non-delivery becomes `delivery_unknown`; the App never automatically sends a second `ui/message` for that Attempt. If the new model turn starts before the Host ACK is recorded, exact `consume_agent_wake` may win first; the later ACK is idempotent and cannot move the Wake back from `consumed`. Only exact consume is production evidence of `continuation_consumed`.
 
 The production App uses bounded heartbeat/reconciliation. A hidden/background View may renew its exact Endpoint but does not initiate a new automatic `ui/message`; returning to the foreground triggers immediate authoritative reconciliation. Pagehide, beforeunload, and `ui/resource-teardown` stop polling and attempt exact best-effort unbind. Correctness never depends on reliable teardown, browser memory, or localStorage.
+
+## Production App bootstrap
+
+The G3 dogfood exposed a View bootstrap gap: a queued Delivery and pending Wake
+could exist while the card stayed at `Initializing`, made no bind/state calls,
+and let its Endpoint lease expire. Both the Agent Continuation and Goal Plan
+Views previously waited for the initial ToolResult to select their resource.
+
+The v2 Views accept complete `ui/notifications/tool-input` through the canonical
+`params.arguments` object defined in the [MCP Apps 2026-01-26 data-passing
+contract](https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx#data-passing).
+Partial input does not select a resource. Agent input selects the exact
+`agent_id`, `endpoint_id`, and `expected_controller_generation`; Goal input
+selects one canonical `goal_id`. A validated initial ToolResult can provide the
+same selector as a fallback and an optional first projection. Either ordering
+works, and a missing ToolResult does not block bind/heartbeat or Goal polling
+once Host initialization succeeds. Unknown Goal lifecycle permits the first
+authoritative read; terminal Goal state still stops polling.
+
+Each card accepts only one identity. Matching notifications are idempotent;
+conflicting identities stop coordination, cancel pending View requests, and
+leave a bounded error. An already-bound Agent View attempts only its original
+exact unbind. Late replies cannot restart it. Tool input is an exact selector,
+never authorization: every actual read/mutation still runs the Server's existing
+principal, scope, and resource checks.
+
+Visible status distinguishes script activity, Host initialization, exact identity
+selection, and live binding/polling, with separate initialization, binding, and
+identity errors. Diagnostics do not display binding ids, claim fences, or consume
+tokens. `tools/list` and `resources/list` advertise only the canonical
+`ui://webcodex/agent-continuation/v2` and `ui://webcodex/goal-plan/v2` resources.
+The old v1 URIs are hidden read aliases serving the same current templates;
+they do not revive expired Endpoints or bypass fresh-binding requirements.
 
 ## Remaining verification boundary
 

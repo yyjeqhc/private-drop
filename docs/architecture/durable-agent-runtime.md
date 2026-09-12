@@ -132,7 +132,7 @@ Important current invariants:
 - project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
 - durable Goals are independent high-level intent/control truth; Goal identity, ownership, lifecycle, revision, and correlations grant no Project, Runner, filesystem, Workflow Session, AgentTaskAttempt, CodingAgentRun, or Job authority.
 
-G3 adds an optional production ChatGPT MCP App Host carrier on top of this substrate. It is deliberately a pull bridge rather than a fake Server callback: one explicit `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)` card binds `ui://webcodex/agent-continuation/v1`, while ModelHidden app-only operations establish one exact process-local View binding, renew the exact Endpoint, acquire through the existing Wake claim state machine, cross the existing durable dispatch fence, and record Host dispatch acceptance or uncertainty. The View itself performs `ui/message` only after prepare succeeds. The process-local binding id fences duplicate/reloaded iframes but grants no authority and is not durable execution truth.
+G3 adds an optional production ChatGPT MCP App Host carrier on top of this substrate. It is deliberately a pull bridge rather than a fake Server callback: one explicit `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)` card binds `ui://webcodex/agent-continuation/v2`, while ModelHidden app-only operations establish one exact process-local View binding, renew the exact Endpoint, acquire through the existing Wake claim state machine, cross the existing durable dispatch fence, and record Host dispatch acceptance or uncertainty. The View itself performs `ui/message` only after prepare succeeds. The process-local binding id fences duplicate/reloaded iframes but grants no authority and is not durable execution truth.
 
 Every bridge operation re-runs ordinary communication authorization and exact Agent/Endpoint/controller-generation validation. Bind additionally requires an Endpoint freshly attached in the current Server process; after restart an old Endpoint id cannot resurrect an old View. Replacing or withdrawing a View reuses existing wake-capability reconciliation: a pre-fence claim is revoked and the logical Wake returns to `pending`, while a prepared/delivered Attempt becomes `delivery_unknown`. The App never blindly resends after the dispatch fence. Host `ui/message` success means only `dispatch_accepted`; only later exact `consume_agent_wake` proves that a continuation model turn actually ran. A consume-before-ACK race is valid and late ACK is idempotent. Hidden/background Views heartbeat but do not initiate a new automatic Host dispatch, so Host scheduling remains best effort/non-immediate.
 
@@ -195,7 +195,7 @@ bounded Goal Plan projection
         ↓
 present_goal_plan(goal_id)   # model-visible, App-bound, read-only
         ↓
-ui://webcodex/goal-plan/v1
+ui://webcodex/goal-plan/v2
         ↓
 goal_plan_state(goal_id)     # ModelHidden, App-only exact polling read
 ```
