@@ -251,6 +251,33 @@ fn file_apply_text_edits_ignores_empty_insert_noop_and_applies_remaining_edit() 
 }
 
 #[test]
+fn file_apply_text_edits_empty_insert_noop_still_validates_anchor_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let file = tmp.path().join("target.txt");
+    std::fs::write(&file, "old\n").unwrap();
+
+    let out = line_edit_json(handle_file_request(
+        &policy,
+        &apply_text_edits_request(
+            tmp.path(),
+            "target.txt",
+            serde_json::json!({
+                "edits": [
+                    {"kind": "insert_before", "anchor_text": "bad\u{0}anchor", "new_text": ""},
+                    {"kind": "replace_exact", "old_text": "old", "new_text": "new"}
+                ]
+            }),
+        ),
+    ));
+    let msg = out["error"].as_str().unwrap();
+    assert!(msg.contains("NUL"), "{msg}");
+    assert!(msg.contains("No files were modified"), "{msg}");
+    assert_eq!(out["changed"], false);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "old\n");
+}
+
+#[test]
 fn file_apply_text_edits_dry_run_does_not_write() {
     let tmp = tempfile::tempdir().unwrap();
     let policy = project_policy(tmp.path());

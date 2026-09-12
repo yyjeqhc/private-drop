@@ -561,9 +561,6 @@ fn edit_plan(
                         "old_text is not allowed",
                     ));
                 }
-                if new_text.is_empty() {
-                    continue;
-                }
                 (anchor, new_text.to_string())
             }
         };
@@ -588,6 +585,13 @@ fn edit_plan(
         let replacement = canonicalize_apply_text_line_endings(&replacement, line_ending)
             .map_err(|error| EditPlanError::plain(index, kind.as_str(), error))?
             .into_owned();
+        if matches!(
+            kind,
+            ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter
+        ) && replacement.is_empty()
+        {
+            continue;
+        }
         let needle = needle.as_ref();
         let (start, end) =
             resolve_apply_text_match(original, needle, edit.occurrence, edit.line_scope.as_ref())
