@@ -174,7 +174,7 @@ timeout_secs = 30
 
 `executable` 与可选 `cwd` 都是 Runner host-local operator 配置并且必须为绝对路径；非法路径会 fail closed。`[mcp]` 属于 restart-required 配置，不支持 provider hot reload。
 
-provider 不会整体继承 Runner 环境。`env_from_env` 只复制显式列出的变量，WebCodex 自己的 sensitive transport/account credential 变量不允许映射；配置的 source variable 缺失时会在 provider 启动前失败。
+provider 不会整体继承 Runner 环境。`env_from_env` 只复制显式列出的变量，WebCodex 自己的 sensitive transport/account credential 变量不允许映射；配置的 source variable 缺失时会在 provider 启动前失败。Windows 上，Runner 在清空环境后会额外只提供非敏感的 `SYSTEMROOT` OS bootstrap（除非 operator 显式映射该 destination）；`PATH`、用户 profile 状态、代理与 credential 仍不会被整体继承。
 
 把 credential 映射给 provider，就等于把这份 credential 委托给该 provider process。provider 可以按自身实现使用它，也可以通过正常 tool result 返回派生值甚至原始值；WebCodex 不会尝试对任意 provider output 做 secret redaction。因此应把 configured provider 视为 credential recipient，使用 least-privilege provider credential，并注意任何拥有 `mcp:local` 权限的 caller 都能行使这些 credential 为 provider 提供的能力。
 

@@ -284,6 +284,12 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
     ] {
         assert_eq!(fixture.marker_count(marker), 1, "missing marker {marker}");
     }
+    #[cfg(windows)]
+    assert_eq!(
+        fixture.marker_count("systemroot-bootstrap-ok"),
+        1,
+        "Windows MCP providers need the minimal SYSTEMROOT bootstrap after env_clear()"
+    );
     let encoded = serde_json::to_string(&response).unwrap();
     assert!(!encoded.contains("github-provider-secret-value"));
     assert!(!encoded.contains("mapped-provider-secret-value"));

@@ -48,6 +48,15 @@ fn main() -> io::Result<()> {
                 "path-leaked\n"
             },
         )?;
+        #[cfg(windows)]
+        append(
+            marker,
+            if env::var_os("SYSTEMROOT").is_some() {
+                "systemroot-bootstrap-ok\n"
+            } else {
+                "systemroot-bootstrap-missing\n"
+            },
+        )?;
         let cwd_matches = match (args.get(2), env::current_dir()) {
             (Some(expected), Ok(current)) => {
                 std::fs::canonicalize(current).ok() == std::fs::canonicalize(expected).ok()

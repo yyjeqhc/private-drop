@@ -5,7 +5,7 @@
 //! provider instance; it is never silently restarted under the same identity.
 
 use super::config::{McpGatewayConfig, McpGatewayProviderConfig, MCP_GATEWAY_MAX_CWD_BYTES};
-use super::shell::is_sensitive_env_key;
+use super::shell::{env_keys_equal, is_sensitive_env_key};
 use crate::mcp_gateway::{
     validate_json_value, validate_request, validate_tool_result, validate_tools, McpGatewayContent,
     McpGatewayDispatchState, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
@@ -338,7 +338,20 @@ impl ProviderEntry {
 fn resolve_provider_environment(
     config: &McpGatewayProviderConfig,
 ) -> Result<Vec<(String, std::ffi::OsString)>, ProviderFailure> {
-    let mut resolved = Vec::with_capacity(config.env_from_env.len());
+    let mut resolved = Vec::with_capacity(config.env_from_env.len() + usize::from(cfg!(windows)));
+    #[cfg(windows)]
+    if !config
+        .env_from_env
+        .keys()
+        .any(|destination| env_keys_equal(destination, "SYSTEMROOT"))
+    {
+        // Keep Windows process bootstrap usable after env_clear() without
+        // inheriting PATH, user profile data, proxy settings, or credentials.
+        // Operators may still explicitly map SYSTEMROOT to another source.
+        if let Some(system_root) = std::env::var_os("SYSTEMROOT") {
+            resolved.push(("SYSTEMROOT".to_string(), system_root));
+        }
+    }
     for (destination, source) in &config.env_from_env {
         // Keep the Runner transport/account secret invariant authoritative even
         // if a caller constructs config without going through load_config.
@@ -386,8 +399,9 @@ impl ProviderConnection {
         let mut command = Command::new(&config.executable);
         command
             .args(&config.args)
-            // Never inherit the Runner process environment implicitly. Only the
-            // explicit env_from_env mapping below crosses this trust boundary.
+            // Never inherit the Runner process environment implicitly. The
+            // resolved environment below is limited to explicit env_from_env
+            // mappings plus the minimal non-secret Windows OS bootstrap.
             .env_clear();
         for (destination, value) in environment {
             command.env(destination, value);

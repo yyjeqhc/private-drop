@@ -192,7 +192,7 @@ timeout_secs = 30
 
 `executable` and optional `cwd` must be absolute host-local operator configuration. Invalid paths fail closed. `[mcp]` is restart-required configuration; changing a provider does not hot-reload it.
 
-Provider processes do not inherit the Runner environment wholesale. `env_from_env` copies only explicitly named variables, and WebCodex's own sensitive transport/account credential variables cannot be mapped. A missing configured source variable fails before provider start.
+Provider processes do not inherit the Runner environment wholesale. `env_from_env` copies only explicitly named variables, and WebCodex's own sensitive transport/account credential variables cannot be mapped. A missing configured source variable fails before provider start. On Windows, the Runner additionally supplies only the non-secret `SYSTEMROOT` OS bootstrap after clearing the environment, unless that destination is explicitly mapped; `PATH`, user-profile state, proxies, and credentials are still not inherited.
 
 Mapping a credential delegates that credential to the configured provider process. The provider can use it according to its own implementation and can choose to return derived or raw values through normal tool results; WebCodex does not attempt to redact arbitrary provider output. Treat configured providers as credential recipients, use least-privilege provider credentials, and remember that any caller authorized for `mcp:local` can exercise the provider capabilities that those credentials enable.
 

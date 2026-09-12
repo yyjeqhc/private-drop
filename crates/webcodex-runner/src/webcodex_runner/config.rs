@@ -191,7 +191,9 @@ pub(crate) struct McpGatewayProviderConfig {
     #[serde(default)]
     pub(crate) cwd: Option<String>,
     /// Explicit provider-env-key -> Runner-process-env-key mapping. Values are
-    /// resolved only immediately before first spawn and are never advertised.
+    /// resolved only immediately before spawn and are never advertised. On
+    /// Windows, the Runner separately supplies only the non-secret SYSTEMROOT
+    /// bootstrap unless the operator explicitly maps that destination.
     #[serde(default)]
     pub(crate) env_from_env: BTreeMap<String, String>,
     /// Optional per-provider request deadline. When absent, inherit
