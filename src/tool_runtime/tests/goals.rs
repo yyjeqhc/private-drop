@@ -42,6 +42,7 @@ fn goal_tools_are_control_only_and_never_declare_execution_authority() {
     for name in [
         "create_goal",
         "get_goal",
+        "present_goal_plan",
         "list_goals",
         "update_goal",
         "associate_goal_agent_task",
@@ -66,7 +67,7 @@ fn goal_tools_are_control_only_and_never_declare_execution_authority() {
         ));
     }
 
-    for name in ["get_goal", "list_goals"] {
+    for name in ["get_goal", "list_goals", "present_goal_plan"] {
         let definition = lookup_tool_definition(name).unwrap();
         assert_eq!(definition.metadata.effect, ToolEffect::Observe);
         assert_eq!(definition.metadata.risk, ToolRisk::Read);
@@ -89,6 +90,25 @@ fn goal_tools_are_control_only_and_never_declare_execution_authority() {
             ToolAuthorityPolicy::RequireAll(COMMUNICATION_MANAGE_SCOPES)
         );
     }
+
+    let app_state = lookup_tool_definition("goal_plan_state").unwrap();
+    assert!(app_state.model_spec.is_none());
+    assert_eq!(app_state.category, "goal");
+    assert_eq!(app_state.metadata.provider_id, "control");
+    assert!(!app_state.metadata.requires_project);
+    assert_eq!(
+        app_state.runner_capability,
+        None::<RunnerCapabilityRequirement>
+    );
+    assert!(!app_state.metadata.shell_like);
+    assert_eq!(app_state.metadata.effect, ToolEffect::Observe);
+    assert_eq!(app_state.metadata.risk, ToolRisk::Read);
+    assert_eq!(app_state.metadata.approval, ToolApprovalPolicy::None);
+    assert_eq!(app_state.metadata.idempotency, ToolIdempotency::PureRead);
+    assert_eq!(
+        app_state.metadata.authority,
+        ToolAuthorityPolicy::RequireAll(COMMUNICATION_READ_SCOPES)
+    );
 
     let session_link = lookup_tool_definition("associate_goal_workflow_session").unwrap();
     assert_eq!(session_link.metadata.idempotency, ToolIdempotency::Keyed);
@@ -127,6 +147,44 @@ fn goal_schemas_are_bounded_private_and_existing_coding_tools_do_not_accept_goal
         update.input_schema["properties"]["terminal_reason"]["maxLength"],
         4096
     );
+
+    let present = spec("present_goal_plan");
+    assert_eq!(present.input_schema["required"], json!(["goal_id"]));
+    let plan = &present.output_schema["properties"]["output"]["properties"]["goal_plan"];
+    assert_eq!(plan["properties"]["version"]["const"], 1);
+    assert_eq!(plan["properties"]["title"]["maxLength"], 200);
+    assert_eq!(plan["properties"]["objective"]["maxLength"], 8192);
+    assert_eq!(
+        plan["properties"]["lifecycle"]["enum"],
+        json!(["active", "completed", "cancelled"])
+    );
+    assert_eq!(plan["properties"]["agent_task_count"]["maximum"], 64);
+    assert_eq!(plan["properties"]["workflow_session_count"]["maximum"], 64);
+    let plan_properties = plan["properties"].as_object().unwrap();
+    for forbidden_property in [
+        "correlations",
+        "terminal_reason",
+        "attempt_fence",
+        "authority_fingerprint",
+        "consume_token",
+        "wake_token",
+        "session_ledger",
+        "stdout",
+        "stderr",
+        "job_log",
+    ] {
+        assert!(
+            !plan_properties.contains_key(forbidden_property),
+            "Goal Plan schema exposed private property {forbidden_property}"
+        );
+    }
+    let app_specs = crate::tool_runtime::goal_plan_app_tool_specs();
+    assert_eq!(app_specs.len(), 1);
+    assert_eq!(app_specs[0].name, "goal_plan_state");
+    assert_eq!(app_specs[0].input_schema["required"], json!(["goal_id"]));
+    assert!(!registered_tool_names()
+        .iter()
+        .any(|name| name == "goal_plan_state"));
 
     let list_summary =
         &spec("list_goals").output_schema["properties"]["output"]["properties"]["goals"]["items"];
@@ -247,6 +305,36 @@ fn goal_tool_calls_and_audit_keep_goal_identity_distinct_and_private_text_out_of
         assert!(!serialized.contains(private), "Goal audit leaked {private}");
     }
 
+    let plan_audit = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
+        "present_goal_plan",
+        &json!({"goal_id": goal_id}),
+    );
+    assert_eq!(plan_audit, json!({"goal_id": goal_id}));
+    let private_objective = "PRIVATE_GOAL_PLAN_OBJECTIVE_DO_NOT_AUDIT";
+    let result_audit = crate::tool_runtime::tool_audit::session_log_result_for_tool(
+        "present_goal_plan",
+        &json!({
+            "goal_plan": {
+                "goal_id": goal_id,
+                "title": "Private title",
+                "objective": private_objective,
+                "lifecycle": "active",
+                "revision": 7,
+                "updated_at_unix_ms": 1,
+                "terminal_at_unix_ms": null,
+                "agent_task_count": 2,
+                "workflow_session_count": 3
+            }
+        }),
+    );
+    assert_eq!(result_audit["goal_id"], goal_id);
+    assert_eq!(result_audit["revision"], 7);
+    assert_eq!(result_audit["agent_task_count"], 2);
+    assert_eq!(result_audit["workflow_session_count"], 3);
+    assert!(!serde_json::to_string(&result_audit)
+        .unwrap()
+        .contains(private_objective));
+
     assert!(ToolCall::from_tool_name(
         "associate_goal_agent_task",
         json!({
@@ -331,6 +419,127 @@ fn goal_runtime_crud_replay_and_exact_read_hide_foreign_existence() {
     assert!(update_replay.success);
     assert_eq!(update_replay.output["replayed"], true);
     assert_eq!(update_replay.output["goal"]["summary"]["revision"], 2);
+}
+
+#[test]
+fn goal_plan_projection_is_exact_pure_revisioned_terminal_and_existence_hidden() {
+    let (_temp, _db, runtime) = runtime_with_goal_db();
+    let bob = auth_context(Some("bob-plan"), false);
+    let alice = auth_context(Some("alice-plan"), false);
+    let goal_id = create_goal(&runtime, Some(&bob), "bob-plan-create");
+
+    let initial = runtime.present_goal_plan(Some(&bob), goal_id.clone());
+    assert!(initial.success, "{:?}", initial.output);
+    let plan = &initial.output["goal_plan"];
+    assert_eq!(plan["version"], 1);
+    assert_eq!(plan["goal_id"], goal_id);
+    assert_eq!(plan["lifecycle"], "active");
+    assert_eq!(plan["revision"], 1);
+    assert_eq!(plan["agent_task_count"], 0);
+    assert_eq!(plan["workflow_session_count"], 0);
+    assert!(plan["terminal_at_unix_ms"].is_null());
+    assert_eq!(
+        plan.as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "agent_task_count",
+            "goal_id",
+            "lifecycle",
+            "objective",
+            "revision",
+            "terminal_at_unix_ms",
+            "title",
+            "updated_at_unix_ms",
+            "version",
+            "workflow_session_count"
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    );
+
+    let polled = runtime.goal_plan_state(Some(&bob), goal_id.clone());
+    assert!(polled.success);
+    assert_eq!(polled.output["goal_plan"]["revision"], 1);
+    assert_eq!(
+        runtime.get_goal(Some(&bob), goal_id.clone()).output["goal"]["summary"]["revision"],
+        1
+    );
+
+    let foreign = runtime.goal_plan_state(Some(&alice), goal_id.clone());
+    let missing = runtime.goal_plan_state(Some(&alice), format!("wc_goal_{}", "f".repeat(32)));
+    assert!(!foreign.success);
+    assert!(!missing.success);
+    assert_eq!(foreign.output["error_kind"], "goal_not_found");
+    assert_eq!(foreign.error, missing.error);
+
+    let updated = runtime.update_goal(
+        Some(&bob),
+        goal_id.clone(),
+        1,
+        None,
+        Some("Updated durable plan objective".to_string()),
+        None,
+        None,
+        "bob-plan-update".to_string(),
+    );
+    assert!(updated.success, "{:?}", updated.output);
+    let after_update = runtime.goal_plan_state(Some(&bob), goal_id.clone());
+    assert!(after_update.success);
+    assert_eq!(after_update.output["goal_plan"]["revision"], 2);
+    assert_eq!(
+        after_update.output["goal_plan"]["objective"],
+        "Updated durable plan objective"
+    );
+
+    let completed = runtime.update_goal(
+        Some(&bob),
+        goal_id.clone(),
+        2,
+        None,
+        None,
+        Some("completed".to_string()),
+        Some("done".to_string()),
+        "bob-plan-complete".to_string(),
+    );
+    assert!(completed.success, "{:?}", completed.output);
+    let terminal = runtime.goal_plan_state(Some(&bob), goal_id.clone());
+    assert!(terminal.success);
+    assert_eq!(terminal.output["goal_plan"]["lifecycle"], "completed");
+    assert_eq!(terminal.output["goal_plan"]["revision"], 3);
+    assert!(terminal.output["goal_plan"]["terminal_at_unix_ms"].is_i64());
+    assert_eq!(
+        runtime.get_goal(Some(&bob), goal_id).output["goal"]["summary"]["revision"],
+        3
+    );
+}
+
+#[test]
+fn goal_plan_projection_fails_closed_on_malformed_persisted_goal() {
+    let (_temp, db, runtime) = runtime_with_goal_db();
+    let bob = auth_context(Some("bob-plan-corrupt"), false);
+    let goal_id = create_goal(&runtime, Some(&bob), "bob-plan-corrupt-create");
+    {
+        let conn = db.conn_for_tests();
+        conn.execute_batch("PRAGMA ignore_check_constraints = ON;")
+            .unwrap();
+        conn.execute(
+            "UPDATE wc_goals SET lifecycle = 'waiting_validation' WHERE goal_id = ?1",
+            [goal_id.as_str()],
+        )
+        .unwrap();
+        conn.execute_batch("PRAGMA ignore_check_constraints = OFF;")
+            .unwrap();
+    }
+    let presented = runtime.present_goal_plan(Some(&bob), goal_id.clone());
+    let polled = runtime.goal_plan_state(Some(&bob), goal_id);
+    assert!(!presented.success);
+    assert!(!polled.success);
+    assert_eq!(presented.output["error_kind"], "goal_store_unavailable");
+    assert_eq!(polled.output["error_kind"], "goal_store_unavailable");
 }
 
 #[test]

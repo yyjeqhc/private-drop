@@ -319,11 +319,23 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         }
     };
 
-    let tools = specs
+    let mut tools = specs
         .into_iter()
         .filter(|spec| artifact_export_enabled || spec.name != "export_project_artifact")
         .map(|spec| mcp_tool_spec_json(spec, compact, app_enabled))
         .collect::<Vec<_>>();
+    if app_enabled && stateless_2026 && model_surface.supports_operator_extensions() {
+        let mut app_specs =
+            filter_specs_for_oauth(crate::tool_runtime::goal_plan_app_tool_specs(), auth)
+                .into_iter()
+                .map(|spec| {
+                    let mut value = mcp_tool_spec_json(spec, compact, false);
+                    attach_app_visibility(&mut value);
+                    value
+                })
+                .collect::<Vec<_>>();
+        tools.append(&mut app_specs);
+    }
     json!({ "tools": tools })
 }
 
@@ -433,6 +445,9 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
         return;
     };
     for tool in tools {
+        if tool.get("name").and_then(Value::as_str) == Some("goal_plan_state") {
+            continue;
+        }
         let accepts_context_ack = tool
             .get("name")
             .and_then(Value::as_str)
@@ -537,6 +552,17 @@ pub(super) fn attach_app_metadata(value: &mut Value, resource_uri: &str) {
     );
 }
 
+fn attach_app_visibility(value: &mut Value) {
+    let Some(meta) = tool_meta_object(value) else {
+        return;
+    };
+    let ui = meta.entry("ui".to_string()).or_insert_with(|| json!({}));
+    let Some(ui) = ui.as_object_mut() else {
+        return;
+    };
+    ui.insert("visibility".to_string(), json!(["app"]));
+}
+
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
     if matches!(
@@ -585,6 +611,9 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
     }
     if app_enabled && presentation::tool_supports_result_app(&tool_name) {
         attach_app_metadata(&mut value, resources::MCP_RESULT_UI_RESOURCE_URI);
+    }
+    if app_enabled && presentation::tool_supports_goal_plan_app(&tool_name) {
+        attach_app_metadata(&mut value, resources::MCP_GOAL_PLAN_UI_RESOURCE_URI);
     }
     value
 }
@@ -1143,6 +1172,7 @@ pub(super) async fn handle_call(
     auth: Option<&AuthContext>,
     stateless_2026: bool,
     app_enabled: bool,
+    server_mcp_apps_enabled: bool,
     host_file_import_trust: HostFileImportTrust,
     window: Option<&crate::client_window::ClientWindow>,
     mut lifecycle: Option<&mut ToolRequestLifecycle>,
@@ -1571,10 +1601,15 @@ pub(super) async fn handle_call(
     // MCP boundary. Adaptive gateway calls are already reduced to an admitted
     // target and continue through the same normal runtime checks, whether that
     // target's preferred exposure is gateway or direct.
+    let goal_plan_app_surface =
+        server_mcp_apps_enabled && stateless_2026 && model_surface.supports_operator_extensions();
+    let app_only_goal_plan_state = goal_plan_app_surface && params.name == "goal_plan_state";
     let surface_denied = match model_surface {
         ModelSurface::LocalCoding => !LOCAL_CODING_TOOL_NAMES.contains(&params.name.as_str()),
         ModelSurface::AdaptiveRuntime => {
-            !via_adaptive_runtime_gateway && !is_adaptive_runtime_direct_tool(&params.name)
+            !app_only_goal_plan_state
+                && !via_adaptive_runtime_gateway
+                && !is_adaptive_runtime_direct_tool(&params.name)
         }
         ModelSurface::FullOperatorRuntime => false,
     };
@@ -1708,6 +1743,7 @@ pub(super) async fn handle_call(
     let skill_management_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let memory_surface_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let trace_diagnostics_capable = stateless_2026 && model_surface.supports_operator_extensions();
+    let goal_plan_app_capable = goal_plan_app_surface;
     let context_request = if context_sidecar_capable {
         match strip_stateless_context_request(&mut params.arguments) {
             Ok(keys) => keys,
@@ -1776,6 +1812,7 @@ pub(super) async fn handle_call(
                 skill_management: skill_management_capable,
                 memory_surface: memory_surface_capable,
                 trace_diagnostics: trace_diagnostics_capable,
+                goal_plan_app: goal_plan_app_capable,
             },
         )
         .await;

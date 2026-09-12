@@ -189,11 +189,35 @@ No current execution path accepts or requires `goal_id`: `work_on_project`, read
 
 Lifecycle is independent across domains. `finish_coding_task` reports/finishes one Workflow Session concern and does not complete a Goal. AgentTask/TaskAttempt terminal completion likewise does not transition a Goal without a future explicit contract. Phase 1 creates no Goal scheduler, Wake/controller, automatic AgentTask, TaskAttempt, Workflow Session, CodingAgentRun, Runner request, process, or Job.
 
-### Follow-on boundaries
+### G2 — Goal Plan MCP App presentation
 
-**G2 — bounded Plan presentation.** Project one exact Goal into a bounded Plan view, create at most one App-bound presentation for that presentation identity, and let the App poll exact bounded state through an App-only read path. Presentation phases may derive from Goal plus existing work/evidence, but they must not expand the authoritative Goal lifecycle. G2 has no wake or model-turn continuation.
+G2 is implemented as a projection over the exact durable Goal rather than a second state machine:
 
-**G3 — production Host continuation adapter.** Add Host continuation only after presentation identity is stable. Reuse the existing durable Agent Endpoint / Wake / Wake Delivery Attempt controller generation, lease/dispatch fence, and exact consume semantics; do not invent a second continuation truth owned by Goal, App, iframe, or Job view.
+```text
+authoritative Goal Store
+        ↓
+exact owner-authorized Goal read
+        ↓
+bounded Goal Plan projection
+        ↓
+present_goal_plan(goal_id)   # model-visible, App-bound, read-only
+        ↓
+ui://webcodex/goal-plan/v1
+        ↓
+goal_plan_state(goal_id)     # ModelHidden, App-only exact polling read
+```
+
+`present_goal_plan` is the only Goal tool bound to the Goal Plan App resource. Each explicit presentation call may create a new Host card; Goal mutations, AgentTask changes, Workflow Session changes, validation, Jobs, and `finish_coding_task` do not create or refresh cards. Ordinary coding/execution tools keep their native Host presentation.
+
+The projection is intentionally sparse: exact `goal_id`, bounded title/objective, authoritative `active | completed | cancelled` lifecycle, monotonic revision, `updated_at`, optional terminal timestamp, and bounded AgentTask/Workflow Session correlation counts. It exposes no correlation identities, Session ledger, TaskAttempt fence, authority fingerprint, Wake/consume token, credential, Job log, stdout, or stderr. G2 does not synthesize `implementing`, `blocked`, `validating`, `reviewing`, or any other durable/presentation phase when the current durable facts do not prove one.
+
+`goal_plan_state` is globally ModelHidden. A UI-capable Stateless MCP 2026 operator surface advertises it to the Host with MCP Apps `ui.visibility = ["app"]`; it is not part of the ordinary model tool universe, Adaptive gateway targets, REST runtime surface, or legacy MCP surface. The protocol-surface gate is not Goal authority: every polling call still derives the existing stable communication principal and independently performs the exact owner-scoped Goal read. App/iframe possession, ClientWindow, Project, Workflow Session, Conversation, credential transport state, and correlation do not select or authorize a Goal.
+
+The App receives exact `goal_id` and revision in the initial presentation result, polls the authoritative Store by that id, and avoids full DOM updates while revision is unchanged. Active cards converge again after foreground/visibility changes; terminal Goals stop periodic polling and retain a stable terminal presentation. Teardown/page unload stops timers. Refresh/reopen requires no localStorage or Server process-local Goal map: the rebuilt View can recover current state from the exact durable identity and SQLite truth. Multiple Views observing the same Goal are safe because both presentation tools are pure reads.
+
+There is no stable Goal page in the Web UI yet, so G2 deliberately omits an `Open in WebCodex` link rather than emitting a dead or semantically incorrect URL.
+
+**G3 — production Host continuation adapter.** Add Host continuation only after this presentation identity/read path is stable. Reuse the existing durable Agent Endpoint / Wake / Wake Delivery Attempt controller generation, lease/dispatch fence, and exact consume semantics; do not invent a second continuation truth owned by Goal, App, iframe, or Job view. G2 contains no Wake, `ui/message`, model resume, dispatch fence, consume token, background model scheduler, or automatic Goal/work execution transition.
 
 These phase boundaries intentionally follow the [September 11–12, 2026 MCP App continuation findings](../agent/mcp-app-continuation-experiments.md): one persistent presentation should converge from server-owned state through bounded App-only refresh; Host dispatch acceptance is not the same as model resumption; and the temporary probe's in-memory timer/map state machine must not be copied into production.
 

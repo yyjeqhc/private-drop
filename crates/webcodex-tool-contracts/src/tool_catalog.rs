@@ -96,6 +96,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         tools: &[
             "create_goal",
             "get_goal",
+            "present_goal_plan",
             "list_goals",
             "update_goal",
             "associate_goal_agent_task",

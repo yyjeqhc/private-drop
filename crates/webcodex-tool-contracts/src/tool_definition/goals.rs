@@ -1,5 +1,8 @@
-use super::ToolVisibility::ModelVisible;
-use super::{def, model_spec, require_all_scopes, ToolDefinition, TOOL_CATEGORY_GOAL};
+use super::ToolVisibility::{ModelHidden, ModelVisible};
+use super::{
+    adaptive_runtime_direct, def, model_spec, require_all_scopes, ToolDefinition,
+    TOOL_CATEGORY_GOAL,
+};
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{Read, WorkflowManage},
@@ -8,7 +11,7 @@ use crate::metadata::{
 use crate::registry::input_schemas::{
     associate_goal_agent_task_input_schema, associate_goal_workflow_session_input_schema,
     create_goal_input_schema, get_goal_input_schema, list_goals_input_schema,
-    update_goal_input_schema,
+    present_goal_plan_input_schema, update_goal_input_schema,
 };
 use webcodex_core::authority::{
     COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES, SCOPE_COMMUNICATION_MANAGE,
@@ -86,6 +89,85 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Read one exact caller-owned durable Goal. Unauthorized and nonexistent ids are existence-hidden. Correlations expose only bounded identities and never target-domain authority, fences, tokens, credentials, Job state, or Workflow Session ledgers.",
             get_goal_input_schema,
+        ),
+        COMMUNICATION_READ_SCOPES,
+    ),
+    require_all_scopes(
+        adaptive_runtime_direct(
+            model_spec(
+                def(
+                    "present_goal_plan",
+                    super::ToolAuditPolicy::typed_fields(&[
+                        super::ToolAuditResultField::pointer("goal_id", "/goal_plan/goal_id"),
+                        super::ToolAuditResultField::pointer("lifecycle", "/goal_plan/lifecycle"),
+                        super::ToolAuditResultField::pointer("revision", "/goal_plan/revision"),
+                        super::ToolAuditResultField::pointer(
+                            "agent_task_count",
+                            "/goal_plan/agent_task_count",
+                        ),
+                        super::ToolAuditResultField::pointer(
+                            "workflow_session_count",
+                            "/goal_plan/workflow_session_count",
+                        ),
+                        super::ToolAuditResultField::value("error_kind"),
+                    ]),
+                    ModelVisible,
+                    TOOL_CATEGORY_GOAL,
+                    None,
+                    TOOL_PROVIDER_CONTROL,
+                    super::ToolSemanticContract {
+                        effect: super::ToolEffect::Observe,
+                        risk: Read,
+                        approval: super::ToolApprovalPolicy::None,
+                        idempotency: super::ToolIdempotency::PureRead,
+                    },
+                    Some(COMMUNICATION_READ),
+                    false,
+                    NoPath,
+                    false,
+                    false,
+                    super::ToolSessionEvidencePolicy::NONE,
+                ),
+                "Present one exact caller-owned durable Goal as a sparse read-only Goal Plan MCP App card. Requires explicit goal_id and never infers Goal identity from Project, Workflow Session, Conversation, credential, ClientWindow, or recent activity. Presentation creates no work, grants no execution authority, and does not modify Goal lifecycle.",
+                present_goal_plan_input_schema,
+            ),
+            17,
+        ),
+        COMMUNICATION_READ_SCOPES,
+    ),
+    require_all_scopes(
+        def(
+            "goal_plan_state",
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::pointer("goal_id", "/goal_plan/goal_id"),
+                super::ToolAuditResultField::pointer("lifecycle", "/goal_plan/lifecycle"),
+                super::ToolAuditResultField::pointer("revision", "/goal_plan/revision"),
+                super::ToolAuditResultField::pointer(
+                    "agent_task_count",
+                    "/goal_plan/agent_task_count",
+                ),
+                super::ToolAuditResultField::pointer(
+                    "workflow_session_count",
+                    "/goal_plan/workflow_session_count",
+                ),
+                super::ToolAuditResultField::value("error_kind"),
+            ]),
+            ModelHidden,
+            TOOL_CATEGORY_GOAL,
+            None,
+            TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(COMMUNICATION_READ),
+            false,
+            NoPath,
+            false,
+            false,
+            super::ToolSessionEvidencePolicy::NONE,
         ),
         COMMUNICATION_READ_SCOPES,
     ),

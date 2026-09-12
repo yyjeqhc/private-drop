@@ -80,6 +80,8 @@ Maintainer-level lifecycle and Agent Task/TaskAttempt details live in [Durable A
 
 The Server also owns an independent durable **Goal** domain for high-level intent/control state. A Goal answers what the user ultimately wants and the authoritative high-level lifecycle of that intent. It is not a Workflow Session, Agent Task, Job, Project selector, credential, or execution authority. Goal references to Agent Tasks and Workflow Sessions are explicit correlation only; dereferencing those ids always re-runs the referenced domain's normal authorization.
 
+Stateless MCP 2026 can optionally present one exact Goal through the sparse Goal Plan App. `present_goal_plan(goal_id)` is the sole model-visible App-bound entry; the View converges through the ModelHidden/app-only `goal_plan_state(goal_id)` read. Both are bounded observations over the same SQLite Goal truth and carry no Project, Runner, Job, Workflow Session mutation, or Host-continuation authority. Existing coding tools do not require Goal identity and keep their normal/native presentation.
+
 ## Task, Job, and Workflow Session continuity
 
 - **Goal** — high-level durable intent/control state (`wc_goal_*`). It can correlate multiple work/execution records, but it does not run them and is never inferred from the current Project, window, credential, or Workflow Session.
