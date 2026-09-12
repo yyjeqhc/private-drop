@@ -232,15 +232,147 @@ test("continuation accepts only parent complete input with canonical arguments",
   assert.equal(view.nodes.status.textContent, "Connection unavailable. Agent connection could not be verified.");
 });
 
-test("business bind failure has a stable bounded diagnostic even after a late matching result", async () => {
+test("nonrecoverable business bind failure stays stopped after a late matching result", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
   view.toolInput(input);
-  await view.reply(view.calls("agent_continuation_bind")[0], { structuredContent: { success: false, output: { error_kind: "endpoint_expired" } } });
+  await view.reply(view.calls("agent_continuation_bind")[0], { structuredContent: { success: false, output: { error_kind: "endpoint_detached" } } });
   view.toolResult({ agent_continuation: projection });
   assert.equal(view.nodes.status.textContent, "Connection unavailable. Queued work is preserved.");
   assert.equal(view.calls("agent_continuation_bind").length, 1);
   assert.equal(view.calls("agent_continuation_state").length, 0);
+  assert.equal(view.calls("agent_continuation_recover_endpoint").length, 0);
+});
+
+const replacementOutput = (from = projection) => {
+  const successor = {
+    ...from, endpoint_id: `wc_endpoint_${"3".repeat(32)}`,
+    controller_generation: from.controller_generation + 1,
+    host_binding: { bound: false },
+  };
+  return {
+    agent_continuation: successor,
+    endpoint_recovery: {
+      kind: "endpoint_replaced",
+      replacement: {
+        agent_id: from.agent_id, from_endpoint_id: from.endpoint_id,
+        from_controller_generation: from.controller_generation,
+        endpoint_id: successor.endpoint_id, controller_generation: successor.controller_generation,
+        reason: "endpoint_expired",
+      },
+    },
+    replayed: false, state_changed: true,
+  };
+};
+
+test("reopened expired card probes replacement, binds the successor, and dispatches once", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  const firstBind = view.calls("agent_continuation_bind")[0];
+  await view.reply(firstBind, {
+    isError: true,
+    structuredContent: { success: false, output: { error_kind: "endpoint_expired" } },
+  });
+  const recovery = view.calls("agent_continuation_recover_endpoint")[0];
+  assert.ok(recovery, "a canonical expiry response must reach the dedicated recovery operation");
+  assert.deepEqual(businessArgs(recovery), businessArgs(firstBind));
+  const replacement = replacementOutput();
+  await view.reply(recovery, toolResult(replacement));
+  const nextBind = view.calls("agent_continuation_bind")[1];
+  assert.ok(nextBind);
+  const current = { ...replacement.agent_continuation, host_binding: { bound: true } };
+  assert.deepEqual(businessArgs(nextBind), {
+    agent_id: current.agent_id, endpoint_id: current.endpoint_id,
+    expected_controller_generation: current.controller_generation, binding_id: bindingId(view),
+  });
+  await view.reply(nextBind, toolResult({ agent_continuation: current }));
+  view.toolInput(input);
+  view.toolResult({ agent_continuation: projection });
+  await view.reply(firstBind, toolResult({ agent_continuation: projection }));
+  assert.equal(view.nodes.binding.textContent, "Connected", "old notifications and replies stay inert");
+  const state = view.calls("agent_continuation_state").at(-1);
+  await view.reply(state, toolResult({ agent_continuation: current }));
+  await view.reply(view.calls("agent_continuation_wake_acquire")[0], toolResult({ wake }));
+  await view.reply(view.calls("agent_continuation_wake_prepare")[0], toolResult({
+    agent_id: current.agent_id, endpoint_id: current.endpoint_id,
+    controller_generation: current.controller_generation,
+    wake_id: wake.wake_id, attempt_id: wake.attempt_id, dispatch_observation: "dispatch_prepared",
+    app_protocol: { automatic_message: "Exact recovered continuation" },
+  }));
+  assert.equal(hostMessages(view).length, 1);
+  await view.reply(hostMessages(view)[0], {});
+  await view.reply(view.calls("agent_continuation_wake_finish")[0], toolResult({}));
+  await view.fireTimers(3000);
+  await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: {
+    ...current, dispatch_observation: "dispatch_accepted",
+  } }));
+  await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({
+    wake: { ...wake, dispatch_observation: "dispatch_accepted" },
+  }));
+  assert.equal(hostMessages(view).length, 1);
+  await view.teardown();
+  assert.equal(view.calls("agent_continuation_unbind")[0].params.arguments.endpoint_id, current.endpoint_id);
+});
+
+test("expiry replacement retries a lost response with the same selector and accepts one successor", async () => {
+  const view = await boundView();
+  await view.reject(view.calls("agent_continuation_state")[0]);
+  const first = view.calls("agent_continuation_recover_endpoint")[0];
+  await view.fireTimers(10000);
+  const retry = view.calls("agent_continuation_recover_endpoint")[1];
+  assert.deepEqual(businessArgs(retry), businessArgs(first));
+  const replacement = { ...replacementOutput(), replayed: true, state_changed: false };
+  await view.reply(retry, toolResult(replacement));
+  await view.reply(first, toolResult(replacement));
+  assert.equal(view.calls("agent_continuation_bind").length, 2);
+  const current = { ...replacement.agent_continuation, host_binding: { bound: true }, wake: null };
+  await view.reply(view.calls("agent_continuation_bind")[1], toolResult({ agent_continuation: current }));
+  assert.equal(view.nodes.binding.textContent, "Connected");
+  assert.equal(view.calls("agent_continuation_state").at(-1).params.arguments.endpoint_id, current.endpoint_id);
+  assert.equal(hostMessages(view).length, 0);
+});
+
+for (const invalid of ["old Endpoint", "old generation", "new generation", "projection mismatch"]) {
+  test(`expiry replacement rejects ${invalid} without retargeting or dispatch`, async () => {
+    const view = await boundView();
+    await view.reject(view.calls("agent_continuation_state")[0]);
+    const output = replacementOutput();
+    const replacement = output.endpoint_recovery.replacement;
+    if (invalid === "old Endpoint") replacement.from_endpoint_id = replacement.endpoint_id;
+    if (invalid === "old generation") replacement.from_controller_generation++;
+    if (invalid === "new generation") replacement.controller_generation++;
+    if (invalid === "projection mismatch") output.agent_continuation.endpoint_id = input.endpoint_id;
+    for (let index = 0; index < 2; index++) {
+      await view.reply(view.calls("agent_continuation_recover_endpoint")[index], toolResult(output));
+    }
+    view.toolInput(input);
+    await view.fireTimers(3000);
+    assert.equal(view.calls("agent_continuation_recover_endpoint").length, 2, "malformed recovery retries are bounded");
+    assert.equal(view.calls("agent_continuation_bind").length, 1);
+    assert.equal(hostMessages(view).length, 0);
+    await view.teardown();
+    assert.equal(view.calls("agent_continuation_unbind")[0].params.arguments.endpoint_id, input.endpoint_id);
+  });
+}
+
+test("healthy heartbeat permits a later expiry probe on the same long-lived card", async () => {
+  const view = await boundView();
+  await view.reject(view.calls("agent_continuation_state")[0]);
+  await view.reply(view.calls("agent_continuation_recover_endpoint")[0], toolResult({
+    agent_continuation: projection,
+    endpoint_recovery: { kind: "controller_live", replacement: null },
+  }));
+  assert.equal(view.calls("agent_continuation_bind").length, 1, "a live probe cannot replace a controller");
+  await view.fireTimers(3000);
+  await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({
+    agent_continuation: { ...projection, wake: null },
+  }));
+  await view.fireTimers(3000);
+  await view.reject(view.calls("agent_continuation_state").at(-1));
+  assert.equal(view.calls("agent_continuation_recover_endpoint").length, 2);
+  await view.reply(view.calls("agent_continuation_recover_endpoint")[1], toolResult(replacementOutput()));
+  assert.equal(view.calls("agent_continuation_bind").length, 2);
 });
 
 for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {

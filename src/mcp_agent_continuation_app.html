@@ -497,7 +497,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (tornDown || !snapshotIsCurrent(selector)) return false;
     const callResult = callToolResultOf(response);
     const structured = structuredOf(callResult);
-    if (callResult && (callResult.isError === true || (structured && structured.success === false))) throw definitiveFailure();
+    if (callResult && (callResult.isError === true || (structured && structured.success === false))) {
+      // Expiry forbids rebinding this generation, but the dedicated recovery
+      // operation may authorize its successor. Other business failures stay final.
+      throw Object.assign(definitiveFailure(), {
+        endpointExpired: !!(structured && structured.success === false
+          && structured.output && structured.output.error_kind === "endpoint_expired"),
+      });
+    }
     const projection = projectionOf(callResult);
     if (!toolCallSucceeded(callResult) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
       throw malformedResult(response);
@@ -759,7 +766,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
             : "Connection interrupted · retrying…";
           scheduleNext();
         } else {
-          const recovered = !error.definitive && await recoverExpiredEndpoint();
+          const recovered = (!error.definitive || error.endpointExpired === true)
+            && await recoverExpiredEndpoint();
           if (recovered) {
             void maybeStartBinding();
           } else if (!tornDown) {
