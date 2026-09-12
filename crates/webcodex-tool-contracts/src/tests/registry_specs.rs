@@ -6,6 +6,34 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
 
+    let work_on_project_desc = desc("work_on_project");
+    for phrase in [
+        "canonical bootstrap",
+        "ordinary coding/review",
+        "omit session_id",
+        "fresh workflow session",
+        "exact resume",
+        "active accessible session",
+        "never guesses prior session",
+        "project instructions",
+        "workflow guidance",
+        "skills",
+        "plugin",
+        "selection metadata",
+        "current model context",
+        "never proves retention",
+        "skill_read_file",
+        "plugin_tool describe",
+        "mode=worktree",
+        "exact git base",
+        "project authority",
+    ] {
+        assert!(
+            work_on_project_desc.contains(phrase),
+            "work_on_project description should mention {phrase}: {work_on_project_desc}"
+        );
+    }
+
     let read_files_desc = desc("read_files");
     for phrase in [
         "adaptive runtime preferred batch-capable inspect tool",
@@ -813,6 +841,22 @@ fn session_tool_specs_describe_explicit_targeting() {
             .is_some(),
         "update_session_context must expose the named SSH resource field"
     );
+
+    let work = spec_named(&specs, "work_on_project");
+    let session_id_description = work.input_schema["properties"]["session_id"]["description"]
+        .as_str()
+        .expect("work_on_project session_id description")
+        .to_lowercase();
+    for phrase in [
+        "does not prove",
+        "fresh model context",
+        "include_* defaults true",
+    ] {
+        assert!(
+            session_id_description.contains(phrase),
+            "work_on_project session_id description should mention {phrase}: {session_id_description}"
+        );
+    }
     let update_desc = update.description.to_lowercase();
     for phrase in [
         "authorized project",
