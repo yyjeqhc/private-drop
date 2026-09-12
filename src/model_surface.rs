@@ -340,6 +340,7 @@ mod tests {
         "session_discussion_summary",
         "present_goal_plan",
         "present_agent_continuation",
+        "rotate_agent_continuation_endpoint",
         "runtime_status",
         "plugin_tool",
         "tool_manifest",

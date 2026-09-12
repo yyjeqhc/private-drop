@@ -363,7 +363,9 @@ fn tool_discovery_groups_drive_tool_categories() {
         );
     }
 
-    let exact_discovery_only = BTreeSet::new();
+    let exact_discovery_only = ["attach_agent_endpoint"]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let mut omitted_from_groups = BTreeSet::new();
     for definition in model_visible_tool_definitions() {
         let Some(groups) = memberships.get(definition.name) else {
