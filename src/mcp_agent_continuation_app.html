@@ -12,44 +12,72 @@ body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
 .header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 .badge { padding: 2px 7px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.summary { font-size: 12px; color: color-mix(in srgb, CanvasText 72%, transparent); }
+.summary b { color: CanvasText; font-weight: 600; }
 .meta { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 14px; font-size: 12px; color: color-mix(in srgb, CanvasText 72%, transparent); }
 .meta b { color: CanvasText; font-weight: 600; overflow-wrap: anywhere; }
+#diagnostics[hidden] { display: none; }
 .status { min-height: 1.4em; font-size: 11px; color: color-mix(in srgb, CanvasText 60%, transparent); }
 </style>
 </head>
 <body>
 <main class="card" aria-live="polite">
-  <div class="header"><h1 id="agent">Agent</h1><span id="binding" class="badge">Initializing</span></div>
-  <div class="meta">
+  <div class="header"><h1 id="agent">Agent</h1><span id="binding" class="badge">Connecting</span></div>
+  <div class="summary">Queued work <b id="queued">0</b></div>
+  <div id="status" class="status">Connecting…</div>
+  <div id="diagnostics" class="meta" hidden>
     <span>Endpoint generation <b id="generation">—</b></span>
     <span>Controller <b id="visibility">Foreground</b></span>
     <span>Wake <b id="wake">None</b></span>
-    <span>Queued deliveries <b id="queued">0</b></span>
     <span>Wake revision <b id="revision">—</b></span>
     <span>Dispatch <b id="dispatch">Idle</b></span>
   </div>
-  <div id="status" class="status">Waiting for authoritative continuation state…</div>
 </main>
 <script>
 (() => {
   "use strict";
   const APP_PROTOCOL = "2026-01-26";
+  // Keep transport/projection diagnostics available for dogfood builds without
+  // exposing protocol internals in the normal product card.
+  const DEBUG_DIAGNOSTICS = false;
   const AGENT_ID = /^wc_dagent_[0-9a-f]{32}$/;
   const ENDPOINT_ID = /^wc_endpoint_[0-9a-f]{32}$/;
   const WAKE_ID = /^wc_wake_[0-9a-f]{32}$/;
   const ATTEMPT_ID = /^wc_wake_attempt_[0-9a-f]{32}$/;
-  const BINDING_ID = /^wc_host_binding_[0-9a-f]{32}$/;
+  const APP_CALL_ID = /^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$/;
+  const SAFE_RESULT_SHAPE = /^(nested-)?(null|array|string|number|boolean|undefined|function|symbol|bigint|structured|structured-direct|content-json|content-only|empty-object|other-object)$/;
+  const SAFE_RESULT_SEMANTICS = new Set([
+    "structured-envelope-invalid", "success-not-true", "output-invalid", "projection-missing",
+    "projection-object-invalid", "projection-version-invalid", "projection-identity-invalid",
+    "projection-display-name-invalid", "projection-queued-count-invalid", "projection-dispatch-invalid",
+    "projection-wake-invalid", "projection-wake-id-invalid", "projection-wake-revision-invalid",
+    "projection-wake-state-invalid", "projection-recovery-invalid", "host-binding-missing", "host-binding-invalid",
+    "host-bound-not-true", "unexpected",
+  ]);
+  const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result"]);
   const CALL_TIMEOUT_MS = 10000;
+  const MAX_BIND_ATTEMPTS = 3;
+  const MAX_RECOVERY_REBINDS = 1;
+  const MAX_ENDPOINT_RECOVERY_ATTEMPTS = 2;
+  const RESTART_RECOVERY_KIND = "host_binding_missing_in_process";
+  const MAX_AUTOMATIC_MESSAGE_CHARS = 4096;
   const VISIBLE_POLL_MS = 3000;
   const HIDDEN_HEARTBEAT_MS = 15000;
   const DISPATCH_STATES = new Set(["dispatch_prepared", "dispatch_accepted", "dispatch_unknown", "continuation_consumed"]);
   let nextId = 1;
+  let nextAppCallSequence = 1;
+  let appCallPrefix = null;
+  const resultAppCallIds = new WeakMap();
   let identity = null;
+  let identityEpoch = 0;
+  let endpointRecoveryProbeEpoch = -1;
   let bindingId = null;
   let timer = null;
   let coordinationInFlight = false;
   let hostInitialized = false;
   let bindingStarted = false;
+  let bindAttempts = 0;
+  let recoveryRebinds = 0;
   let tornDown = false;
   const pending = new Map();
   // Coordination is serial and the Server owns one current claim per binding.
@@ -58,15 +86,32 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let prepareUncertain = null;
   let pendingFinish = null;
   const el = id => document.getElementById(id);
-  el("status").textContent = "App active · initializing Host";
+  el("diagnostics").hidden = !DEBUG_DIAGNOSTICS;
+  el("status").textContent = "Connecting…";
+  // One secure random fence per View, stable across response-loss retries.
+  // This selector grants no authority and is never durable browser state.
+  let viewBindingId = null;
+  try {
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    viewBindingId = "wc_host_binding_" + hex.slice(0, 32);
+    appCallPrefix = hex.slice(32);
+  } catch (_) {} // Secure randomness unavailable: bind fails closed.
+
+  function hostFailure(kind, fields = {}) {
+    const error = new Error("Host request failed");
+    error.hostFailureKind = SAFE_HOST_FAILURE_KINDS.has(kind) ? kind : "bridge-error";
+    return Object.assign(error, fields);
+  }
 
   function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
-    if (tornDown) return Promise.reject(new Error("App torn down"));
+    if (tornDown) return Promise.reject(hostFailure("bridge-cancelled"));
     const id = nextId++;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         pending.delete(id);
-        reject(new Error("Host request timed out"));
+        reject(hostFailure("bridge-timeout"));
       }, timeoutMs);
       pending.set(id, { resolve, reject, timeout });
       parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
@@ -77,20 +122,152 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
   }
 
+  function nextAppCallId() {
+    if (!appCallPrefix || nextAppCallSequence > 999999) return null;
+    return `wc_app_call_${appCallPrefix}_${nextAppCallSequence++}`;
+  }
+
+  function appCallArguments(args) {
+    const appCallId = nextAppCallId();
+    return {
+      appCallId,
+      arguments: appCallId ? Object.assign({}, args, { app_call_id: appCallId }) : args,
+    };
+  }
+
+  function appCallIdOf(result) {
+    return result && typeof result === "object" ? (resultAppCallIds.get(result) || null) : null;
+  }
+
+  function callToolResultOf(result) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+    const nested = result.result;
+    if (nested && typeof nested === "object" && !Array.isArray(nested) && (
+      nested.structuredContent || nested.structured_content || Array.isArray(nested.content)
+      || typeof nested.success === "boolean" || Object.prototype.hasOwnProperty.call(nested, "isError")
+    )) return nested;
+    return result;
+  }
+
+  function canonicalStructuredEnvelope(value) {
+    return !!(value && typeof value === "object" && !Array.isArray(value)
+      && typeof value.success === "boolean"
+      && (Object.prototype.hasOwnProperty.call(value, "output")
+        || Object.prototype.hasOwnProperty.call(value, "error")));
+  }
+
+  function standardContentEnvelopeOf(callResult) {
+    const blocks = Array.isArray(callResult && callResult.content) ? callResult.content : [];
+    for (const block of blocks) {
+      if (!block || block.type !== "text" || typeof block.text !== "string") continue;
+      try {
+        const parsed = JSON.parse(block.text);
+        if (canonicalStructuredEnvelope(parsed)) return parsed;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function structuredOf(result) {
+    const callResult = callToolResultOf(result);
+    if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return null;
+    // A direct bridge return has no CallToolResult carrier to prefer.
+    if (canonicalStructuredEnvelope(callResult)) return callResult;
+    // WebCodex duplicates the exact Server envelope into standard text content for
+    // these app-only tools. Production shows Hosts may independently project
+    // structuredContent while preserving the outer success/output envelope, so a
+    // complete CallToolResult prefers the canonical standard content copy first.
+    const standard = standardContentEnvelopeOf(callResult);
+    if (standard) return standard;
+    const direct = callResult.structuredContent || callResult.structured_content;
+    return canonicalStructuredEnvelope(direct) ? direct : null;
+  }
+
+  function toolResultShape(result) {
+    if (result === null) return "null";
+    if (Array.isArray(result)) return "array";
+    if (typeof result !== "object") return typeof result;
+    const callResult = callToolResultOf(result);
+    if (callResult !== result) return "nested-" + toolResultShape(callResult);
+    if (callResult.structuredContent || callResult.structured_content) return "structured";
+    if (typeof callResult.success === "boolean" && (
+      Object.prototype.hasOwnProperty.call(callResult, "output")
+      || Object.prototype.hasOwnProperty.call(callResult, "error")
+    )) return "structured-direct";
+    if (Array.isArray(callResult.content)) {
+      for (const block of callResult.content) {
+        if (!block || block.type !== "text" || typeof block.text !== "string") continue;
+        try {
+          const parsed = JSON.parse(block.text);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return "content-json";
+        } catch (_) {}
+      }
+      return "content-only";
+    }
+    return Object.keys(callResult).length === 0 ? "empty-object" : "other-object";
+  }
+
+  function bindSemanticFailure(result) {
+    const callResult = callToolResultOf(result);
+    if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return "unexpected";
+    const advertisedStructured = callResult.structuredContent || callResult.structured_content;
+    if (advertisedStructured && !canonicalStructuredEnvelope(advertisedStructured)
+      && !canonicalStructuredEnvelope(callResult)
+      && !standardContentEnvelopeOf(callResult)) return "structured-envelope-invalid";
+    const structured = structuredOf(callResult);
+    if (!structured) return advertisedStructured ? "structured-envelope-invalid" : "unexpected";
+    if (structured.success !== true) return "success-not-true";
+    if (!structured.output || typeof structured.output !== "object" || Array.isArray(structured.output)) return "output-invalid";
+    if (!Object.prototype.hasOwnProperty.call(structured.output, "agent_continuation")) return "projection-missing";
+    const projection = structured.output.agent_continuation;
+    const projectionFailure = projectionSemanticFailure(projection);
+    if (projectionFailure) return projectionFailure;
+    if (!Object.prototype.hasOwnProperty.call(projection, "host_binding")) return "host-binding-missing";
+    if (!projection.host_binding || typeof projection.host_binding !== "object" || Array.isArray(projection.host_binding)) return "host-binding-invalid";
+    if (projection.host_binding.bound !== true) return "host-bound-not-true";
+    return "unexpected";
+  }
+
+  function hostFailureDiagnostic(error) {
+    if (!DEBUG_DIAGNOSTICS || !error || typeof error !== "object" || !SAFE_HOST_FAILURE_KINDS.has(error.hostFailureKind)) return "";
+    const parts = [error.hostFailureKind];
+    if ((error.hostFailureKind === "bridge-error" || error.hostFailureKind === "bridge-cancelled")
+      && Number.isSafeInteger(error.rpcCode)) parts.push(`rpc=${error.rpcCode}`);
+    if (error.hostFailureKind === "malformed-result" && typeof error.resultShape === "string"
+      && SAFE_RESULT_SHAPE.test(error.resultShape)) parts.push(`response=${error.resultShape}`);
+    if (error.hostFailureKind === "malformed-result" && SAFE_RESULT_SEMANTICS.has(error.resultSemantic)) parts.push(`semantic=${error.resultSemantic}`);
+    if (typeof error.appCallId === "string" && APP_CALL_ID.test(error.appCallId)) parts.push(`call=${error.appCallId}`);
+    return parts.join(" · ");
+  }
+
+  function malformedResult(result) {
+    return hostFailure("malformed-result", {
+      resultShape: toolResultShape(result),
+      resultSemantic: bindSemanticFailure(result),
+      appCallId: appCallIdOf(result),
+    });
+  }
+
   function outputOf(result) {
-    const structured = result && (result.structuredContent || result.structured_content || result);
+    const callResult = callToolResultOf(result);
+    const structured = structuredOf(callResult) || callResult;
     return structured && (structured.output || structured);
   }
 
   function toolCallSucceeded(result) {
-    const structured = result && (result.structuredContent || result.structured_content);
-    return !!(structured && structured.success === true);
+    const callResult = callToolResultOf(result);
+    const structured = structuredOf(callResult);
+    return !!(callResult && callResult.isError !== true && structured && structured.success === true);
   }
 
-  function privateContinuationMeta(result) {
-    const meta = result && result._meta;
-    const value = meta && meta["webcodex/agentContinuation"];
-    return value && typeof value === "object" ? value : null;
+  function restartRecoveryOf(projection) {
+    return !!(projection && projection.recovery
+      && projection.recovery.kind === RESTART_RECOVERY_KIND
+      && projection.host_binding && projection.host_binding.bound === false);
+  }
+
+  function definitiveFailure() {
+    return Object.assign(new Error("Host binding unavailable"), { definitive: true });
   }
 
   function validIdentity(value) {
@@ -100,18 +277,49 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       && Number.isSafeInteger(value.controller_generation) && value.controller_generation >= 1);
   }
 
+  function sameIdentity(left, right) {
+    return !!(left && right
+      && left.agent_id === right.agent_id
+      && left.endpoint_id === right.endpoint_id
+      && left.controller_generation === right.controller_generation);
+  }
+
+  function identitySnapshot() {
+    return identity && {
+      agent_id: identity.agent_id,
+      endpoint_id: identity.endpoint_id,
+      controller_generation: identity.controller_generation,
+      epoch: identityEpoch,
+    };
+  }
+
+  function snapshotIsCurrent(snapshot) {
+    return !!(snapshot && snapshot.epoch === identityEpoch && sameIdentity(snapshot, identity));
+  }
+
+  function markCurrentEndpointHealthy() {
+    // A recovery probe is bounded only within one unhealthy episode. Once an
+    // exact bind/heartbeat proves this generation healthy again, a later lease
+    // expiry must be allowed to probe replacement on the same long-lived card.
+    endpointRecoveryProbeEpoch = -1;
+  }
+
   function acceptIdentity(candidate) {
     if (tornDown) return false;
-    if (!validIdentity(candidate) || (identity && (
-      identity.agent_id !== candidate.agent_id
-      || identity.endpoint_id !== candidate.endpoint_id
-      || identity.controller_generation !== candidate.controller_generation
-    ))) {
-      // Keep the first exact selector. Teardown can only unbind that same carrier;
-      // pending responses must never restart coordination or retarget this card.
+    if (identity && validIdentity(candidate)
+      && identity.agent_id === candidate.agent_id
+      && candidate.controller_generation < identity.controller_generation) {
+      // A response issued before an authorized replacement may arrive late.
+      // Strictly older generations are inert: they can neither retarget nor
+      // tear down the newer controller selected by the replacement envelope.
+      return false;
+    }
+    if (!validIdentity(candidate) || (identity && !sameIdentity(identity, candidate))) {
+      // Keep the first exact selector. Only acceptReplacementIdentity() below
+      // may perform E1/g1 -> E2/g2; ordinary projections still fail closed.
       teardown();
       el("binding").textContent = "Unavailable";
-      el("status").textContent = "Invalid or conflicting continuation identity";
+      el("status").textContent = "Connection unavailable. Agent connection could not be verified.";
       return false;
     }
     if (!identity) {
@@ -120,23 +328,89 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         endpoint_id: candidate.endpoint_id,
         controller_generation: candidate.controller_generation,
       };
+      identityEpoch++;
       el("generation").textContent = String(identity.controller_generation);
     }
     return true;
   }
 
-  function validProjection(value) {
-    if (!value || typeof value !== "object" || value.version !== 1) return null;
-    if (!validIdentity(value)) return null;
-    if (typeof value.display_name !== "string" || value.display_name.length === 0) return null;
-    if (!Number.isSafeInteger(value.queued_delivery_count) || value.queued_delivery_count < 0) return null;
-    if (value.dispatch_observation !== null && !DISPATCH_STATES.has(value.dispatch_observation)) return null;
-    if (value.wake !== null) {
-      if (!value.wake || !WAKE_ID.test(value.wake.wake_id || "")) return null;
-      if (!Number.isSafeInteger(value.wake.revision) || value.wake.revision < 1) return null;
-      if (!["pending", "claimed", "prepared", "delivered", "delivery_unknown"].includes(value.wake.state)) return null;
+  function replacementOf(result) {
+    const output = outputOf(result);
+    const recovery = output && output.endpoint_recovery;
+    const replacement = recovery && recovery.kind === "endpoint_replaced" && recovery.replacement;
+    const projection = validProjection(output && output.agent_continuation);
+    return replacement && typeof replacement === "object" && !Array.isArray(replacement) && projection
+      ? { replacement, projection }
+      : null;
+  }
+
+  function acceptReplacementIdentity(result, stale) {
+    if (tornDown || !snapshotIsCurrent(stale)) return false;
+    const transition = replacementOf(result);
+    if (!transition) return false;
+    const { replacement, projection } = transition;
+    if (replacement.agent_id !== stale.agent_id
+      || replacement.from_endpoint_id !== stale.endpoint_id
+      || replacement.from_controller_generation !== stale.controller_generation
+      || replacement.reason !== "endpoint_expired"
+      || typeof replacement.endpoint_id !== "string" || !ENDPOINT_ID.test(replacement.endpoint_id)
+      || !Number.isSafeInteger(replacement.controller_generation)
+      || replacement.controller_generation !== stale.controller_generation + 1
+      || projection.agent_id !== stale.agent_id
+      || projection.endpoint_id !== replacement.endpoint_id
+      || projection.controller_generation !== replacement.controller_generation) {
+      return false;
     }
-    return value;
+    identity = {
+      agent_id: replacement.agent_id,
+      endpoint_id: replacement.endpoint_id,
+      controller_generation: replacement.controller_generation,
+    };
+    identityEpoch++;
+    endpointRecoveryProbeEpoch = -1;
+    bindingId = null;
+    bindingStarted = false;
+    bindAttempts = 0;
+    recoveryRebinds = 0;
+    pendingFinish = null;
+    dispatchStarted = null;
+    prepareUncertain = null;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    el("generation").textContent = String(identity.controller_generation);
+    el("binding").textContent = "Reconnecting";
+    el("status").textContent = "Restoring connection…";
+    return true;
+  }
+
+  function projectionSemanticFailure(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "projection-object-invalid";
+    if (value.version !== 1) return "projection-version-invalid";
+    if (!validIdentity(value)) return "projection-identity-invalid";
+    if (typeof value.display_name !== "string" || value.display_name.length === 0) return "projection-display-name-invalid";
+    if (!Number.isSafeInteger(value.queued_delivery_count) || value.queued_delivery_count < 0) return "projection-queued-count-invalid";
+    if (value.dispatch_observation !== null && !DISPATCH_STATES.has(value.dispatch_observation)) return "projection-dispatch-invalid";
+    if (value.wake !== null) {
+      if (!value.wake || typeof value.wake !== "object" || Array.isArray(value.wake)) return "projection-wake-invalid";
+      if (!WAKE_ID.test(value.wake.wake_id || "")) return "projection-wake-id-invalid";
+      if (!Number.isSafeInteger(value.wake.revision) || value.wake.revision < 1) return "projection-wake-revision-invalid";
+      if (!["pending", "claimed", "prepared", "delivered", "delivery_unknown"].includes(value.wake.state)) return "projection-wake-state-invalid";
+    }
+    if (!Object.prototype.hasOwnProperty.call(value, "host_binding")) return "host-binding-missing";
+    if (!value.host_binding || typeof value.host_binding !== "object" || Array.isArray(value.host_binding)
+      || typeof value.host_binding.bound !== "boolean") return "host-binding-invalid";
+    if (!Object.prototype.hasOwnProperty.call(value, "recovery")) return "projection-recovery-invalid";
+    if (value.recovery !== null) {
+      if (!value.recovery || typeof value.recovery !== "object" || Array.isArray(value.recovery)
+        || Object.keys(value.recovery).length !== 1
+        || value.recovery.kind !== RESTART_RECOVERY_KIND
+        || value.host_binding.bound !== false) return "projection-recovery-invalid";
+    }
+    return null;
+  }
+
+  function validProjection(value) {
+    return projectionSemanticFailure(value) === null ? value : null;
   }
 
   function projectionOf(result) {
@@ -144,16 +418,30 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return validProjection(output && output.agent_continuation);
   }
 
-  function exactArgs(extra = {}) {
+  function exactArgsFor(selector, extra = {}) {
     return Object.assign({
-      agent_id: identity.agent_id,
-      endpoint_id: identity.endpoint_id,
-      expected_controller_generation: identity.controller_generation,
+      agent_id: selector.agent_id,
+      endpoint_id: selector.endpoint_id,
+      expected_controller_generation: selector.controller_generation,
     }, extra);
   }
 
+  function exactArgs(extra = {}) {
+    return exactArgsFor(identity, extra);
+  }
+
   async function callTool(name, args) {
-    return request("tools/call", { name, arguments: args });
+    const diagnostic = appCallArguments(args);
+    try {
+      const result = await request("tools/call", { name, arguments: diagnostic.arguments });
+      if (diagnostic.appCallId && result && typeof result === "object") {
+        resultAppCallIds.set(result, diagnostic.appCallId);
+      }
+      return result;
+    } catch (error) {
+      if (diagnostic.appCallId && error && typeof error === "object") error.appCallId = diagnostic.appCallId;
+      throw error;
+    }
   }
 
   function dispatchLabel(value) {
@@ -177,41 +465,72 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     el("dispatch").textContent = dispatchLabel(projection.dispatch_observation);
     // An initial projection cannot prove that this View has a live binding.
     if (!bindingId) return;
-    el("binding").textContent = "Host bound";
+    el("binding").textContent = "Connected";
     if (projection.dispatch_observation === "continuation_consumed") {
-      el("status").textContent = "Exact durable Wake was consumed by a continuation model turn";
+      el("status").textContent = "Work resumed successfully";
     } else if (document.hidden) {
-      el("status").textContent = "Background controller: heartbeat only; automatic Host dispatch is deferred";
+      el("status").textContent = "Connected in background; queued work is preserved";
     } else if (projection.wake) {
-      el("status").textContent = "Reconciling authoritative durable Wake state";
+      el("status").textContent = "Continuing queued work…";
     } else {
-      el("status").textContent = "Host carrier live; no pending durable Wake";
+      el("status").textContent = "Ready for queued work";
     }
   }
 
   function scheduleNext() {
     if (tornDown) return;
     if (timer !== null) clearTimeout(timer);
-    timer = setTimeout(() => { void reconcile(); }, document.hidden ? HIDDEN_HEARTBEAT_MS : VISIBLE_POLL_MS);
+    const scheduledEpoch = identityEpoch;
+    timer = setTimeout(() => {
+      timer = null;
+      if (scheduledEpoch !== identityEpoch) return scheduleNext();
+      if (bindingId) void reconcile(); else void maybeStartBinding();
+    }, document.hidden ? HIDDEN_HEARTBEAT_MS : VISIBLE_POLL_MS);
   }
 
   async function bind() {
-    const response = await callTool("agent_continuation_bind", exactArgs());
-    if (tornDown) return;
-    const projection = projectionOf(response);
-    const privateMeta = privateContinuationMeta(response);
-    if (!projection || !privateMeta || !BINDING_ID.test(privateMeta.binding_id || "")) {
-      throw new Error("Invalid Host binding response");
+    if (!viewBindingId) throw definitiveFailure();
+    const selector = identitySnapshot();
+    if (!selector) throw definitiveFailure();
+    bindAttempts++;
+    const response = await callTool("agent_continuation_bind", exactArgsFor(selector, { binding_id: viewBindingId }));
+    if (tornDown || !snapshotIsCurrent(selector)) return false;
+    const callResult = callToolResultOf(response);
+    const structured = structuredOf(callResult);
+    if (callResult && (callResult.isError === true || (structured && structured.success === false))) {
+      // Expiry forbids rebinding this generation, but the dedicated recovery
+      // operation may authorize its successor. Other business failures stay final.
+      throw Object.assign(definitiveFailure(), {
+        endpointExpired: !!(structured && structured.success === false
+          && structured.output && structured.output.error_kind === "endpoint_expired"),
+      });
     }
-    if (!acceptIdentity(projection)) return;
-    bindingId = privateMeta.binding_id;
+    const projection = projectionOf(callResult);
+    if (!toolCallSucceeded(callResult) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
+      throw malformedResult(response);
+    }
+    if (!acceptIdentity(projection)) return false;
+    bindingId = viewBindingId;
+    markCurrentEndpointHealthy();
     render(projection);
+    return true;
   }
 
   async function heartbeat() {
-    const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
+    const selector = identitySnapshot();
+    if (!selector) return null;
+    const response = await callTool("agent_continuation_state", exactArgsFor(selector, { binding_id: bindingId }));
+    if (tornDown || !snapshotIsCurrent(selector)) return null;
     const projection = projectionOf(response);
-    if (!projection || !acceptIdentity(projection)) throw new Error("Invalid continuation state");
+    if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) {
+      const structured = structuredOf(response);
+      if (structured && structured.success === false) throw new Error("Continuation state was not accepted");
+      throw malformedResult(response);
+    }
+    if (restartRecoveryOf(projection)) {
+      throw Object.assign(new Error("Process-local Host binding was lost"), { recoverableBindingLoss: true });
+    }
+    markCurrentEndpointHealthy();
     render(projection);
     return projection;
   }
@@ -261,11 +580,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       attempt_id: wake.attempt_id,
     }));
     const output = outputOf(response);
-    const privateMeta = privateContinuationMeta(response);
-    if (!output || output.dispatch_observation !== "dispatch_prepared" || !privateMeta || typeof privateMeta.automatic_message !== "string" || privateMeta.automatic_message.length === 0) {
+    // This ModelHidden app-only result uses standard structuredContent, never
+    // custom ToolResult _meta. Keep the exact Server envelope out of visible UI.
+    const message = output && output.app_protocol && output.app_protocol.automatic_message;
+    if (!toolCallSucceeded(response) || !output || output.dispatch_observation !== "dispatch_prepared"
+      || output.agent_id !== identity.agent_id || output.endpoint_id !== identity.endpoint_id
+      || output.controller_generation !== identity.controller_generation
+      || output.wake_id !== wake.wake_id || output.attempt_id !== wake.attempt_id
+      || typeof message !== "string" || message.trim().length === 0 || message.length > MAX_AUTOMATIC_MESSAGE_CHARS) {
       throw new Error("Invalid prepared continuation envelope");
     }
-    return privateMeta.automatic_message;
+    return message;
   }
 
   async function dispatchWake(wake) {
@@ -274,7 +599,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     try {
       automaticMessage = await prepare(wake);
     } catch (_) {
-      // A timed-out prepare may already have crossed the durable dispatch fence.
+      // A timeout or malformed successful response may be after the durable fence.
       // Never guess and never call ui/message without the returned exact envelope.
       prepareUncertain = wake.attempt_id;
       try {
@@ -310,12 +635,61 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     await finishAttempt(wake, outcome);
   }
 
+  function resetLostProcessBindingForRebind() {
+    bindingId = null;
+    bindingStarted = false;
+    pendingFinish = null;
+    dispatchStarted = null;
+    prepareUncertain = null;
+  }
+
+  async function recoverExpiredEndpoint() {
+    const stale = identitySnapshot();
+    if (!stale || !viewBindingId || endpointRecoveryProbeEpoch === stale.epoch) return false;
+    endpointRecoveryProbeEpoch = stale.epoch;
+    el("binding").textContent = "Reconnecting";
+    el("status").textContent = "Reconnecting…";
+    let lastError = null;
+    for (let attempt = 0; attempt < MAX_ENDPOINT_RECOVERY_ATTEMPTS; attempt++) {
+      try {
+        const response = await callTool("agent_continuation_recover_endpoint", exactArgsFor(stale, {
+          binding_id: viewBindingId,
+        }));
+        if (tornDown || !snapshotIsCurrent(stale)) return false;
+        if (!toolCallSucceeded(response)) throw definitiveFailure();
+        const output = outputOf(response);
+        const recovery = output && output.endpoint_recovery;
+        if (recovery && recovery.kind === "controller_live" && recovery.replacement === null) {
+          const projection = projectionOf(response);
+          if (!projection || !sameIdentity(projection, stale)) throw malformedResult(response);
+          el("binding").textContent = "Unavailable";
+          el("status").textContent = "Connection unavailable. Queued work is preserved.";
+          return false;
+        }
+        if (acceptReplacementIdentity(response, stale)) return true;
+        throw malformedResult(response);
+      } catch (error) {
+        lastError = error;
+        if (tornDown || !snapshotIsCurrent(stale) || (error && error.definitive)) break;
+      }
+    }
+    if (!tornDown && snapshotIsCurrent(stale)) {
+      const diagnostic = hostFailureDiagnostic(lastError);
+      el("binding").textContent = "Unavailable";
+      el("status").textContent = diagnostic
+        ? `Connection unavailable · ${diagnostic}. Durable Agent state is preserved.`
+        : "Connection unavailable. Queued work is preserved.";
+    }
+    return false;
+  }
+
   async function reconcile() {
     if (tornDown || !identity || !bindingId || coordinationInFlight) return scheduleNext();
     coordinationInFlight = true;
     try {
       await retryPendingFinish();
       const projection = await heartbeat();
+      if (!projection) return;
       // Acquiring a successor retires the old Server-side claim. Reconcile its
       // pending ACK first while still renewing the Endpoint on every poll.
       if (document.hidden || pendingFinish) return;
@@ -331,8 +705,24 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         return;
       }
       await dispatchWake(wake);
-    } catch (_) {
-      if (!tornDown) el("status").textContent = "Host reconciliation pending; durable Wake remains authoritative";
+    } catch (error) {
+      if (!tornDown && error && error.recoverableBindingLoss === true && recoveryRebinds < MAX_RECOVERY_REBINDS) {
+        recoveryRebinds++;
+        resetLostProcessBindingForRebind();
+        el("binding").textContent = "Reconnecting";
+        el("status").textContent = "Reconnecting…";
+      } else if (!tornDown) {
+        const recovered = await recoverExpiredEndpoint();
+        if (recovered) {
+          void maybeStartBinding();
+        } else if (!tornDown && endpointRecoveryProbeEpoch !== identityEpoch) {
+          const diagnostic = hostFailureDiagnostic(error);
+          el("binding").textContent = "Reconnecting";
+          el("status").textContent = diagnostic
+            ? `Reconnecting · ${diagnostic}`
+            : "Reconnecting…";
+        }
+      }
     } finally {
       coordinationInFlight = false;
       scheduleNext();
@@ -355,36 +745,54 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const projection = projectionOf(result);
     if (!projection || !acceptIdentity(projection)) return;
     // A delayed initial result must not overwrite newer bind/heartbeat state.
-    if (!bindingId) render(projection);
+    if (!bindingStarted && bindAttempts === 0) render(projection);
     void maybeStartBinding();
   }
 
   async function maybeStartBinding() {
-    if (!hostInitialized || !identity || bindingStarted || tornDown) return;
+    if (!hostInitialized || !identity || bindingStarted || timer !== null || tornDown) return;
     bindingStarted = true;
-    el("binding").textContent = "Binding";
-    el("status").textContent = "Exact identity received · binding Host carrier";
+    el("binding").textContent = "Connecting";
+    el("status").textContent = "Connecting…";
     try {
-      await bind();
-      void reconcile();
-    } catch (_) {
+      if (await bind()) void reconcile();
+    } catch (error) {
       if (!tornDown) {
-        el("binding").textContent = "Unavailable";
-        el("status").textContent = "Host binding unavailable; durable Agent state is unchanged";
+        const diagnostic = hostFailureDiagnostic(error);
+        if (!error.definitive && bindAttempts < MAX_BIND_ATTEMPTS) {
+          bindingStarted = false;
+          el("status").textContent = diagnostic
+            ? `Connection interrupted · ${diagnostic} · retrying…`
+            : "Connection interrupted · retrying…";
+          scheduleNext();
+        } else {
+          const recovered = (!error.definitive || error.endpointExpired === true)
+            && await recoverExpiredEndpoint();
+          if (recovered) {
+            void maybeStartBinding();
+          } else if (!tornDown) {
+            el("binding").textContent = "Unavailable";
+            el("status").textContent = diagnostic
+              ? `Connection unavailable · ${diagnostic}. Durable Agent state is preserved.`
+              : "Connection unavailable. Queued work is preserved.";
+          }
+        }
       }
     }
   }
 
   function bestEffortUnbind() {
-    if (!identity || !bindingId || tornDown) return;
+    // Also withdraw a bind whose successful response may have been lost.
+    if (!identity || !viewBindingId || bindAttempts === 0 || tornDown) return;
     const id = nextId++;
+    const diagnostic = appCallArguments(exactArgs({ binding_id: viewBindingId }));
     parent.postMessage({
       jsonrpc: "2.0",
       id,
       method: "tools/call",
       params: {
         name: "agent_continuation_unbind",
-        arguments: exactArgs({ binding_id: bindingId }),
+        arguments: diagnostic.arguments,
       },
     }, "*");
   }
@@ -410,8 +818,13 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       const entry = pending.get(msg.id);
       pending.delete(msg.id);
       clearTimeout(entry.timeout);
-      if (msg.error) entry.reject(new Error(String(msg.error.message || "Host error")));
-      else entry.resolve(msg.result);
+      if (msg.error) {
+        const rpcCode = Number.isSafeInteger(msg.error.code) ? msg.error.code : null;
+        entry.reject(hostFailure(rpcCode === -32800 ? "bridge-cancelled" : "bridge-error", {
+          rpcCode,
+          definitive: [-32600, -32601, -32602].includes(rpcCode),
+        }));
+      } else entry.resolve(msg.result);
       return;
     }
     if (msg.method === "ui/notifications/tool-input") {
@@ -441,16 +854,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "2.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "14.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;
     hostInitialized = true;
-    el("status").textContent = "Host initialized · waiting for exact tool identity";
+    el("status").textContent = "Waiting for Agent connection…";
     notify("ui/notifications/initialized", {});
     void maybeStartBinding();
   })
-    .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
+    .catch(() => { if (!tornDown) el("status").textContent = "Connection unavailable"; });
 })();
 </script>
 </body>

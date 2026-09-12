@@ -1326,6 +1326,16 @@ pub enum ToolCall {
         specialty_labels: Option<Vec<String>>,
     },
 
+    /// Rotate the server-local continuation Endpoint/controller generation for a durable Agent.
+    RotateAgentContinuationEndpoint {
+        agent_id: String,
+        host: String,
+        #[serde(default)]
+        client_attachment_id: Option<String>,
+        idempotency_key: String,
+    },
+
+    /// Compatibility name for server-local continuation Endpoint rotation.
     /// Attach a current Host/Client Endpoint to a durable Agent.
     AttachAgentEndpoint {
         agent_id: String,
@@ -1347,6 +1357,15 @@ pub enum ToolCall {
         agent_id: String,
         endpoint_id: String,
         expected_controller_generation: i64,
+        binding_id: String,
+    },
+
+    /// App-only same-Window recovery for one exact naturally expired Endpoint.
+    AgentContinuationRecoverEndpoint {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
     },
 
     /// App-only exact Host heartbeat plus bounded authoritative state refresh.
@@ -2851,9 +2870,11 @@ impl ToolCall {
             Self::CreateAgentIdentity { .. } => "create_agent_identity",
             Self::ListAgentIdentities { .. } => "list_agent_identities",
             Self::UpdateAgentIdentity { .. } => "update_agent_identity",
+            Self::RotateAgentContinuationEndpoint { .. } => "rotate_agent_continuation_endpoint",
             Self::AttachAgentEndpoint { .. } => "attach_agent_endpoint",
             Self::PresentAgentContinuation { .. } => "present_agent_continuation",
             Self::AgentContinuationBind { .. } => "agent_continuation_bind",
+            Self::AgentContinuationRecoverEndpoint { .. } => "agent_continuation_recover_endpoint",
             Self::AgentContinuationState { .. } => "agent_continuation_state",
             Self::AgentContinuationWakeAcquire { .. } => "agent_continuation_wake_acquire",
             Self::AgentContinuationWakePrepare { .. } => "agent_continuation_wake_prepare",

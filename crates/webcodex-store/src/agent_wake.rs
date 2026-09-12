@@ -342,7 +342,11 @@ impl Database {
         expire_stale_endpoints(&transaction, now)?;
         // Process-local Host callbacks/adapters never survive a Server
         // takeover. Clear their durable capability projection before any
-        // successor can treat an old Endpoint as dispatchable.
+        // successor can treat an old Endpoint as dispatchable. Deliberately
+        // preserve the last current MCP App recovery fingerprint and canonical
+        // ClientWindow key: neither is authority, but after ordinary exact
+        // Endpoint checks they fence which View/Host window may recreate only
+        // the lost process-local binding.
         transaction
             .execute(
                 "UPDATE wc_agent_endpoints
@@ -1532,7 +1536,9 @@ fn expire_stale_endpoints(
         transaction
             .execute(
                 "UPDATE wc_agent_endpoints
-                 SET lifecycle = 'expired', expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2)
+                 SET lifecycle = 'expired', expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2),
+                     wake_capable = 0,
+                     mcp_app_recovery_fingerprint = NULL
                  WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
                 params![endpoint_id, now],
             )
@@ -1652,7 +1658,7 @@ fn wake_envelope(
     consume_token: &str,
 ) -> AgentWakeEnvelope {
     let resume_hint = format!(
-        "This is an exact WebCodex Durable Agent continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\n\nAuthoritative continuation contract:\n1. First call bootstrap_agent_conversation with this exact agent_id, endpoint_id, controller_generation, and wake_id; do not infer or retarget any identity from ambient Host, Project, Workflow Session, ClientWindow, credential, recent Agent, or recent Task state.\n2. Re-read durable work from list_agent_inbox and read_conversation as needed. This Host message intentionally contains no business Message body or transcript.\n3. Agent/Conversation authority grants communication authority only. It does not grant Project, Runner, filesystem, coding, Goal, Task, or Workflow Session authority; if coding work is needed, use the ordinary WebCodex authorization/project workflow.\n4. Consume this exact Wake with consume_agent_wake only after this model turn has actually taken over the continuation. Wake consumption and Delivery consumption are distinct; separately consume only Delivery ids actually processed.\n5. For Agent replies, keep using the existing wake_reply_id plus stable reply_operation_index replay contract.\n\nqueued_delivery_count={}\ninbox_high_watermark={}\n",
+        "This is an exact WebCodex Durable Agent continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\n\nAuthoritative continuation contract:\n1. First call bootstrap_agent_conversation with this exact agent_id, endpoint_id, controller_generation, and wake_id; do not infer or retarget any identity from ambient Host, Project, Workflow Session, ClientWindow, credential, recent Agent, or recent Task state.\n2. Re-read the authoritative Agent Inbox with list_agent_inbox and read_conversation as needed. This Host message intentionally contains no business Message body or transcript. Treat newly queued or otherwise unprocessed durable Inbox deliveries as the authoritative current work for this resumed turn; do not restart or restate the initial setup/continuation instructions as the task.\n3. Agent/Conversation authority grants communication authority only. It does not grant Project, Runner, filesystem, coding, Goal, Task, or Workflow Session authority; if coding work is needed, use the ordinary WebCodex authorization/project workflow.\n4. Consume this exact Wake with consume_agent_wake only after this model turn has actually taken over the continuation. Wake consumption and Delivery consumption are distinct; separately consume only Delivery ids actually processed.\n5. For Agent replies, keep using the existing wake_reply_id plus stable reply_operation_index replay contract.\n6. After processing the durable work, make this resumed turn's user-visible final response reflect the actual work/result (or a real blocker). Do not merely repeat this continuation contract, its identity fields, or the initial setup prompt.\n\nqueued_delivery_count={}\ninbox_high_watermark={}\n",
         wake.target_agent_id,
         endpoint_id,
         controller_generation,

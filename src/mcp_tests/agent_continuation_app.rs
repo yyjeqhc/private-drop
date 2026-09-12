@@ -1,8 +1,9 @@
 use super::*;
 use std::sync::Arc;
 
-const APP_TOOLS: [&str; 6] = [
+const APP_TOOLS: [&str; 7] = [
     "agent_continuation_bind",
+    "agent_continuation_recover_endpoint",
     "agent_continuation_state",
     "agent_continuation_wake_acquire",
     "agent_continuation_wake_prepare",
@@ -15,6 +16,75 @@ fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
         .as_array()?
         .iter()
         .find(|tool| tool["name"] == name)
+}
+
+fn mcp_2026_window_params(params: Value, raw_openai_session: &str) -> Value {
+    let mut params = mcp_2026_params(params);
+    params["_meta"]["openai/session"] = Value::String(raw_openai_session.to_string());
+    params
+}
+
+fn endpoint_client_window_key(db: &crate::db::Database, endpoint_id: &str) -> Option<String> {
+    db.conn_for_tests()
+        .query_row(
+            "SELECT mcp_app_client_window_key FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+            [endpoint_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn schema_type_matches(value: &Value, schema: &Value) -> bool {
+    match schema.get("type").and_then(Value::as_str) {
+        Some("object") => value.is_object(),
+        Some("array") => value.is_array(),
+        Some("string") => value.is_string(),
+        Some("boolean") => value.is_boolean(),
+        Some("integer") => value.as_i64().is_some() || value.as_u64().is_some(),
+        Some("number") => value.is_number(),
+        Some("null") => value.is_null(),
+        Some(_) | None => true,
+    }
+}
+
+fn host_project_through_output_schema(value: &Value, schema: &Value) -> Value {
+    if let Some(variants) = schema.get("anyOf").and_then(Value::as_array) {
+        if let Some(branch) = variants
+            .iter()
+            .find(|branch| schema_type_matches(value, branch))
+        {
+            return host_project_through_output_schema(value, branch);
+        }
+    }
+    if schema.get("type").and_then(Value::as_str) == Some("object") {
+        let Some(object) = value.as_object() else {
+            return value.clone();
+        };
+        let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+            return value.clone();
+        };
+        let mut projected = serde_json::Map::new();
+        for (field, child_schema) in properties {
+            if let Some(child) = object.get(field) {
+                projected.insert(
+                    field.clone(),
+                    host_project_through_output_schema(child, child_schema),
+                );
+            }
+        }
+        return Value::Object(projected);
+    }
+    if schema.get("type").and_then(Value::as_str) == Some("array") {
+        if let (Some(items), Some(values)) = (schema.get("items"), value.as_array()) {
+            return Value::Array(
+                values
+                    .iter()
+                    .map(|child| host_project_through_output_schema(child, items))
+                    .collect(),
+            );
+        }
+    }
+    value.clone()
 }
 
 fn continuation_auth(username: &str) -> crate::auth::AuthContext {
@@ -51,6 +121,7 @@ async fn handle_with_server_apps_enabled(
     enabled: bool,
 ) -> McpOutcome {
     let protocol_era = super::super::inferred_protocol_era(&request);
+    let window = crate::client_window::stateless_mcp_window(&request.params);
     super::super::handle_mcp_request_with_lifecycle(
         runtime,
         None,
@@ -58,7 +129,7 @@ async fn handle_with_server_apps_enabled(
         auth,
         protocol_era,
         super::super::HostFileImportTrust::Untrusted,
-        None,
+        window.identity.as_ref(),
         None,
         None,
         crate::model_surface::effective_mcp_compact_schemas(
@@ -170,7 +241,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v2"
+        "ui://webcodex/agent-continuation/v14"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -206,21 +277,39 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         })
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(bound_tools, vec!["present_agent_continuation"]);
+    assert_eq!(bound_tools.len(), APP_TOOLS.len() + 1);
+    assert!(bound_tools.contains(&"present_agent_continuation"));
     for name in APP_TOOLS {
         let descriptor = tool(&ui["result"], name).unwrap_or_else(|| panic!("missing {name}"));
         assert_eq!(
             descriptor.pointer("/_meta/ui/visibility"),
             Some(&json!(["app"]))
         );
-        assert!(
-            descriptor.pointer("/_meta/ui/resourceUri").is_none(),
-            "{name} must coordinate the existing card rather than create another one"
+        assert_eq!(
+            descriptor.pointer("/_meta/ui/resourceUri"),
+            Some(&json!(MCP_AGENT_CONTINUATION_UI_RESOURCE_URI)),
+            "{name} must be associated with the continuation View for Host bridge calls"
         );
+        assert!(bound_tools.contains(&name));
+        assert_eq!(
+            descriptor.pointer("/inputSchema/properties/app_call_id/pattern"),
+            Some(&json!("^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$")),
+            "{name} must advertise only the bounded adapter diagnostic id"
+        );
+        assert!(!descriptor["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "app_call_id"));
     }
     assert_eq!(
         tool(&ui["result"], "agent_continuation_bind").unwrap()["inputSchema"]["required"],
-        json!(["agent_id", "endpoint_id", "expected_controller_generation"])
+        json!([
+            "agent_id",
+            "endpoint_id",
+            "expected_controller_generation",
+            "binding_id"
+        ])
     );
     assert_eq!(
         tool(&ui["result"], "agent_continuation_wake_prepare").unwrap()["inputSchema"]["required"],
@@ -340,10 +429,39 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         .as_array()
         .unwrap()
         .iter()
-        .any(|resource| resource["uri"] == "ui://webcodex/agent-continuation/v1"));
+        .any(|resource| matches!(
+            resource["uri"].as_str(),
+            Some(
+                "ui://webcodex/agent-continuation/v1"
+                    | "ui://webcodex/agent-continuation/v2"
+                    | "ui://webcodex/agent-continuation/v3"
+                    | "ui://webcodex/agent-continuation/v4"
+                    | "ui://webcodex/agent-continuation/v5"
+                    | "ui://webcodex/agent-continuation/v6"
+                    | "ui://webcodex/agent-continuation/v7"
+                    | "ui://webcodex/agent-continuation/v8"
+                    | "ui://webcodex/agent-continuation/v9"
+                    | "ui://webcodex/agent-continuation/v10"
+                    | "ui://webcodex/agent-continuation/v11"
+                    | "ui://webcodex/agent-continuation/v12"
+                    | "ui://webcodex/agent-continuation/v13"
+            )
+        )));
     for uri in [
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
         "ui://webcodex/agent-continuation/v1",
+        "ui://webcodex/agent-continuation/v2",
+        "ui://webcodex/agent-continuation/v3",
+        "ui://webcodex/agent-continuation/v4",
+        "ui://webcodex/agent-continuation/v5",
+        "ui://webcodex/agent-continuation/v6",
+        "ui://webcodex/agent-continuation/v7",
+        "ui://webcodex/agent-continuation/v8",
+        "ui://webcodex/agent-continuation/v9",
+        "ui://webcodex/agent-continuation/v10",
+        "ui://webcodex/agent-continuation/v11",
+        "ui://webcodex/agent-continuation/v12",
+        "ui://webcodex/agent-continuation/v13",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -377,6 +495,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui/initialize",
         "ui/notifications/tool-input",
         "agent_continuation_bind",
+        "agent_continuation_recover_endpoint",
         "agent_continuation_state",
         "agent_continuation_wake_acquire",
         "agent_continuation_wake_prepare",
@@ -405,6 +524,88 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         );
     }
     assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("host_binding_missing_in_process"),
+        "App recovery must key only on the explicit process-local binding-loss contract"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("MAX_RECOVERY_REBINDS = 1"),
+        "App restart recovery must remain bounded"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("MAX_ENDPOINT_RECOVERY_ATTEMPTS = 2"),
+        "expired-endpoint replacement retries must remain bounded and replay-safe"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("function markCurrentEndpointHealthy()"),
+        "a healthy exact controller must reopen future expired-endpoint recovery eligibility"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains(
+            "bindingId = viewBindingId;\n    markCurrentEndpointHealthy();\n    render(projection);"
+        ),
+        "a successful exact bind must end the current recovery-probe episode"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains(
+            "markCurrentEndpointHealthy();\n    render(projection);\n    return projection;"
+        ),
+        "a successful exact heartbeat must allow a later lease expiry to probe again"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("function acceptReplacementIdentity(result, stale)"),
+        "only the dedicated replacement envelope may retarget a live card"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("candidate.controller_generation < identity.controller_generation"),
+        "strictly delayed old-generation responses must be inert after replacement"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (tornDown || !snapshotIsCurrent(selector)) return false;"),
+        "a delayed old bind response must be discarded after replacement"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (tornDown || !snapshotIsCurrent(selector)) return null;"),
+        "a delayed old state response must be discarded after replacement"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (scheduledEpoch !== identityEpoch) return scheduleNext();"),
+        "old timer callbacks must not coordinate the replacement generation"
+    );
+    assert!(
+        !MCP_AGENT_CONTINUATION_APP_HTML.contains("rpcCode === -32000"),
+        "generic Host -32000 must never be classified as endpoint expiry"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (acceptReplacementIdentity(response, stale)) return true;"),
+        "identity replacement must be gated by the dedicated recovery ToolResult"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"14.0.0\""),
+        "App protocol version must advance with the v14 resource"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("const DEBUG_DIAGNOSTICS = false;"),
+        "transport diagnostics must stay disabled in the normal product card"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("id=\"diagnostics\" class=\"meta\" hidden"),
+        "technical continuation fields must be hidden by default"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("app_call_id"),
+        "server-side App call correlation must remain available while UI diagnostics are hidden"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("function restartRecoveryOf(projection)"),
+        "App restart recovery must consume only a successful validated projection"
+    );
+    assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("function toolCallSucceeded(result)"),
         "App must distinguish a successful JSON-RPC exchange from a failed ToolResult"
     );
@@ -423,7 +624,287 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
 }
 
 #[tokio::test]
-async fn app_private_binding_and_consume_envelope_never_enter_structured_content() {
+async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fence() {
+    let (_temp, db, runtime) = continuation_runtime(ModelSurface::AdaptiveRuntime);
+    let owner = continuation_auth("continuation-window-owner");
+    let foreign = continuation_auth("continuation-window-foreign");
+    let agent = create_agent(
+        &runtime,
+        &owner,
+        "continuation-window-agent",
+        "Window Agent",
+        "continuation-window-create",
+    );
+    let (endpoint, generation) = attach(&runtime, &owner, &agent, "continuation-window-endpoint");
+    let raw_session = "production-openai-session-window-a";
+    let binding_id = format!("wc_host_binding_{}", "7".repeat(32));
+    let bind = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5151)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_bind",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(bind) = bind else {
+        panic!("window-bound continuation bind failed")
+    };
+    assert_eq!(bind["result"]["structuredContent"]["success"], true);
+
+    let expected_window =
+        crate::client_window::ClientWindow::from_opaque("openai-session", raw_session).unwrap();
+    let persisted = endpoint_client_window_key(&db, &endpoint).expect("persisted ClientWindow key");
+    assert_eq!(persisted, expected_window.key());
+    assert_ne!(
+        persisted, raw_session,
+        "raw OpenAI session must never be durable"
+    );
+    assert_eq!(persisted.len(), 64);
+
+    let wrong_window = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5152)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_state",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                "production-openai-session-window-b",
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(wrong_window) = wrong_window else {
+        panic!("wrong-window state must be a tool failure")
+    };
+    assert_eq!(
+        wrong_window["result"]["structuredContent"]["success"],
+        false
+    );
+    assert_eq!(
+        wrong_window["result"]["structuredContent"]["output"]["error_kind"],
+        "host_binding_stale"
+    );
+
+    let foreign_binding = format!("wc_host_binding_{}", "8".repeat(32));
+    let foreign_bind = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5153)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_bind",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": foreign_binding
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&foreign),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(foreign_bind) = foreign_bind else {
+        panic!("foreign principal must be represented as a tool failure")
+    };
+    assert_eq!(
+        foreign_bind["result"]["structuredContent"]["success"],
+        false
+    );
+
+    let owner_state = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5154)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_state",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(owner_state) = owner_state else {
+        panic!("owner window state failed")
+    };
+    assert_eq!(owner_state["result"]["structuredContent"]["success"], true);
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_endpoints SET lease_expires_at_unix_ms = 0 WHERE endpoint_id = ?1",
+            [&endpoint],
+        )
+        .unwrap();
+    let recovered = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5155)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_recover_endpoint",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(recovered) = recovered else {
+        panic!("same-window expired Endpoint recovery failed")
+    };
+    assert_eq!(recovered["result"]["structuredContent"]["success"], true);
+    let recovery_output = &recovered["result"]["structuredContent"]["output"];
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["kind"],
+        "endpoint_replaced"
+    );
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["replacement"]["from_endpoint_id"],
+        endpoint
+    );
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["replacement"]["from_controller_generation"],
+        generation
+    );
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["replacement"]["controller_generation"],
+        generation + 1
+    );
+    let replacement_endpoint = recovery_output["endpoint_recovery"]["replacement"]["endpoint_id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        endpoint_client_window_key(&db, replacement_endpoint).as_deref(),
+        Some(expected_window.key())
+    );
+}
+
+#[test]
+fn restart_recovery_survives_published_projection_output_schema() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("agent-continuation-schema-restart.db");
+    let db = Arc::new(crate::db::Database::open(&path).unwrap());
+    let runtime = ToolRuntime::new_for_tests()
+        .with_model_surface(ModelSurface::AdaptiveRuntime)
+        .with_communication_database(db.clone());
+    let owner = continuation_auth("continuation-schema-restart");
+    let agent = create_agent(
+        &runtime,
+        &owner,
+        "continuation-schema-restart-agent",
+        "Schema Restart Agent",
+        "continuation-schema-restart-create",
+    );
+    let (endpoint, generation) = attach(
+        &runtime,
+        &owner,
+        &agent,
+        "continuation-schema-restart-endpoint",
+    );
+    let binding_id = format!("wc_host_binding_{}", "b".repeat(32));
+    let bind = runtime.agent_continuation_bind(
+        Some(&owner),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        binding_id.clone(),
+    );
+    assert!(bind.success, "{:?}", bind.output);
+    let ordinary = runtime.agent_continuation_state(
+        Some(&owner),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        binding_id.clone(),
+    );
+    assert!(ordinary.success, "{:?}", ordinary.output);
+    assert_eq!(
+        ordinary.output["agent_continuation"]["recovery"],
+        Value::Null
+    );
+
+    drop(runtime);
+    drop(db);
+    let reopened = Arc::new(crate::db::Database::open(&path).unwrap());
+    let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+    reopened
+        .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
+        .unwrap();
+    let runtime = ToolRuntime::new_for_tests()
+        .with_model_surface(ModelSurface::AdaptiveRuntime)
+        .with_communication_database(reopened);
+    let restart =
+        runtime.agent_continuation_state(Some(&owner), agent, endpoint, generation, binding_id);
+    assert!(restart.success, "{:?}", restart.output);
+    let runtime_projection = restart.output["agent_continuation"].clone();
+    assert_eq!(
+        runtime_projection["recovery"]["kind"],
+        "host_binding_missing_in_process"
+    );
+
+    let published = webcodex_tool_contracts::output_schema_for_tool("present_agent_continuation");
+    let projection_schema = &published["properties"]["output"]["properties"]["agent_continuation"];
+    let host_projection =
+        host_project_through_output_schema(&runtime_projection, projection_schema);
+    assert_eq!(
+        host_projection, runtime_projection,
+        "published continuation outputSchema must preserve every runtime projection field"
+    );
+    assert_eq!(
+        host_projection["recovery"]["kind"],
+        "host_binding_missing_in_process"
+    );
+}
+
+#[tokio::test]
+async fn agent_continuation_app_protocol_uses_standard_result_without_model_projection_leaks() {
+    let binding_id = format!("wc_host_binding_{}", "a".repeat(32));
     let (_temp, _db, runtime) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let owner = continuation_auth("continuation-owner");
     let foreign = continuation_auth("continuation-foreign");
@@ -497,7 +978,8 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
-                    "expected_controller_generation": receiver_generation
+                    "expected_controller_generation": receiver_generation,
+                    "binding_id": binding_id
                 }
             })),
         ),
@@ -526,7 +1008,9 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
-                    "expected_controller_generation": receiver_generation
+                    "expected_controller_generation": receiver_generation,
+                    "binding_id": binding_id,
+                    "app_call_id": "wc_app_call_0123456789abcdef_1"
                 }
             })),
         ),
@@ -538,11 +1022,21 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
         panic!("bind failed")
     };
     assert_eq!(bind["result"]["structuredContent"]["success"], true);
-    let binding_id = bind["result"]["_meta"]["webcodex/agentContinuation"]["binding_id"]
-        .as_str()
-        .expect("private binding id")
-        .to_string();
-    assert!(binding_id.starts_with("wc_host_binding_"));
+    assert!(bind["result"]["_meta"]
+        .get("webcodex/agentContinuation")
+        .is_none());
+    assert_eq!(
+        bind["result"]["structuredContent"]["output"]["agent_continuation"]["host_binding"]
+            ["bound"],
+        true
+    );
+    let bind_content: Value = serde_json::from_str(
+        bind["result"]["content"][0]["text"]
+            .as_str()
+            .expect("app-only bind must carry a standard text compatibility envelope"),
+    )
+    .expect("app-only bind text compatibility envelope must be JSON");
+    assert_eq!(bind_content, bind["result"]["structuredContent"]);
     let bind_structured = bind["result"]["structuredContent"].to_string();
     assert!(!bind_structured.contains("wc_host_binding_"));
     assert!(!bind_structured.contains("_app_private"));
@@ -622,18 +1116,21 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
     let structured = prepare["result"]["structuredContent"].to_string();
     for forbidden in [
         "wc_host_binding_",
-        "wc_wake_consume_",
         "claim_fence",
         private_body,
+        "PRIVATE Agent description",
+        "PRIVATE-specialty-label",
         "_app_private",
-        "automatic_message",
     ] {
         assert!(
             !structured.contains(forbidden),
             "structuredContent leaked {forbidden}"
         );
     }
-    let automatic_message = prepare["result"]["_meta"]["webcodex/agentContinuation"]
+    assert!(prepare["result"]["_meta"]
+        .get("webcodex/agentContinuation")
+        .is_none());
+    let automatic_message = prepare["result"]["structuredContent"]["output"]["app_protocol"]
         ["automatic_message"]
         .as_str()
         .expect("App-private exact continuation envelope");
@@ -644,6 +1141,91 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
     assert!(!automatic_message.contains(private_body));
     assert!(!automatic_message.contains("PRIVATE Agent description"));
     assert!(!automatic_message.contains("PRIVATE-specialty-label"));
+    assert!(automatic_message.len() <= 4096);
+    let prepare_content: Value = serde_json::from_str(
+        prepare["result"]["content"][0]["text"]
+            .as_str()
+            .expect("app-only prepare must carry a standard text compatibility envelope"),
+    )
+    .expect("app-only prepare text compatibility envelope must be JSON");
+    assert_eq!(prepare_content, prepare["result"]["structuredContent"]);
+    for forbidden in [
+        "wc_host_binding_",
+        "claim_fence",
+        private_body,
+        "_app_private",
+    ] {
+        assert!(!prepare_content.to_string().contains(forbidden));
+    }
+
+    // Knowing the current binding and exact Attempt never grants authority.
+    let mut read_only_owner = owner.clone();
+    read_only_owner
+        .scopes
+        .retain(|scope| scope != crate::auth::SCOPE_COMMUNICATION_MANAGE);
+    for name in APP_TOOLS {
+        let mut args = json!({
+            "agent_id": receiver, "endpoint_id": receiver_endpoint,
+            "expected_controller_generation": receiver_generation, "binding_id": binding_id,
+        });
+        if matches!(
+            name,
+            "agent_continuation_wake_prepare" | "agent_continuation_wake_finish"
+        ) {
+            args["wake_id"] = json!(wake_id);
+            args["attempt_id"] = json!(attempt_id);
+        }
+        if name == "agent_continuation_wake_finish" {
+            args["outcome"] = json!("dispatch_accepted");
+        }
+        let request = || {
+            rpc(
+                "tools/call",
+                Some(json!(5206)),
+                mcp_2026_params(json!({"name": name, "arguments": args})),
+            )
+        };
+        let denied =
+            handle_with_server_apps_enabled(&runtime, request(), Some(&foreign), true).await;
+        let McpOutcome::Ok(denied) = denied else {
+            panic!("foreign {name} must fail as a business result")
+        };
+        assert_eq!(denied["result"]["structuredContent"]["success"], false);
+        let denied_text = denied.to_string();
+        assert!(!denied_text.contains("consume_token"));
+        assert!(!denied_text.contains(&binding_id));
+        let unscoped =
+            handle_with_server_apps_enabled(&runtime, request(), Some(&read_only_owner), true)
+                .await;
+        assert!(
+            matches!(unscoped, McpOutcome::Forbidden { .. }),
+            "{name} requires communication:manage even with the exact fence"
+        );
+    }
+
+    // The model-visible read stays sparse even while a prepared envelope exists.
+    let present_after_prepare = runtime.present_agent_continuation(
+        Some(&owner),
+        receiver,
+        receiver_endpoint,
+        receiver_generation,
+    );
+    assert!(present_after_prepare.success);
+    for projection in [present_text, present_after_prepare.output.to_string()] {
+        for secret in [
+            "binding_id",
+            "wc_host_binding_",
+            "consume_token",
+            "automatic_message",
+            "app_protocol",
+            "claim_fence",
+        ] {
+            assert!(
+                !projection.contains(secret),
+                "model projection leaked {secret}"
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -656,31 +1238,36 @@ async fn agent_continuation_hidden_kernel_entry_is_fail_closed_without_protocol_
     let runtime =
         ToolRuntime::new_for_tests().with_model_surface(ModelSurface::FullOperatorRuntime);
     let auth = continuation_auth("continuation-kernel-gate");
-    let outcome = runtime
-        .call_tool_with_protocol_capabilities(
-            ToolCallRequest {
-                tool_name: "agent_continuation_bind".to_string(),
-                arguments: json!({
-                    "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
-                    "endpoint_id": format!("wc_endpoint_{}", "b".repeat(32)),
-                    "expected_controller_generation": 1
-                }),
-            },
-            ToolCallContext {
-                transport: ToolTransport::Mcp,
-                session_id: None,
-                auth: Some(&auth),
-                window: None,
-                record_oauth_scope_denials: false,
-                host_file_import_trust: HostFileImportTrust::Untrusted,
-            },
-            ToolProtocolCapabilities::default(),
-        )
-        .await;
-    assert!(matches!(
-        outcome.error_status,
-        Some(ToolCallErrorStatus::InvalidArguments { ref message })
-            if message.contains("Agent continuation App coordination")
-    ));
-    assert!(outcome.result.is_none());
+    for transport in [ToolTransport::Mcp, ToolTransport::Api] {
+        for name in APP_TOOLS {
+            let outcome = runtime
+                .call_tool_with_protocol_capabilities(
+                    ToolCallRequest {
+                        tool_name: name.to_string(),
+                        arguments: json!({
+                            "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
+                            "endpoint_id": format!("wc_endpoint_{}", "b".repeat(32)),
+                            "expected_controller_generation": 1,
+                            "binding_id": format!("wc_host_binding_{}", "a".repeat(32))
+                        }),
+                    },
+                    ToolCallContext {
+                        transport,
+                        session_id: None,
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    ToolProtocolCapabilities::default(),
+                )
+                .await;
+            assert!(matches!(
+                outcome.error_status,
+                Some(ToolCallErrorStatus::InvalidArguments { ref message })
+                    if message.contains("Agent continuation App coordination")
+            ));
+            assert!(outcome.result.is_none());
+        }
+    }
 }

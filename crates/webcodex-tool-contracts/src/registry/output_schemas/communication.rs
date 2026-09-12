@@ -113,13 +113,59 @@ fn agent_continuation_projection_schema() -> Value {
                     {"type": "null"}
                 ],
                 "description": "Process-local Host observation only; only continuation_consumed proves a later turn exact-consumed the durable Wake."
+            },
+            "recovery": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "kind": {"type": "string", "const": "host_binding_missing_in_process"}
+                        },
+                        "required": ["kind"]
+                    },
+                    {"type": "null"}
+                ],
+                "description": "Null during ordinary state. The sole object variant is emitted only for fingerprint-proven Server-restart loss of this exact process-local MCP App binding."
             }
         },
         "required": [
             "version", "agent_id", "display_name", "endpoint_id", "controller_generation",
             "endpoint_lease_expires_at_unix_ms", "host_binding", "wake",
-            "queued_delivery_count", "dispatch_observation"
+            "queued_delivery_count", "dispatch_observation", "recovery"
         ]
+    })
+}
+
+fn agent_continuation_endpoint_recovery_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": {"type": "string", "enum": ["controller_live", "endpoint_replaced"]},
+            "replacement": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "agent_id": schema_type("string", "Durable Agent identity, unchanged by replacement."),
+                            "from_endpoint_id": schema_type("string", "Exact stale Endpoint authorized for replacement."),
+                            "from_controller_generation": schema_type("integer", "Exact stale controller generation authorized for replacement."),
+                            "endpoint_id": schema_type("string", "Server-created replacement Endpoint identity."),
+                            "controller_generation": schema_type("integer", "Monotonically increased replacement generation."),
+                            "reason": {"type": "string", "const": "endpoint_expired"}
+                        },
+                        "required": [
+                            "agent_id", "from_endpoint_id", "from_controller_generation",
+                            "endpoint_id", "controller_generation", "reason"
+                        ]
+                    },
+                    {"type": "null"}
+                ]
+            }
+        },
+        "required": ["kind", "replacement"]
     })
 }
 
@@ -286,22 +332,28 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             "agent_continuation",
             agent_continuation_projection_schema(),
         )]),
-        "attach_agent_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
+        "agent_continuation_recover_endpoint" => wrapped_output_schema(vec![
+            ("agent_continuation", agent_continuation_projection_schema()),
+            ("endpoint_recovery", agent_continuation_endpoint_recovery_schema()),
+            ("replayed", schema_type("boolean", "True when the exact expired-endpoint replacement was replayed.")),
+            ("state_changed", schema_type("boolean", "True only when this call created the replacement Endpoint.")),
+        ]),
+        "rotate_agent_continuation_endpoint" | "attach_agent_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
             ("endpoint", endpoint_schema()),
             (
                 "created",
                 schema_type(
                     "boolean",
-                    "True only for first attachment; false for detach.",
+                    "True only when this call created a new Endpoint; false for detach or exact replay.",
                 ),
             ),
             (
                 "replayed",
-                schema_type("boolean", "True for exact idempotent attach replay."),
+                schema_type("boolean", "True when an exact idempotent Endpoint creation or rotation request replayed the original result."),
             ),
             (
                 "state_changed",
-                schema_type("boolean", "Whether attachment state changed."),
+                schema_type("boolean", "Whether Endpoint/controller lifecycle state changed."),
             ),
         ]),
         "bootstrap_agent_conversation" => wrapped_output_schema(vec![

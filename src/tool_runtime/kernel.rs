@@ -373,6 +373,7 @@ impl ToolRuntime {
         if matches!(
             request.tool_name.as_str(),
             "agent_continuation_bind"
+                | "agent_continuation_recover_endpoint"
                 | "agent_continuation_state"
                 | "agent_continuation_wake_acquire"
                 | "agent_continuation_wake_prepare"

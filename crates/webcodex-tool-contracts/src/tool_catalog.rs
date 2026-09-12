@@ -109,7 +109,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "create_agent_identity",
             "list_agent_identities",
             "update_agent_identity",
-            "attach_agent_endpoint",
+            "rotate_agent_continuation_endpoint",
             "present_agent_continuation",
             "bootstrap_agent_conversation",
             "detach_agent_endpoint",

@@ -408,6 +408,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         None
     };
     guard.set_tool_name(tool_name.clone());
+    guard.set_app_call_id(tools::agent_continuation_app_call_id_from_params(
+        &request.params,
+    ));
     let computer_app_resource_uri = if request.method == "resources/read" {
         request
             .params

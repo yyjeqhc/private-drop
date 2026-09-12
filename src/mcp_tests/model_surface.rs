@@ -547,11 +547,11 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "Adaptive compact discovery must cost less than full schema discovery"
     );
     // Measured on this surface with Stateless 2026 wrappers, fileParams, and
-    // MCP App metadata: compact=107,089 bytes; full=565,453 bytes. Keep ~22%
+    // MCP App metadata: compact=138,639 bytes; full=663,081 bytes. Keep ~18%
     // headroom over the compact baseline while retaining a guard far below the
     // full-schema context cost. This is a model schema-cost budget, not an MCP
     // transport limit and not the tools/call stable-readable result ceiling.
-    const MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES: usize = 128 * 1024;
+    const MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES: usize = 160 * 1024;
     assert!(
         compact_serialized_tools_bytes <= MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES,
         "adaptive compact tools/list schema cost {compact_serialized_tools_bytes} exceeded {MAX_ADAPTIVE_RUNTIME_COMPACT_TOOLS_LIST_BYTES} bytes"
@@ -1779,6 +1779,7 @@ async fn full_operator_tools_list_projects_destructive_hints_for_non_additive_mu
         "heartbeat_agent_task_attempt",
         "complete_agent_task_attempt",
         "update_agent_identity",
+        "rotate_agent_continuation_endpoint",
         "attach_agent_endpoint",
         "detach_agent_endpoint",
         "consume_agent_deliveries",

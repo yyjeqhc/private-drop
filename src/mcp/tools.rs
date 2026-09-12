@@ -334,8 +334,20 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         )
         .into_iter()
         .map(|spec| {
+            let agent_continuation_tool = is_agent_continuation_app_tool_name(&spec.name);
             let mut value = mcp_tool_spec_json(spec, compact, false);
             attach_app_visibility(&mut value);
+            if agent_continuation_tool {
+                // Keep the app-only tools associated with the same continuation
+                // resource for compatibility with Hosts that use that hint. The
+                // association is not authority; visibility remains app-only and
+                // every call is re-authorized by the normal communication kernel.
+                attach_app_metadata(
+                    &mut value,
+                    resources::MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
+                );
+                attach_agent_continuation_app_diagnostic_schema(&mut value);
+            }
             value
         })
         .collect::<Vec<_>>();
@@ -575,6 +587,7 @@ fn is_agent_continuation_app_tool_name(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "agent_continuation_bind"
+            | "agent_continuation_recover_endpoint"
             | "agent_continuation_state"
             | "agent_continuation_wake_acquire"
             | "agent_continuation_wake_prepare"
@@ -583,25 +596,163 @@ fn is_agent_continuation_app_tool_name(tool_name: &str) -> bool {
     )
 }
 
-fn mcp_agent_continuation_app_result(tool_name: &str, mut result: ToolResult) -> Value {
-    let private = if is_agent_continuation_app_tool_name(tool_name) {
-        result
-            .output
-            .as_object_mut()
-            .and_then(|output| output.remove("_app_private"))
-    } else {
-        None
+const AGENT_CONTINUATION_APP_CALL_ID_FIELD: &str = "app_call_id";
+const AGENT_CONTINUATION_APP_CALL_ID_PATTERN: &str = "^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$";
+
+fn valid_agent_continuation_app_call_id(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("wc_app_call_") else {
+        return false;
     };
-    let mut value = mcp_runtime_tool_result_fallback(result);
-    if let Some(private) = private {
-        if let Some(meta) = tool_meta_object(&mut value) {
-            // MCP tool-result _meta is delivered to the App but not the model.
-            // This is the only wire location for the process-local binding id and
-            // the one-shot automatic continuation message containing consume_token.
-            meta.insert("webcodex/agentContinuation".to_string(), private);
-        }
+    let Some((view_prefix, sequence)) = rest.split_once('_') else {
+        return false;
+    };
+    view_prefix.len() == 16
+        && view_prefix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && !sequence.is_empty()
+        && sequence.len() <= 6
+        && !sequence.starts_with('0')
+        && sequence.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+pub(super) fn agent_continuation_app_call_id_from_params(params: &Value) -> Option<String> {
+    let name = params.get("name").and_then(Value::as_str)?;
+    if !is_agent_continuation_app_tool_name(name) {
+        return None;
     }
-    value
+    let value = params
+        .get("arguments")?
+        .get(AGENT_CONTINUATION_APP_CALL_ID_FIELD)?
+        .as_str()?;
+    valid_agent_continuation_app_call_id(value).then(|| value.to_string())
+}
+
+fn attach_agent_continuation_app_diagnostic_schema(value: &mut Value) {
+    let Some(properties) = value
+        .pointer_mut("/inputSchema/properties")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    properties.insert(
+        AGENT_CONTINUATION_APP_CALL_ID_FIELD.to_string(),
+        json!({
+            "type": "string",
+            "pattern": AGENT_CONTINUATION_APP_CALL_ID_PATTERN,
+            "description": "Optional App-generated diagnostic correlation id. Grants no authority and is stripped by the MCP adapter before ToolRuntime parsing."
+        }),
+    );
+}
+
+fn strip_agent_continuation_app_call_id(arguments: &mut Value) -> Result<Option<String>, String> {
+    let Some(object) = arguments.as_object_mut() else {
+        return Ok(None);
+    };
+    let Some(value) = object.remove(AGENT_CONTINUATION_APP_CALL_ID_FIELD) else {
+        return Ok(None);
+    };
+    let Value::String(value) = value else {
+        return Err(format!(
+            "field '{AGENT_CONTINUATION_APP_CALL_ID_FIELD}' must be a canonical App diagnostic id"
+        ));
+    };
+    if !valid_agent_continuation_app_call_id(&value) {
+        return Err(format!(
+            "field '{AGENT_CONTINUATION_APP_CALL_ID_FIELD}' must match {AGENT_CONTINUATION_APP_CALL_ID_PATTERN}"
+        ));
+    }
+    Ok(Some(value))
+}
+
+fn attach_app_tool_content_fallback(result: &mut Value) {
+    let Some(structured) = result.get("structuredContent") else {
+        return;
+    };
+    let Ok(text) = serde_json::to_string(structured) else {
+        return;
+    };
+    result["content"] = json!([{ "type": "text", "text": text }]);
+}
+
+fn safe_continuation_dispatch_observation(value: Option<&Value>) -> &'static str {
+    match value.and_then(Value::as_str) {
+        Some("dispatch_prepared") => "dispatch_prepared",
+        Some("dispatch_accepted") => "dispatch_accepted",
+        Some("dispatch_unknown") => "dispatch_unknown",
+        Some("continuation_consumed") => "continuation_consumed",
+        _ => "-",
+    }
+}
+
+fn log_agent_continuation_app_result(
+    lifecycle: Option<&ToolRequestLifecycle>,
+    tool_name: &str,
+    app_call_id: Option<&str>,
+    result: &Value,
+) {
+    if !crate::tool_request_trace::tool_request_trace_enabled() {
+        return;
+    }
+    let Some(lifecycle) = lifecycle else {
+        return;
+    };
+    let structured = result.get("structuredContent").and_then(Value::as_object);
+    let tool_success = structured
+        .and_then(|structured| structured.get("success"))
+        .and_then(Value::as_bool);
+    let output = structured
+        .and_then(|structured| structured.get("output"))
+        .and_then(Value::as_object);
+    let projection = output
+        .and_then(|output| output.get("agent_continuation"))
+        .and_then(Value::as_object)
+        .or(output);
+    let wake_present = projection
+        .and_then(|projection| projection.get("wake"))
+        .is_some_and(|wake| !wake.is_null())
+        || output
+            .and_then(|output| output.get("wake_id"))
+            .is_some_and(Value::is_string);
+    let queued_delivery_count = projection
+        .and_then(|projection| projection.get("queued_delivery_count"))
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            projection
+                .and_then(|projection| projection.get("wake"))
+                .and_then(Value::as_object)
+                .and_then(|wake| wake.get("queued_delivery_count"))
+                .and_then(Value::as_i64)
+        });
+    let host_bound = projection
+        .and_then(|projection| projection.get("host_binding"))
+        .and_then(Value::as_object)
+        .and_then(|host_binding| host_binding.get("bound"))
+        .and_then(Value::as_bool);
+    let dispatch_observation = safe_continuation_dispatch_observation(
+        projection
+            .and_then(|projection| projection.get("dispatch_observation"))
+            .or_else(|| output.and_then(|output| output.get("dispatch_observation"))),
+    );
+    let content_blocks = result
+        .get("content")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    tracing::info!(
+        event = "mcp_agent_continuation_app_result",
+        server_trace_id = %lifecycle.correlation_trace_id(),
+        app_call_id = app_call_id.unwrap_or("-"),
+        tool_name,
+        tool_success = tool_success.map(|value| if value { 1_i32 } else { 0_i32 }).unwrap_or(-1),
+        structured_content_present = if structured.is_some() { 1_i32 } else { 0_i32 },
+        content_blocks = content_blocks as i64,
+        host_bound = host_bound.map(|value| if value { 1_i32 } else { 0_i32 }).unwrap_or(-1),
+        wake_present = if wake_present { 1_i32 } else { 0_i32 },
+        queued_delivery_count = queued_delivery_count.unwrap_or(-1),
+        dispatch_observation,
+        "mcp_agent_continuation_app_result"
+    );
 }
 
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
@@ -1233,6 +1384,23 @@ pub(super) async fn handle_call(
             return McpOutcome::BadRequest(rpc_error(id, -32602, format!("Invalid params: {}", e)));
         }
     };
+    let app_call_id = if stateless_2026 && is_agent_continuation_app_tool_name(&params.name) {
+        match strip_agent_continuation_app_call_id(&mut params.arguments) {
+            Ok(app_call_id) => app_call_id,
+            Err(message) => {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("invalid_arguments");
+                    lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                }
+                return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(lc) = lifecycle.as_deref_mut() {
+        lc.set_app_call_id(app_call_id.clone());
+    }
     if runtime.runtime_exposure() == RuntimeExposure::ProjectConnector {
         if let Some(lc) = lifecycle.as_deref() {
             lc.capture_payload("raw_arguments", &params.arguments);
@@ -1931,13 +2099,29 @@ pub(super) async fn handle_call(
     ) {
         resources::McpResourceToolResultAdaptation::Framed(value) => value,
         resources::McpResourceToolResultAdaptation::Unhandled(result) => {
-            if is_agent_continuation_app_tool_name(&params.name) {
-                mcp_agent_continuation_app_result(&params.name, result)
-            } else {
-                mcp_runtime_tool_result_fallback(result)
-            }
+            // App-only tools use the standard CallToolResult channel too. Their
+            // visibility/admission boundary, not custom result metadata, keeps
+            // continuation protocol data out of ordinary model tool results.
+            mcp_runtime_tool_result_fallback(result)
         }
     };
+    if app_only_agent_continuation {
+        // ChatGPT production has been observed to complete View-originated
+        // tools/call server-side while not forwarding structuredContent back to
+        // the View. Keep structuredContent canonical, but duplicate this bounded
+        // app-only envelope into standard text content as a compatibility path.
+        // These tools are ModelHidden/app-visible only, so ordinary model tool
+        // results retain the compact text fallback.
+        attach_app_tool_content_fallback(&mut result);
+    }
+    if app_only_agent_continuation {
+        log_agent_continuation_app_result(
+            lifecycle.as_deref(),
+            &params.name,
+            app_call_id.as_deref(),
+            &result,
+        );
+    }
     if app_enabled {
         presentation::attach_result_app_presentation(&params.name, &mut result);
     }

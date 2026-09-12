@@ -88,6 +88,7 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         "job_tail",
         "goal_plan_state",
         "agent_continuation_bind",
+        "agent_continuation_recover_endpoint",
         "agent_continuation_state",
         "agent_continuation_wake_acquire",
         "agent_continuation_wake_prepare",

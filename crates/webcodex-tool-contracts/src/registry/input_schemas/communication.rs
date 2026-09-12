@@ -169,11 +169,11 @@ pub fn attach_agent_endpoint_input_schema() -> Value {
         "type": "object",
         "properties": {
             "agent_id": canonical_id(AGENT_ID_PATTERN, "Canonical durable Agent id owned by the current communication principal."),
-            "host": bounded_string("Endpoint host adapter name, for example ChatGPT. This is attachment metadata, not authority.", 64),
+            "host": bounded_string("Server-local continuation adapter label, for example ChatGPT. This is recorded metadata only: it does not initiate, configure, or authorize an external connection.", 64),
             "client_attachment_id": {
                 "type": "string",
                 "maxLength": 128,
-                "description": "Optional host-local attachment identifier. It is not durable Agent identity."
+                "description": "Optional opaque host-local attachment label copied into server-local Endpoint metadata. It is not durable Agent identity, remote-host authority, or a connection selector."
             },
             "idempotency_key": idempotency_key()
         },
@@ -208,7 +208,11 @@ pub fn present_agent_continuation_input_schema() -> Value {
 }
 
 pub fn agent_continuation_bind_input_schema() -> Value {
-    present_agent_continuation_input_schema()
+    agent_continuation_state_input_schema()
+}
+
+pub fn agent_continuation_recover_endpoint_input_schema() -> Value {
+    agent_continuation_state_input_schema()
 }
 
 pub fn agent_continuation_state_input_schema() -> Value {

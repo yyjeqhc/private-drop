@@ -78,6 +78,36 @@ fn assert_all_objects_strict(schema: &Value, path: &str, open_boundaries: &[&str
 }
 
 #[test]
+fn agent_continuation_projection_schema_requires_strict_nullable_restart_recovery() {
+    let schema = output_schema_for_tool("present_agent_continuation");
+    let projection = &schema["properties"]["output"]["properties"]["agent_continuation"];
+    assert_eq!(projection["additionalProperties"], false);
+    assert!(projection["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "recovery"));
+
+    let recovery_variants = projection["properties"]["recovery"]["anyOf"]
+        .as_array()
+        .expect("recovery must be nullable through anyOf");
+    assert_eq!(recovery_variants.len(), 2);
+    let recovery = recovery_variants
+        .iter()
+        .find(|variant| variant["type"] == "object")
+        .expect("recovery object variant");
+    assert_eq!(recovery["additionalProperties"], false);
+    assert_eq!(recovery["required"], json!(["kind"]));
+    assert_eq!(
+        recovery["properties"]["kind"]["const"],
+        "host_binding_missing_in_process"
+    );
+    assert!(recovery_variants
+        .iter()
+        .any(|variant| variant["type"] == "null"));
+}
+
+#[test]
 fn git_diff_hunks_output_schema_keeps_page_and_model_budgets_distinct() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "git_diff_hunks");
