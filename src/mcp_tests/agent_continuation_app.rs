@@ -170,7 +170,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v6"
+        "ui://webcodex/agent-continuation/v7"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -220,6 +220,16 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
             "{name} must be associated with the continuation View for Host bridge calls"
         );
         assert!(bound_tools.contains(&name));
+        assert_eq!(
+            descriptor.pointer("/inputSchema/properties/app_call_id/pattern"),
+            Some(&json!("^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$")),
+            "{name} must advertise only the bounded adapter diagnostic id"
+        );
+        assert!(!descriptor["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "app_call_id"));
     }
     assert_eq!(
         tool(&ui["result"], "agent_continuation_bind").unwrap()["inputSchema"]["required"],
@@ -356,6 +366,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v3"
                     | "ui://webcodex/agent-continuation/v4"
                     | "ui://webcodex/agent-continuation/v5"
+                    | "ui://webcodex/agent-continuation/v6"
             )
         )));
     for uri in [
@@ -365,6 +376,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v3",
         "ui://webcodex/agent-continuation/v4",
         "ui://webcodex/agent-continuation/v5",
+        "ui://webcodex/agent-continuation/v6",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -550,7 +562,8 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
                     "expected_controller_generation": receiver_generation,
-                    "binding_id": binding_id
+                    "binding_id": binding_id,
+                    "app_call_id": "wc_app_call_0123456789abcdef_1"
                 }
             })),
         ),

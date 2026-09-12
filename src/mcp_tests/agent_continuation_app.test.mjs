@@ -3,6 +3,12 @@ import assert from "node:assert/strict";
 import { app, flush, toolResult } from "./app_test_support.mjs";
 
 const bindingId = view => view.calls("agent_continuation_bind")[0].params.arguments.binding_id;
+const appCallId = call => call.params.arguments.app_call_id;
+const businessArgs = call => {
+  const { app_call_id, ...args } = call.params.arguments;
+  return args;
+};
+const assertAppCallId = call => assert.match(appCallId(call), /^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$/);
 const wake = {
   wake_id: `wc_wake_${"4".repeat(32)}`, attempt_id: `wc_wake_attempt_${"5".repeat(32)}`,
   state: "claimed", revision: 2, dispatch_observation: null,
@@ -51,7 +57,8 @@ for (const outcome of ["success", "error", "timeout"]) {
         ? "Exact identity received · binding Host carrier" : "Host initialization unavailable");
       if (outcome === "success") {
         assert.match(bindingId(view), /^wc_host_binding_[0-9a-f]{32}$/);
-        assert.deepEqual({ ...view.calls("agent_continuation_bind")[0].params.arguments }, { ...input, binding_id: bindingId(view) });
+        assertAppCallId(view.calls("agent_continuation_bind")[0]);
+        assert.deepEqual(businessArgs(view.calls("agent_continuation_bind")[0]), { ...input, binding_id: bindingId(view) });
         const quiet = { ...projection, wake: null, queued_delivery_count: 0 };
         await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: quiet }));
         assert.equal(view.nodes.binding.textContent, "Host bound");
@@ -59,7 +66,8 @@ for (const outcome of ["success", "error", "timeout"]) {
         await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: quiet }));
         await view.fireTimers(3000);
         assert.equal(view.calls("agent_continuation_state").length, 2);
-        assert.deepEqual({ ...view.calls("agent_continuation_state")[1].params.arguments }, { ...input, binding_id: bindingId(view) });
+        assertAppCallId(view.calls("agent_continuation_state")[1]);
+        assert.deepEqual(businessArgs(view.calls("agent_continuation_state")[1]), { ...input, binding_id: bindingId(view) });
       }
     });
   }
@@ -148,6 +156,7 @@ for (const [field, value] of Object.entries(conflicts)) {
         assert.equal(args.agent_id, input.agent_id);
         assert.equal(args.endpoint_id, input.endpoint_id);
         assert.equal(args.expected_controller_generation, input.expected_controller_generation);
+        assertAppCallId(call);
       }
     });
   }
@@ -210,7 +219,8 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
   test(`input-only carrier ${method} stops coordination and unbinds only its exact carrier`, async () => {
     const view = await boundView();
     await view.teardown(method);
-    assert.deepEqual({ ...view.calls("agent_continuation_unbind")[0].params.arguments }, { ...input, binding_id: bindingId(view) });
+    assertAppCallId(view.calls("agent_continuation_unbind")[0]);
+    assert.deepEqual(businessArgs(view.calls("agent_continuation_unbind")[0]), { ...input, binding_id: bindingId(view) });
     await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: projection }));
     const count = view.sent.length;
     view.toolInput(input);
@@ -432,12 +442,41 @@ test("malformed bind response exposes only a bounded response-shape diagnostic",
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
   view.toolInput(input);
-  await view.reply(view.calls("agent_continuation_bind")[0], {});
+  const bind = view.calls("agent_continuation_bind")[0];
+  assertAppCallId(bind);
+  await view.reply(bind, {});
   assert.equal(view.nodes.status.textContent,
-    "Host binding response unavailable · response=empty-object · reconciling");
+    `Host binding malformed-result · response=empty-object · call=${appCallId(bind)} · reconciling`);
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
+});
+
+test("Host cancellation exposes only bounded bridge diagnostics", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  const bind = view.calls("agent_continuation_bind")[0];
+  assertAppCallId(bind);
+  const privateMessage = `PRIVATE_HOST_MESSAGE_${input.agent_id}_${bindingId(view)}`;
+  await view.reject(bind, { code: -32800, message: privateMessage });
+  assert.equal(view.nodes.status.textContent,
+    `Host binding bridge-cancelled · rpc=-32800 · call=${appCallId(bind)} · reconciling`);
+  assert.ok(!view.nodes.status.textContent.includes(privateMessage));
+  assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
+  assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
+});
+
+test("heartbeat Host rejection keeps durable state authoritative with exact App call correlation", async () => {
+  const view = await boundView();
+  const state = view.calls("agent_continuation_state")[0];
+  assertAppCallId(state);
+  const privateMessage = `PRIVATE_HEARTBEAT_ERROR_${input.endpoint_id}`;
+  await view.reject(state, { code: -32042, message: privateMessage });
+  assert.equal(view.nodes.status.textContent,
+    `Host reconciliation bridge-error · rpc=-32042 · call=${appCallId(state)}; durable Wake remains authoritative`);
+  assert.ok(!view.nodes.status.textContent.includes(privateMessage));
+  assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
 });
 
 for (const loss of ["timeout", "Host error", "malformed result"]) {
@@ -448,19 +487,25 @@ for (const loss of ["timeout", "Host error", "malformed result"]) {
     const first = view.calls("agent_continuation_bind")[0];
     const serverBinding = first.params.arguments.binding_id; // Server committed; reply is lost.
     assert.match(serverBinding, /^wc_host_binding_[0-9a-f]{32}$/);
+    assertAppCallId(first);
     if (loss === "timeout") await view.fireTimers(10000);
     else if (loss === "Host error") await view.reject(first);
     else await view.reply(first, {});
-    assert.equal(view.nodes.status.textContent, loss === "malformed result"
-      ? "Host binding response unavailable · response=empty-object · reconciling"
-      : "Host binding response unavailable · reconciling");
+    const expectedDiagnostic = loss === "timeout"
+      ? `bridge-timeout · call=${appCallId(first)}`
+      : loss === "Host error"
+        ? `bridge-error · rpc=-32000 · call=${appCallId(first)}`
+        : `malformed-result · response=empty-object · call=${appCallId(first)}`;
+    assert.equal(view.nodes.status.textContent, `Host binding ${expectedDiagnostic} · reconciling`);
     view.toolResult({ agent_continuation: projection });
     view.toolInput(input);
     await flush();
     assert.equal(view.calls("agent_continuation_bind").length, 1, "no notification-driven tight retry");
     await view.fireTimers(3000);
     const retry = view.calls("agent_continuation_bind")[1];
-    assert.deepEqual(retry.params.arguments, first.params.arguments);
+    assertAppCallId(retry);
+    assert.deepEqual(businessArgs(retry), businessArgs(first));
+    assert.notEqual(appCallId(retry), appCallId(first), "each Host attempt gets a fresh diagnostic id");
     await view.reply(retry, toolResult({ agent_continuation: projection }, { binding_id: "Wrong metadata fence" }));
     assert.equal(view.nodes.binding.textContent, "Host bound");
     assert.equal(view.calls("agent_continuation_state")[0].params.arguments.binding_id, serverBinding);

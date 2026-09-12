@@ -26,7 +26,7 @@ pub(super) fn tool_supports_goal_plan_app(tool_name: &str) -> bool {
 /// Dedicated Durable Agent continuation controller App binding. Only the
 /// explicit presentation entry is model-visible and creates the persistent card.
 /// App-only coordination tools may still declare the same resource association
-/// so the Host can authorize View-originated calls without exposing them to the model.
+/// as a Host compatibility hint without exposing them to the model or granting authority.
 pub(super) fn tool_supports_agent_continuation_app(tool_name: &str) -> bool {
     tool_name == "present_agent_continuation"
 }

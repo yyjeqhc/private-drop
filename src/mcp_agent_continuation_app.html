@@ -38,6 +38,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const ENDPOINT_ID = /^wc_endpoint_[0-9a-f]{32}$/;
   const WAKE_ID = /^wc_wake_[0-9a-f]{32}$/;
   const ATTEMPT_ID = /^wc_wake_attempt_[0-9a-f]{32}$/;
+  const APP_CALL_ID = /^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$/;
+  const SAFE_RESULT_SHAPE = /^(nested-)?(null|array|string|number|boolean|undefined|function|symbol|bigint|structured|structured-direct|content-json|content-only|empty-object|other-object)$/;
+  const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result"]);
   const CALL_TIMEOUT_MS = 10000;
   const MAX_BIND_ATTEMPTS = 3;
   const MAX_AUTOMATIC_MESSAGE_CHARS = 4096;
@@ -45,6 +48,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const HIDDEN_HEARTBEAT_MS = 15000;
   const DISPATCH_STATES = new Set(["dispatch_prepared", "dispatch_accepted", "dispatch_unknown", "continuation_consumed"]);
   let nextId = 1;
+  let nextAppCallSequence = 1;
+  let appCallPrefix = null;
+  const resultAppCallIds = new WeakMap();
   let identity = null;
   let bindingId = null;
   let timer = null;
@@ -65,18 +71,26 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   // This selector grants no authority and is never durable browser state.
   let viewBindingId = null;
   try {
-    const bytes = new Uint8Array(16);
+    const bytes = new Uint8Array(24);
     crypto.getRandomValues(bytes);
-    viewBindingId = "wc_host_binding_" + Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    viewBindingId = "wc_host_binding_" + hex.slice(0, 32);
+    appCallPrefix = hex.slice(32);
   } catch (_) {} // Secure randomness unavailable: bind fails closed.
 
+  function hostFailure(kind, fields = {}) {
+    const error = new Error("Host request failed");
+    error.hostFailureKind = SAFE_HOST_FAILURE_KINDS.has(kind) ? kind : "bridge-error";
+    return Object.assign(error, fields);
+  }
+
   function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
-    if (tornDown) return Promise.reject(new Error("App torn down"));
+    if (tornDown) return Promise.reject(hostFailure("bridge-cancelled"));
     const id = nextId++;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         pending.delete(id);
-        reject(new Error("Host request timed out"));
+        reject(hostFailure("bridge-timeout"));
       }, timeoutMs);
       pending.set(id, { resolve, reject, timeout });
       parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
@@ -85,6 +99,23 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   function notify(method, params) {
     if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+  }
+
+  function nextAppCallId() {
+    if (!appCallPrefix || nextAppCallSequence > 999999) return null;
+    return `wc_app_call_${appCallPrefix}_${nextAppCallSequence++}`;
+  }
+
+  function appCallArguments(args) {
+    const appCallId = nextAppCallId();
+    return {
+      appCallId,
+      arguments: appCallId ? Object.assign({}, args, { app_call_id: appCallId }) : args,
+    };
+  }
+
+  function appCallIdOf(result) {
+    return result && typeof result === "object" ? (resultAppCallIds.get(result) || null) : null;
   }
 
   function callToolResultOf(result) {
@@ -145,6 +176,24 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       return "content-only";
     }
     return Object.keys(callResult).length === 0 ? "empty-object" : "other-object";
+  }
+
+  function hostFailureDiagnostic(error) {
+    if (!error || typeof error !== "object" || !SAFE_HOST_FAILURE_KINDS.has(error.hostFailureKind)) return "";
+    const parts = [error.hostFailureKind];
+    if ((error.hostFailureKind === "bridge-error" || error.hostFailureKind === "bridge-cancelled")
+      && Number.isSafeInteger(error.rpcCode)) parts.push(`rpc=${error.rpcCode}`);
+    if (error.hostFailureKind === "malformed-result" && typeof error.resultShape === "string"
+      && SAFE_RESULT_SHAPE.test(error.resultShape)) parts.push(`response=${error.resultShape}`);
+    if (typeof error.appCallId === "string" && APP_CALL_ID.test(error.appCallId)) parts.push(`call=${error.appCallId}`);
+    return parts.join(" · ");
+  }
+
+  function malformedResult(result) {
+    return hostFailure("malformed-result", {
+      resultShape: toolResultShape(result),
+      appCallId: appCallIdOf(result),
+    });
   }
 
   function outputOf(result) {
@@ -223,7 +272,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   async function callTool(name, args) {
-    return request("tools/call", { name, arguments: args });
+    const diagnostic = appCallArguments(args);
+    try {
+      const result = await request("tools/call", { name, arguments: diagnostic.arguments });
+      if (diagnostic.appCallId && result && typeof result === "object") {
+        resultAppCallIds.set(result, diagnostic.appCallId);
+      }
+      return result;
+    } catch (error) {
+      if (diagnostic.appCallId && error && typeof error === "object") error.appCallId = diagnostic.appCallId;
+      throw error;
+    }
   }
 
   function dispatchLabel(value) {
@@ -278,7 +337,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (callResult && (callResult.isError === true || (structured && structured.success === false))) throw definitiveFailure();
     const projection = projectionOf(callResult);
     if (!toolCallSucceeded(callResult) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
-      throw Object.assign(new Error("Invalid Host binding response"), { resultShape: toolResultShape(response) });
+      throw malformedResult(response);
     }
     if (!acceptIdentity(projection)) return;
     bindingId = viewBindingId;
@@ -288,7 +347,11 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   async function heartbeat() {
     const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
     const projection = projectionOf(response);
-    if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) throw new Error("Invalid continuation state");
+    if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) {
+      const structured = structuredOf(response);
+      if (structured && structured.success === false) throw new Error("Continuation state was not accepted");
+      throw malformedResult(response);
+    }
     render(projection);
     return projection;
   }
@@ -414,8 +477,13 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         return;
       }
       await dispatchWake(wake);
-    } catch (_) {
-      if (!tornDown) el("status").textContent = "Host reconciliation pending; durable Wake remains authoritative";
+    } catch (error) {
+      if (!tornDown) {
+        const diagnostic = hostFailureDiagnostic(error);
+        el("status").textContent = diagnostic
+          ? `Host reconciliation ${diagnostic}; durable Wake remains authoritative`
+          : "Host reconciliation pending; durable Wake remains authoritative";
+      }
     } finally {
       coordinationInFlight = false;
       scheduleNext();
@@ -452,14 +520,18 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       void reconcile();
     } catch (error) {
       if (!tornDown) {
-        const shape = error && typeof error.resultShape === "string" ? ` · response=${error.resultShape}` : "";
+        const diagnostic = hostFailureDiagnostic(error);
         if (!error.definitive && bindAttempts < MAX_BIND_ATTEMPTS) {
           bindingStarted = false;
-          el("status").textContent = `Host binding response unavailable${shape} · reconciling`;
+          el("status").textContent = diagnostic
+            ? `Host binding ${diagnostic} · reconciling`
+            : "Host binding response unavailable · reconciling";
           scheduleNext();
         } else {
           el("binding").textContent = "Unavailable";
-          el("status").textContent = `Host binding unavailable${shape}; durable Agent state is unchanged`;
+          el("status").textContent = diagnostic
+            ? `Host binding ${diagnostic}; durable Agent state is unchanged`
+            : "Host binding unavailable; durable Agent state is unchanged";
         }
       }
     }
@@ -469,13 +541,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     // Also withdraw a bind whose successful response may have been lost.
     if (!identity || !viewBindingId || bindAttempts === 0 || tornDown) return;
     const id = nextId++;
+    const diagnostic = appCallArguments(exactArgs({ binding_id: viewBindingId }));
     parent.postMessage({
       jsonrpc: "2.0",
       id,
       method: "tools/call",
       params: {
         name: "agent_continuation_unbind",
-        arguments: exactArgs({ binding_id: viewBindingId }),
+        arguments: diagnostic.arguments,
       },
     }, "*");
   }
@@ -501,10 +574,13 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       const entry = pending.get(msg.id);
       pending.delete(msg.id);
       clearTimeout(entry.timeout);
-      if (msg.error) entry.reject(Object.assign(new Error("Host request failed"), {
-        definitive: [-32600, -32601, -32602].includes(msg.error.code),
-      }));
-      else entry.resolve(msg.result);
+      if (msg.error) {
+        const rpcCode = Number.isSafeInteger(msg.error.code) ? msg.error.code : null;
+        entry.reject(hostFailure(rpcCode === -32800 ? "bridge-cancelled" : "bridge-error", {
+          rpcCode,
+          definitive: [-32600, -32601, -32602].includes(rpcCode),
+        }));
+      } else entry.resolve(msg.result);
       return;
     }
     if (msg.method === "ui/notifications/tool-input") {
@@ -534,7 +610,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "6.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "7.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;
