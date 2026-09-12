@@ -40,6 +40,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const ATTEMPT_ID = /^wc_wake_attempt_[0-9a-f]{32}$/;
   const APP_CALL_ID = /^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$/;
   const SAFE_RESULT_SHAPE = /^(nested-)?(null|array|string|number|boolean|undefined|function|symbol|bigint|structured|structured-direct|content-json|content-only|empty-object|other-object)$/;
+  const SAFE_RESULT_SEMANTICS = new Set(["structured-envelope-invalid", "success-not-true", "output-invalid", "projection-missing", "projection-invalid", "host-binding-missing", "host-binding-invalid", "host-bound-not-true", "unexpected"]);
   const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result"]);
   const CALL_TIMEOUT_MS = 10000;
   const MAX_BIND_ATTEMPTS = 3;
@@ -128,17 +129,25 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return result;
   }
 
+  function canonicalStructuredEnvelope(value) {
+    return !!(value && typeof value === "object" && !Array.isArray(value)
+      && typeof value.success === "boolean"
+      && (Object.prototype.hasOwnProperty.call(value, "output")
+        || Object.prototype.hasOwnProperty.call(value, "error")));
+  }
+
   function structuredOf(result) {
     const callResult = callToolResultOf(result);
     if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return null;
     const direct = callResult.structuredContent || callResult.structured_content;
-    if (direct && typeof direct === "object" && !Array.isArray(direct)) return direct;
+    // A Host may synthesize or project structuredContent independently from the
+    // standard CallToolResult content. Prefer it only when the canonical WebCodex
+    // success envelope survived; otherwise keep looking for the standard JSON
+    // compatibility envelope instead of letting malformed structuredContent mask it.
+    if (canonicalStructuredEnvelope(direct)) return direct;
     // Some Hosts expose the structuredContent value itself rather than the full
     // CallToolResult. Accept it only when it retains the canonical success envelope.
-    if (typeof callResult.success === "boolean" && (
-      Object.prototype.hasOwnProperty.call(callResult, "output")
-      || Object.prototype.hasOwnProperty.call(callResult, "error")
-    )) return callResult;
+    if (canonicalStructuredEnvelope(callResult)) return callResult;
     // Some Hosts preserve only standard CallToolResult content for View-originated
     // tools/call. App-only WebCodex tools duplicate their bounded structured
     // envelope as JSON text there so coordination never depends on private _meta
@@ -148,7 +157,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       if (!block || block.type !== "text" || typeof block.text !== "string") continue;
       try {
         const parsed = JSON.parse(block.text);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        if (canonicalStructuredEnvelope(parsed)) return parsed;
       } catch (_) {}
     }
     return null;
@@ -178,6 +187,33 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return Object.keys(callResult).length === 0 ? "empty-object" : "other-object";
   }
 
+  function bindSemanticFailure(result) {
+    const callResult = callToolResultOf(result);
+    if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return "unexpected";
+    const advertisedStructured = callResult.structuredContent || callResult.structured_content;
+    if (advertisedStructured && !canonicalStructuredEnvelope(advertisedStructured)
+      && !canonicalStructuredEnvelope(callResult)) {
+      const blocks = Array.isArray(callResult.content) ? callResult.content : [];
+      let canonicalContent = false;
+      for (const block of blocks) {
+        if (!block || block.type !== "text" || typeof block.text !== "string") continue;
+        try { canonicalContent ||= canonicalStructuredEnvelope(JSON.parse(block.text)); } catch (_) {}
+      }
+      if (!canonicalContent) return "structured-envelope-invalid";
+    }
+    const structured = structuredOf(callResult);
+    if (!structured) return advertisedStructured ? "structured-envelope-invalid" : "unexpected";
+    if (structured.success !== true) return "success-not-true";
+    if (!structured.output || typeof structured.output !== "object" || Array.isArray(structured.output)) return "output-invalid";
+    if (!Object.prototype.hasOwnProperty.call(structured.output, "agent_continuation")) return "projection-missing";
+    const projection = structured.output.agent_continuation;
+    if (!validProjection(projection)) return "projection-invalid";
+    if (!Object.prototype.hasOwnProperty.call(projection, "host_binding")) return "host-binding-missing";
+    if (!projection.host_binding || typeof projection.host_binding !== "object" || Array.isArray(projection.host_binding)) return "host-binding-invalid";
+    if (projection.host_binding.bound !== true) return "host-bound-not-true";
+    return "unexpected";
+  }
+
   function hostFailureDiagnostic(error) {
     if (!error || typeof error !== "object" || !SAFE_HOST_FAILURE_KINDS.has(error.hostFailureKind)) return "";
     const parts = [error.hostFailureKind];
@@ -185,6 +221,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       && Number.isSafeInteger(error.rpcCode)) parts.push(`rpc=${error.rpcCode}`);
     if (error.hostFailureKind === "malformed-result" && typeof error.resultShape === "string"
       && SAFE_RESULT_SHAPE.test(error.resultShape)) parts.push(`response=${error.resultShape}`);
+    if (error.hostFailureKind === "malformed-result" && SAFE_RESULT_SEMANTICS.has(error.resultSemantic)) parts.push(`semantic=${error.resultSemantic}`);
     if (typeof error.appCallId === "string" && APP_CALL_ID.test(error.appCallId)) parts.push(`call=${error.appCallId}`);
     return parts.join(" · ");
   }
@@ -192,6 +229,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   function malformedResult(result) {
     return hostFailure("malformed-result", {
       resultShape: toolResultShape(result),
+      resultSemantic: bindSemanticFailure(result),
       appCallId: appCallIdOf(result),
     });
   }
@@ -610,7 +648,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "7.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "8.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

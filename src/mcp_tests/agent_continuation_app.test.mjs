@@ -438,6 +438,19 @@ for (const [shape, wrap] of [
   });
 }
 
+test("non-canonical Host structuredContent cannot mask canonical standard content fallback", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  const response = toolResult({ agent_continuation: projection });
+  const canonical = response.structuredContent;
+  response.content = [{ type: "text", text: JSON.stringify(canonical) }];
+  response.structuredContent = { agent_continuation: projection };
+  await view.reply(view.calls("agent_continuation_bind")[0], response);
+  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(view.calls("agent_continuation_state").length, 1);
+});
+
 test("malformed bind response exposes only a bounded response-shape diagnostic", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
@@ -446,7 +459,20 @@ test("malformed bind response exposes only a bounded response-shape diagnostic",
   assertAppCallId(bind);
   await view.reply(bind, {});
   assert.equal(view.nodes.status.textContent,
-    `Host binding malformed-result · response=empty-object · call=${appCallId(bind)} · reconciling`);
+    `Host binding malformed-result · response=empty-object · semantic=unexpected · call=${appCallId(bind)} · reconciling`);
+  assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
+  assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
+  assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
+});
+
+test("non-canonical structured result reports only a fixed semantic gate", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  const bind = view.calls("agent_continuation_bind")[0];
+  await view.reply(bind, { structuredContent: { agent_continuation: projection } });
+  assert.equal(view.nodes.status.textContent,
+    `Host binding malformed-result · response=structured · semantic=structured-envelope-invalid · call=${appCallId(bind)} · reconciling`);
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
@@ -495,7 +521,7 @@ for (const loss of ["timeout", "Host error", "malformed result"]) {
       ? `bridge-timeout · call=${appCallId(first)}`
       : loss === "Host error"
         ? `bridge-error · rpc=-32000 · call=${appCallId(first)}`
-        : `malformed-result · response=empty-object · call=${appCallId(first)}`;
+        : `malformed-result · response=empty-object · semantic=unexpected · call=${appCallId(first)}`;
     assert.equal(view.nodes.status.textContent, `Host binding ${expectedDiagnostic} · reconciling`);
     view.toolResult({ agent_continuation: projection });
     view.toolInput(input);
