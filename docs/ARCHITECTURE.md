@@ -280,6 +280,7 @@ update rather than silently changing the architecture.
 
 ## Further reading
 
+- [Resource model and architecture quality exploration](architecture/resource-model-and-quality-review.md) — source-grounded review and staged proposals; not a runtime contract
 - [Durable Agent runtime and asynchronous work](architecture/durable-agent-runtime.md) — persistent Agent identity and planned asynchronous Agent work
 - [Durable Agent/Conversation/Wake contract](architecture/durable-agent-conversation.md) — current communication implementation
 - [CLI](CLI.md) — commands and terminology
