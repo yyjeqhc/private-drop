@@ -87,15 +87,32 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
   }
 
+  function callToolResultOf(result) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+    const nested = result.result;
+    if (nested && typeof nested === "object" && !Array.isArray(nested) && (
+      nested.structuredContent || nested.structured_content || Array.isArray(nested.content)
+      || typeof nested.success === "boolean" || Object.prototype.hasOwnProperty.call(nested, "isError")
+    )) return nested;
+    return result;
+  }
+
   function structuredOf(result) {
-    if (!result || typeof result !== "object") return null;
-    const direct = result.structuredContent || result.structured_content;
+    const callResult = callToolResultOf(result);
+    if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return null;
+    const direct = callResult.structuredContent || callResult.structured_content;
     if (direct && typeof direct === "object" && !Array.isArray(direct)) return direct;
+    // Some Hosts expose the structuredContent value itself rather than the full
+    // CallToolResult. Accept it only when it retains the canonical success envelope.
+    if (typeof callResult.success === "boolean" && (
+      Object.prototype.hasOwnProperty.call(callResult, "output")
+      || Object.prototype.hasOwnProperty.call(callResult, "error")
+    )) return callResult;
     // Some Hosts preserve only standard CallToolResult content for View-originated
     // tools/call. App-only WebCodex tools duplicate their bounded structured
     // envelope as JSON text there so coordination never depends on private _meta
     // or Host-specific structuredContent forwarding.
-    const blocks = Array.isArray(result.content) ? result.content : [];
+    const blocks = Array.isArray(callResult.content) ? callResult.content : [];
     for (const block of blocks) {
       if (!block || block.type !== "text" || typeof block.text !== "string") continue;
       try {
@@ -106,14 +123,40 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return null;
   }
 
+  function toolResultShape(result) {
+    if (result === null) return "null";
+    if (Array.isArray(result)) return "array";
+    if (typeof result !== "object") return typeof result;
+    const callResult = callToolResultOf(result);
+    if (callResult !== result) return "nested-" + toolResultShape(callResult);
+    if (callResult.structuredContent || callResult.structured_content) return "structured";
+    if (typeof callResult.success === "boolean" && (
+      Object.prototype.hasOwnProperty.call(callResult, "output")
+      || Object.prototype.hasOwnProperty.call(callResult, "error")
+    )) return "structured-direct";
+    if (Array.isArray(callResult.content)) {
+      for (const block of callResult.content) {
+        if (!block || block.type !== "text" || typeof block.text !== "string") continue;
+        try {
+          const parsed = JSON.parse(block.text);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return "content-json";
+        } catch (_) {}
+      }
+      return "content-only";
+    }
+    return Object.keys(callResult).length === 0 ? "empty-object" : "other-object";
+  }
+
   function outputOf(result) {
-    const structured = structuredOf(result) || result;
+    const callResult = callToolResultOf(result);
+    const structured = structuredOf(callResult) || callResult;
     return structured && (structured.output || structured);
   }
 
   function toolCallSucceeded(result) {
-    const structured = structuredOf(result);
-    return !!(result && result.isError !== true && structured && structured.success === true);
+    const callResult = callToolResultOf(result);
+    const structured = structuredOf(callResult);
+    return !!(callResult && callResult.isError !== true && structured && structured.success === true);
   }
 
   function definitiveFailure() {
@@ -230,11 +273,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     bindAttempts++;
     const response = await callTool("agent_continuation_bind", exactArgs({ binding_id: viewBindingId }));
     if (tornDown) return;
-    const structured = structuredOf(response);
-    if (response && (response.isError === true || (structured && structured.success === false))) throw definitiveFailure();
-    const projection = projectionOf(response);
-    if (!toolCallSucceeded(response) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
-      throw new Error("Invalid Host binding response");
+    const callResult = callToolResultOf(response);
+    const structured = structuredOf(callResult);
+    if (callResult && (callResult.isError === true || (structured && structured.success === false))) throw definitiveFailure();
+    const projection = projectionOf(callResult);
+    if (!toolCallSucceeded(callResult) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
+      throw Object.assign(new Error("Invalid Host binding response"), { resultShape: toolResultShape(response) });
     }
     if (!acceptIdentity(projection)) return;
     bindingId = viewBindingId;
@@ -408,13 +452,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       void reconcile();
     } catch (error) {
       if (!tornDown) {
+        const shape = error && typeof error.resultShape === "string" ? ` · response=${error.resultShape}` : "";
         if (!error.definitive && bindAttempts < MAX_BIND_ATTEMPTS) {
           bindingStarted = false;
-          el("status").textContent = "Host binding response unavailable · reconciling";
+          el("status").textContent = `Host binding response unavailable${shape} · reconciling`;
           scheduleNext();
         } else {
           el("binding").textContent = "Unavailable";
-          el("status").textContent = "Host binding unavailable; durable Agent state is unchanged";
+          el("status").textContent = `Host binding unavailable${shape}; durable Agent state is unchanged`;
         }
       }
     }
@@ -489,7 +534,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "4.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "5.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

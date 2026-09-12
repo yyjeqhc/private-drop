@@ -413,6 +413,33 @@ test("App coordination survives Host stripping structuredContent from View tools
   assert.equal(view.nodes.binding.textContent, "Host bound");
 });
 
+for (const [shape, wrap] of [
+  ["structuredContent value", result => result.structuredContent],
+  ["nested CallToolResult", result => ({ result })],
+]) {
+  test(`bind accepts ${shape} returned by Host bridge`, async () => {
+    const view = app("mcp_agent_continuation_app.html");
+    await view.initialize();
+    view.toolInput(input);
+    const response = toolResult({ agent_continuation: projection });
+    await view.reply(view.calls("agent_continuation_bind")[0], wrap(response));
+    assert.equal(view.nodes.binding.textContent, "Host bound");
+    assert.equal(view.calls("agent_continuation_state").length, 1);
+  });
+}
+
+test("malformed bind response exposes only a bounded response-shape diagnostic", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  await view.reply(view.calls("agent_continuation_bind")[0], {});
+  assert.equal(view.nodes.status.textContent,
+    "Host binding response unavailable · response=empty-object · reconciling");
+  assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
+  assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
+  assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
+});
+
 for (const loss of ["timeout", "Host error", "malformed result"]) {
   test(`same View retries bind with the same secure fence after ${loss}`, async () => {
     const view = app("mcp_agent_continuation_app.html", { deliverToolMeta: false });
@@ -424,7 +451,9 @@ for (const loss of ["timeout", "Host error", "malformed result"]) {
     if (loss === "timeout") await view.fireTimers(10000);
     else if (loss === "Host error") await view.reject(first);
     else await view.reply(first, {});
-    assert.equal(view.nodes.status.textContent, "Host binding response unavailable · reconciling");
+    assert.equal(view.nodes.status.textContent, loss === "malformed result"
+      ? "Host binding response unavailable · response=empty-object · reconciling"
+      : "Host binding response unavailable · reconciling");
     view.toolResult({ agent_continuation: projection });
     view.toolInput(input);
     await flush();

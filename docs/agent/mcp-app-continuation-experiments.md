@@ -202,8 +202,8 @@ Visible status distinguishes script activity, Host initialization, exact identit
 selection, and live binding/polling, with separate initialization, binding, and
 identity errors. Diagnostics do not display binding ids, claim fences, or consume
 tokens. `tools/list` and `resources/list` advertise only the canonical
-`ui://webcodex/agent-continuation/v4` and `ui://webcodex/goal-plan/v2` resources.
-The old v1 URIs and Agent continuation v2/v3 are hidden read aliases serving the same current templates;
+`ui://webcodex/agent-continuation/v5` and `ui://webcodex/goal-plan/v2` resources.
+The old v1 URIs and Agent continuation v2/v3/v4 are hidden read aliases serving the same current templates;
 they do not revive expired Endpoints or bypass fresh-binding requirements.
 
 ## Remaining verification boundary
@@ -219,3 +219,7 @@ The v3 fix removed the earlier correctness dependency on custom ToolResult `_met
 The v4 compatibility path therefore keeps `structuredContent` canonical but duplicates the same bounded machine envelope as JSON in standard `content[0].text` for the app-only Agent continuation coordination tools. The View prefers structured content and falls back to that JSON text. This remains isolated from ordinary model tools because these coordination tools are ModelHidden/App-visible only; no custom ToolResult `_meta` is required. The prepare envelope still excludes Host binding ids, claim fences, private Conversation bodies, and private Agent profile data; its bounded automatic message is intentionally available to the View because it is the exact payload later passed to `ui/message`.
 
 The deterministic Host harness can independently strip custom metadata and `structuredContent` from App-originated calls. Regressions cover the metadata-free/content-only lifecycle, successor Wakes, stable bind retries, View replacement, and conservative malformed/post-timeout prepare handling. The canonical App URI advances to `ui://webcodex/agent-continuation/v4` so the next production dogfood cannot silently reuse a cached v3 View; v1-v3 remain hidden read aliases for existing cards. These local tests do not establish successful production v4 continuation or exact Wake consumption; that remains the next named deployment/dogfood step.
+
+The v4 production dogfood still produced three successful Server-side binds and no subsequent state call. The serialized bind response grew to the expected compatibility-envelope size, and retries happened after only a few seconds rather than the View's 10-second request timeout. This proves the fallback reached the Host and the Host returned promptly, but the value exposed to the iframe still did not match the App's accepted CallToolResult shapes. The same production run fetched the App resource after presentation, reducing stale-resource caching as an explanation.
+
+The v5 View therefore adds two narrowly validated bridge variants without weakening bind semantics: a one-level nested CallToolResult and the canonical `structuredContent` value returned directly. Both still require `success=true`, an exact valid Agent/Endpoint/generation projection, and `host_binding.bound=true`. Any other successful-but-unusable response remains fail-closed and now renders only a fixed response-shape class such as `empty-object`, `content-only`, or `other-object`; it never displays payload keys, identities, binding ids, Wake data, or continuation tokens. The canonical URI advances to `ui://webcodex/agent-continuation/v5`, with v1-v4 retained only as hidden read aliases.
