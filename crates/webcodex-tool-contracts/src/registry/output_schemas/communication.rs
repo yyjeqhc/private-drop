@@ -70,6 +70,59 @@ fn endpoint_schema() -> Value {
     })
 }
 
+fn agent_continuation_projection_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "version": {"type": "integer", "const": 1},
+            "agent_id": schema_type("string", "Exact durable Agent identity."),
+            "display_name": schema_type("string", "Safe Agent display name only; private description and specialty labels are omitted."),
+            "endpoint_id": schema_type("string", "Exact current Endpoint identity."),
+            "controller_generation": schema_type("integer", "Exact Endpoint controller generation."),
+            "endpoint_lease_expires_at_unix_ms": schema_type("integer", "Current bounded Endpoint lease expiry."),
+            "host_binding": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "bound": schema_type("boolean", "Whether this exact Endpoint generation has a current process-local Host carrier."),
+                    "adapter_kind": nullable_string("Safe Host carrier kind, if present."),
+                    "production_auto_resume_available": schema_type("boolean", "Whether the current Host carrier has a demonstrated production new-turn primitive.")
+                },
+                "required": ["bound", "adapter_kind", "production_auto_resume_available"]
+            },
+            "wake": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "wake_id": schema_type("string", "Exact unresolved durable Wake identity."),
+                            "state": {"type": "string", "enum": ["pending", "claimed", "prepared", "delivered", "delivery_unknown"]},
+                            "revision": schema_type("integer", "Current durable Wake revision.")
+                        },
+                        "required": ["wake_id", "state", "revision"]
+                    },
+                    {"type": "null"}
+                ]
+            },
+            "queued_delivery_count": schema_type("integer", "Current authoritative queued Inbox count; no Message bodies are included."),
+            "dispatch_observation": {
+                "anyOf": [
+                    {"type": "string", "enum": ["dispatch_prepared", "dispatch_accepted", "dispatch_unknown", "continuation_consumed"]},
+                    {"type": "null"}
+                ],
+                "description": "Process-local Host observation only; only continuation_consumed proves a later turn exact-consumed the durable Wake."
+            }
+        },
+        "required": [
+            "version", "agent_id", "display_name", "endpoint_id", "controller_generation",
+            "endpoint_lease_expires_at_unix_ms", "host_binding", "wake",
+            "queued_delivery_count", "dispatch_observation"
+        ]
+    })
+}
+
 fn participant_schema() -> Value {
     json!({
         "type": "object",
@@ -229,6 +282,10 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                 array_schema(agent_schema(), "Bounded Agent Card page."),
             ),
         ]),
+        "present_agent_continuation" => wrapped_output_schema(vec![(
+            "agent_continuation",
+            agent_continuation_projection_schema(),
+        )]),
         "attach_agent_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
             ("endpoint", endpoint_schema()),
             (

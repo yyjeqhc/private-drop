@@ -139,16 +139,40 @@ Do not copy the temporary timer/map implementation into production. Reuse the au
 
 The static Result App follows the same sparsity rule: current tool descriptors bind it only to `list_jobs`, `validation_summary`, and `git_review_summary`. High-frequency observation, validation-run, and worktree-review calls keep native Host presentation; bounded legacy projections remain available only so already-cached older descriptors fail gracefully rather than forcing a compatibility break.
 
-The production Durable Goal G2 implementation now applies the same findings to a server-owned Goal: one explicit `present_goal_plan(goal_id)` binds `ui://webcodex/goal-plan/v1`, while the existing View uses the ModelHidden/app-only `goal_plan_state(goal_id)` exact read to converge on SQLite Goal revision. It deliberately adds no Wake, `ui/message`, model resume, timer-owned server state, or execution transition; those remain G3 concerns.
+The production Durable Goal G2 implementation applies the same presentation findings to a server-owned Goal: one explicit `present_goal_plan(goal_id)` binds `ui://webcodex/goal-plan/v1`, while the existing View uses the ModelHidden/app-only `goal_plan_state(goal_id)` exact read to converge on SQLite Goal revision. G3 does **not** change that contract: Goal still has no Wake, `ui/message`, model resume, dispatch fence, consume token, background model scheduler, Agent owner/controller relation, or automatic Goal/work execution transition.
 
-## Recommended implementation order
+## Production G3 mapping
 
-The Host mechanism is no longer the main unknown. The lowest-risk implementation sequence is:
+G3 now maps the demonstrated Host primitive onto the existing production Durable Agent substrate instead of copying the temporary probe state machine:
 
-1. **Improve the existing static Result App projection first.** Reuse the current `webcodex/presentation` contract and display richer bounded Job/validation/worktree context without adding polling or wake behavior.
-2. **Add a dedicated workflow/plan presentation projection.** Keep it read-only and server-owned initially; one start card should represent the high-level Workflow Session rather than every tool call.
-3. **Add App-only exact workflow-state refresh.** This gives the single card eventual convergence without changing ordinary model-visible tool behavior.
-4. **Integrate the durable continuation controller only after the presentation identity is stable.** Reuse exact endpoint/controller generation, wake lease, dispatch fence, and consume semantics; do not make Host continuation a core execution dependency.
-5. **Treat background model-turn scheduling as non-immediate.** Backend work must remain independently durable, and a pending decision must still be recoverable when an eligible View/model activation becomes available later.
+```text
+authoritative SQLite Wake / Wake Delivery Attempt
+        ↓
+exact current Agent Endpoint + controller generation
+        ↓
+process-local MCP App View binding
+        ↓
+agent_continuation_wake_acquire   # existing durable claim
+        ↓
+agent_continuation_wake_prepare   # existing durable dispatch fence
+        ↓
+View calls Host ui/message exactly once
+        ↓
+agent_continuation_wake_finish    # dispatch_accepted | delivery_unknown
+        ↓
+later model turn exact-consumes Wake
+```
 
-This staged path lets WebCodex improve the user-visible card immediately while keeping the more consequential continuation adapter isolated and reviewable.
+The only card-creating entry is the explicit read `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)`, bound to `ui://webcodex/agent-continuation/v1`. Bind/state/acquire/prepare/finish/unbind are globally ModelHidden and are projected only as App-visible tools on eligible Stateless MCP 2026 operator surfaces. They do not bind the resource again, so polling/coordination does not create a stream of custom cards. Ordinary communication and coding tools keep native Host presentation.
+
+The View binding is process-local fencing, not durable authority. Every App-only operation re-authorizes the normal communication principal and exact Agent/Endpoint/controller generation. Bind succeeds only for an Endpoint freshly attached in that Server process. A later View for the same exact Endpoint/generation replaces the previous process binding; the stale iframe cannot heartbeat, acquire, prepare, finish, or teardown the new controller. On replacement/loss, existing Store reconciliation handles the durable state: pre-fence claim -> revoked Attempt + pending Wake; post-fence prepared/delivered -> `delivery_unknown`. Server restart forgets the View binding and cannot revive it from an old endpoint id alone.
+
+The App keeps claim fences entirely Server-side. The bounded automatic message is returned only after prepare and contains exact `agent_id`, `endpoint_id`, `controller_generation`, `wake_id`, and `consume_token`; it contains no Conversation Message body, transcript, Agent private description/specialty labels, credential, principal digest, claim fence, Project authority, or Workflow Session authority. The binding id and automatic message are delivered through App-private MCP result metadata, removed from ordinary `structuredContent`, typed audit/session projections, and forensic tool-request payload capture.
+
+`ui/message` success is recorded only as `dispatch_accepted`. Timeout, reload, View loss, or any post-fence outcome that cannot prove non-delivery becomes `delivery_unknown`; the App never automatically sends a second `ui/message` for that Attempt. If the new model turn starts before the Host ACK is recorded, exact `consume_agent_wake` may win first; the later ACK is idempotent and cannot move the Wake back from `consumed`. Only exact consume is production evidence of `continuation_consumed`.
+
+The production App uses bounded heartbeat/reconciliation. A hidden/background View may renew its exact Endpoint but does not initiate a new automatic `ui/message`; returning to the foreground triggers immediate authoritative reconciliation. Pagehide, beforeunload, and `ui/resource-teardown` stop polling and attempt exact best-effort unbind. Correctness never depends on reliable teardown, browser memory, or localStorage.
+
+## Remaining verification boundary
+
+Deterministic tests cover surface isolation, protocol fail-closed behavior, authorization/existence hiding, duplicate-View fencing, Endpoint replacement and Server restart semantics, pre-fence recovery, post-fence uncertainty, 50-Message burst coalescing, exact consume/token/generation checks, consume-before-ACK ordering, and secret redaction. The remaining environment-specific step is manual ChatGPT dogfood of the production App resource and `ui/message` Host behavior. That dogfood must continue to interpret Host success as dispatch acceptance only; background model-turn scheduling remains eventually available/best effort, not an immediate guarantee.

@@ -1335,6 +1335,65 @@ pub enum ToolCall {
         idempotency_key: String,
     },
 
+    /// Present one exact Agent/Endpoint continuation controller card. Never infers a target.
+    PresentAgentContinuation {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+    },
+
+    /// App-only bind of one live Host View to an exact freshly attached Endpoint generation.
+    AgentContinuationBind {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+    },
+
+    /// App-only exact Host heartbeat plus bounded authoritative state refresh.
+    AgentContinuationState {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    },
+
+    /// App-only pre-fence acquire through the durable Wake claim state machine.
+    AgentContinuationWakeAcquire {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    },
+
+    /// App-only crossing of the existing durable dispatch fence immediately before ui/message.
+    AgentContinuationWakePrepare {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+        wake_id: String,
+        attempt_id: String,
+    },
+
+    /// App-only record of Host dispatch acceptance or conservative post-fence uncertainty.
+    AgentContinuationWakeFinish {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+        wake_id: String,
+        attempt_id: String,
+        outcome: String,
+    },
+
+    /// App-only best-effort withdrawal of one exact process-local Host View binding.
+    AgentContinuationUnbind {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    },
+
     /// Detach an Endpoint while preserving the durable Agent.
     DetachAgentEndpoint {
         endpoint_id: String,
@@ -2793,6 +2852,13 @@ impl ToolCall {
             Self::ListAgentIdentities { .. } => "list_agent_identities",
             Self::UpdateAgentIdentity { .. } => "update_agent_identity",
             Self::AttachAgentEndpoint { .. } => "attach_agent_endpoint",
+            Self::PresentAgentContinuation { .. } => "present_agent_continuation",
+            Self::AgentContinuationBind { .. } => "agent_continuation_bind",
+            Self::AgentContinuationState { .. } => "agent_continuation_state",
+            Self::AgentContinuationWakeAcquire { .. } => "agent_continuation_wake_acquire",
+            Self::AgentContinuationWakePrepare { .. } => "agent_continuation_wake_prepare",
+            Self::AgentContinuationWakeFinish { .. } => "agent_continuation_wake_finish",
+            Self::AgentContinuationUnbind { .. } => "agent_continuation_unbind",
             Self::DetachAgentEndpoint { .. } => "detach_agent_endpoint",
             Self::CreateConversation { .. } => "create_conversation",
             Self::ListConversations { .. } => "list_conversations",

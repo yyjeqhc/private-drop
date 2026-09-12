@@ -7,7 +7,7 @@ use crate::tool_runtime::ToolRuntime;
 use crate::{Database, RunnerRegistry};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -65,6 +65,67 @@ impl ContinuationAdapter for FakeHostAdapter {
     fn dispatch(&self, envelope: &AgentWakeEnvelope) -> ContinuationDispatchOutcome {
         self.envelopes.lock().unwrap().push(envelope.clone());
         self.outcome
+    }
+}
+
+#[derive(Debug, Default)]
+struct BlockingHostAdapter {
+    entered: (Mutex<bool>, Condvar),
+    release: (Mutex<bool>, Condvar),
+    dispatch_count: AtomicUsize,
+}
+
+impl BlockingHostAdapter {
+    fn wait_until_preflight(&self) {
+        let (lock, ready) = &self.entered;
+        let mut entered = lock.lock().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !*entered {
+            let timeout = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !timeout.is_zero(),
+                "timed out waiting for blocking preflight"
+            );
+            let (next, result) = ready.wait_timeout(entered, timeout).unwrap();
+            entered = next;
+            assert!(
+                !result.timed_out() || *entered,
+                "timed out waiting for blocking preflight"
+            );
+        }
+    }
+
+    fn release_preflight(&self) {
+        let (lock, ready) = &self.release;
+        *lock.lock().unwrap() = true;
+        ready.notify_all();
+    }
+}
+
+impl ContinuationAdapter for BlockingHostAdapter {
+    fn adapter_kind(&self) -> &'static str {
+        "blocking_fake"
+    }
+
+    fn preflight(
+        &self,
+        _continuation: &ContinuationPreflight,
+    ) -> Result<(), ContinuationPreflightError> {
+        let (entered_lock, entered_ready) = &self.entered;
+        *entered_lock.lock().unwrap() = true;
+        entered_ready.notify_all();
+
+        let (release_lock, release_ready) = &self.release;
+        let mut released = release_lock.lock().unwrap();
+        while !*released {
+            released = release_ready.wait(released).unwrap();
+        }
+        Ok(())
+    }
+
+    fn dispatch(&self, _envelope: &AgentWakeEnvelope) -> ContinuationDispatchOutcome {
+        self.dispatch_count.fetch_add(1, Ordering::SeqCst);
+        ContinuationDispatchOutcome::Delivered
     }
 }
 
@@ -194,6 +255,150 @@ fn wake_id_for(db: &Database, agent_id: &str) -> String {
             |row| row.get(0),
         )
         .unwrap()
+}
+
+fn bind_mcp_app(
+    runtime: &ToolRuntime,
+    agent_id: &str,
+    endpoint_id: &str,
+    generation: i64,
+) -> String {
+    let result = runtime.agent_continuation_bind(
+        None,
+        agent_id.to_string(),
+        endpoint_id.to_string(),
+        generation,
+    );
+    assert!(result.success, "{:?}", result.output);
+    result.output["_app_private"]["binding_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn acquire_mcp_app(
+    runtime: &ToolRuntime,
+    agent_id: &str,
+    endpoint_id: &str,
+    generation: i64,
+    binding_id: &str,
+) -> Value {
+    let result = runtime.agent_continuation_wake_acquire(
+        None,
+        agent_id.to_string(),
+        endpoint_id.to_string(),
+        generation,
+        binding_id.to_string(),
+    );
+    assert!(result.success, "{:?}", result.output);
+    result.output
+}
+
+fn prepare_mcp_app(
+    runtime: &ToolRuntime,
+    agent_id: &str,
+    endpoint_id: &str,
+    generation: i64,
+    binding_id: &str,
+    wake_id: &str,
+    attempt_id: &str,
+) -> (Value, String) {
+    let result = runtime.agent_continuation_wake_prepare(
+        None,
+        agent_id.to_string(),
+        endpoint_id.to_string(),
+        generation,
+        binding_id.to_string(),
+        wake_id.to_string(),
+        attempt_id.to_string(),
+    );
+    assert!(result.success, "{:?}", result.output);
+    let message = result.output["_app_private"]["automatic_message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (result.output, message)
+}
+
+fn resume_field(message: &str, field: &str) -> String {
+    let prefix = format!("{field}=");
+    message
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .unwrap_or_else(|| panic!("missing {field} from continuation message"))
+        .to_string()
+}
+
+struct McpContinuationFixture {
+    _temp: tempfile::TempDir,
+    db: Arc<Database>,
+    runtime: ToolRuntime,
+    sender: String,
+    receiver: String,
+    sender_endpoint: String,
+    sender_generation: i64,
+    receiver_endpoint: String,
+    receiver_generation: i64,
+    conversation_id: String,
+}
+
+fn mcp_continuation_fixture(stem: &str) -> McpContinuationFixture {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&temp.path().join(format!("{stem}.db"))).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let sender = create_agent(
+        &runtime,
+        &format!("{stem}-sender"),
+        "MCP Sender",
+        "PRIVATE sender description",
+        "PRIVATE-sender-label",
+        &format!("{stem}-sender-create"),
+    );
+    let receiver = create_agent(
+        &runtime,
+        &format!("{stem}-receiver"),
+        "MCP Receiver",
+        "PRIVATE receiver description",
+        "PRIVATE-receiver-label",
+        &format!("{stem}-receiver-create"),
+    );
+    let (sender_endpoint, sender_generation) =
+        attach(&runtime, &sender, &format!("{stem}-sender-endpoint"));
+    let (receiver_endpoint, receiver_generation) =
+        attach(&runtime, &receiver, &format!("{stem}-receiver-endpoint"));
+    let conversation_id = create_conversation(
+        &runtime,
+        &sender,
+        &receiver,
+        &format!("{stem}-conversation"),
+    );
+    McpContinuationFixture {
+        _temp: temp,
+        db,
+        runtime,
+        sender,
+        receiver,
+        sender_endpoint,
+        sender_generation,
+        receiver_endpoint,
+        receiver_generation,
+        conversation_id,
+    }
+}
+
+fn post_fixture_message(fixture: &McpContinuationFixture, body: &str, key: &str) {
+    post_as_agent(
+        &fixture.runtime,
+        &fixture.conversation_id,
+        body,
+        &fixture.sender,
+        &fixture.sender_endpoint,
+        fixture.sender_generation,
+        &fixture.receiver,
+        Some(key),
+        None,
+        None,
+    );
 }
 
 #[test]
@@ -452,10 +657,40 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         old_process_registration.output["error_kind"], "endpoint_not_attached_in_process",
         "a successor process cannot assume a pre-restart Host callback survived"
     );
+    let old_app_registration =
+        runtime.agent_continuation_bind(None, agent_b.clone(), endpoint_b.clone(), generation_b);
+    assert!(!old_app_registration.success);
+    assert_eq!(
+        old_app_registration.output["error_kind"], "endpoint_not_attached_in_process",
+        "a successor process cannot resurrect a pre-restart MCP App View from endpoint_id alone"
+    );
 
     let (replacement_endpoint, replacement_generation) =
         attach(&runtime, &agent_b, "restart-endpoint-b2");
     assert_eq!(replacement_generation, generation_b + 1);
+    let replacement_binding = bind_mcp_app(
+        &runtime,
+        &agent_b,
+        &replacement_endpoint,
+        replacement_generation,
+    );
+    let unbound_replacement = runtime.agent_continuation_unbind(
+        None,
+        agent_b.clone(),
+        replacement_endpoint.clone(),
+        replacement_generation,
+        replacement_binding,
+    );
+    assert!(
+        unbound_replacement.success,
+        "{:?}",
+        unbound_replacement.output
+    );
+    assert_eq!(
+        reopened.agent_wake(&logical_wake_id).unwrap().unwrap().state,
+        AgentWakeState::Pending,
+        "fresh replacement App bind/unbind must preserve a pre-fence logical Wake for another eligible carrier"
+    );
     let replacement_adapter = Arc::new(FakeHostAdapter::delivered());
     let registration = runtime.register_agent_continuation_adapter(
         None,
@@ -671,6 +906,440 @@ fn wake_derived_reply_identity_closes_response_loss_without_merging_consumption(
         AgentWakeState::DeliveryUnknown,
         "Delivery consume remains independent from the logical Wake; replacement conservatively fences the delivered activation"
     );
+}
+
+#[test]
+fn replacing_push_with_mcp_app_orders_same_generation_host_carriers() {
+    let fixture = mcp_continuation_fixture("push-app-transition-fence");
+    let adapter = Arc::new(BlockingHostAdapter::default());
+    let registration = fixture.runtime.register_agent_continuation_adapter(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        adapter.clone(),
+    );
+    assert!(registration.success, "{:?}", registration.output);
+
+    post_fixture_message(
+        &fixture,
+        "same-generation carrier replacement work",
+        "push-app-transition-message",
+    );
+    let logical_wake_id = wake_id_for(&fixture.db, &fixture.receiver);
+    adapter.wait_until_preflight();
+
+    let runtime = fixture.runtime.clone();
+    let receiver = fixture.receiver.clone();
+    let endpoint = fixture.receiver_endpoint.clone();
+    let generation = fixture.receiver_generation;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = runtime.agent_continuation_bind(None, receiver, endpoint, generation);
+        tx.send(result).unwrap();
+    });
+
+    assert!(
+        matches!(
+            rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "same-generation MCP App replacement must not return while the old push carrier is inside dispatch"
+    );
+
+    adapter.release_preflight();
+    let bind = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("MCP App replacement should complete after the old push dispatch leaves its transition fence");
+    assert!(bind.success, "{:?}", bind.output);
+    assert_eq!(adapter.dispatch_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .db
+            .agent_wake(&logical_wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::DeliveryUnknown,
+        "replacing a carrier after its dispatch accepted path must preserve conservative post-fence uncertainty"
+    );
+
+    let binding_id = bind.output["_app_private"]["binding_id"]
+        .as_str()
+        .expect("replacement App binding id")
+        .to_string();
+    let acquired = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding_id,
+    );
+    assert!(
+        acquired["wake"].is_null(),
+        "the replacement App must not acquire a second Attempt for the unresolved post-fence Wake"
+    );
+}
+
+#[test]
+fn mcp_app_view_replacement_fences_pre_and_post_dispatch_without_second_lifecycle() {
+    let fixture = mcp_continuation_fixture("mcp-view-fence");
+    let first_binding = bind_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+    );
+    let private_body = "PRIVATE MCP App business message body";
+    post_fixture_message(&fixture, private_body, "mcp-view-fence-message");
+    let logical_wake_id = wake_id_for(&fixture.db, &fixture.receiver);
+
+    let first = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &first_binding,
+    );
+    assert_eq!(first["wake"]["wake_id"], logical_wake_id);
+    assert_eq!(first["wake"]["state"], "claimed");
+    let first_attempt = first["wake"]["attempt_id"].as_str().unwrap().to_string();
+
+    let second_binding = bind_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+    );
+    assert_ne!(first_binding, second_binding);
+    assert_eq!(
+        fixture
+            .db
+            .agent_wake(&logical_wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::Pending,
+        "replacing a pre-fence View must revoke its Attempt and safely recover the Wake"
+    );
+    let stale_state = fixture.runtime.agent_continuation_state(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        first_binding,
+    );
+    assert!(!stale_state.success);
+    assert_eq!(stale_state.output["error_kind"], "host_binding_stale");
+
+    let second = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &second_binding,
+    );
+    assert_eq!(second["wake"]["wake_id"], logical_wake_id);
+    let second_attempt = second["wake"]["attempt_id"].as_str().unwrap().to_string();
+    assert_ne!(first_attempt, second_attempt);
+    let (_prepared, automatic_message) = prepare_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &second_binding,
+        &logical_wake_id,
+        &second_attempt,
+    );
+    assert_eq!(
+        resume_field(&automatic_message, "agent_id"),
+        fixture.receiver
+    );
+    assert_eq!(
+        resume_field(&automatic_message, "endpoint_id"),
+        fixture.receiver_endpoint
+    );
+    assert_eq!(
+        resume_field(&automatic_message, "controller_generation"),
+        fixture.receiver_generation.to_string()
+    );
+    assert_eq!(resume_field(&automatic_message, "wake_id"), logical_wake_id);
+    assert!(resume_field(&automatic_message, "consume_token").starts_with("wc_wake_consume_"));
+    for private in [
+        private_body,
+        "PRIVATE receiver description",
+        "PRIVATE-receiver-label",
+        "claim_fence=",
+        "wc_commprincipal_",
+    ] {
+        assert!(
+            !automatic_message.contains(private),
+            "automatic continuation message leaked {private}"
+        );
+    }
+
+    let third_binding = bind_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+    );
+    assert_ne!(second_binding, third_binding);
+    assert_eq!(
+        fixture
+            .db
+            .agent_wake(&logical_wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::DeliveryUnknown,
+        "replacing a post-fence View must preserve conservative dispatch uncertainty"
+    );
+    let stale_finish = fixture.runtime.agent_continuation_wake_finish(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        second_binding,
+        logical_wake_id.clone(),
+        second_attempt,
+        "dispatch_accepted".to_string(),
+    );
+    assert!(!stale_finish.success);
+    assert_eq!(stale_finish.output["error_kind"], "host_binding_stale");
+    let blocked = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &third_binding,
+    );
+    assert!(
+        blocked["wake"].is_null(),
+        "an unresolved post-fence Wake must not manufacture a second model-turn Attempt"
+    );
+}
+
+#[test]
+fn mcp_app_consume_ack_race_and_teardown_preserve_exact_wake_semantics() {
+    let fixture = mcp_continuation_fixture("mcp-consume-race");
+    let binding = bind_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+    );
+    post_fixture_message(
+        &fixture,
+        "work for exact continuation",
+        "mcp-consume-race-message",
+    );
+    let wake_id = wake_id_for(&fixture.db, &fixture.receiver);
+    let acquired = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+    );
+    let attempt_id = acquired["wake"]["attempt_id"].as_str().unwrap().to_string();
+    let (_prepared, automatic_message) = prepare_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+        &wake_id,
+        &attempt_id,
+    );
+    let consume_token = resume_field(&automatic_message, "consume_token");
+
+    let wrong_token = fixture.runtime.consume_agent_wake(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        wake_id.clone(),
+        "wc_wake_consume_00000000000000000000000000000000".to_string(),
+    );
+    assert!(!wrong_token.success);
+    let wrong_generation = fixture.runtime.consume_agent_wake(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation + 1,
+        wake_id.clone(),
+        consume_token.clone(),
+    );
+    assert!(!wrong_generation.success);
+    let wrong_endpoint = fixture.runtime.consume_agent_wake(
+        None,
+        fixture.receiver.clone(),
+        fixture.sender_endpoint.clone(),
+        fixture.sender_generation,
+        wake_id.clone(),
+        consume_token.clone(),
+    );
+    assert!(!wrong_endpoint.success);
+
+    let consumed = fixture.runtime.consume_agent_wake(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        wake_id.clone(),
+        consume_token.clone(),
+    );
+    assert!(consumed.success, "{:?}", consumed.output);
+    assert_eq!(
+        fixture.db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Consumed
+    );
+
+    let late_ack = fixture.runtime.agent_continuation_wake_finish(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        binding.clone(),
+        wake_id.clone(),
+        attempt_id.clone(),
+        "dispatch_accepted".to_string(),
+    );
+    assert!(late_ack.success, "{:?}", late_ack.output);
+    assert_eq!(late_ack.output["continuation_consumed"], true);
+    assert_eq!(late_ack.output["wake_state"], "consumed");
+    let late_ack_retry = fixture.runtime.agent_continuation_wake_finish(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        binding,
+        wake_id.clone(),
+        attempt_id,
+        "dispatch_accepted".to_string(),
+    );
+    assert!(late_ack_retry.success, "{:?}", late_ack_retry.output);
+    assert_eq!(
+        fixture.db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Consumed,
+        "late/retried Host ACK must never regress a consumed Wake"
+    );
+
+    let replay = fixture.runtime.consume_agent_wake(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        wake_id,
+        consume_token,
+    );
+    assert!(replay.success, "{:?}", replay.output);
+}
+
+#[test]
+fn mcp_app_post_fence_unbind_is_unknown_but_exact_turn_can_still_consume() {
+    let fixture = mcp_continuation_fixture("mcp-unbind-race");
+    let binding = bind_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+    );
+    post_fixture_message(&fixture, "teardown race work", "mcp-unbind-race-message");
+    let wake_id = wake_id_for(&fixture.db, &fixture.receiver);
+    let acquired = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+    );
+    let attempt_id = acquired["wake"]["attempt_id"].as_str().unwrap().to_string();
+    let (_prepared, automatic_message) = prepare_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+        &wake_id,
+        &attempt_id,
+    );
+    let consume_token = resume_field(&automatic_message, "consume_token");
+    let unbound = fixture.runtime.agent_continuation_unbind(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        binding,
+    );
+    assert!(unbound.success, "{:?}", unbound.output);
+    assert_eq!(unbound.output["wake_capable"], false);
+    assert_eq!(
+        fixture.db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::DeliveryUnknown
+    );
+
+    let consumed = fixture.runtime.consume_agent_wake(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        wake_id.clone(),
+        consume_token,
+    );
+    assert!(
+        consumed.success,
+        "a turn already dispatched through mcp_app must remain exactly consumable after View teardown: {:?}",
+        consumed.output
+    );
+    assert_eq!(
+        fixture.db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Consumed
+    );
+}
+
+#[test]
+fn mcp_app_fifty_message_burst_coalesces_to_one_current_attempt() {
+    let fixture = mcp_continuation_fixture("mcp-burst");
+    let binding = bind_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+    );
+    for index in 0..50 {
+        post_fixture_message(
+            &fixture,
+            &format!("durable burst message {index}"),
+            &format!("mcp-burst-message-{index}"),
+        );
+    }
+    assert_eq!(count(&fixture.db, "wc_conversation_messages"), 50);
+    assert_eq!(count(&fixture.db, "wc_agent_deliveries"), 50);
+    assert_eq!(
+        count(&fixture.db, "wc_agent_wakes"),
+        1,
+        "all pending burst deliveries should coalesce into one logical Wake"
+    );
+    let first = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+    );
+    let replay = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+    );
+    assert_eq!(first["wake"]["wake_id"], replay["wake"]["wake_id"]);
+    assert_eq!(first["wake"]["attempt_id"], replay["wake"]["attempt_id"]);
+    assert_eq!(replay["wake"]["replayed"], true);
+    assert_eq!(count(&fixture.db, "wc_agent_wakes"), 1);
 }
 
 #[test]

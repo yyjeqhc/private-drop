@@ -25,6 +25,44 @@ pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
     )]
 }
 
+/// Fixed MCP App Host-continuation coordination contract. Definitions remain
+/// globally ModelHidden and deliberately stay outside the generic Stateless
+/// operator-extension universe: only the MCP Apps adapter may project them.
+pub fn agent_continuation_app_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        tool_spec(
+            "agent_continuation_bind",
+            "App-only bind of one live View to one exact freshly attached Durable Agent Endpoint generation. Re-authorizes communication:manage and replaces any older process-local Host carrier without creating durable continuation truth.",
+            super::input_schemas::agent_continuation_bind_input_schema(),
+        ),
+        tool_spec(
+            "agent_continuation_state",
+            "App-only exact Host heartbeat and sparse authoritative continuation-state refresh. Renews only the current exact Endpoint/View binding; stale Views fail closed.",
+            super::input_schemas::agent_continuation_state_input_schema(),
+        ),
+        tool_spec(
+            "agent_continuation_wake_acquire",
+            "App-only pre-fence acquire through the existing durable Wake claim state machine. Returns bounded safe identity only; claim fences and consume tokens remain private.",
+            super::input_schemas::agent_continuation_wake_acquire_input_schema(),
+        ),
+        tool_spec(
+            "agent_continuation_wake_prepare",
+            "App-only crossing of the existing durable dispatch fence immediately before one Host ui/message attempt. A successful result authorizes exactly one automatic Host dispatch for that Attempt; never retry blindly after this phase.",
+            super::input_schemas::agent_continuation_wake_prepare_input_schema(),
+        ),
+        tool_spec(
+            "agent_continuation_wake_finish",
+            "App-only record of ui/message dispatch acceptance or conservative post-fence delivery uncertainty. Dispatch acceptance never means model resumed; only exact consume_agent_wake proves the continuation turn ran.",
+            super::input_schemas::agent_continuation_wake_finish_input_schema(),
+        ),
+        tool_spec(
+            "agent_continuation_unbind",
+            "App-only best-effort withdrawal of one exact process-local View binding. Stale teardown cannot withdraw a replacement View; durable Wake reconciliation remains owned by the existing Endpoint/Wake state machine.",
+            super::input_schemas::agent_continuation_unbind_input_schema(),
+        ),
+    ]
+}
+
 /// Fixed admin-only forensic trace reader. It remains globally ModelHidden and
 /// is projected only by capable Stateless MCP 2026 operator adapters.
 pub fn operator_diagnostic_tool_specs() -> Vec<ToolSpec> {

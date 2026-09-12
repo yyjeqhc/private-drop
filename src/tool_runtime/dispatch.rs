@@ -2011,6 +2011,103 @@ impl ToolRuntime {
                 idempotency_key,
             ),
 
+            ToolCall::PresentAgentContinuation {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            } => self.present_agent_continuation(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            ),
+
+            ToolCall::AgentContinuationBind {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            } => self.agent_continuation_bind(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            ),
+
+            ToolCall::AgentContinuationState {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            } => self.agent_continuation_state(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            ),
+
+            ToolCall::AgentContinuationWakeAcquire {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            } => self.agent_continuation_wake_acquire(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            ),
+
+            ToolCall::AgentContinuationWakePrepare {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+                wake_id,
+                attempt_id,
+            } => self.agent_continuation_wake_prepare(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+                wake_id,
+                attempt_id,
+            ),
+
+            ToolCall::AgentContinuationWakeFinish {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+                wake_id,
+                attempt_id,
+                outcome,
+            } => self.agent_continuation_wake_finish(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+                wake_id,
+                attempt_id,
+                outcome,
+            ),
+
+            ToolCall::AgentContinuationUnbind {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            } => self.agent_continuation_unbind(
+                auth,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            ),
+
             ToolCall::DetachAgentEndpoint { endpoint_id } => {
                 self.detach_agent_endpoint(auth, endpoint_id)
             }
