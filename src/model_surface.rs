@@ -338,6 +338,8 @@ mod tests {
     const EXPECTED_ADAPTIVE_RUNTIME_DIRECT_TOOL_NAMES: &[&str] = &[
         "work_on_project",
         "session_discussion_summary",
+        "present_goal_plan",
+        "present_agent_continuation",
         "runtime_status",
         "plugin_tool",
         "tool_manifest",

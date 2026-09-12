@@ -517,6 +517,11 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
     let tools = compact_tools;
     let names: Vec<&str> = tools
         .iter()
+        .filter(|tool| {
+            tool.pointer("/_meta/ui/visibility")
+                .and_then(Value::as_array)
+                .is_none_or(|visibility| !visibility.iter().any(|value| value == "app"))
+        })
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
     let direct_names = crate::model_surface::adaptive_runtime_direct_tool_specs()
@@ -526,7 +531,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
     assert_eq!(
         names.len(),
         direct_names.len() + 1,
-        "adaptive surface should expose only the definition-derived direct set plus one gateway"
+        "adaptive model surface should expose only the definition-derived direct set plus one gateway"
     );
     assert_eq!(
         &names[..direct_names.len()],
