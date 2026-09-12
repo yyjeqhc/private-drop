@@ -1499,6 +1499,55 @@ mod computer_privacy_tests {
     }
 
     #[test]
+    fn agent_continuation_app_audit_omits_host_binding_and_resume_secrets() {
+        let args = json!({
+            "agent_id": "wc_agent_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "endpoint_id": "wc_endpoint_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expected_controller_generation": 7,
+            "binding_id": "wc_host_binding_PRIVATE_BINDING",
+            "wake_id": "wc_wake_cccccccccccccccccccccccccccccccc",
+            "attempt_id": "wc_wake_attempt_dddddddddddddddddddddddddddddddd"
+        });
+        let arguments =
+            session_log_arguments_for_tool_request("agent_continuation_wake_prepare", &args);
+        let arguments_text = serde_json::to_string(&arguments).unwrap();
+        assert_eq!(arguments["agent_id"], args["agent_id"]);
+        assert_eq!(arguments["wake_id"], args["wake_id"]);
+        assert!(!arguments_text.contains("PRIVATE_BINDING"));
+        assert!(!arguments_text.contains("binding_id"));
+
+        let result = json!({
+            "agent_id": args["agent_id"],
+            "endpoint_id": args["endpoint_id"],
+            "wake_id": args["wake_id"],
+            "attempt_id": args["attempt_id"],
+            "wake_revision": 9,
+            "dispatch_observation": "dispatch_prepared",
+            "state_changed": true,
+            "_app_private": {
+                "binding_id": "wc_host_binding_PRIVATE_BINDING",
+                "automatic_message": "consume_token=wc_wake_consume_PRIVATE_TOKEN\nPRIVATE MESSAGE BODY"
+            }
+        });
+        let projected = session_log_result_for_tool("agent_continuation_wake_prepare", &result);
+        let projected_text = serde_json::to_string(&projected).unwrap();
+        assert_eq!(projected["wake_id"], args["wake_id"]);
+        assert_eq!(projected["dispatch_observation"], "dispatch_prepared");
+        for forbidden in [
+            "PRIVATE_BINDING",
+            "PRIVATE_TOKEN",
+            "PRIVATE MESSAGE BODY",
+            "automatic_message",
+            "_app_private",
+        ] {
+            assert!(
+                !projected_text.contains(forbidden),
+                "audit leaked {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn computer_application_list_ledger_omits_names_ids_and_native_identity() {
         let output = json!({
             "applications": [{
@@ -3734,6 +3783,68 @@ impl ToolCall {
                     "idempotency_key": idempotency_key,
                 }),
             ),
+            Self::PresentAgentContinuation {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            }
+            | Self::AgentContinuationBind {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            }
+            | Self::AgentContinuationState {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                ..
+            }
+            | Self::AgentContinuationWakeAcquire {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                ..
+            }
+            | Self::AgentContinuationUnbind {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                ..
+            } => serde_json::json!({
+                "agent_id": agent_id,
+                "endpoint_id": endpoint_id,
+                "expected_controller_generation": expected_controller_generation,
+            }),
+            Self::AgentContinuationWakePrepare {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                wake_id,
+                attempt_id,
+                ..
+            } => serde_json::json!({
+                "agent_id": agent_id,
+                "endpoint_id": endpoint_id,
+                "expected_controller_generation": expected_controller_generation,
+                "wake_id": wake_id,
+                "attempt_id": attempt_id,
+            }),
+            Self::AgentContinuationWakeFinish {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                wake_id,
+                attempt_id,
+                outcome,
+                ..
+            } => serde_json::json!({
+                "agent_id": agent_id,
+                "endpoint_id": endpoint_id,
+                "expected_controller_generation": expected_controller_generation,
+                "wake_id": wake_id,
+                "attempt_id": attempt_id,
+                "outcome": outcome,
+            }),
             Self::DetachAgentEndpoint { endpoint_id } => typed_communication_request_audit(
                 CommunicationRequestAudit::DetachEndpoint,
                 &serde_json::json!({"endpoint_id": endpoint_id}),

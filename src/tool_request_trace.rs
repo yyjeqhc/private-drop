@@ -1566,6 +1566,21 @@ pub struct ToolRequestLifecycle {
     completed: AtomicBool,
 }
 
+fn tool_suppresses_payload_capture(tool_name: Option<&str>) -> bool {
+    matches!(
+        tool_name,
+        Some(
+            "read_tool_trace"
+                | "agent_continuation_bind"
+                | "agent_continuation_state"
+                | "agent_continuation_wake_acquire"
+                | "agent_continuation_wake_prepare"
+                | "agent_continuation_wake_finish"
+                | "agent_continuation_unbind"
+        )
+    )
+}
+
 impl ToolRequestLifecycle {
     pub fn new(
         prefix: &'static str,
@@ -1574,7 +1589,7 @@ impl ToolRequestLifecycle {
         method: impl Into<String>,
         tool_name: Option<String>,
     ) -> Self {
-        let suppress_payload_capture = tool_name.as_deref() == Some("read_tool_trace");
+        let suppress_payload_capture = tool_suppresses_payload_capture(tool_name.as_deref());
         let request_observed_at_ms = chrono::Utc::now().timestamp_millis();
         Self {
             prefix,
@@ -1621,7 +1636,7 @@ impl ToolRequestLifecycle {
     }
 
     pub fn set_tool_name(&mut self, tool_name: Option<String>) {
-        self.suppress_payload_capture = tool_name.as_deref() == Some("read_tool_trace");
+        self.suppress_payload_capture = tool_suppresses_payload_capture(tool_name.as_deref());
         self.tool_name = tool_name;
     }
 
@@ -2156,6 +2171,51 @@ mod tests {
         drop(guard);
         flush_full_trace_writer();
         assert!(payload_files(temp.path(), &trace_id).is_empty());
+    }
+
+    #[test]
+    fn agent_continuation_app_lifecycle_never_captures_host_binding_or_resume_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE", "full");
+        env.set(
+            "WEBCODEX_TOOL_REQUEST_TRACE_DIR",
+            temp.path().to_string_lossy().as_ref(),
+        );
+        env.set("WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES", "8388608");
+        reset_trace_store_accounting();
+
+        for tool_name in [
+            "agent_continuation_bind",
+            "agent_continuation_state",
+            "agent_continuation_wake_acquire",
+            "agent_continuation_wake_prepare",
+            "agent_continuation_wake_finish",
+            "agent_continuation_unbind",
+        ] {
+            let trace_id = Uuid::new_v4().to_string();
+            let guard = ToolRequestLifecycle::new(
+                "mcp",
+                trace_id.clone(),
+                "none",
+                "tools/call",
+                Some(tool_name.to_string()),
+            );
+            guard.capture_payload(
+                "raw_request",
+                &json!({"binding_id": "wc_host_binding_PRIVATE", "consume_token": "PRIVATE"}),
+            );
+            guard.capture_payload(
+                "final_response",
+                &json!({"automatic_message": "PRIVATE_RESUME_ENVELOPE"}),
+            );
+            drop(guard);
+            flush_full_trace_writer();
+            assert!(
+                payload_files(temp.path(), &trace_id).is_empty(),
+                "{tool_name} must suppress forensic payload capture"
+            );
+        }
     }
 
     #[test]

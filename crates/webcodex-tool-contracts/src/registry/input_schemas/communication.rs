@@ -7,6 +7,8 @@ const MESSAGE_ID_PATTERN: &str = "^wc_cmsg_[0-9a-f]{32}$";
 const DELIVERY_ID_PATTERN: &str = "^wc_delivery_[0-9a-f]{32}$";
 const WAKE_ID_PATTERN: &str = "^wc_wake_[0-9a-f]{32}$";
 const WAKE_CONSUME_TOKEN_PATTERN: &str = "^wc_wake_consume_[0-9a-f]{32}$";
+const WAKE_ATTEMPT_ID_PATTERN: &str = "^wc_wake_attempt_[0-9a-f]{32}$";
+const HOST_BINDING_ID_PATTERN: &str = "^wc_host_binding_[0-9a-f]{32}$";
 
 fn bounded_string(description: &str, max_length: usize) -> Value {
     json!({
@@ -178,6 +180,95 @@ pub fn attach_agent_endpoint_input_schema() -> Value {
         "required": ["agent_id", "host", "idempotency_key"],
         "additionalProperties": false
     })
+}
+
+fn exact_agent_endpoint_properties() -> Value {
+    json!({
+        "agent_id": canonical_id(AGENT_ID_PATTERN, "Exact durable Agent id; no current/recent Agent fallback is permitted."),
+        "endpoint_id": canonical_id(ENDPOINT_ID_PATTERN, "Exact current Agent Endpoint id."),
+        "expected_controller_generation": expected_controller_generation()
+    })
+}
+
+fn host_binding_id() -> Value {
+    canonical_id(
+        HOST_BINDING_ID_PATTERN,
+        "Opaque process-local MCP App View binding fence. Possession never grants communication authority.",
+    )
+}
+
+pub fn present_agent_continuation_input_schema() -> Value {
+    let exact = exact_agent_endpoint_properties();
+    json!({
+        "type": "object",
+        "properties": exact,
+        "required": ["agent_id", "endpoint_id", "expected_controller_generation"],
+        "additionalProperties": false
+    })
+}
+
+pub fn agent_continuation_bind_input_schema() -> Value {
+    present_agent_continuation_input_schema()
+}
+
+pub fn agent_continuation_state_input_schema() -> Value {
+    let mut properties = exact_agent_endpoint_properties();
+    properties["binding_id"] = host_binding_id();
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": ["agent_id", "endpoint_id", "expected_controller_generation", "binding_id"],
+        "additionalProperties": false
+    })
+}
+
+pub fn agent_continuation_wake_acquire_input_schema() -> Value {
+    agent_continuation_state_input_schema()
+}
+
+pub fn agent_continuation_wake_prepare_input_schema() -> Value {
+    let mut properties = exact_agent_endpoint_properties();
+    properties["binding_id"] = host_binding_id();
+    properties["wake_id"] = canonical_id(
+        WAKE_ID_PATTERN,
+        "Exact durable Wake acquired by this current Host binding.",
+    );
+    properties["attempt_id"] = canonical_id(
+        WAKE_ATTEMPT_ID_PATTERN,
+        "Exact durable Wake Delivery Attempt acquired by this current Host binding.",
+    );
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": [
+            "agent_id", "endpoint_id", "expected_controller_generation",
+            "binding_id", "wake_id", "attempt_id"
+        ],
+        "additionalProperties": false
+    })
+}
+
+pub fn agent_continuation_wake_finish_input_schema() -> Value {
+    let mut schema = agent_continuation_wake_prepare_input_schema();
+    schema["properties"]["outcome"] = json!({
+        "type": "string",
+        "enum": ["dispatch_accepted", "delivery_unknown"],
+        "description": "Host dispatch result after the durable fence. dispatch_accepted means only that ui/message returned success; delivery_unknown is required when post-fence delivery cannot be disproved."
+    });
+    schema["required"] = json!([
+        "agent_id",
+        "endpoint_id",
+        "expected_controller_generation",
+        "binding_id",
+        "wake_id",
+        "attempt_id",
+        "outcome"
+    ]);
+    schema
+}
+
+pub fn agent_continuation_unbind_input_schema() -> Value {
+    agent_continuation_state_input_schema()
 }
 
 pub fn detach_agent_endpoint_input_schema() -> Value {

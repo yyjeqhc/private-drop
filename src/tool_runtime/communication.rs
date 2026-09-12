@@ -186,6 +186,46 @@ fn serialized_success<T: Serialize>(value: T) -> ToolResult {
     }
 }
 
+fn agent_continuation_projection(
+    bootstrap: crate::db::AgentConversationBootstrapRecord,
+    binding: crate::agent_wake::AgentHostBindingStatus,
+    observation: Option<crate::agent_wake::McpAppHostBindingObservation>,
+) -> serde_json::Value {
+    let wake = bootstrap.wake.as_ref();
+    let dispatch_observation = observation.as_ref().and_then(|observation| {
+        if observation.active_wake_id.is_some() && wake.is_none() {
+            Some("continuation_consumed")
+        } else if observation.active_wake_id.as_deref() == wake.map(|wake| wake.wake_id.as_str()) {
+            observation.dispatch_phase.map(|phase| phase.as_str())
+        } else {
+            // A successor Wake must not inherit the previous Attempt's phase.
+            None
+        }
+    });
+    json!({
+        "agent_continuation": {
+            "version": 1,
+            "agent_id": bootstrap.acting_agent.agent_id,
+            "display_name": bootstrap.acting_agent.display_name,
+            "endpoint_id": bootstrap.endpoint.endpoint_id,
+            "controller_generation": bootstrap.endpoint.controller_generation,
+            "endpoint_lease_expires_at_unix_ms": bootstrap.endpoint.lease_expires_at_unix_ms,
+            "host_binding": {
+                "bound": binding.adapter_registered,
+                "adapter_kind": binding.adapter_kind,
+                "production_auto_resume_available": binding.production_auto_resume_available,
+            },
+            "wake": wake.map(|wake| json!({
+                "wake_id": wake.wake_id,
+                "state": wake.state,
+                "revision": wake.revision,
+            })),
+            "queued_delivery_count": bootstrap.inbox.queued_delivery_count,
+            "dispatch_observation": dispatch_observation,
+        }
+    })
+}
+
 impl ToolRuntime {
     pub(crate) fn create_agent_identity(
         &self,
@@ -402,6 +442,342 @@ impl ToolRuntime {
             Ok(endpoint) => serialized_success(json!({
                 "endpoint": endpoint,
                 "adapter_registered": false,
+                "state_changed": true,
+            })),
+            Err(error) => communication_error(error, RecoveryKind::Reconcile),
+        }
+    }
+
+    pub(crate) fn present_agent_continuation(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return communication_store_unavailable();
+        };
+        let bootstrap = match db.bootstrap_agent_conversation(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            None,
+            None,
+        ) {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+        };
+        let binding = self
+            .agent_continuations
+            .as_ref()
+            .map(|controller| {
+                controller.binding_status(&agent_id, &endpoint_id, expected_controller_generation)
+            })
+            .unwrap_or(crate::agent_wake::AgentHostBindingStatus {
+                adapter_registered: false,
+                adapter_kind: None,
+                production_auto_resume_available: false,
+            });
+        let observation = self.agent_continuations.as_ref().and_then(|controller| {
+            controller.mcp_app_binding_observation(
+                &agent_id,
+                &endpoint_id,
+                expected_controller_generation,
+            )
+        });
+        ToolResult::ok(agent_continuation_projection(
+            bootstrap,
+            binding,
+            observation,
+        ))
+    }
+
+    pub(crate) fn agent_continuation_bind(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return communication_store_unavailable();
+        };
+        let (_endpoint, binding_id) = match controller.register_mcp_app_binding(
+            principal.clone(),
+            agent_id.clone(),
+            endpoint_id.clone(),
+            expected_controller_generation,
+        ) {
+            Ok(result) => result,
+            Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+        };
+        let bootstrap = match db.bootstrap_agent_conversation(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            None,
+            None,
+        ) {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+        };
+        let binding =
+            controller.binding_status(&agent_id, &endpoint_id, expected_controller_generation);
+        let observation = controller.mcp_app_binding_observation(
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+        );
+        let mut output = agent_continuation_projection(bootstrap, binding, observation);
+        output["state_changed"] = json!(true);
+        output["_app_private"] = json!({"binding_id": binding_id});
+        ToolResult::ok(output)
+    }
+
+    pub(crate) fn agent_continuation_state(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return communication_store_unavailable();
+        };
+        let (_endpoint, observation) = match controller.mcp_app_binding_state(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            &binding_id,
+        ) {
+            Ok(result) => result,
+            Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+        };
+        let bootstrap = match db.bootstrap_agent_conversation(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            None,
+            // Observe the current unresolved Wake after the previous one is
+            // consumed. Keep the old claim in the controller for a late ACK;
+            // acquire retires it when the View actually takes the next Wake.
+            None,
+        ) {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+        };
+        let binding =
+            controller.binding_status(&agent_id, &endpoint_id, expected_controller_generation);
+        ToolResult::ok(agent_continuation_projection(
+            bootstrap,
+            binding,
+            Some(observation),
+        ))
+    }
+
+    pub(crate) fn agent_continuation_wake_acquire(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        match controller.acquire_mcp_app_wake(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            &binding_id,
+        ) {
+            Ok(acquisition) => {
+                let state_changed = acquisition
+                    .as_ref()
+                    .is_some_and(|acquisition| !acquisition.replayed);
+                ToolResult::ok(json!({
+                    "agent_id": agent_id,
+                    "endpoint_id": endpoint_id,
+                    "controller_generation": expected_controller_generation,
+                    "adapter_kind": crate::agent_wake::MCP_APP_CONTINUATION_ADAPTER_KIND,
+                    "wake": acquisition.map(|acquisition| json!({
+                        "wake_id": acquisition.wake_id,
+                        "attempt_id": acquisition.attempt_id,
+                        "state": acquisition.wake_state,
+                        "revision": acquisition.wake_revision,
+                        "queued_delivery_count": acquisition.queued_delivery_count,
+                        "inbox_high_watermark": acquisition.inbox_high_watermark,
+                        "dispatch_observation": acquisition.dispatch_phase.map(|phase| phase.as_str()),
+                        "replayed": acquisition.replayed,
+                    })),
+                    "state_changed": state_changed,
+                }))
+            }
+            Err(error) => communication_error(error, RecoveryKind::Reconcile),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn agent_continuation_wake_prepare(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+        wake_id: String,
+        attempt_id: String,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        match controller.prepare_mcp_app_wake(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            &binding_id,
+            &wake_id,
+            &attempt_id,
+        ) {
+            Ok(prepared) => ToolResult::ok(json!({
+                "agent_id": agent_id,
+                "endpoint_id": endpoint_id,
+                "controller_generation": expected_controller_generation,
+                "wake_id": prepared.wake_id,
+                "attempt_id": prepared.attempt_id,
+                "wake_revision": prepared.wake_revision,
+                "dispatch_observation": crate::agent_wake::McpAppDispatchPhase::Prepared.as_str(),
+                "state_changed": true,
+                "_app_private": {
+                    "automatic_message": prepared.automatic_message,
+                }
+            })),
+            Err(error) => communication_error(error, RecoveryKind::Reconcile),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn agent_continuation_wake_finish(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+        wake_id: String,
+        attempt_id: String,
+        outcome: String,
+    ) -> ToolResult {
+        let dispatch_accepted = match outcome.as_str() {
+            "dispatch_accepted" => true,
+            "delivery_unknown" => false,
+            _ => {
+                return ToolResult::err_with_output(
+                    "outcome must be dispatch_accepted or delivery_unknown",
+                    json!({
+                        "error_kind": "invalid_dispatch_outcome",
+                        "state_changed": false,
+                    }),
+                )
+                .with_recovery(RecoveryKind::FixInput, None)
+            }
+        };
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        match controller.finish_mcp_app_wake(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            &binding_id,
+            &wake_id,
+            &attempt_id,
+            dispatch_accepted,
+        ) {
+            Ok(finished) => ToolResult::ok(json!({
+                "agent_id": agent_id,
+                "endpoint_id": endpoint_id,
+                "controller_generation": expected_controller_generation,
+                "wake_id": finished.wake.wake_id,
+                "attempt_id": attempt_id,
+                "wake_state": finished.wake.state,
+                "wake_revision": finished.wake.revision,
+                "dispatch_observation": finished.dispatch_phase.as_str(),
+                "continuation_consumed": finished.wake.state == AgentWakeState::Consumed,
+                "state_changed": finished.state_changed,
+            })),
+            Err(error) => communication_error(error, RecoveryKind::Reconcile),
+        }
+    }
+
+    pub(crate) fn agent_continuation_unbind(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    ) -> ToolResult {
+        let principal = match communication_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(controller) = self.agent_continuations.as_ref() else {
+            return communication_store_unavailable();
+        };
+        match controller.unregister_mcp_app_binding(
+            &principal,
+            &agent_id,
+            &endpoint_id,
+            expected_controller_generation,
+            &binding_id,
+        ) {
+            Ok(endpoint) => serialized_success(json!({
+                "agent_id": agent_id,
+                "endpoint_id": endpoint.endpoint_id,
+                "controller_generation": endpoint.controller_generation,
+                "adapter_kind": crate::agent_wake::MCP_APP_CONTINUATION_ADAPTER_KIND,
+                "wake_capable": endpoint.wake_capable,
                 "state_changed": true,
             })),
             Err(error) => communication_error(error, RecoveryKind::Reconcile),

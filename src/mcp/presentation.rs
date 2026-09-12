@@ -23,6 +23,13 @@ pub(super) fn tool_supports_goal_plan_app(tool_name: &str) -> bool {
     tool_name == "present_goal_plan"
 }
 
+/// Dedicated Durable Agent continuation controller App binding. Only the
+/// explicit presentation entry creates a persistent card; app-only Host bridge
+/// calls deliberately have no resource binding and therefore create no cards.
+pub(super) fn tool_supports_agent_continuation_app(tool_name: &str) -> bool {
+    tool_name == "present_agent_continuation"
+}
+
 /// Bounded presentation projections retained for current milestone cards and for
 /// already-cached older tool descriptors. Projection support does not itself bind
 /// a new App card in tools/list.

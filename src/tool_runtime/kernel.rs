@@ -109,6 +109,10 @@ pub(crate) struct ToolProtocolCapabilities {
     /// Protocol-surface support for the ModelHidden Goal Plan App polling read.
     /// This never replaces canonical communication/Goal authorization.
     pub(crate) goal_plan_app: bool,
+    /// Protocol-surface support for ModelHidden MCP App Host-continuation
+    /// coordination. Canonical communication authorization and exact
+    /// process-local Host binding validation remain mandatory in the runtime.
+    pub(crate) agent_continuation_app: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,6 +281,7 @@ impl ToolRuntime {
                 memory_surface: false,
                 trace_diagnostics: false,
                 goal_plan_app: false,
+                agent_continuation_app: false,
             },
         )
         .await
@@ -358,6 +363,28 @@ impl ToolRuntime {
                 result: None,
                 error_status: Some(ToolCallErrorStatus::InvalidArguments {
                     message: "Goal Plan App state is available only on Stateless MCP 2026 App-enabled operator surfaces"
+                        .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+                correlation: Default::default(),
+            };
+        }
+        if matches!(
+            request.tool_name.as_str(),
+            "agent_continuation_bind"
+                | "agent_continuation_state"
+                | "agent_continuation_wake_acquire"
+                | "agent_continuation_wake_prepare"
+                | "agent_continuation_wake_finish"
+                | "agent_continuation_unbind"
+        ) && !capabilities.agent_continuation_app
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "Agent continuation App coordination is available only on Stateless MCP 2026 App-enabled operator surfaces"
                         .to_string(),
                 }),
                 project: None,

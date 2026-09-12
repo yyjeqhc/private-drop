@@ -127,23 +127,16 @@ Important current invariants:
 - A3 does not bind or dispatch an execution backend: starting a TaskAttempt does not
   create a CodingAgentRun, Job, Workflow Session, Wake, or Host callback.
 - process-local Host bindings are empty after restart; offline Messages, Deliveries,
-  and the same logical Wake remain durable until a new exact Endpoint generation
-  registers a callable adapter.
+  and the same logical Wake remain durable until a fresh/replacement exact Endpoint
+  generation registers a new live Host carrier.
 - project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
 - durable Goals are independent high-level intent/control truth; Goal identity, ownership, lifecycle, revision, and correlations grant no Project, Runner, filesystem, Workflow Session, AgentTaskAttempt, CodingAgentRun, or Job authority.
 
-No production ChatGPT auto-resume adapter currently exists in the repository. A
-September 2026 temporary MCP App probe did demonstrate that ChatGPT can accept an
-App `ui/message` continuation request and start a later model turn, including a
-bounded four-round autonomous loop while the View remained in the foreground. The
-same investigation also showed that Host acceptance does not prove immediate model
-execution: a background tab could continue App polling and reach dispatch-accepted
-state without starting the next turn. See
-[`../agent/mcp-app-continuation-experiments.md`](../agent/mcp-app-continuation-experiments.md).
-MCP 2026 Tasks, Connector continuation, and Runtime Console keep their existing exact
-polling/activation contracts; experimental Host behavior is not silently reused as
-a production callback. The controller boundary and fake adapter tests still prove
-dispatch semantics rather than production Host wake delivery.
+G3 adds an optional production ChatGPT MCP App Host carrier on top of this substrate. It is deliberately a pull bridge rather than a fake Server callback: one explicit `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)` card binds `ui://webcodex/agent-continuation/v1`, while ModelHidden app-only operations establish one exact process-local View binding, renew the exact Endpoint, acquire through the existing Wake claim state machine, cross the existing durable dispatch fence, and record Host dispatch acceptance or uncertainty. The View itself performs `ui/message` only after prepare succeeds. The process-local binding id fences duplicate/reloaded iframes but grants no authority and is not durable execution truth.
+
+Every bridge operation re-runs ordinary communication authorization and exact Agent/Endpoint/controller-generation validation. Bind additionally requires an Endpoint freshly attached in the current Server process; after restart an old Endpoint id cannot resurrect an old View. Replacing or withdrawing a View reuses existing wake-capability reconciliation: a pre-fence claim is revoked and the logical Wake returns to `pending`, while a prepared/delivered Attempt becomes `delivery_unknown`. The App never blindly resends after the dispatch fence. Host `ui/message` success means only `dispatch_accepted`; only later exact `consume_agent_wake` proves that a continuation model turn actually ran. A consume-before-ACK race is valid and late ACK is idempotent. Hidden/background Views heartbeat but do not initiate a new automatic Host dispatch, so Host scheduling remains best effort/non-immediate.
+
+MCP 2026 Tasks, Connector continuation, Runtime Console, explicit activation, and push `ContinuationAdapter` behavior retain their existing contracts. The MCP App is an optional carrier, not a scheduler or a source of Agent, Task, Goal, Project, Workflow Session, or execution authority. See [`../agent/mcp-app-continuation-experiments.md`](../agent/mcp-app-continuation-experiments.md) for the Host evidence and production mapping.
 
 These invariants, the natural-conversation slice, and the durable A3 ownership
 substrate support asynchronous Agent work without introducing a scheduler.
@@ -213,13 +206,17 @@ The projection is intentionally sparse: exact `goal_id`, bounded title/objective
 
 `goal_plan_state` is globally ModelHidden. A UI-capable Stateless MCP 2026 operator surface advertises it to the Host with MCP Apps `ui.visibility = ["app"]`; it is not part of the ordinary model tool universe, Adaptive gateway targets, REST runtime surface, or legacy MCP surface. The protocol-surface gate is not Goal authority: every polling call still derives the existing stable communication principal and independently performs the exact owner-scoped Goal read. App/iframe possession, ClientWindow, Project, Workflow Session, Conversation, credential transport state, and correlation do not select or authorize a Goal.
 
-The App receives exact `goal_id` and revision in the initial presentation result, polls the authoritative Store by that id, and avoids full DOM updates while revision is unchanged. Active cards converge again after foreground/visibility changes; terminal Goals stop periodic polling and retain a stable terminal presentation. Teardown/page unload stops timers. Refresh/reopen requires no localStorage or Server process-local Goal map: the rebuilt View can recover current state from the exact durable identity and SQLite truth. Multiple Views observing the same Goal are safe because both presentation tools are pure reads.
+The App receives exact `goal_id` and revision in the initial presentation result, polls the authoritative Store by that id after successful Host initialization, and avoids full DOM updates while revision is unchanged. Early results can render while initialization is pending. Active cards converge again after foreground/visibility changes; terminal Goals stop polling and retain a stable terminal presentation even if an older active notification arrives later. Teardown/page unload stops timers. Refresh/reopen requires no localStorage or Server process-local Goal map: the rebuilt View can recover current state from the exact durable identity and SQLite truth. Multiple Views observing the same Goal are safe because both presentation tools are pure reads.
 
 There is no stable Goal page in the Web UI yet, so G2 deliberately omits an `Open in WebCodex` link rather than emitting a dead or semantically incorrect URL.
 
-**G3 — production Host continuation adapter.** Add Host continuation only after this presentation identity/read path is stable. Reuse the existing durable Agent Endpoint / Wake / Wake Delivery Attempt controller generation, lease/dispatch fence, and exact consume semantics; do not invent a second continuation truth owned by Goal, App, iframe, or Job view. G2 contains no Wake, `ui/message`, model resume, dispatch fence, consume token, background model scheduler, or automatic Goal/work execution transition.
+**G3 — production Host continuation adapter.** G3 is now implemented for explicit Durable Agent Endpoints, independently of Goal. The public `present_agent_continuation` entry requires exact `agent_id`, `endpoint_id`, and `expected_controller_generation`; it does not infer a target from Goal, Workflow Session, Project, ClientWindow, credential, recent Agent, recent Task, or any other ambient state. The associated App bridge is available only on an App-enabled Stateless MCP 2026 operator-capable surface, where its hidden tools are projected with `ui.visibility = ["app"]`; they remain absent from the ordinary model universe, Local Coding, legacy MCP, REST/generic runtime and Adaptive gateway targets, with a kernel protocol-capability gate as the final backstop.
 
-These phase boundaries intentionally follow the [September 11–12, 2026 MCP App continuation findings](../agent/mcp-app-continuation-experiments.md): one persistent presentation should converge from server-owned state through bounded App-only refresh; Host dispatch acceptance is not the same as model resumption; and the temporary probe's in-memory timer/map state machine must not be copied into production.
+The durable lifecycle remains exactly the pre-existing Agent Endpoint / Wake / Wake Delivery Attempt lifecycle. The App View is only a live Host controller/carrier: `bind` establishes one current process-local View fence, `state` heartbeats and renews the exact Endpoint, `wake_acquire` delegates to the existing claim path, `wake_prepare` crosses the existing durable dispatch fence and revalidates exact binding, and `wake_finish` records only accepted/unknown Host dispatch outcome. Claim fence and binding secret are not durable/model-visible truth; the automatic message carries the exact consume token only through App-private MCP result metadata, not ordinary structured model content or audit/trace payloads. `dispatch_prepared`, `dispatch_accepted`, and `dispatch_unknown` are bounded Host observations, not new authoritative Wake states. Only exact durable `consume_agent_wake` establishes `continuation_consumed`.
+
+G3 does **not** connect the G1/G2 Goal domain to this carrier. Goal remains `active | completed | cancelled` high-level Control truth and `present_goal_plan` remains read-only presentation. No Goal revision/completion, AgentTask, Workflow Session, Job, Project, ClientWindow, or credential automatically creates or retargets a continuation. These boundaries follow the [September 11–12, 2026 MCP App continuation findings](../agent/mcp-app-continuation-experiments.md): one sparse card converges from authoritative state, Host acceptance is not model resumption, and background Host scheduling is not an immediate guarantee.
+
+The View starts binding only after successful Host initialization. It rechecks foreground visibility after asynchronous acquire/prepare calls; losing visibility after prepare records conservative uncertainty without sending `ui/message`. State refresh follows the current unresolved Wake after exact consumption, and never copies an older Attempt's dispatch phase onto its successor. The previous claim remains available for late ACK reconciliation until acquire takes the next Wake. The View finishes any pending ACK retry before acquiring a successor and retains only one Attempt's retry markers.
 
 ## Asynchronous Agent work
 

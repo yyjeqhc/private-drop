@@ -325,15 +325,20 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         .map(|spec| mcp_tool_spec_json(spec, compact, app_enabled))
         .collect::<Vec<_>>();
     if app_enabled && stateless_2026 && model_surface.supports_operator_extensions() {
-        let mut app_specs =
-            filter_specs_for_oauth(crate::tool_runtime::goal_plan_app_tool_specs(), auth)
+        let mut app_specs = filter_specs_for_oauth(
+            crate::tool_runtime::goal_plan_app_tool_specs()
                 .into_iter()
-                .map(|spec| {
-                    let mut value = mcp_tool_spec_json(spec, compact, false);
-                    attach_app_visibility(&mut value);
-                    value
-                })
-                .collect::<Vec<_>>();
+                .chain(crate::tool_runtime::agent_continuation_app_tool_specs())
+                .collect(),
+            auth,
+        )
+        .into_iter()
+        .map(|spec| {
+            let mut value = mcp_tool_spec_json(spec, compact, false);
+            attach_app_visibility(&mut value);
+            value
+        })
+        .collect::<Vec<_>>();
         tools.append(&mut app_specs);
     }
     json!({ "tools": tools })
@@ -445,7 +450,10 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
         return;
     };
     for tool in tools {
-        if tool.get("name").and_then(Value::as_str) == Some("goal_plan_state") {
+        let tool_name = tool.get("name").and_then(Value::as_str);
+        if tool_name == Some("goal_plan_state")
+            || tool_name.is_some_and(is_agent_continuation_app_tool_name)
+        {
             continue;
         }
         let accepts_context_ack = tool
@@ -563,6 +571,39 @@ fn attach_app_visibility(value: &mut Value) {
     ui.insert("visibility".to_string(), json!(["app"]));
 }
 
+fn is_agent_continuation_app_tool_name(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "agent_continuation_bind"
+            | "agent_continuation_state"
+            | "agent_continuation_wake_acquire"
+            | "agent_continuation_wake_prepare"
+            | "agent_continuation_wake_finish"
+            | "agent_continuation_unbind"
+    )
+}
+
+fn mcp_agent_continuation_app_result(tool_name: &str, mut result: ToolResult) -> Value {
+    let private = if is_agent_continuation_app_tool_name(tool_name) {
+        result
+            .output
+            .as_object_mut()
+            .and_then(|output| output.remove("_app_private"))
+    } else {
+        None
+    };
+    let mut value = mcp_runtime_tool_result_fallback(result);
+    if let Some(private) = private {
+        if let Some(meta) = tool_meta_object(&mut value) {
+            // MCP tool-result _meta is delivered to the App but not the model.
+            // This is the only wire location for the process-local binding id and
+            // the one-shot automatic continuation message containing consume_token.
+            meta.insert("webcodex/agentContinuation".to_string(), private);
+        }
+    }
+    value
+}
+
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
     if matches!(
@@ -614,6 +655,12 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
     }
     if app_enabled && presentation::tool_supports_goal_plan_app(&tool_name) {
         attach_app_metadata(&mut value, resources::MCP_GOAL_PLAN_UI_RESOURCE_URI);
+    }
+    if app_enabled && presentation::tool_supports_agent_continuation_app(&tool_name) {
+        attach_app_metadata(
+            &mut value,
+            resources::MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
+        );
     }
     value
 }
@@ -1603,11 +1650,16 @@ pub(super) async fn handle_call(
     // target's preferred exposure is gateway or direct.
     let goal_plan_app_surface =
         server_mcp_apps_enabled && stateless_2026 && model_surface.supports_operator_extensions();
+    let agent_continuation_app_surface =
+        server_mcp_apps_enabled && stateless_2026 && model_surface.supports_operator_extensions();
     let app_only_goal_plan_state = goal_plan_app_surface && params.name == "goal_plan_state";
+    let app_only_agent_continuation =
+        agent_continuation_app_surface && is_agent_continuation_app_tool_name(&params.name);
     let surface_denied = match model_surface {
         ModelSurface::LocalCoding => !LOCAL_CODING_TOOL_NAMES.contains(&params.name.as_str()),
         ModelSurface::AdaptiveRuntime => {
             !app_only_goal_plan_state
+                && !app_only_agent_continuation
                 && !via_adaptive_runtime_gateway
                 && !is_adaptive_runtime_direct_tool(&params.name)
         }
@@ -1744,6 +1796,7 @@ pub(super) async fn handle_call(
     let memory_surface_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let trace_diagnostics_capable = stateless_2026 && model_surface.supports_operator_extensions();
     let goal_plan_app_capable = goal_plan_app_surface;
+    let agent_continuation_app_capable = agent_continuation_app_surface;
     let context_request = if context_sidecar_capable {
         match strip_stateless_context_request(&mut params.arguments) {
             Ok(keys) => keys,
@@ -1813,6 +1866,7 @@ pub(super) async fn handle_call(
                 memory_surface: memory_surface_capable,
                 trace_diagnostics: trace_diagnostics_capable,
                 goal_plan_app: goal_plan_app_capable,
+                agent_continuation_app: agent_continuation_app_capable,
             },
         )
         .await;
@@ -1877,7 +1931,11 @@ pub(super) async fn handle_call(
     ) {
         resources::McpResourceToolResultAdaptation::Framed(value) => value,
         resources::McpResourceToolResultAdaptation::Unhandled(result) => {
-            mcp_runtime_tool_result_fallback(result)
+            if is_agent_continuation_app_tool_name(&params.name) {
+                mcp_agent_continuation_app_result(&params.name, result)
+            } else {
+                mcp_runtime_tool_result_fallback(result)
+            }
         }
     };
     if app_enabled {

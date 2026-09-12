@@ -950,7 +950,13 @@ impl Database {
                     "Agent Wake Attempt does not exist",
                 )
             })?;
-        if !endpoint.wake_capable && adapter_kind != "explicit_activation" {
+        // A model turn that already crossed a durable Host dispatch fence must
+        // remain exactly consumable even if the ephemeral Host carrier is torn
+        // down before the new turn observes the Wake. explicit_activation never
+        // requires Host capability; mcp_app may lose its View after prepare.
+        if !endpoint.wake_capable
+            && !matches!(adapter_kind.as_str(), "explicit_activation" | "mcp_app")
+        {
             return Err(CommunicationStoreError::new(
                 "endpoint_not_wake_capable",
                 "Agent Endpoint is not wake-capable",
@@ -1646,14 +1652,14 @@ fn wake_envelope(
     consume_token: &str,
 ) -> AgentWakeEnvelope {
     let resume_hint = format!(
-        "Agent {} has durable communication work pending.\n\nwake_id={}\nendpoint_id={}\ncontroller_generation={}\nqueued_delivery_count={}\ninbox_high_watermark={}\nconsume_token={}\n\nBefore completing this turn:\n1. bootstrap and verify the exact Agent / Endpoint generation;\n2. read the authoritative Agent Inbox and relevant Conversation;\n3. perform any needed work and post replies with the Wake-derived replay identity;\n4. consume the exact accepted Wake;\n5. separately consume only processed Delivery ids.",
+        "This is an exact WebCodex Durable Agent continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\n\nAuthoritative continuation contract:\n1. First call bootstrap_agent_conversation with this exact agent_id, endpoint_id, controller_generation, and wake_id; do not infer or retarget any identity from ambient Host, Project, Workflow Session, ClientWindow, credential, recent Agent, or recent Task state.\n2. Re-read durable work from list_agent_inbox and read_conversation as needed. This Host message intentionally contains no business Message body or transcript.\n3. Agent/Conversation authority grants communication authority only. It does not grant Project, Runner, filesystem, coding, Goal, Task, or Workflow Session authority; if coding work is needed, use the ordinary WebCodex authorization/project workflow.\n4. Consume this exact Wake with consume_agent_wake only after this model turn has actually taken over the continuation. Wake consumption and Delivery consumption are distinct; separately consume only Delivery ids actually processed.\n5. For Agent replies, keep using the existing wake_reply_id plus stable reply_operation_index replay contract.\n\nqueued_delivery_count={}\ninbox_high_watermark={}\n",
         wake.target_agent_id,
-        wake.wake_id,
         endpoint_id,
         controller_generation,
+        wake.wake_id,
+        consume_token,
         wake.queued_delivery_count_snapshot,
         wake.inbox_high_watermark,
-        consume_token,
     );
     AgentWakeEnvelope {
         wake_id: wake.wake_id.clone(),

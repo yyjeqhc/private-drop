@@ -42,6 +42,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let nextId = 1;
   let goalId = null;
   let lastRevision = 0;
+  let lastLifecycle = null;
+  let hostInitialized = false;
   let pollTimer = null;
   let pollInFlight = false;
   let tornDown = false;
@@ -109,7 +111,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   async function poll() {
-    if (tornDown || !goalId || pollInFlight) return;
+    if (tornDown || !hostInitialized || !goalId || lastLifecycle !== "active" || pollInFlight) return;
     pollInFlight = true;
     try {
       const response = await send("tools/call", { name: "goal_plan_state", arguments: { goal_id: goalId } });
@@ -117,11 +119,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       if (!plan || plan.goal_id !== goalId) throw new Error("Invalid Goal Plan state");
       if (plan.revision > lastRevision) {
         lastRevision = plan.revision;
+        lastLifecycle = plan.lifecycle;
         render(plan);
       } else if (plan.revision === lastRevision && plan.lifecycle === "active" && el("status").textContent === "State refresh pending") {
         el("status").textContent = "Tracking authoritative Goal state";
       }
-      if (plan.lifecycle !== "active") stopPolling();
+      if (lastLifecycle !== "active") stopPolling();
     } catch (_) {
       if (!tornDown) el("status").textContent = "State refresh pending";
     } finally {
@@ -129,21 +132,23 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     }
   }
 
-  function ensurePolling(plan) {
-    if (plan.lifecycle !== "active" || tornDown) return stopPolling();
+  function ensurePolling() {
+    if (!hostInitialized || lastLifecycle !== "active" || tornDown) return stopPolling();
     if (pollTimer === null) pollTimer = setInterval(poll, POLL_MS);
   }
 
   function acceptInitial(result) {
+    if (tornDown) return;
     const plan = extractPlan(result);
     if (!plan) return;
     if (goalId && goalId !== plan.goal_id) return;
     goalId = plan.goal_id;
-    if (plan.revision >= lastRevision) {
+    if (plan.revision > lastRevision) {
       lastRevision = plan.revision;
+      lastLifecycle = plan.lifecycle;
       render(plan);
     }
-    ensurePolling(plan);
+    ensurePolling();
   }
 
   function teardown() {
@@ -187,7 +192,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   addEventListener("beforeunload", teardown, { once: true });
 
   send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "1.0.0" }, appCapabilities: {} })
-    .then(() => notify("ui/notifications/initialized", {}))
+    .then(() => {
+      if (tornDown) return;
+      hostInitialized = true;
+      notify("ui/notifications/initialized", {});
+      ensurePolling();
+    })
     .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
 })();
 </script>

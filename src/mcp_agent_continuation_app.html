@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>WebCodex Agent Continuation</title>
+<style>
+:root { color-scheme: light dark; font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
+.card { display: grid; gap: 9px; }
+.header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.badge { padding: 2px 7px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.meta { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 14px; font-size: 12px; color: color-mix(in srgb, CanvasText 72%, transparent); }
+.meta b { color: CanvasText; font-weight: 600; overflow-wrap: anywhere; }
+.status { min-height: 1.4em; font-size: 11px; color: color-mix(in srgb, CanvasText 60%, transparent); }
+</style>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <div class="header"><h1 id="agent">Agent</h1><span id="binding" class="badge">Initializing</span></div>
+  <div class="meta">
+    <span>Endpoint generation <b id="generation">—</b></span>
+    <span>Controller <b id="visibility">Foreground</b></span>
+    <span>Wake <b id="wake">None</b></span>
+    <span>Queued deliveries <b id="queued">0</b></span>
+    <span>Wake revision <b id="revision">—</b></span>
+    <span>Dispatch <b id="dispatch">Idle</b></span>
+  </div>
+  <div id="status" class="status">Waiting for authoritative continuation state…</div>
+</main>
+<script>
+(() => {
+  "use strict";
+  const APP_PROTOCOL = "2026-01-26";
+  const AGENT_ID = /^wc_dagent_[0-9a-f]{32}$/;
+  const ENDPOINT_ID = /^wc_endpoint_[0-9a-f]{32}$/;
+  const WAKE_ID = /^wc_wake_[0-9a-f]{32}$/;
+  const ATTEMPT_ID = /^wc_wake_attempt_[0-9a-f]{32}$/;
+  const BINDING_ID = /^wc_host_binding_[0-9a-f]{32}$/;
+  const CALL_TIMEOUT_MS = 10000;
+  const VISIBLE_POLL_MS = 3000;
+  const HIDDEN_HEARTBEAT_MS = 15000;
+  const DISPATCH_STATES = new Set(["dispatch_prepared", "dispatch_accepted", "dispatch_unknown", "continuation_consumed"]);
+  let nextId = 1;
+  let identity = null;
+  let bindingId = null;
+  let timer = null;
+  let coordinationInFlight = false;
+  let hostInitialized = false;
+  let bindingStarted = false;
+  let tornDown = false;
+  const pending = new Map();
+  // Coordination is serial and the Server owns one current claim per binding.
+  // Retain only that Attempt's local delivery/retry markers across polls.
+  let dispatchStarted = null;
+  let prepareUncertain = null;
+  let pendingFinish = null;
+  const el = id => document.getElementById(id);
+
+  function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
+    if (tornDown) return Promise.reject(new Error("App torn down"));
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error("Host request timed out"));
+      }, timeoutMs);
+      pending.set(id, { resolve, reject, timeout });
+      parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+    });
+  }
+
+  function notify(method, params) {
+    if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+  }
+
+  function outputOf(result) {
+    const structured = result && (result.structuredContent || result.structured_content || result);
+    return structured && (structured.output || structured);
+  }
+
+  function toolCallSucceeded(result) {
+    const structured = result && (result.structuredContent || result.structured_content);
+    return !!(structured && structured.success === true);
+  }
+
+  function privateContinuationMeta(result) {
+    const meta = result && result._meta;
+    const value = meta && meta["webcodex/agentContinuation"];
+    return value && typeof value === "object" ? value : null;
+  }
+
+  function validProjection(value) {
+    if (!value || typeof value !== "object" || value.version !== 1) return null;
+    if (!AGENT_ID.test(value.agent_id || "") || !ENDPOINT_ID.test(value.endpoint_id || "")) return null;
+    if (!Number.isSafeInteger(value.controller_generation) || value.controller_generation < 1) return null;
+    if (typeof value.display_name !== "string" || value.display_name.length === 0) return null;
+    if (!Number.isSafeInteger(value.queued_delivery_count) || value.queued_delivery_count < 0) return null;
+    if (value.dispatch_observation !== null && !DISPATCH_STATES.has(value.dispatch_observation)) return null;
+    if (value.wake !== null) {
+      if (!value.wake || !WAKE_ID.test(value.wake.wake_id || "")) return null;
+      if (!Number.isSafeInteger(value.wake.revision) || value.wake.revision < 1) return null;
+      if (!["pending", "claimed", "prepared", "delivered", "delivery_unknown"].includes(value.wake.state)) return null;
+    }
+    return value;
+  }
+
+  function projectionOf(result) {
+    const output = outputOf(result);
+    return validProjection(output && output.agent_continuation);
+  }
+
+  function exactArgs(extra = {}) {
+    return Object.assign({
+      agent_id: identity.agent_id,
+      endpoint_id: identity.endpoint_id,
+      expected_controller_generation: identity.controller_generation,
+    }, extra);
+  }
+
+  async function callTool(name, args) {
+    return request("tools/call", { name, arguments: args });
+  }
+
+  function dispatchLabel(value) {
+    switch (value) {
+      case "dispatch_prepared": return "Prepared";
+      case "dispatch_accepted": return "Accepted by Host";
+      case "dispatch_unknown": return "Delivery unknown";
+      case "continuation_consumed": return "Continuation consumed";
+      default: return "Idle";
+    }
+  }
+
+  function render(projection) {
+    el("agent").textContent = projection.display_name;
+    el("generation").textContent = String(projection.controller_generation);
+    el("binding").textContent = projection.host_binding && projection.host_binding.bound ? "Host bound" : "Host unbound";
+    el("visibility").textContent = document.hidden ? "Background" : "Foreground";
+    el("queued").textContent = String(projection.queued_delivery_count);
+    el("wake").textContent = projection.wake ? projection.wake.state : "None";
+    el("revision").textContent = projection.wake ? String(projection.wake.revision) : "—";
+    el("dispatch").textContent = dispatchLabel(projection.dispatch_observation);
+    if (projection.dispatch_observation === "continuation_consumed") {
+      el("status").textContent = "Exact durable Wake was consumed by a continuation model turn";
+    } else if (document.hidden) {
+      el("status").textContent = "Background controller: heartbeat only; automatic Host dispatch is deferred";
+    } else if (projection.wake) {
+      el("status").textContent = "Reconciling authoritative durable Wake state";
+    } else {
+      el("status").textContent = "Host carrier live; no pending durable Wake";
+    }
+  }
+
+  function scheduleNext() {
+    if (tornDown) return;
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => { void reconcile(); }, document.hidden ? HIDDEN_HEARTBEAT_MS : VISIBLE_POLL_MS);
+  }
+
+  async function bind() {
+    const response = await callTool("agent_continuation_bind", exactArgs());
+    const projection = projectionOf(response);
+    const privateMeta = privateContinuationMeta(response);
+    if (!projection || !privateMeta || !BINDING_ID.test(privateMeta.binding_id || "")) {
+      throw new Error("Invalid Host binding response");
+    }
+    bindingId = privateMeta.binding_id;
+    render(projection);
+  }
+
+  async function heartbeat() {
+    const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
+    const projection = projectionOf(response);
+    if (!projection) throw new Error("Invalid continuation state");
+    render(projection);
+    return projection;
+  }
+
+  async function finishAttempt(wake, outcome) {
+    const args = exactArgs({
+      binding_id: bindingId,
+      wake_id: wake.wake_id,
+      attempt_id: wake.attempt_id,
+      outcome,
+    });
+    try {
+      const response = await callTool("agent_continuation_wake_finish", args);
+      if (!toolCallSucceeded(response)) throw new Error("Continuation finish was not accepted");
+      pendingFinish = null;
+      return true;
+    } catch (_) {
+      if (!tornDown) pendingFinish = { wake, outcome };
+      return false;
+    }
+  }
+
+  async function retryPendingFinish() {
+    const entry = pendingFinish;
+    if (!entry) return;
+    await finishAttempt(entry.wake, entry.outcome);
+  }
+
+  function validAcquiredWake(value) {
+    if (!value || typeof value !== "object") return null;
+    if (!WAKE_ID.test(value.wake_id || "") || !ATTEMPT_ID.test(value.attempt_id || "")) return null;
+    if (!Number.isSafeInteger(value.revision) || value.revision < 1) return null;
+    return value;
+  }
+
+  async function acquire() {
+    const response = await callTool("agent_continuation_wake_acquire", exactArgs({ binding_id: bindingId }));
+    if (!toolCallSucceeded(response)) throw new Error("Continuation acquire was not accepted");
+    const output = outputOf(response);
+    return validAcquiredWake(output && output.wake);
+  }
+
+  async function prepare(wake) {
+    const response = await callTool("agent_continuation_wake_prepare", exactArgs({
+      binding_id: bindingId,
+      wake_id: wake.wake_id,
+      attempt_id: wake.attempt_id,
+    }));
+    const output = outputOf(response);
+    const privateMeta = privateContinuationMeta(response);
+    if (!output || output.dispatch_observation !== "dispatch_prepared" || !privateMeta || typeof privateMeta.automatic_message !== "string" || privateMeta.automatic_message.length === 0) {
+      throw new Error("Invalid prepared continuation envelope");
+    }
+    return privateMeta.automatic_message;
+  }
+
+  async function dispatchWake(wake) {
+    if (dispatchStarted === wake.attempt_id || prepareUncertain === wake.attempt_id) return;
+    let automaticMessage;
+    try {
+      automaticMessage = await prepare(wake);
+    } catch (_) {
+      // A timed-out prepare may already have crossed the durable dispatch fence.
+      // Never guess and never call ui/message without the returned exact envelope.
+      prepareUncertain = wake.attempt_id;
+      try {
+        const projection = await heartbeat();
+        if (projection.dispatch_observation === "dispatch_prepared") {
+          await finishAttempt(wake, "delivery_unknown");
+        }
+      } catch (_) {}
+      return;
+    }
+
+    if (tornDown) return;
+    if (document.hidden) {
+      // Visibility may change while prepare is in flight. The fence already
+      // crossed, so reconcile conservatively without sending a background turn.
+      await finishAttempt(wake, "delivery_unknown");
+      return;
+    }
+
+    // This process-local marker is set before the Host call. Reload/loss cannot
+    // cause a blind resend: replacement binding reconciles prepared -> unknown.
+    dispatchStarted = wake.attempt_id;
+    let outcome = "delivery_unknown";
+    try {
+      await request("ui/message", {
+        role: "user",
+        content: [{ type: "text", text: automaticMessage }],
+      });
+      outcome = "dispatch_accepted";
+    } catch (_) {
+      // After prepare, rejection/timeout/background loss is conservatively unknown.
+    }
+    await finishAttempt(wake, outcome);
+  }
+
+  async function reconcile() {
+    if (tornDown || !identity || !bindingId || coordinationInFlight) return scheduleNext();
+    coordinationInFlight = true;
+    try {
+      await retryPendingFinish();
+      const projection = await heartbeat();
+      // Acquiring a successor retires the old Server-side claim. Reconcile its
+      // pending ACK first while still renewing the Endpoint on every poll.
+      if (document.hidden || pendingFinish) return;
+      if (!projection.wake || projection.dispatch_observation === "continuation_consumed") return;
+      const wake = await acquire();
+      if (!wake || document.hidden || tornDown) return;
+      if (wake.dispatch_observation === "dispatch_accepted" || wake.dispatch_observation === "dispatch_unknown") return;
+      if (wake.dispatch_observation === "dispatch_prepared") {
+        // A prepared Attempt without this View's pre-call marker is never resent.
+        if (dispatchStarted !== wake.attempt_id) {
+          await finishAttempt(wake, "delivery_unknown");
+        }
+        return;
+      }
+      await dispatchWake(wake);
+    } catch (_) {
+      if (!tornDown) el("status").textContent = "Host reconciliation pending; durable Wake remains authoritative";
+    } finally {
+      coordinationInFlight = false;
+      scheduleNext();
+    }
+  }
+
+  function acceptInitial(result) {
+    const projection = projectionOf(result);
+    if (!projection || identity || tornDown) return;
+    identity = {
+      agent_id: projection.agent_id,
+      endpoint_id: projection.endpoint_id,
+      controller_generation: projection.controller_generation,
+    };
+    render(projection);
+    void startBinding();
+  }
+
+  async function startBinding() {
+    if (!hostInitialized || !identity || bindingStarted || tornDown) return;
+    bindingStarted = true;
+    try {
+      await bind();
+      void reconcile();
+    } catch (_) {
+      if (!tornDown) el("status").textContent = "Host binding unavailable; durable Agent state is unchanged";
+    }
+  }
+
+  function bestEffortUnbind() {
+    if (!identity || !bindingId || tornDown) return;
+    const id = nextId++;
+    parent.postMessage({
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: {
+        name: "agent_continuation_unbind",
+        arguments: exactArgs({ binding_id: bindingId }),
+      },
+    }, "*");
+  }
+
+  function teardown() {
+    if (tornDown) return;
+    bestEffortUnbind();
+    tornDown = true;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timeout);
+      entry.reject(new Error("App torn down"));
+    }
+    pending.clear();
+  }
+
+  addEventListener("message", event => {
+    if (event.source !== parent) return;
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (Object.prototype.hasOwnProperty.call(msg, "id") && pending.has(msg.id)) {
+      const entry = pending.get(msg.id);
+      pending.delete(msg.id);
+      clearTimeout(entry.timeout);
+      if (msg.error) entry.reject(new Error(String(msg.error.message || "Host error")));
+      else entry.resolve(msg.result);
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-result") {
+      void acceptInitial(msg.params);
+      return;
+    }
+    if (msg.method === "ui/resource-teardown") {
+      teardown();
+      if (Object.prototype.hasOwnProperty.call(msg, "id")) {
+        parent.postMessage({ jsonrpc: "2.0", id: msg.id, result: {} }, "*");
+      }
+    }
+  });
+
+  addEventListener("visibilitychange", () => {
+    el("visibility").textContent = document.hidden ? "Background" : "Foreground";
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    if (!document.hidden) void reconcile(); else scheduleNext();
+  });
+  addEventListener("pagehide", teardown, { once: true });
+  addEventListener("beforeunload", teardown, { once: true });
+
+  request("ui/initialize", {
+    protocolVersion: APP_PROTOCOL,
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "1.0.0" },
+    appCapabilities: {},
+  }).then(() => {
+    if (tornDown) return;
+    hostInitialized = true;
+    notify("ui/notifications/initialized", {});
+    void startBinding();
+  })
+    .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
+})();
+</script>
+</body>
+</html>
