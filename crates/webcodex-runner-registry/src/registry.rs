@@ -73,6 +73,8 @@ pub struct RunnerRegistry {
     pub(crate) shared_key_limits: SharedKeyRegistrationLimits,
     pub(crate) telemetry: Arc<dyn RunnerRegistryTelemetry>,
     pub(crate) cleanup_intents: Arc<StdMutex<HashMap<String, Option<RunnerAccess>>>>,
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub(crate) project_job_scan_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Default for RunnerRegistry {
@@ -89,7 +91,15 @@ impl RunnerRegistry {
             shared_key_limits: SharedKeyRegistrationLimits::default(),
             telemetry,
             cleanup_intents: Arc::new(StdMutex::new(HashMap::new())),
+            #[cfg(any(test, feature = "root-test-support"))]
+            project_job_scan_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn project_job_scan_count_for_test(&self) -> usize {
+        self.project_job_scan_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[cfg(any(test, feature = "root-test-support"))]

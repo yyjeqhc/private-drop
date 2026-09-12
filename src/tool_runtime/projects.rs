@@ -203,6 +203,14 @@ impl ToolRuntime {
             candidates.truncate(limit);
         }
         let truncated = candidates.len() < matched_count;
+        let project_ids: Vec<&str> = candidates
+            .iter()
+            .map(|candidate| candidate.runtime_id.as_str())
+            .collect();
+        let active_jobs_by_project = self
+            .runner_registry
+            .count_active_jobs_for_projects(access.as_ref(), &project_ids)
+            .await;
 
         let mut list = Vec::with_capacity(candidates.len());
         for ProjectCandidate {
@@ -211,10 +219,9 @@ impl ToolRuntime {
             project_index,
         } in candidates
         {
-            // Extract only one selected Project and the small Runner fields used by
-            // its projection before awaiting Job state. Candidate staging above
-            // never owns or clones a RunnerView (and therefore never clones
-            // the Runner's complete projects Vec per match).
+            // Extract only one selected Project and its small Runner projection.
+            // Candidate staging never clones a Runner's complete project inventory;
+            // Job counts above share one authorized registry snapshot.
             let (
                 client_id,
                 runner_status,
@@ -245,10 +252,10 @@ impl ToolRuntime {
                     smoke_project_capabilities(client, project),
                 )
             };
-            let active_jobs = self
-                .runner_registry
-                .count_active_jobs_for_project(access.as_ref(), &runtime_id)
-                .await;
+            let active_jobs = active_jobs_by_project
+                .get(&runtime_id)
+                .copied()
+                .unwrap_or(0);
             let value = if options.summary_only {
                 json!({
                     "id": runtime_id,
