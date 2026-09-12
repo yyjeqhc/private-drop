@@ -88,7 +88,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::WorkspaceReview).diff_review(super::ToolDiffReviewEvidence::ArgumentBool("include_diff")),
             ),
-            "Default inspect/review tool before final response. Read-only worktree overview with bounded hunks. If hunks truncate, diff_review_handoff classifies page/line/mixed truncation and provides a parser-ready git_diff_hunks recovery call.",
+            "Default inspect/review tool before final response. Read-only worktree overview with bounded hunks and compact Session signals; recent Session event history is omitted unless session_event_limit is explicitly positive. If hunks truncate, diff_review_handoff classifies page/line/mixed truncation and provides a parser-ready git_diff_hunks recovery call.",
             show_changes_input_schema,
         )))),
         130,

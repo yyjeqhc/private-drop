@@ -51,7 +51,7 @@ const SHOW_CHANGES_MAX_HUNK_LINES: usize = 240;
 // Keep overview context materially below the default per-hunk line ceiling so
 // ordinary small mid-file edits remain decision-complete in show_changes.
 const SHOW_CHANGES_DIFF_CONTEXT_LINES: usize = 20;
-const SHOW_CHANGES_DEFAULT_SESSION_EVENT_LIMIT: usize = 30;
+const SHOW_CHANGES_SESSION_SIGNAL_EVENT_LIMIT: usize = 30;
 const SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT: usize = 200;
 /// Maximum number of changed-file records `show_changes` emits on the
 /// production side. The total count stays exact (all entries are counted); only
@@ -1923,6 +1923,7 @@ pub(crate) fn apply_show_changes_session(
     output: &mut Value,
     session_id: Option<&str>,
     summary: Option<SessionSummary>,
+    recent_events_limit: Option<usize>,
 ) {
     let Some(session_id) = session_id else {
         output["session"] = Value::Null;
@@ -1932,11 +1933,13 @@ pub(crate) fn apply_show_changes_session(
     let session_signals = match summary {
         Some(summary) => {
             let changed_paths = session_changed_paths(&summary.events);
-            let recent_events: Vec<Value> = summary
-                .events
-                .iter()
-                .map(show_changes_session_event)
-                .collect();
+            let recent_events = recent_events_limit.filter(|limit| *limit > 0).map(|limit| {
+                let start = summary.events.len().saturating_sub(limit);
+                summary.events[start..]
+                    .iter()
+                    .map(show_changes_session_event)
+                    .collect::<Vec<_>>()
+            });
             let signals = SessionActionSignals {
                 failed: summary.counts.failed > 0,
                 write_like: summary.counts.write_like > 0,
@@ -1951,8 +1954,15 @@ pub(crate) fn apply_show_changes_session(
                 "updated_at": summary.updated_at,
                 "counts": summary.counts,
                 "changed_paths": changed_paths,
-                "recent_events": recent_events,
+                "signals": {
+                    "failed": signals.failed,
+                    "write_like": signals.write_like,
+                    "shell_like": signals.shell_like,
+                },
             });
+            if let Some(recent_events) = recent_events {
+                output["session"]["recent_events"] = json!(recent_events);
+            }
             Some(signals)
         }
         None => {
@@ -4706,9 +4716,11 @@ impl ToolRuntime {
             .filter(|n| *n > 0)
             .unwrap_or(SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES)
             .min(SHOW_CHANGES_MAX_HUNK_LINES);
-        let session_event_limit = session_event_limit
-            .filter(|n| *n > 0)
-            .unwrap_or(SHOW_CHANGES_DEFAULT_SESSION_EVENT_LIMIT)
+        let recent_events_limit = session_event_limit
+            .unwrap_or(0)
+            .min(SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT);
+        let session_summary_limit = recent_events_limit
+            .max(SHOW_CHANGES_SESSION_SIGNAL_EVENT_LIMIT)
             .min(SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT);
         let command = show_changes_command(include_diff, max_hunks, max_hunk_lines);
         let output = match self
@@ -4740,8 +4752,13 @@ impl ToolRuntime {
             );
             let session_summary = session_id
                 .as_deref()
-                .and_then(|id| self.sessions.summary(id, Some(session_event_limit)));
-            apply_show_changes_session(&mut payload, session_id.as_deref(), session_summary);
+                .and_then(|id| self.sessions.summary(id, Some(session_summary_limit)));
+            apply_show_changes_session(
+                &mut payload,
+                session_id.as_deref(),
+                session_summary,
+                (recent_events_limit > 0).then_some(recent_events_limit),
+            );
             return ToolResult::ok(payload);
         }
         let status_observed = status_observation.status_observed();
@@ -4768,8 +4785,13 @@ impl ToolRuntime {
         }
         let session_summary = session_id
             .as_deref()
-            .and_then(|id| self.sessions.summary(id, Some(session_event_limit)));
-        apply_show_changes_session(&mut payload, session_id.as_deref(), session_summary);
+            .and_then(|id| self.sessions.summary(id, Some(session_summary_limit)));
+        apply_show_changes_session(
+            &mut payload,
+            session_id.as_deref(),
+            session_summary,
+            (recent_events_limit > 0).then_some(recent_events_limit),
+        );
         // Success requires the command/result envelope, status, diff-stat, and
         // (when requested) full diff inspections all to be proven successful.
         // `transport_safe` is a legacy field name: it describes bounded
