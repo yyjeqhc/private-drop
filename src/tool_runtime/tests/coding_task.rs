@@ -133,7 +133,18 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     assert!(work_props["base_ref"]["description"]
         .as_str()
         .is_some_and(|description| description.contains("Runner resolves")));
-    assert!(work.description.contains("managed worktree"));
+    for phrase in [
+        "mode=worktree",
+        "exact Git base",
+        "isolated worktree",
+        "Project authority",
+    ] {
+        assert!(
+            work.description.contains(phrase),
+            "work_on_project description should retain {phrase}: {}",
+            work.description
+        );
+    }
     let work_output = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
     assert!(work_output["properties"]["output"]["properties"]
         .as_object()
