@@ -170,7 +170,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v2"
+        "ui://webcodex/agent-continuation/v3"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -220,7 +220,12 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
     }
     assert_eq!(
         tool(&ui["result"], "agent_continuation_bind").unwrap()["inputSchema"]["required"],
-        json!(["agent_id", "endpoint_id", "expected_controller_generation"])
+        json!([
+            "agent_id",
+            "endpoint_id",
+            "expected_controller_generation",
+            "binding_id"
+        ])
     );
     assert_eq!(
         tool(&ui["result"], "agent_continuation_wake_prepare").unwrap()["inputSchema"]["required"],
@@ -340,10 +345,14 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         .as_array()
         .unwrap()
         .iter()
-        .any(|resource| resource["uri"] == "ui://webcodex/agent-continuation/v1"));
+        .any(|resource| matches!(
+            resource["uri"].as_str(),
+            Some("ui://webcodex/agent-continuation/v1" | "ui://webcodex/agent-continuation/v2")
+        )));
     for uri in [
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
         "ui://webcodex/agent-continuation/v1",
+        "ui://webcodex/agent-continuation/v2",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -423,7 +432,8 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
 }
 
 #[tokio::test]
-async fn app_private_binding_and_consume_envelope_never_enter_structured_content() {
+async fn agent_continuation_app_protocol_uses_standard_result_without_model_projection_leaks() {
+    let binding_id = format!("wc_host_binding_{}", "a".repeat(32));
     let (_temp, _db, runtime) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let owner = continuation_auth("continuation-owner");
     let foreign = continuation_auth("continuation-foreign");
@@ -497,7 +507,8 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
-                    "expected_controller_generation": receiver_generation
+                    "expected_controller_generation": receiver_generation,
+                    "binding_id": binding_id
                 }
             })),
         ),
@@ -526,7 +537,8 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
-                    "expected_controller_generation": receiver_generation
+                    "expected_controller_generation": receiver_generation,
+                    "binding_id": binding_id
                 }
             })),
         ),
@@ -538,11 +550,14 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
         panic!("bind failed")
     };
     assert_eq!(bind["result"]["structuredContent"]["success"], true);
-    let binding_id = bind["result"]["_meta"]["webcodex/agentContinuation"]["binding_id"]
-        .as_str()
-        .expect("private binding id")
-        .to_string();
-    assert!(binding_id.starts_with("wc_host_binding_"));
+    assert!(bind["result"]["_meta"]
+        .get("webcodex/agentContinuation")
+        .is_none());
+    assert_eq!(
+        bind["result"]["structuredContent"]["output"]["agent_continuation"]["host_binding"]
+            ["bound"],
+        true
+    );
     let bind_structured = bind["result"]["structuredContent"].to_string();
     assert!(!bind_structured.contains("wc_host_binding_"));
     assert!(!bind_structured.contains("_app_private"));
@@ -622,18 +637,21 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
     let structured = prepare["result"]["structuredContent"].to_string();
     for forbidden in [
         "wc_host_binding_",
-        "wc_wake_consume_",
         "claim_fence",
         private_body,
+        "PRIVATE Agent description",
+        "PRIVATE-specialty-label",
         "_app_private",
-        "automatic_message",
     ] {
         assert!(
             !structured.contains(forbidden),
             "structuredContent leaked {forbidden}"
         );
     }
-    let automatic_message = prepare["result"]["_meta"]["webcodex/agentContinuation"]
+    assert!(prepare["result"]["_meta"]
+        .get("webcodex/agentContinuation")
+        .is_none());
+    let automatic_message = prepare["result"]["structuredContent"]["output"]["app_protocol"]
         ["automatic_message"]
         .as_str()
         .expect("App-private exact continuation envelope");
@@ -644,6 +662,79 @@ async fn app_private_binding_and_consume_envelope_never_enter_structured_content
     assert!(!automatic_message.contains(private_body));
     assert!(!automatic_message.contains("PRIVATE Agent description"));
     assert!(!automatic_message.contains("PRIVATE-specialty-label"));
+    assert!(automatic_message.len() <= 4096);
+    assert!(!prepare["result"]["content"]
+        .to_string()
+        .contains("consume_token"));
+
+    // Knowing the current binding and exact Attempt never grants authority.
+    let mut read_only_owner = owner.clone();
+    read_only_owner
+        .scopes
+        .retain(|scope| scope != crate::auth::SCOPE_COMMUNICATION_MANAGE);
+    for name in APP_TOOLS {
+        let mut args = json!({
+            "agent_id": receiver, "endpoint_id": receiver_endpoint,
+            "expected_controller_generation": receiver_generation, "binding_id": binding_id,
+        });
+        if matches!(
+            name,
+            "agent_continuation_wake_prepare" | "agent_continuation_wake_finish"
+        ) {
+            args["wake_id"] = json!(wake_id);
+            args["attempt_id"] = json!(attempt_id);
+        }
+        if name == "agent_continuation_wake_finish" {
+            args["outcome"] = json!("dispatch_accepted");
+        }
+        let request = || {
+            rpc(
+                "tools/call",
+                Some(json!(5206)),
+                mcp_2026_params(json!({"name": name, "arguments": args})),
+            )
+        };
+        let denied =
+            handle_with_server_apps_enabled(&runtime, request(), Some(&foreign), true).await;
+        let McpOutcome::Ok(denied) = denied else {
+            panic!("foreign {name} must fail as a business result")
+        };
+        assert_eq!(denied["result"]["structuredContent"]["success"], false);
+        let denied_text = denied.to_string();
+        assert!(!denied_text.contains("consume_token"));
+        assert!(!denied_text.contains(&binding_id));
+        let unscoped =
+            handle_with_server_apps_enabled(&runtime, request(), Some(&read_only_owner), true)
+                .await;
+        assert!(
+            matches!(unscoped, McpOutcome::Forbidden { .. }),
+            "{name} requires communication:manage even with the exact fence"
+        );
+    }
+
+    // The model-visible read stays sparse even while a prepared envelope exists.
+    let present_after_prepare = runtime.present_agent_continuation(
+        Some(&owner),
+        receiver,
+        receiver_endpoint,
+        receiver_generation,
+    );
+    assert!(present_after_prepare.success);
+    for projection in [present_text, present_after_prepare.output.to_string()] {
+        for secret in [
+            "binding_id",
+            "wc_host_binding_",
+            "consume_token",
+            "automatic_message",
+            "app_protocol",
+            "claim_fence",
+        ] {
+            assert!(
+                !projection.contains(secret),
+                "model projection leaked {secret}"
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -656,31 +747,36 @@ async fn agent_continuation_hidden_kernel_entry_is_fail_closed_without_protocol_
     let runtime =
         ToolRuntime::new_for_tests().with_model_surface(ModelSurface::FullOperatorRuntime);
     let auth = continuation_auth("continuation-kernel-gate");
-    let outcome = runtime
-        .call_tool_with_protocol_capabilities(
-            ToolCallRequest {
-                tool_name: "agent_continuation_bind".to_string(),
-                arguments: json!({
-                    "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
-                    "endpoint_id": format!("wc_endpoint_{}", "b".repeat(32)),
-                    "expected_controller_generation": 1
-                }),
-            },
-            ToolCallContext {
-                transport: ToolTransport::Mcp,
-                session_id: None,
-                auth: Some(&auth),
-                window: None,
-                record_oauth_scope_denials: false,
-                host_file_import_trust: HostFileImportTrust::Untrusted,
-            },
-            ToolProtocolCapabilities::default(),
-        )
-        .await;
-    assert!(matches!(
-        outcome.error_status,
-        Some(ToolCallErrorStatus::InvalidArguments { ref message })
-            if message.contains("Agent continuation App coordination")
-    ));
-    assert!(outcome.result.is_none());
+    for transport in [ToolTransport::Mcp, ToolTransport::Api] {
+        for name in APP_TOOLS {
+            let outcome = runtime
+                .call_tool_with_protocol_capabilities(
+                    ToolCallRequest {
+                        tool_name: name.to_string(),
+                        arguments: json!({
+                            "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
+                            "endpoint_id": format!("wc_endpoint_{}", "b".repeat(32)),
+                            "expected_controller_generation": 1,
+                            "binding_id": format!("wc_host_binding_{}", "a".repeat(32))
+                        }),
+                    },
+                    ToolCallContext {
+                        transport,
+                        session_id: None,
+                        auth: Some(&auth),
+                        window: None,
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    ToolProtocolCapabilities::default(),
+                )
+                .await;
+            assert!(matches!(
+                outcome.error_status,
+                Some(ToolCallErrorStatus::InvalidArguments { ref message })
+                    if message.contains("Agent continuation App coordination")
+            ));
+            assert!(outcome.result.is_none());
+        }
+    }
 }

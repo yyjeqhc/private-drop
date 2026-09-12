@@ -1347,6 +1347,7 @@ pub enum ToolCall {
         agent_id: String,
         endpoint_id: String,
         expected_controller_generation: i64,
+        binding_id: String,
     },
 
     /// App-only exact Host heartbeat plus bounded authoritative state refresh.

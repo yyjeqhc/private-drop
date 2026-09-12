@@ -583,27 +583,6 @@ fn is_agent_continuation_app_tool_name(tool_name: &str) -> bool {
     )
 }
 
-fn mcp_agent_continuation_app_result(tool_name: &str, mut result: ToolResult) -> Value {
-    let private = if is_agent_continuation_app_tool_name(tool_name) {
-        result
-            .output
-            .as_object_mut()
-            .and_then(|output| output.remove("_app_private"))
-    } else {
-        None
-    };
-    let mut value = mcp_runtime_tool_result_fallback(result);
-    if let Some(private) = private {
-        if let Some(meta) = tool_meta_object(&mut value) {
-            // MCP tool-result _meta is delivered to the App but not the model.
-            // This is the only wire location for the process-local binding id and
-            // the one-shot automatic continuation message containing consume_token.
-            meta.insert("webcodex/agentContinuation".to_string(), private);
-        }
-    }
-    value
-}
-
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
     if matches!(
@@ -1931,11 +1910,10 @@ pub(super) async fn handle_call(
     ) {
         resources::McpResourceToolResultAdaptation::Framed(value) => value,
         resources::McpResourceToolResultAdaptation::Unhandled(result) => {
-            if is_agent_continuation_app_tool_name(&params.name) {
-                mcp_agent_continuation_app_result(&params.name, result)
-            } else {
-                mcp_runtime_tool_result_fallback(result)
-            }
+            // App-only tools use the standard CallToolResult channel too. Their
+            // visibility/admission boundary, not custom result metadata, keeps
+            // continuation protocol data out of ordinary model tool results.
+            mcp_runtime_tool_result_fallback(result)
         }
     };
     if app_enabled {

@@ -1524,7 +1524,7 @@ mod computer_privacy_tests {
             "wake_revision": 9,
             "dispatch_observation": "dispatch_prepared",
             "state_changed": true,
-            "_app_private": {
+            "app_protocol": {
                 "binding_id": "wc_host_binding_PRIVATE_BINDING",
                 "automatic_message": "consume_token=wc_wake_consume_PRIVATE_TOKEN\nPRIVATE MESSAGE BODY"
             }
@@ -1538,7 +1538,7 @@ mod computer_privacy_tests {
             "PRIVATE_TOKEN",
             "PRIVATE MESSAGE BODY",
             "automatic_message",
-            "_app_private",
+            "app_protocol",
         ] {
             assert!(
                 !projected_text.contains(forbidden),
@@ -3792,6 +3792,7 @@ impl ToolCall {
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
+                ..
             }
             | Self::AgentContinuationState {
                 agent_id,

@@ -208,7 +208,7 @@ pub fn present_agent_continuation_input_schema() -> Value {
 }
 
 pub fn agent_continuation_bind_input_schema() -> Value {
-    present_agent_continuation_input_schema()
+    agent_continuation_state_input_schema()
 }
 
 pub fn agent_continuation_state_input_schema() -> Value {

@@ -357,14 +357,16 @@ impl AgentContinuationController {
     }
 
     /// Bind one live MCP App View as the pull-style Host carrier for an exact
-    /// Endpoint generation. The opaque binding id is process-local fencing only.
+    /// Endpoint generation. The View supplies a stable, process-local fence, not
+    /// authority. Same-View response-loss retries renew without replacing claims.
     pub(crate) fn register_mcp_app_binding(
         &self,
         principal: CommunicationPrincipal,
         agent_id: String,
         endpoint_id: String,
         controller_generation: i64,
-    ) -> Result<(AgentEndpointRecord, String), CommunicationStoreError> {
+        binding_id: String,
+    ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
         let _transition = self
             .state
             .binding_transitions
@@ -376,16 +378,48 @@ impl AgentContinuationController {
             &endpoint_id,
             controller_generation,
         )?;
+        if !binding_id
+            .strip_prefix(MCP_APP_BINDING_ID_PREFIX)
+            .is_some_and(|suffix| {
+                suffix.len() == 32
+                    && suffix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        {
+            return Err(CommunicationStoreError::new(
+                "invalid_host_binding_id",
+                "binding_id must be wc_host_binding_ followed by 32 lowercase hex characters",
+            ));
+        }
+        let same_view = self
+            .state
+            .bindings
+            .lock()
+            .expect("Agent continuation registry mutex poisoned")
+            .get(&agent_id)
+            .is_some_and(|binding| {
+                binding.principal == principal
+                    && binding.endpoint_id == endpoint_id
+                    && binding.controller_generation == controller_generation
+                    && matches!(&binding.carrier, EndpointContinuationCarrier::McpApp {
+                        binding_id: current, ..
+                    } if current == &binding_id)
+            });
+        if same_view {
+            // Do not withdraw capability, revoke a claim, or reset dispatch phase.
+            return Ok(self
+                .state
+                .db
+                .renew_agent_endpoint(&principal, &endpoint_id, controller_generation)?
+                .endpoint);
+        }
         self.disable_exact_binding_for_replacement(
             &principal,
             &agent_id,
             &endpoint_id,
             controller_generation,
         )?;
-        let binding_id = format!(
-            "{MCP_APP_BINDING_ID_PREFIX}{}",
-            uuid::Uuid::new_v4().simple()
-        );
         self.state
             .bindings
             .lock()
@@ -398,7 +432,7 @@ impl AgentContinuationController {
                     endpoint_id: endpoint_id.clone(),
                     controller_generation,
                     carrier: EndpointContinuationCarrier::McpApp {
-                        binding_id: binding_id.clone(),
+                        binding_id,
                         active_claim: None,
                         dispatch_phase: None,
                     },
@@ -417,7 +451,7 @@ impl AgentContinuationController {
                 return Err(error);
             }
         };
-        Ok((endpoint, binding_id))
+        Ok(endpoint)
     }
 
     /// App heartbeat/state path. Renewal is deliberately coupled to exact

@@ -263,17 +263,16 @@ fn bind_mcp_app(
     endpoint_id: &str,
     generation: i64,
 ) -> String {
+    let binding_id = format!("wc_host_binding_{}", uuid::Uuid::new_v4().simple());
     let result = runtime.agent_continuation_bind(
         None,
         agent_id.to_string(),
         endpoint_id.to_string(),
         generation,
+        binding_id.clone(),
     );
     assert!(result.success, "{:?}", result.output);
-    result.output["_app_private"]["binding_id"]
-        .as_str()
-        .unwrap()
-        .to_string()
+    binding_id
 }
 
 fn acquire_mcp_app(
@@ -313,7 +312,7 @@ fn prepare_mcp_app(
         attempt_id.to_string(),
     );
     assert!(result.success, "{:?}", result.output);
-    let message = result.output["_app_private"]["automatic_message"]
+    let message = result.output["app_protocol"]["automatic_message"]
         .as_str()
         .unwrap()
         .to_string();
@@ -657,8 +656,13 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         old_process_registration.output["error_kind"], "endpoint_not_attached_in_process",
         "a successor process cannot assume a pre-restart Host callback survived"
     );
-    let old_app_registration =
-        runtime.agent_continuation_bind(None, agent_b.clone(), endpoint_b.clone(), generation_b);
+    let old_app_registration = runtime.agent_continuation_bind(
+        None,
+        agent_b.clone(),
+        endpoint_b.clone(),
+        generation_b,
+        format!("wc_host_binding_{}", "a".repeat(32)),
+    );
     assert!(!old_app_registration.success);
     assert_eq!(
         old_app_registration.output["error_kind"], "endpoint_not_attached_in_process",
@@ -935,7 +939,13 @@ fn replacing_push_with_mcp_app_orders_same_generation_host_carriers() {
     let generation = fixture.receiver_generation;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = runtime.agent_continuation_bind(None, receiver, endpoint, generation);
+        let result = runtime.agent_continuation_bind(
+            None,
+            receiver,
+            endpoint,
+            generation,
+            format!("wc_host_binding_{}", "b".repeat(32)),
+        );
         tx.send(result).unwrap();
     });
 
@@ -964,10 +974,7 @@ fn replacing_push_with_mcp_app_orders_same_generation_host_carriers() {
         "replacing a carrier after its dispatch accepted path must preserve conservative post-fence uncertainty"
     );
 
-    let binding_id = bind.output["_app_private"]["binding_id"]
-        .as_str()
-        .expect("replacement App binding id")
-        .to_string();
+    let binding_id = format!("wc_host_binding_{}", "b".repeat(32));
     let acquired = acquire_mcp_app(
         &fixture.runtime,
         &fixture.receiver,
@@ -1027,10 +1034,48 @@ fn mcp_app_view_replacement_fences_pre_and_post_dispatch_without_second_lifecycl
         fixture.receiver.clone(),
         fixture.receiver_endpoint.clone(),
         fixture.receiver_generation,
-        first_binding,
+        first_binding.clone(),
     );
     assert!(!stale_state.success);
     assert_eq!(stale_state.output["error_kind"], "host_binding_stale");
+    let stale_acquire = fixture.runtime.agent_continuation_wake_acquire(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        first_binding.clone(),
+    );
+    let stale_prepare = fixture.runtime.agent_continuation_wake_prepare(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        first_binding.clone(),
+        logical_wake_id.clone(),
+        first_attempt.clone(),
+    );
+    let stale_unbind = fixture.runtime.agent_continuation_unbind(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        first_binding,
+    );
+    for stale in [stale_acquire, stale_prepare, stale_unbind] {
+        assert!(!stale.success);
+        assert_eq!(stale.output["error_kind"], "host_binding_stale");
+    }
+    let current = fixture.runtime.agent_continuation_state(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        second_binding.clone(),
+    );
+    assert!(
+        current.success,
+        "old View unbind must not withdraw new View"
+    );
 
     let second = acquire_mcp_app(
         &fixture.runtime,
@@ -1558,4 +1603,218 @@ fn explicit_activation_bootstrap_is_replayable_and_consumes_wake_separately() {
         db.agent_wake(&wake_id).unwrap().unwrap().state,
         AgentWakeState::Consumed
     );
+}
+
+#[test]
+fn mcp_app_binding_input_requires_canonical_view_fence() {
+    let fixture = mcp_continuation_fixture("mcp-binding-input");
+    let valid = format!("wc_host_binding_{}", "a0".repeat(16));
+    for invalid in [
+        String::new(),
+        format!("wc_binding_{}", "a".repeat(32)),
+        format!("wc_host_binding_{}", "A".repeat(32)),
+        format!("wc_host_binding_{}", "a".repeat(31)),
+        format!("wc_host_binding_{}", "a".repeat(33)),
+        format!("wc_host_binding_{}", "g".repeat(32)),
+        format!("{valid}\n"),
+    ] {
+        let result = fixture.runtime.agent_continuation_bind(
+            None,
+            fixture.receiver.clone(),
+            fixture.receiver_endpoint.clone(),
+            fixture.receiver_generation,
+            invalid,
+        );
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "invalid_host_binding_id");
+        assert!(
+            !fixture
+                .runtime
+                .agent_continuations
+                .as_ref()
+                .unwrap()
+                .binding_status(
+                    &fixture.receiver,
+                    &fixture.receiver_endpoint,
+                    fixture.receiver_generation,
+                )
+                .adapter_registered
+        );
+    }
+    let result = fixture.runtime.agent_continuation_bind(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        valid.clone(),
+    );
+    assert!(result.success);
+    let state = fixture.runtime.agent_continuation_state(
+        None,
+        fixture.receiver,
+        fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        valid,
+    );
+    assert!(state.success);
+    assert_eq!(
+        state.output["agent_continuation"]["host_binding"]["bound"],
+        true
+    );
+}
+
+#[test]
+fn mcp_app_same_view_bind_retry_preserves_claim_and_every_dispatch_phase() {
+    let fixture = mcp_continuation_fixture("mcp-idempotent-bind");
+    let binding = bind_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+    );
+    let controller = fixture.runtime.agent_continuations.as_ref().unwrap();
+    let retry = || {
+        let before = controller
+            .mcp_app_binding_observation(
+                &fixture.receiver,
+                &fixture.receiver_endpoint,
+                fixture.receiver_generation,
+            )
+            .unwrap();
+        let durable_before = before
+            .active_wake_id
+            .as_ref()
+            .map(|wake| fixture.db.agent_wake(wake).unwrap().unwrap());
+        let result = fixture.runtime.agent_continuation_bind(
+            None,
+            fixture.receiver.clone(),
+            fixture.receiver_endpoint.clone(),
+            fixture.receiver_generation,
+            binding.clone(),
+        );
+        assert!(result.success);
+        assert_eq!(
+            result.output["agent_continuation"]["host_binding"]["bound"],
+            true
+        );
+        assert_eq!(
+            controller
+                .mcp_app_binding_observation(
+                    &fixture.receiver,
+                    &fixture.receiver_endpoint,
+                    fixture.receiver_generation,
+                )
+                .unwrap(),
+            before,
+            "same-id renew must preserve the exact active claim and phase"
+        );
+        if let Some(durable_before) = durable_before {
+            assert_eq!(
+                fixture
+                    .db
+                    .agent_wake(&durable_before.wake_id)
+                    .unwrap()
+                    .unwrap(),
+                durable_before
+            );
+        }
+        let capable: bool = fixture
+            .db
+            .conn_for_tests()
+            .query_row(
+                "SELECT wake_capable FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                [&fixture.receiver_endpoint],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(capable);
+    };
+    retry();
+    post_fixture_message(&fixture, "first work", "idempotent-bind-first");
+    let acquired = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+    );
+    let wake = acquired["wake"]["wake_id"].as_str().unwrap();
+    let attempt = acquired["wake"]["attempt_id"].as_str().unwrap();
+    retry(); // Claimed but pre-fence: replacement would revoke this Attempt.
+    let replay = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+    );
+    assert_eq!(replay["wake"]["attempt_id"], attempt);
+    assert_eq!(replay["wake"]["replayed"], true);
+    let (_, message) = prepare_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+        wake,
+        attempt,
+    );
+    retry(); // Prepared: replacement would force delivery_unknown.
+    let consumed = fixture.runtime.consume_agent_wake(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        wake.to_string(),
+        resume_field(&message, "consume_token"),
+    );
+    assert!(consumed.success);
+    retry(); // Consume before ACK must keep the old claim for late finish.
+    let ack = fixture.runtime.agent_continuation_wake_finish(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        binding.clone(),
+        wake.to_string(),
+        attempt.to_string(),
+        "dispatch_accepted".to_string(),
+    );
+    assert!(ack.success);
+    retry();
+    post_fixture_message(&fixture, "successor work", "idempotent-bind-second");
+    let successor = acquire_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+    );
+    assert_ne!(successor["wake"]["wake_id"], wake);
+    assert_ne!(successor["wake"]["attempt_id"], attempt);
+    assert!(successor["wake"]["dispatch_observation"].is_null());
+    retry();
+    let wake = successor["wake"]["wake_id"].as_str().unwrap();
+    let attempt = successor["wake"]["attempt_id"].as_str().unwrap();
+    prepare_mcp_app(
+        &fixture.runtime,
+        &fixture.receiver,
+        &fixture.receiver_endpoint,
+        fixture.receiver_generation,
+        &binding,
+        wake,
+        attempt,
+    );
+    let unknown = fixture.runtime.agent_continuation_wake_finish(
+        None,
+        fixture.receiver.clone(),
+        fixture.receiver_endpoint.clone(),
+        fixture.receiver_generation,
+        binding.clone(),
+        wake.to_string(),
+        attempt.to_string(),
+        "delivery_unknown".to_string(),
+    );
+    assert!(unknown.success);
+    retry();
 }

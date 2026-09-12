@@ -504,6 +504,7 @@ impl ToolRuntime {
         agent_id: String,
         endpoint_id: String,
         expected_controller_generation: i64,
+        binding_id: String,
     ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
@@ -515,11 +516,12 @@ impl ToolRuntime {
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
-        let (_endpoint, binding_id) = match controller.register_mcp_app_binding(
+        let _endpoint = match controller.register_mcp_app_binding(
             principal.clone(),
             agent_id.clone(),
             endpoint_id.clone(),
             expected_controller_generation,
+            binding_id,
         ) {
             Ok(result) => result,
             Err(error) => return communication_error(error, RecoveryKind::Reconcile),
@@ -544,7 +546,6 @@ impl ToolRuntime {
         );
         let mut output = agent_continuation_projection(bootstrap, binding, observation);
         output["state_changed"] = json!(true);
-        output["_app_private"] = json!({"binding_id": binding_id});
         ToolResult::ok(output)
     }
 
@@ -683,7 +684,11 @@ impl ToolRuntime {
                 "wake_revision": prepared.wake_revision,
                 "dispatch_observation": crate::agent_wake::McpAppDispatchPhase::Prepared.as_str(),
                 "state_changed": true,
-                "_app_private": {
+                // Only the ModelHidden MCP Apps prepare response carries this bounded
+                // protocol payload. Standard structuredContent survives Host bridges;
+                // custom ToolResult _meta is not a correctness prerequisite. Typed
+                // audit/Session projections and name-based trace suppression omit it.
+                "app_protocol": {
                     "automatic_message": prepared.automatic_message,
                 }
             })),

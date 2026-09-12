@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { app, flush, toolResult } from "./app_test_support.mjs";
 
-const binding_id = `wc_host_binding_${"3".repeat(32)}`;
+const bindingId = view => view.calls("agent_continuation_bind")[0].params.arguments.binding_id;
 const wake = {
   wake_id: `wc_wake_${"4".repeat(32)}`, attempt_id: `wc_wake_attempt_${"5".repeat(32)}`,
   state: "claimed", revision: 2, dispatch_observation: null,
@@ -17,15 +17,19 @@ const input = {
   agent_id: projection.agent_id, endpoint_id: projection.endpoint_id,
   expected_controller_generation: projection.controller_generation,
 };
-const prepared = () => toolResult({ dispatch_observation: "dispatch_prepared" }, { automatic_message: "Exact test continuation" });
+const prepared = (current = wake, automatic_message = "Exact test continuation") => toolResult({
+  agent_id: input.agent_id, endpoint_id: input.endpoint_id, controller_generation: input.expected_controller_generation,
+  wake_id: current.wake_id, attempt_id: current.attempt_id, dispatch_observation: "dispatch_prepared",
+  app_protocol: { automatic_message },
+});
 const hostMessages = view => view.sent.filter(message => message.method === "ui/message");
 
-async function boundView() {
-  const view = app("mcp_agent_continuation_app.html");
+async function boundView(options = { deliverToolMeta: false }) {
+  const view = app("mcp_agent_continuation_app.html", options);
   await view.initialize();
   view.toolInput(input);
   await flush();
-  await view.reply(view.calls("agent_continuation_bind").at(-1), toolResult({ agent_continuation: projection }, { binding_id }));
+  await view.reply(view.calls("agent_continuation_bind").at(-1), toolResult({ agent_continuation: projection }));
   return view;
 }
 
@@ -46,15 +50,16 @@ for (const outcome of ["success", "error", "timeout"]) {
       assert.equal(view.nodes.status.textContent, outcome === "success"
         ? "Exact identity received · binding Host carrier" : "Host initialization unavailable");
       if (outcome === "success") {
-        assert.deepEqual({ ...view.calls("agent_continuation_bind")[0].params.arguments }, input);
+        assert.match(bindingId(view), /^wc_host_binding_[0-9a-f]{32}$/);
+        assert.deepEqual({ ...view.calls("agent_continuation_bind")[0].params.arguments }, { ...input, binding_id: bindingId(view) });
         const quiet = { ...projection, wake: null, queued_delivery_count: 0 };
-        await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: quiet }, { binding_id }));
+        await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: quiet }));
         assert.equal(view.nodes.binding.textContent, "Host bound");
         assert.equal(view.nodes.status.textContent, "Host carrier live; no pending durable Wake");
         await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: quiet }));
         await view.fireTimers(3000);
         assert.equal(view.calls("agent_continuation_state").length, 2);
-        assert.deepEqual({ ...view.calls("agent_continuation_state")[1].params.arguments }, { ...input, binding_id });
+        assert.deepEqual({ ...view.calls("agent_continuation_state")[1].params.arguments }, { ...input, binding_id: bindingId(view) });
       }
     });
   }
@@ -75,7 +80,7 @@ for (const order of [
     view.toolInput(input);
     view.toolResult({ agent_continuation: projection });
     assert.equal(view.calls("agent_continuation_bind").length, 1);
-    await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: projection }, { binding_id }));
+    await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: projection }));
     const quiet = { ...projection, wake: null, queued_delivery_count: 0, display_name: "Current" };
     await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: quiet }));
     view.toolInput(input);
@@ -102,7 +107,7 @@ for (const [field, value] of Object.entries(conflicts)) {
       if (stage !== "initialize") {
         await view.initialize();
         pending = view.calls("agent_continuation_bind")[0];
-        response = toolResult({ agent_continuation: projection }, { binding_id });
+        response = toolResult({ agent_continuation: projection });
       }
       if (["state", "acquire", "prepare", "dispatch"].includes(stage)) {
         await view.reply(pending, response);
@@ -190,11 +195,11 @@ test("continuation accepts only parent complete input with canonical arguments",
   assert.equal(view.nodes.status.textContent, "Invalid or conflicting continuation identity");
 });
 
-test("bind failure has a stable bounded diagnostic even after a late matching result", async () => {
+test("business bind failure has a stable bounded diagnostic even after a late matching result", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
   view.toolInput(input);
-  await view.fireTimers(10000);
+  await view.reply(view.calls("agent_continuation_bind")[0], { structuredContent: { success: false, output: { error_kind: "endpoint_expired" } } });
   view.toolResult({ agent_continuation: projection });
   assert.equal(view.nodes.status.textContent, "Host binding unavailable; durable Agent state is unchanged");
   assert.equal(view.calls("agent_continuation_bind").length, 1);
@@ -205,7 +210,7 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
   test(`input-only carrier ${method} stops coordination and unbinds only its exact carrier`, async () => {
     const view = await boundView();
     await view.teardown(method);
-    assert.deepEqual({ ...view.calls("agent_continuation_unbind")[0].params.arguments }, { ...input, binding_id });
+    assert.deepEqual({ ...view.calls("agent_continuation_unbind")[0].params.arguments }, { ...input, binding_id: bindingId(view) });
     await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: projection }));
     const count = view.sent.length;
     view.toolInput(input);
@@ -239,12 +244,10 @@ test("input-only dispatch never displays its private binding or consume envelope
   await view.reply(view.calls("agent_continuation_wake_acquire")[0], toolResult({ wake }));
   const consume_token = `wc_wake_consume_${"c".repeat(32)}`;
   const automatic_message = `Exact test continuation consume_token=${consume_token}`;
-  await view.reply(view.calls("agent_continuation_wake_prepare")[0], toolResult(
-    { dispatch_observation: "dispatch_prepared" }, { automatic_message },
-  ));
+  await view.reply(view.calls("agent_continuation_wake_prepare")[0], prepared(wake, automatic_message));
   assert.equal(hostMessages(view)[0].params.content[0].text, automatic_message);
   const displayed = Object.values(view.nodes).map(node => node.textContent).join("\n");
-  for (const secret of [binding_id, consume_token, automatic_message]) assert.ok(!displayed.includes(secret));
+  for (const secret of [bindingId(view), consume_token, automatic_message]) assert.ok(!displayed.includes(secret));
 });
 
 for (const stage of ["bind", "state"]) {
@@ -253,10 +256,10 @@ for (const stage of ["bind", "state"]) {
     await view.initialize();
     view.toolInput(input);
     if (stage === "state") {
-      await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: projection }, { binding_id }));
+      await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: projection }));
     }
     await view.reply(view.calls(`agent_continuation_${stage}`)[0], toolResult(
-      { agent_continuation: { ...projection, endpoint_id: conflicts.endpoint_id } }, { binding_id },
+      { agent_continuation: { ...projection, endpoint_id: conflicts.endpoint_id } },
     ));
     assert.equal(view.nodes.status.textContent, "Invalid or conflicting continuation identity");
     assert.equal(view.calls("agent_continuation_wake_acquire").length, 0);
@@ -344,15 +347,18 @@ test("finish failure keeps the old claim until its ACK is reconciled before acqu
   assert.equal(hostMessages(view).length, 1);
 });
 
-test("one View carries successive Attempts and exact teardown stops coordination", async () => {
+test("all App coordination survives stripped ToolResult metadata through successor Wakes", async () => {
   const view = await boundView();
   for (let round = 0; round < 3; round++) {
     const currentWake = { ...wake, wake_id: `wc_wake_${String(round + 6).repeat(32)}`, attempt_id: `wc_wake_attempt_${String(round + 6).repeat(32)}` };
     const currentProjection = { ...projection, wake: currentWake };
     await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: currentProjection }));
     await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake: currentWake }));
-    await view.reply(view.calls("agent_continuation_wake_prepare").at(-1), prepared());
+    const response = prepared(currentWake);
+    response._meta = { "webcodex/agentContinuation": { automatic_message: "Wrong metadata envelope" } };
+    await view.reply(view.calls("agent_continuation_wake_prepare").at(-1), response);
     assert.equal(hostMessages(view).length, round + 1);
+    assert.equal(hostMessages(view).at(-1).params.content[0].text, response.structuredContent.output.app_protocol.automatic_message);
     await view.reply(hostMessages(view).at(-1), {});
     await view.reply(view.calls("agent_continuation_wake_finish").at(-1), toolResult({}));
     await view.fireTimers(3000);
@@ -362,10 +368,166 @@ test("one View carries successive Attempts and exact teardown stops coordination
   assert.equal(view.calls("agent_continuation_bind").length, 1);
   await view.teardown();
   const unbind = view.calls("agent_continuation_unbind").at(-1);
-  assert.equal(unbind.params.arguments.binding_id, binding_id);
+  assert.equal(unbind.params.arguments.binding_id, bindingId(view));
+  for (const call of view.sent.filter(message => message.method === "tools/call")) {
+    assert.equal(call.params.arguments.binding_id, bindingId(view));
+  }
   const count = view.sent.length;
   await view.visibility(false);
   await view.fireTimers(3000);
   assert.equal(view.sent.length, count);
   assert.equal(view.timers.size, 0);
 });
+
+for (const loss of ["timeout", "Host error", "malformed result"]) {
+  test(`same View retries bind with the same secure fence after ${loss}`, async () => {
+    const view = app("mcp_agent_continuation_app.html", { deliverToolMeta: false });
+    await view.initialize();
+    view.toolInput(input);
+    const first = view.calls("agent_continuation_bind")[0];
+    const serverBinding = first.params.arguments.binding_id; // Server committed; reply is lost.
+    assert.match(serverBinding, /^wc_host_binding_[0-9a-f]{32}$/);
+    if (loss === "timeout") await view.fireTimers(10000);
+    else if (loss === "Host error") await view.reject(first);
+    else await view.reply(first, {});
+    assert.equal(view.nodes.status.textContent, "Host binding response unavailable · reconciling");
+    view.toolResult({ agent_continuation: projection });
+    view.toolInput(input);
+    await flush();
+    assert.equal(view.calls("agent_continuation_bind").length, 1, "no notification-driven tight retry");
+    await view.fireTimers(3000);
+    const retry = view.calls("agent_continuation_bind")[1];
+    assert.deepEqual(retry.params.arguments, first.params.arguments);
+    await view.reply(retry, toolResult({ agent_continuation: projection }, { binding_id: "Wrong metadata fence" }));
+    assert.equal(view.nodes.binding.textContent, "Host bound");
+    assert.equal(view.calls("agent_continuation_state")[0].params.arguments.binding_id, serverBinding);
+    await view.reply(first, toolResult({ agent_continuation: projection }));
+    assert.equal(view.calls("agent_continuation_state").length, 1, "late original reply is ignored");
+  });
+}
+
+test("bind response-loss retries are bounded even with repeated bootstrap notifications", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  for (let round = 0; round < 3; round++) {
+    assert.equal(view.calls("agent_continuation_bind").length, round + 1);
+    await view.fireTimers(10000);
+    await view.fireTimers(3000);
+  }
+  view.toolInput(input);
+  view.toolResult({ agent_continuation: projection });
+  await view.fireTimers(3000);
+  assert.equal(view.calls("agent_continuation_bind").length, 3);
+  assert.equal(view.nodes.binding.textContent, "Unavailable");
+  assert.equal(view.timers.size, 0);
+  await view.teardown();
+  assert.equal(view.calls("agent_continuation_unbind")[0].params.arguments.binding_id, bindingId(view));
+});
+
+for (const crypto of [undefined, {}, { getRandomValues() { throw new Error("unavailable"); } }]) {
+  test(`secure random unavailable fails closed (${typeof crypto?.getRandomValues})`, async () => {
+    const view = app("mcp_agent_continuation_app.html", { crypto: crypto ?? null });
+    await view.initialize();
+    view.toolInput(input);
+    await flush();
+    assert.equal(view.calls("agent_continuation_bind").length, 0);
+    assert.equal(view.nodes.binding.textContent, "Unavailable");
+    assert.equal(view.timers.size, 0);
+  });
+}
+
+for (const invalid of [
+  { structuredContent: { success: false, output: { agent_continuation: projection } } },
+  { ...toolResult({ agent_continuation: projection }), isError: true },
+  toolResult({ agent_continuation: { ...projection, host_binding: { bound: false } } }),
+]) {
+  test("bind cannot accept business failure or an unbound projection", async () => {
+    const view = app("mcp_agent_continuation_app.html");
+    await view.initialize();
+    view.toolInput(input);
+    await view.reply(view.calls("agent_continuation_bind")[0], invalid);
+    assert.equal(view.calls("agent_continuation_state").length, 0);
+    assert.notEqual(view.nodes.binding.textContent, "Host bound");
+  });
+}
+
+for (const loss of ["timeout", "missing", "wrong type", "blank", "oversized", "wrong Attempt", "business failure"]) {
+  test(`prepare ${loss} reconciles delivery_unknown without a second prepare or Host turn`, async () => {
+    const view = await boundView();
+    await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
+    await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake }));
+    if (loss === "timeout") await view.fireTimers(10000);
+    else {
+      const response = prepared();
+      const output = response.structuredContent.output;
+      if (loss === "missing") delete output.app_protocol;
+      if (loss === "wrong type") output.app_protocol.automatic_message = {};
+      if (loss === "blank") output.app_protocol.automatic_message = "  ";
+      if (loss === "oversized") output.app_protocol.automatic_message = "x".repeat(4097);
+      if (loss === "wrong Attempt") output.attempt_id = `wc_wake_attempt_${"e".repeat(32)}`;
+      if (loss === "business failure") response.structuredContent.success = false;
+      await view.reply(view.calls("agent_continuation_wake_prepare")[0], response);
+    }
+    assert.equal(hostMessages(view).length, 0);
+    // First reconciliation can itself time out: the next poll still owns recovery.
+    await view.fireTimers(10000);
+    await view.fireTimers(3000);
+    await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: {
+      ...projection, dispatch_observation: "dispatch_prepared",
+    } }));
+    await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake: {
+      ...wake, dispatch_observation: "dispatch_prepared",
+    } }));
+    const finish = view.calls("agent_continuation_wake_finish").at(-1);
+    assert.equal(finish.params.arguments.outcome, "delivery_unknown");
+    await view.reply(finish, toolResult({}));
+    await view.fireTimers(3000);
+    await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: {
+      ...projection, dispatch_observation: "dispatch_unknown",
+    } }));
+    await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake: {
+      ...wake, dispatch_observation: "dispatch_unknown",
+    } }));
+    assert.equal(view.calls("agent_continuation_wake_prepare").length, 1);
+    assert.equal(hostMessages(view).length, 0);
+  });
+}
+
+for (const stage of ["state", "acquire", "finish"]) {
+  test(`duplicate View replacement rejects stale ${stage} and preserves new View on old teardown`, async () => {
+    const first = await boundView();
+    if (stage !== "state") {
+      await first.reply(first.calls("agent_continuation_state")[0], toolResult({ agent_continuation: projection }));
+    }
+    if (stage === "finish") {
+      await first.reply(first.calls("agent_continuation_wake_acquire")[0], toolResult({ wake }));
+      await first.reply(first.calls("agent_continuation_wake_prepare")[0], prepared());
+      await first.reply(hostMessages(first)[0], {});
+    }
+    const name = stage === "state" ? "agent_continuation_state" : `agent_continuation_wake_${stage}`;
+    const stale = first.calls(name).at(-1);
+    const second = await boundView();
+    assert.notEqual(bindingId(first), bindingId(second));
+    let current = bindingId(second);
+    // The Rust controller tests own authoritative replacement semantics. This
+    // Host fixture checks the shipped View's behavior when in-flight calls lose.
+    assert.notEqual(stale.params.arguments.binding_id, current);
+    await first.reply(stale, { structuredContent: { success: false, output: { error_kind: "host_binding_stale" } } });
+    await first.teardown();
+    const unbind = first.calls("agent_continuation_unbind")[0];
+    if (unbind.params.arguments.binding_id === current) current = null;
+    assert.equal(current, bindingId(second));
+    const messages = hostMessages(first).length;
+    await first.fireTimers(3000);
+    assert.equal(hostMessages(first).length, messages);
+    for (let round = 0; round < 2; round++) {
+      const state = second.calls("agent_continuation_state").at(-1);
+      assert.equal(state.params.arguments.binding_id, current);
+      await second.reply(state, toolResult({ agent_continuation: { ...projection, wake: null } }));
+      await second.fireTimers(3000);
+    }
+    assert.equal(second.calls("agent_continuation_state").length, 3);
+    assert.equal(second.nodes.binding.textContent, "Host bound");
+  });
+}

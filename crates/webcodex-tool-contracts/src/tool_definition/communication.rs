@@ -232,7 +232,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     effect: super::ToolEffect::Mutate,
                     risk: CommunicationManage,
                     approval: super::ToolApprovalPolicy::Standard,
-                    idempotency: super::ToolIdempotency::NonIdempotent,
+                    idempotency: super::ToolIdempotency::DesiredState,
                 },
                 Some(COMMUNICATION_MANAGE),
                 false,

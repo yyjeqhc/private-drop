@@ -2207,7 +2207,9 @@ mod tests {
             );
             guard.capture_payload(
                 "final_response",
-                &json!({"automatic_message": "PRIVATE_RESUME_ENVELOPE"}),
+                &json!({"structuredContent": {"success": true, "output": {
+                    "app_protocol": {"automatic_message": "consume_token=wc_wake_consume_PRIVATE_RESUME_ENVELOPE"}
+                }}}),
             );
             drop(guard);
             flush_full_trace_writer();

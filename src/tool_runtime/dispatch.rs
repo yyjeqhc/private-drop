@@ -2026,11 +2026,13 @@ impl ToolRuntime {
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
+                binding_id,
             } => self.agent_continuation_bind(
                 auth,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
+                binding_id,
             ),
 
             ToolCall::AgentContinuationState {

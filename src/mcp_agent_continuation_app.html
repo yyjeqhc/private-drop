@@ -38,8 +38,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const ENDPOINT_ID = /^wc_endpoint_[0-9a-f]{32}$/;
   const WAKE_ID = /^wc_wake_[0-9a-f]{32}$/;
   const ATTEMPT_ID = /^wc_wake_attempt_[0-9a-f]{32}$/;
-  const BINDING_ID = /^wc_host_binding_[0-9a-f]{32}$/;
   const CALL_TIMEOUT_MS = 10000;
+  const MAX_BIND_ATTEMPTS = 3;
+  const MAX_AUTOMATIC_MESSAGE_CHARS = 4096;
   const VISIBLE_POLL_MS = 3000;
   const HIDDEN_HEARTBEAT_MS = 15000;
   const DISPATCH_STATES = new Set(["dispatch_prepared", "dispatch_accepted", "dispatch_unknown", "continuation_consumed"]);
@@ -50,6 +51,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let coordinationInFlight = false;
   let hostInitialized = false;
   let bindingStarted = false;
+  let bindAttempts = 0;
   let tornDown = false;
   const pending = new Map();
   // Coordination is serial and the Server owns one current claim per binding.
@@ -59,6 +61,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let pendingFinish = null;
   const el = id => document.getElementById(id);
   el("status").textContent = "App active · initializing Host";
+  // One secure random fence per View, stable across response-loss retries.
+  // This selector grants no authority and is never durable browser state.
+  let viewBindingId = null;
+  try {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    viewBindingId = "wc_host_binding_" + Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  } catch (_) {} // Secure randomness unavailable: bind fails closed.
 
   function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
     if (tornDown) return Promise.reject(new Error("App torn down"));
@@ -84,13 +94,11 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   function toolCallSucceeded(result) {
     const structured = result && (result.structuredContent || result.structured_content);
-    return !!(structured && structured.success === true);
+    return !!(result && result.isError !== true && structured && structured.success === true);
   }
 
-  function privateContinuationMeta(result) {
-    const meta = result && result._meta;
-    const value = meta && meta["webcodex/agentContinuation"];
-    return value && typeof value === "object" ? value : null;
+  function definitiveFailure() {
+    return Object.assign(new Error("Host binding unavailable"), { definitive: true });
   }
 
   function validIdentity(value) {
@@ -192,26 +200,32 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   function scheduleNext() {
     if (tornDown) return;
     if (timer !== null) clearTimeout(timer);
-    timer = setTimeout(() => { void reconcile(); }, document.hidden ? HIDDEN_HEARTBEAT_MS : VISIBLE_POLL_MS);
+    timer = setTimeout(() => {
+      timer = null;
+      if (bindingId) void reconcile(); else void maybeStartBinding();
+    }, document.hidden ? HIDDEN_HEARTBEAT_MS : VISIBLE_POLL_MS);
   }
 
   async function bind() {
-    const response = await callTool("agent_continuation_bind", exactArgs());
+    if (!viewBindingId) throw definitiveFailure();
+    bindAttempts++;
+    const response = await callTool("agent_continuation_bind", exactArgs({ binding_id: viewBindingId }));
     if (tornDown) return;
+    const structured = response && (response.structuredContent || response.structured_content);
+    if (response && (response.isError === true || (structured && structured.success === false))) throw definitiveFailure();
     const projection = projectionOf(response);
-    const privateMeta = privateContinuationMeta(response);
-    if (!projection || !privateMeta || !BINDING_ID.test(privateMeta.binding_id || "")) {
+    if (!toolCallSucceeded(response) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
       throw new Error("Invalid Host binding response");
     }
     if (!acceptIdentity(projection)) return;
-    bindingId = privateMeta.binding_id;
+    bindingId = viewBindingId;
     render(projection);
   }
 
   async function heartbeat() {
     const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
     const projection = projectionOf(response);
-    if (!projection || !acceptIdentity(projection)) throw new Error("Invalid continuation state");
+    if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) throw new Error("Invalid continuation state");
     render(projection);
     return projection;
   }
@@ -261,11 +275,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       attempt_id: wake.attempt_id,
     }));
     const output = outputOf(response);
-    const privateMeta = privateContinuationMeta(response);
-    if (!output || output.dispatch_observation !== "dispatch_prepared" || !privateMeta || typeof privateMeta.automatic_message !== "string" || privateMeta.automatic_message.length === 0) {
+    // This ModelHidden app-only result uses standard structuredContent, never
+    // custom ToolResult _meta. Keep the exact Server envelope out of visible UI.
+    const message = output && output.app_protocol && output.app_protocol.automatic_message;
+    if (!toolCallSucceeded(response) || !output || output.dispatch_observation !== "dispatch_prepared"
+      || output.agent_id !== identity.agent_id || output.endpoint_id !== identity.endpoint_id
+      || output.controller_generation !== identity.controller_generation
+      || output.wake_id !== wake.wake_id || output.attempt_id !== wake.attempt_id
+      || typeof message !== "string" || message.trim().length === 0 || message.length > MAX_AUTOMATIC_MESSAGE_CHARS) {
       throw new Error("Invalid prepared continuation envelope");
     }
-    return privateMeta.automatic_message;
+    return message;
   }
 
   async function dispatchWake(wake) {
@@ -274,7 +294,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     try {
       automaticMessage = await prepare(wake);
     } catch (_) {
-      // A timed-out prepare may already have crossed the durable dispatch fence.
+      // A timeout or malformed successful response may be after the durable fence.
       // Never guess and never call ui/message without the returned exact envelope.
       prepareUncertain = wake.attempt_id;
       try {
@@ -355,28 +375,35 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const projection = projectionOf(result);
     if (!projection || !acceptIdentity(projection)) return;
     // A delayed initial result must not overwrite newer bind/heartbeat state.
-    if (!bindingId) render(projection);
+    if (!bindingStarted && bindAttempts === 0) render(projection);
     void maybeStartBinding();
   }
 
   async function maybeStartBinding() {
-    if (!hostInitialized || !identity || bindingStarted || tornDown) return;
+    if (!hostInitialized || !identity || bindingStarted || timer !== null || tornDown) return;
     bindingStarted = true;
     el("binding").textContent = "Binding";
     el("status").textContent = "Exact identity received · binding Host carrier";
     try {
       await bind();
       void reconcile();
-    } catch (_) {
+    } catch (error) {
       if (!tornDown) {
-        el("binding").textContent = "Unavailable";
-        el("status").textContent = "Host binding unavailable; durable Agent state is unchanged";
+        if (!error.definitive && bindAttempts < MAX_BIND_ATTEMPTS) {
+          bindingStarted = false;
+          el("status").textContent = "Host binding response unavailable · reconciling";
+          scheduleNext();
+        } else {
+          el("binding").textContent = "Unavailable";
+          el("status").textContent = "Host binding unavailable; durable Agent state is unchanged";
+        }
       }
     }
   }
 
   function bestEffortUnbind() {
-    if (!identity || !bindingId || tornDown) return;
+    // Also withdraw a bind whose successful response may have been lost.
+    if (!identity || !viewBindingId || bindAttempts === 0 || tornDown) return;
     const id = nextId++;
     parent.postMessage({
       jsonrpc: "2.0",
@@ -384,7 +411,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       method: "tools/call",
       params: {
         name: "agent_continuation_unbind",
-        arguments: exactArgs({ binding_id: bindingId }),
+        arguments: exactArgs({ binding_id: viewBindingId }),
       },
     }, "*");
   }
@@ -410,7 +437,9 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       const entry = pending.get(msg.id);
       pending.delete(msg.id);
       clearTimeout(entry.timeout);
-      if (msg.error) entry.reject(new Error(String(msg.error.message || "Host error")));
+      if (msg.error) entry.reject(Object.assign(new Error("Host request failed"), {
+        definitive: [-32600, -32601, -32602].includes(msg.error.code),
+      }));
       else entry.resolve(msg.result);
       return;
     }
@@ -441,7 +470,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "2.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "3.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

@@ -1525,3 +1525,25 @@ fn create_project_rejects_retired_allow_existing_empty_with_migration_hint() {
     assert!(error.contains("allow_existing_empty"), "{error}");
     assert!(error.contains("adopt_existing_empty"), "{error}");
 }
+
+#[test]
+fn agent_continuation_bind_parses_required_view_fence_and_omits_it_from_audit() {
+    let binding_id = format!("wc_host_binding_{}", "a0".repeat(16));
+    let mut args = json!({
+        "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
+        "endpoint_id": format!("wc_endpoint_{}", "b".repeat(32)),
+        "expected_controller_generation": 1,
+        "binding_id": binding_id,
+    });
+    let call = ToolCall::from_tool_name("agent_continuation_bind", args.clone()).unwrap();
+    assert!(
+        matches!(&call, ToolCall::AgentContinuationBind { binding_id: parsed, .. } if parsed == &binding_id)
+    );
+    let audit =
+        crate::tool_audit::session_log_arguments_for_tool_request("agent_continuation_bind", &args)
+            .to_string();
+    assert!(!audit.contains("binding_id"));
+    assert!(!audit.contains(&binding_id));
+    args.as_object_mut().unwrap().remove("binding_id");
+    assert!(ToolCall::from_tool_name("agent_continuation_bind", args).is_err());
+}

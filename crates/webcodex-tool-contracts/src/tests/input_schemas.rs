@@ -575,3 +575,38 @@ fn tool_specs_covers_expected_tool_set() {
         );
     }
 }
+
+#[test]
+fn agent_continuation_bind_requires_canonical_view_fence_without_model_exposure() {
+    let specs = crate::registry::agent_continuation_app_tool_specs();
+    let bind = specs
+        .iter()
+        .find(|spec| spec.name == "agent_continuation_bind")
+        .unwrap();
+    assert_eq!(
+        bind.input_schema["properties"]["binding_id"]["pattern"],
+        "^wc_host_binding_[0-9a-f]{32}$"
+    );
+    let mut args = json!({
+        "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
+        "endpoint_id": format!("wc_endpoint_{}", "b".repeat(32)),
+        "expected_controller_generation": 1,
+        "binding_id": format!("wc_host_binding_{}", "a0".repeat(16)),
+    });
+    assert!(test_support::validate_schema_instance(&args, &bind.input_schema).is_ok());
+    for invalid in [
+        String::new(),
+        format!("wc_binding_{}", "a".repeat(32)),
+        format!("wc_host_binding_{}", "A".repeat(32)),
+        format!("wc_host_binding_{}", "a".repeat(31)),
+        format!("wc_host_binding_{}", "a".repeat(33)),
+    ] {
+        args["binding_id"] = json!(invalid);
+        assert!(test_support::validate_schema_instance(&args, &bind.input_schema).is_err());
+    }
+    args.as_object_mut().unwrap().remove("binding_id");
+    assert!(test_support::validate_schema_instance(&args, &bind.input_schema).is_err());
+    assert!(!registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == bind.name));
+}

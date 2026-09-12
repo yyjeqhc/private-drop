@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
+import { webcrypto } from "node:crypto";
 
 export const flush = () => new Promise(resolve => setImmediate(resolve));
 
 // Execute the shipped App script with deterministic Host messages and timers.
-export function app(filename) {
+export function app(filename, { deliverToolMeta = true, crypto = webcrypto } = {}) {
   const html = readFileSync(new URL(`../${filename}`, import.meta.url), "utf8");
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const nodes = {};
@@ -30,7 +31,7 @@ export function app(filename) {
     return id;
   }
   runInNewContext(script, {
-    document, parent, addEventListener, TextEncoder,
+    document, parent, addEventListener, TextEncoder, crypto,
     setTimeout: setTimer,
     clearTimeout: id => timers.delete(id),
     setInterval: (callback, delay) => setTimer(callback, delay, true),
@@ -52,7 +53,14 @@ export function app(filename) {
       deliver({ method: "ui/notifications/tool-result", params: toolResult(output) }, source);
     },
     async reply(request, result) {
+      // Only App-originated tools/call crosses this policy. Initial model-tool
+      // result notifications remain a separate lifecycle with their own shape.
+      if (!deliverToolMeta && request.method === "tools/call") result = stripToolResultMeta(result);
       deliver({ id: request.id, result });
+      await flush();
+    },
+    async reject(request, error = { code: -32000, message: "Host request failed" }) {
+      deliver({ id: request.id, error });
       await flush();
     },
     async initialize(outcome = "success") {
@@ -83,6 +91,11 @@ export function app(filename) {
       await flush();
     },
   };
+}
+
+export function stripToolResultMeta(result) {
+  const { _meta, ...standard } = result;
+  return standard;
 }
 
 export function toolResult(output, privateMeta) {
