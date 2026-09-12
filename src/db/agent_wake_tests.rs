@@ -253,7 +253,16 @@ fn fake_adapter_recovers_same_wake_before_fence_and_exact_consume_is_idempotent(
     assert_eq!(envelope.controller_generation, 2);
     assert!(envelope
         .resume_hint
-        .contains("Re-read durable work from list_agent_inbox and read_conversation"));
+        .contains("read the authoritative Agent Inbox"));
+    assert!(envelope
+        .resume_hint
+        .contains("authoritative current work for this resumed turn"));
+    assert!(envelope
+        .resume_hint
+        .contains("user-visible final response reflect the actual work/result"));
+    assert!(envelope
+        .resume_hint
+        .contains("Do not merely repeat this continuation contract"));
     assert!(!envelope.resume_hint.contains(secret_body));
     assert!(!envelope
         .resume_hint
