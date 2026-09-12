@@ -153,7 +153,7 @@ fn watch_git_dirty_inputs(repo_root: &Path, git_dirty: &str) {
 fn git_dirty_from_git(repo_root: &Path) -> String {
     match Command::new("git")
         .current_dir(repo_root)
-        .args(["diff-index", "--quiet", "HEAD", "--"])
+        .args(["diff", "--no-ext-diff", "--quiet", "HEAD", "--"])
         .status()
     {
         Ok(status) if status.success() => "false".to_string(),
