@@ -58,7 +58,7 @@ pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] =
     &["ui://webcodex/result/v1", "ui://webcodex/result/v2"];
 pub(super) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v2";
 pub(super) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
-    "ui://webcodex/agent-continuation/v5";
+    "ui://webcodex/agent-continuation/v6";
 pub(super) const MCP_UI_RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
 pub(super) const MCP_COMPUTER_APP_HTML: &str = include_str!("../mcp_computer_app.html");
 pub(super) const MCP_RESULT_APP_HTML: &str = include_str!("../mcp_result_app.html");
@@ -217,7 +217,7 @@ pub(super) fn mcp_goal_plan_app_resource_read(uri: &str, domain: Option<&str>) -
 }
 
 pub(super) fn is_mcp_agent_continuation_app_resource_uri(uri: &str) -> bool {
-    // Thin hidden read aliases for existing cards; discovery advertises only v5.
+    // Thin hidden read aliases for existing cards; discovery advertises only v6.
     uri == MCP_AGENT_CONTINUATION_UI_RESOURCE_URI
         || matches!(
             uri,
@@ -225,6 +225,7 @@ pub(super) fn is_mcp_agent_continuation_app_resource_uri(uri: &str) -> bool {
                 | "ui://webcodex/agent-continuation/v2"
                 | "ui://webcodex/agent-continuation/v3"
                 | "ui://webcodex/agent-continuation/v4"
+                | "ui://webcodex/agent-continuation/v5"
         )
 }
 

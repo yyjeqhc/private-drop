@@ -334,8 +334,19 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         )
         .into_iter()
         .map(|spec| {
+            let agent_continuation_tool = is_agent_continuation_app_tool_name(&spec.name);
             let mut value = mcp_tool_spec_json(spec, compact, false);
             attach_app_visibility(&mut value);
+            if agent_continuation_tool {
+                // ChatGPT's App bridge associates View-originated tools/call with
+                // the resource that owns the calling View. App-only visibility
+                // prevents these coordination tools from becoming model-callable
+                // card entries while preserving that Host-side resource binding.
+                attach_app_metadata(
+                    &mut value,
+                    resources::MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
+                );
+            }
             value
         })
         .collect::<Vec<_>>();

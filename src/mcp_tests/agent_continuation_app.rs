@@ -170,7 +170,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v5"
+        "ui://webcodex/agent-continuation/v6"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -206,17 +206,20 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         })
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(bound_tools, vec!["present_agent_continuation"]);
+    assert_eq!(bound_tools.len(), APP_TOOLS.len() + 1);
+    assert!(bound_tools.contains(&"present_agent_continuation"));
     for name in APP_TOOLS {
         let descriptor = tool(&ui["result"], name).unwrap_or_else(|| panic!("missing {name}"));
         assert_eq!(
             descriptor.pointer("/_meta/ui/visibility"),
             Some(&json!(["app"]))
         );
-        assert!(
-            descriptor.pointer("/_meta/ui/resourceUri").is_none(),
-            "{name} must coordinate the existing card rather than create another one"
+        assert_eq!(
+            descriptor.pointer("/_meta/ui/resourceUri"),
+            Some(&json!(MCP_AGENT_CONTINUATION_UI_RESOURCE_URI)),
+            "{name} must be associated with the continuation View for Host bridge calls"
         );
+        assert!(bound_tools.contains(&name));
     }
     assert_eq!(
         tool(&ui["result"], "agent_continuation_bind").unwrap()["inputSchema"]["required"],
@@ -347,12 +350,21 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         .iter()
         .any(|resource| matches!(
             resource["uri"].as_str(),
-            Some("ui://webcodex/agent-continuation/v1" | "ui://webcodex/agent-continuation/v2")
+            Some(
+                "ui://webcodex/agent-continuation/v1"
+                    | "ui://webcodex/agent-continuation/v2"
+                    | "ui://webcodex/agent-continuation/v3"
+                    | "ui://webcodex/agent-continuation/v4"
+                    | "ui://webcodex/agent-continuation/v5"
+            )
         )));
     for uri in [
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
         "ui://webcodex/agent-continuation/v1",
         "ui://webcodex/agent-continuation/v2",
+        "ui://webcodex/agent-continuation/v3",
+        "ui://webcodex/agent-continuation/v4",
+        "ui://webcodex/agent-continuation/v5",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
