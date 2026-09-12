@@ -98,6 +98,8 @@ handoff, and finish can reason about the same unit of work.
 - Validation evidence and closeout summaries
 - Handoff / finish tooling (`session_handoff_summary`, `finish_coding_task`, …)
 
+Workflow Session lifecycle is independent from the durable `wc_goal_*` Goal domain. A Session may be explicitly correlated to a Goal, but that correlation grants no Session/Project authority and does not make the Session the Goal's lifecycle owner. In particular, `finish_coding_task` does not transition a Goal to `completed`; any Goal transition is a separate explicit Goal-domain mutation.
+
 ### Identity
 
 | Aspect | Contract |
