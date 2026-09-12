@@ -30,6 +30,18 @@ const CARGO_VALIDATION_FAILURE_KIND: &str = "validation_failed";
 const VALIDATION_FAILURE_GUIDANCE: &str =
     "command was started; inspect bounded validation evidence, fix the reported issue, then rerun the same structured validation tool.";
 
+fn test_count_assertion_failure_message(tool_name: &str, payload: &Value) -> String {
+    if tool_name == "cargo_test"
+        && payload.get("zero_tests_run").and_then(Value::as_bool) == Some(true)
+    {
+        return "cargo_test completed but 0 tests executed; broaden or remove the substring filter, use the test's full qualified name if needed, or verify the selected package/target. Do not put --exact, --nocapture, or other Cargo/libtest flags in filter, and do not treat this result as validation success.".to_string();
+    }
+    if tool_name == "cargo_test" {
+        return "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string();
+    }
+    "structured test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
+}
+
 fn validate_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     match cwd {
         Some(raw) => {
@@ -1233,24 +1245,17 @@ impl ToolRuntime {
                 CARGO_VALIDATION_FAILURE_KIND
             };
             payload["failure_kind"] = json!(failure_kind);
+            let error = if timed_out {
+                command_timeout_message(handoff.effective_timeout_secs, &stdout_tail, &stderr_tail)
+            } else if process_passed {
+                test_count_assertion_failure_message(adapter.tool_identity(), &payload)
+            } else {
+                format!("structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}")
+            };
             let result = ToolResult {
                 success: false,
                 output: payload,
-                error: Some(if timed_out {
-                    command_timeout_message(
-                        handoff.effective_timeout_secs,
-                        &stdout_tail,
-                        &stderr_tail,
-                    )
-                } else {
-                    if process_passed {
-                        "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
-                    } else {
-                        format!(
-                            "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
-                        )
-                    }
-                }),
+                error: Some(error),
             };
             self.runner_registry
                 .remove_projected_hidden_terminal_job_record(&job_id)
@@ -1399,16 +1404,15 @@ impl ToolRuntime {
                 } else {
                     "process_exit"
                 });
+                let error = if process_passed {
+                    test_count_assertion_failure_message(adapter.tool_identity(), &payload)
+                } else {
+                    format!("structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}")
+                };
                 ToolResult {
                     success: false,
                     output: payload,
-                    error: Some(if process_passed {
-                        "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
-                    } else {
-                        format!(
-                            "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
-                        )
-                    }),
+                    error: Some(error),
                 }
             }
         }

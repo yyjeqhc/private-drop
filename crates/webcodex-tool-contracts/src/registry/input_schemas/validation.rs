@@ -160,7 +160,12 @@ pub fn cargo_test_input_schema() -> Value {
                 "Optional project-relative working directory.",
                 false,
             ),
-            ("filter", "string", "Optional cargo test filter.", false),
+            (
+                "filter",
+                "string",
+                "Optional Rust test substring passed as `cargo test FILTER`. This is not a CLI-argument field: do not include `--exact`, `--nocapture`, or other Cargo/libtest flags. Omit it to run the selected Cargo test target normally; if zero tests run, broaden or remove the filter, or use the test's full qualified name.",
+                false,
+            ),
             ("all_targets", "boolean", "Include --all-targets.", false),
             ("all_features", "boolean", "Include --all-features.", false),
             (

@@ -273,6 +273,13 @@ fn cargo_test_schema_explains_execution_proof_policy() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "cargo_test");
     let properties = spec.input_schema["properties"].as_object().unwrap();
+    let filter = properties["filter"]["description"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(filter.contains("substring"), "{filter}");
+    assert!(filter.contains("cargo test FILTER"), "{filter}");
+    assert!(filter.contains("--exact"), "{filter}");
+    assert!(filter.contains("full qualified name"), "{filter}");
     let require_tests = properties["require_tests"]["description"]
         .as_str()
         .unwrap_or_default();
@@ -300,6 +307,11 @@ fn cargo_test_schema_explains_execution_proof_policy() {
         .contains("Normal execution requires non-zero"));
     assert!(spec.description.contains("require_tests=false opts out"));
     assert!(spec.description.contains("no_run=true is compile-only"));
+    assert!(spec.description.contains("Rust substring"));
+    assert!(spec.description.contains("--exact"));
+    assert!(spec
+        .description
+        .contains("zero-test results are not validation proof"));
 }
 
 #[test]

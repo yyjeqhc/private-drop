@@ -88,6 +88,11 @@ async fn fast_cargo_test_require_tests_rejects_ignored_only_and_records_failed_s
     );
     assert_eq!(result.output["tests_run_count"], 0);
     assert_eq!(result.output["zero_tests_run"], true);
+    let error = result.error.as_deref().expect("zero-test recovery message");
+    assert!(error.contains("0 tests executed"), "{error}");
+    assert!(error.contains("substring filter"), "{error}");
+    assert!(error.contains("full qualified name"), "{error}");
+    assert!(error.contains("--exact"), "{error}");
     assert_eq!(result.output["test_count_assertion"]["actual_tests_run"], 0);
     assert_cargo_result_matches_schema("cargo_test", &result);
     assert!(
