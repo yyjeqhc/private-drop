@@ -18,17 +18,13 @@ fn presentation<'a>(call_result: &'a Value) -> &'a Value {
     &call_result["_meta"][super::super::presentation::MCP_PRESENTATION_META_KEY]
 }
 
-const RESULT_APP_TOOLS: [&str; 8] = [
-    "list_jobs",
+const RESULT_APP_TOOLS: [&str; 3] = ["list_jobs", "validation_summary", "git_review_summary"];
+const UNBOUND_RESULT_APP_TOOLS: [&str; 14] = [
     "observe_jobs",
     "cargo_check",
     "cargo_test",
     "go_test",
-    "validation_summary",
     "show_changes",
-    "git_review_summary",
-];
-const UNBOUND_RESULT_APP_TOOLS: [&str; 9] = [
     "cargo_fmt",
     "run_shell",
     "run_process",
@@ -154,8 +150,9 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     const PUBLIC_URL: &str = "https://self-host.example";
     let runtime =
         test_runtime_with_surface_and_public_url(ModelSurface::FullOperatorRuntime, PUBLIC_URL);
-    assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/result/v2");
+    assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/result/v3");
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v1"));
+    assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v2"));
     assert!(mcp_result_app_resource_meta(None)["ui"]
         .get("domain")
         .is_none());
@@ -501,7 +498,13 @@ fn job_presentation_is_post_result_bounded_and_private() {
         .map(|index| {
             json!({
                 "job_id": format!("job-{index}"),
-                "status": if index == 0 { "lost" } else { "running" },
+                "status": match index {
+                    0 => "lost",
+                    1 => "running",
+                    2 => "recovering",
+                    4 => "failed",
+                    _ => "completed",
+                },
                 "project": "p".repeat(400),
                 "active": index != 0,
                 "blocking_active": index != 0,
@@ -510,8 +513,27 @@ fn job_presentation_is_post_result_bounded_and_private() {
                 "duration_ms": 25,
                 "elapsed_secs": 1,
                 "command_execution_state": if index == 0 { "outcome_unknown" } else { "completed" },
-                "recovery_state": if index == 0 { "recovering" } else { "reconciled" },
+                "recovery_state": if index == 0 || index == 2 { "recovering" } else { "reconciled" },
                 "recovery_reason": "r".repeat(400),
+                "activity": if index == 1 {
+                    json!({"state": "working", "phase": "cargo_compiling", "source": "cargo_output"})
+                } else {
+                    Value::Null
+                },
+                "detected_summary": if index == 1 {
+                    json!({
+                        "kind": "build",
+                        "outcome": "in_progress",
+                        "progress": {
+                            "state": "working",
+                            "reason_code": "cargo_compiling",
+                            "summary": secret
+                        },
+                        "raw": secret
+                    })
+                } else {
+                    Value::Null
+                },
                 "stdout_tail": secret,
                 "stderr_tail": secret,
                 "command_summary": secret,
@@ -533,9 +555,16 @@ fn job_presentation_is_post_result_bounded_and_private() {
 
     let meta = presentation(&framed);
     assert_eq!(meta["kind"], "job_list");
-    assert_eq!(meta["items"].as_array().unwrap().len(), 8);
-    assert_eq!(meta["items_truncated"], true);
+    assert_eq!(meta["items"].as_array().unwrap().len(), 4);
+    assert_eq!(meta["presented_count"], 4);
+    assert_eq!(meta["routine_omitted_count"], 8);
+    assert_eq!(meta["items_truncated"], false);
     assert_eq!(meta["truncated"], true);
+    assert!(meta["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["status"] != "completed"));
     assert_eq!(meta["items"][0]["status"], "lost");
     assert_eq!(
         meta["items"][0]["command_execution_state"],
@@ -546,6 +575,29 @@ fn job_presentation_is_post_result_bounded_and_private() {
     assert_eq!(meta["items"][0]["active"], false);
     assert_eq!(meta["items"][0]["blocking_active"], false);
     assert_eq!(meta["items"][0]["terminal_pending"], false);
+    assert_eq!(meta["shown_active_count"], 2);
+    assert_eq!(meta["shown_terminal_count"], 2);
+    assert_eq!(meta["shown_attention_count"], 3);
+    assert_eq!(meta["items"][1]["active"], true);
+    assert_eq!(meta["items"][1]["blocking_active"], true);
+    assert_eq!(meta["items"][1]["terminal"], false);
+    assert_eq!(meta["items"][2]["status"], "recovering");
+    assert_eq!(meta["items"][2]["active"], true);
+    assert_eq!(meta["items"][2]["blocking_active"], true);
+    assert_eq!(meta["items"][2]["terminal"], false);
+    assert_eq!(meta["items"][3]["status"], "failed");
+    assert_eq!(meta["items"][3]["terminal"], true);
+    assert_eq!(meta["items"][1]["progress"]["state"], "working");
+    assert_eq!(
+        meta["items"][1]["progress"]["reason_code"],
+        "cargo_compiling"
+    );
+    assert_eq!(
+        meta["items"][1]["progress"]["summary"],
+        "Cargo compilation in progress"
+    );
+    assert_eq!(meta["items"][1]["work"]["kind"], "build");
+    assert_eq!(meta["items"][1]["work"]["outcome"], "in_progress");
     assert!(meta["items"][0]["guidance"]
         .as_str()
         .unwrap()
@@ -571,6 +623,8 @@ fn job_presentation_is_post_result_bounded_and_private() {
         "stderr_tail",
         "command_summary",
         "observation_token",
+        "detected_summary",
+        "activity",
         "cwd",
     ] {
         assert!(!serialized.contains(forbidden));
@@ -1449,6 +1503,11 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "Git changes",
         "Committed review",
         "Cargo Test",
+        "jobState",
+        "jobWorkText",
+        "No active jobs",
+        "No active jobs shown",
+        "Progress reason",
         "Array.from",
         "Cargo test zero tests",
     ] {
@@ -1758,6 +1817,8 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
     let running = observe(&runtime, &auth, &job_id, 3210).await;
     assert_eq!(presentation(&running)["items"][0]["status"], "running");
     assert_eq!(presentation(&running)["items"][0]["terminal"], false);
+    assert_eq!(presentation(&running)["items"][0]["active"], true);
+    assert_eq!(presentation(&running)["items"][0]["blocking_active"], true);
     assert!(serde_json::to_string(presentation(&running))
         .unwrap()
         .find("secret log body")
@@ -1814,6 +1875,11 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
     let completed = observe(&runtime, &auth, &job_id, 3211).await;
     assert_eq!(presentation(&completed)["items"][0]["status"], "completed");
     assert_eq!(presentation(&completed)["items"][0]["terminal"], true);
+    assert_eq!(presentation(&completed)["items"][0]["active"], false);
+    assert_eq!(
+        presentation(&completed)["items"][0]["blocking_active"],
+        false
+    );
     assert_eq!(
         completed["structuredContent"]["output"]["items"][0]["status"],
         "completed"

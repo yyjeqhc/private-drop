@@ -1,14 +1,25 @@
 use serde_json::{json, Map, Value};
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 pub(super) const MCP_PRESENTATION_META_KEY: &str = "webcodex/presentation";
 pub(super) const MCP_PRESENTATION_VERSION: u64 = 1;
 pub(super) const MAX_MCP_PRESENTATION_ITEMS: usize = 8;
 pub(super) const MAX_MCP_PRESENTATION_TEXT_CHARS: usize = 256;
 
-/// Static MCP App descriptor/presentation eligibility only. This is not a Tool
-/// registry or authority surface: the normal ToolSpec/runtime admission path
-/// remains canonical and decides whether any of these tools are callable.
+/// Static MCP App descriptor eligibility only. One advertised App binding creates
+/// one extra Host presentation per tool result, so keep this deliberately sparse:
+/// routine execution/observation stays on the Host's native tool card.
 pub(super) fn tool_supports_result_app(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "list_jobs" | "validation_summary" | "git_review_summary"
+    )
+}
+
+/// Bounded presentation projections retained for current milestone cards and for
+/// already-cached older tool descriptors. Projection support does not itself bind
+/// a new App card in tools/list.
+fn tool_has_result_presentation_projection(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "list_jobs"
@@ -63,6 +74,119 @@ fn copy_scalar(source: &Value, target: &mut Map<String, Value>, key: &str) {
     }
 }
 
+fn safe_job_progress(state: &str, reason_code: &str) -> Option<Value> {
+    if !matches!(state, "working" | "waiting") {
+        return None;
+    }
+    let summary = match reason_code {
+        "process_running" => "Process execution in progress",
+        "validation_format" => "Formatting validation in progress",
+        "validation_check" => "Check validation in progress",
+        "validation_test" => "Test validation in progress",
+        "cargo_waiting_for_build_lock" | "cargo_build_lock" => "Waiting for Cargo build lock",
+        "cargo_compiling" => "Cargo compilation in progress",
+        "cargo_checking" => "Cargo checking in progress",
+        _ => return None,
+    };
+    Some(json!({
+        "state": state,
+        "reason_code": reason_code,
+        "summary": summary,
+    }))
+}
+
+fn job_progress_presentation(source: &Value) -> Option<Value> {
+    if let Some(progress) = source
+        .pointer("/detected_summary/progress")
+        .and_then(Value::as_object)
+    {
+        if let (Some(state), Some(reason_code)) = (
+            progress.get("state").and_then(Value::as_str),
+            progress.get("reason_code").and_then(Value::as_str),
+        ) {
+            if let Some(projected) = safe_job_progress(state, reason_code) {
+                return Some(projected);
+            }
+        }
+    }
+
+    let activity = source.get("activity")?.as_object()?;
+    let state = activity.get("state")?.as_str()?;
+    let reason_code = activity.get("phase")?.as_str()?;
+    safe_job_progress(state, reason_code)
+}
+
+fn job_work_presentation(source: &Value) -> Option<Value> {
+    let detected = source.get("detected_summary")?.as_object()?;
+    let mut output = Map::new();
+    if let Some(kind) = detected.get("kind").and_then(Value::as_str).filter(|kind| {
+        matches!(
+            *kind,
+            "test"
+                | "check"
+                | "format"
+                | "build"
+                | "validation"
+                | "release"
+                | "diagnostic"
+                | "operation"
+        )
+    }) {
+        output.insert("kind".to_string(), Value::String(kind.to_string()));
+    }
+    if let Some(outcome) = detected
+        .get("outcome")
+        .and_then(Value::as_str)
+        .filter(|outcome| {
+            matches!(
+                *outcome,
+                "in_progress" | "passed" | "failed" | "timed_out" | "cancelled"
+            )
+        })
+    {
+        output.insert("outcome".to_string(), Value::String(outcome.to_string()));
+    }
+    let detected = Value::Object(detected.clone());
+    for key in [
+        "tests_detected",
+        "tests_run_count",
+        "zero_tests_run",
+        "tests_passed",
+        "tests_failed",
+    ] {
+        copy_scalar(&detected, &mut output, key);
+    }
+    (!output.is_empty()).then(|| Value::Object(output))
+}
+
+fn apply_job_lifecycle(item: &mut Map<String, Value>, status: &str) {
+    let active = webcodex_runner_registry::job_status_is_active(status);
+    let lifecycle = RunnerJobLifecycle::from_wire(status).ok();
+    let terminal_pending = lifecycle == Some(RunnerJobLifecycle::StopRequested);
+    let terminal = lifecycle.is_some_and(RunnerJobLifecycle::is_terminal);
+    item.insert("active".to_string(), Value::Bool(active));
+    item.insert("terminal".to_string(), Value::Bool(terminal));
+    item.insert(
+        "terminal_pending".to_string(),
+        Value::Bool(terminal_pending),
+    );
+    item.insert(
+        "blocking_active".to_string(),
+        Value::Bool(active && !terminal_pending),
+    );
+}
+
+fn job_item_needs_attention(item: &Value) -> bool {
+    matches!(
+        item.get("status").and_then(Value::as_str),
+        Some("failed" | "lost" | "timeout" | "timed_out")
+    ) || matches!(
+        item.get("recovery_state").and_then(Value::as_str),
+        Some("recovering" | "lost_after_reconcile")
+    ) || item.get("command_execution_state").and_then(Value::as_str) == Some("outcome_unknown")
+        || item.get("error_kind").is_some()
+}
+
 fn static_guidance(
     status: Option<&str>,
     execution_state: Option<&str>,
@@ -79,9 +203,6 @@ fn static_guidance(
     match recovery {
         Some("recovering") => {
             Some("Job recovery is in progress; this card does not poll or retry automatically.")
-        }
-        Some("reconciled") => {
-            Some("Job state was reconciled from the canonical runtime record.")
         }
         Some("lost_after_reconcile") => Some(
             "Job remained lost after reconciliation; inspect current runtime state before retrying.",
@@ -101,16 +222,15 @@ fn job_summary_presentation(job: &Value) -> Option<Value> {
     copy_bounded_text(job, &mut item, "recovery_state");
     copy_bounded_text(job, &mut item, "recovery_reason_code");
     copy_bounded_text(job, &mut item, "recovery_reason");
-    for key in [
-        "active",
-        "blocking_active",
-        "terminal",
-        "terminal_pending",
-        "duration_ms",
-        "elapsed_secs",
-        "exit_code",
-    ] {
+    for key in ["duration_ms", "elapsed_secs", "exit_code"] {
         copy_scalar(job, &mut item, key);
+    }
+    apply_job_lifecycle(&mut item, &status);
+    if let Some(progress) = job_progress_presentation(job) {
+        item.insert("progress".to_string(), progress);
+    }
+    if let Some(work) = job_work_presentation(job) {
+        item.insert("work".to_string(), work);
     }
     let execution_state = job.get("command_execution_state").and_then(Value::as_str);
     let recovery_state = job.get("recovery_state").and_then(Value::as_str);
@@ -122,18 +242,50 @@ fn job_summary_presentation(job: &Value) -> Option<Value> {
 
 fn list_jobs_presentation(output: &Value) -> Option<Value> {
     let jobs = output.get("jobs")?.as_array()?;
-    let items = jobs
+    let projected = jobs
         .iter()
-        .take(MAX_MCP_PRESENTATION_ITEMS)
         .filter_map(job_summary_presentation)
         .collect::<Vec<_>>();
+    let foreground_count = projected
+        .iter()
+        .filter(|item| {
+            item.get("active").and_then(Value::as_bool) == Some(true)
+                || job_item_needs_attention(item)
+        })
+        .count();
+    let routine_omitted_count = projected.len().saturating_sub(foreground_count);
+    let items = projected
+        .into_iter()
+        .filter(|item| {
+            item.get("active").and_then(Value::as_bool) == Some(true)
+                || job_item_needs_attention(item)
+        })
+        .take(MAX_MCP_PRESENTATION_ITEMS)
+        .collect::<Vec<_>>();
+    let shown_active_count = items
+        .iter()
+        .filter(|item| item.get("active").and_then(Value::as_bool) == Some(true))
+        .count();
+    let shown_terminal_count = items
+        .iter()
+        .filter(|item| item.get("terminal").and_then(Value::as_bool) == Some(true))
+        .count();
+    let shown_attention_count = items
+        .iter()
+        .filter(|item| job_item_needs_attention(item))
+        .count();
     Some(json!({
         "version": MCP_PRESENTATION_VERSION,
         "kind": "job_list",
         "count": output.get("count").and_then(Value::as_u64)?,
         "matched_count": output.get("matched_count").and_then(Value::as_u64)?,
         "truncated": output.get("truncated").and_then(Value::as_bool)?,
-        "items_truncated": jobs.len() > MAX_MCP_PRESENTATION_ITEMS,
+        "presented_count": items.len(),
+        "routine_omitted_count": routine_omitted_count,
+        "items_truncated": foreground_count > MAX_MCP_PRESENTATION_ITEMS,
+        "shown_active_count": shown_active_count,
+        "shown_terminal_count": shown_terminal_count,
+        "shown_attention_count": shown_attention_count,
         "items": items,
     }))
 }
@@ -150,7 +302,7 @@ fn observed_success_presentation(observation: &Value) -> Option<Value> {
     let status = observation.get("status").and_then(bounded_text)?;
     let mut item = Map::new();
     item.insert("job_id".to_string(), Value::String(job_id));
-    item.insert("status".to_string(), Value::String(status));
+    item.insert("status".to_string(), Value::String(status.clone()));
     for key in [
         "command_execution_state",
         "recovery_state",
@@ -161,7 +313,6 @@ fn observed_success_presentation(observation: &Value) -> Option<Value> {
         copy_bounded_text(observation, &mut item, key);
     }
     for key in [
-        "terminal",
         "changed",
         "exit_code",
         "stdout_lines",
@@ -176,6 +327,13 @@ fn observed_success_presentation(observation: &Value) -> Option<Value> {
         "earlier_stderr_unavailable",
     ] {
         copy_scalar(observation, &mut item, key);
+    }
+    apply_job_lifecycle(&mut item, &status);
+    if let Some(progress) = job_progress_presentation(observation) {
+        item.insert("progress".to_string(), progress);
+    }
+    if let Some(work) = job_work_presentation(observation) {
+        item.insert("work".to_string(), work);
     }
     if let Some(guidance) = observation_guidance(observation) {
         item.insert("guidance".to_string(), Value::String(guidance.to_string()));
@@ -872,7 +1030,7 @@ fn git_review_presentation(output: &Value) -> Option<Value> {
 }
 
 fn presentation_from_call_result(tool_name: &str, call_result: &Value) -> Option<Value> {
-    if !tool_supports_result_app(tool_name) {
+    if !tool_has_result_presentation_projection(tool_name) {
         return None;
     }
     let structured = call_result.get("structuredContent")?;

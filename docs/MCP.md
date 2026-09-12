@@ -62,15 +62,21 @@ For a regular independent Windows Server + Runner reached through OpenAI Tunnel,
 
 ## Result cards
 
-On operator surfaces, clients advertising MCP Apps HTML support can display
-read-only result cards for `list_jobs`, `observe_jobs`, `cargo_check`, `cargo_test`,
-`go_test`, `validation_summary`, `show_changes`, and `git_review_summary`.
-Validation cards show execution outcomes, bounded diagnostics, and current versus
-historical validation evidence; Git cards show bounded worktree or committed-range
-metadata without embedding raw diffs or hunks.
-Cards do not poll, retry, or invoke tools; the canonical tool result remains
-available independently. `WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata
-and resources without disabling the underlying tools.
+On operator surfaces, clients advertising MCP Apps HTML support can display a
+small set of read-only milestone cards for `list_jobs`, `validation_summary`, and
+`git_review_summary`. The Job card shows only active or attention-requiring Jobs;
+routine successful terminal Jobs stay out of the foreground. Aggregate validation
+and committed-range review cards remain bounded and do not embed raw logs, diffs,
+or hunks.
+
+High-frequency calls such as `observe_jobs`, `cargo_check`, `cargo_test`, `go_test`,
+and `show_changes` intentionally keep the Host's native tool presentation instead
+of creating an extra custom App card for every call. Cards do not poll, retry, or
+invoke tools; the canonical tool result remains available independently.
+`WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata and resources without
+disabling the underlying tools.
+
+The current Result App is intentionally static. September 2026 Host experiments proved that a separately designed MCP App controller can poll server-owned state and request later ChatGPT model turns, including a bounded foreground autonomous multi-turn loop, but background-tab model-turn scheduling is not an immediate guarantee. Those findings and the production design constraints are recorded in [`agent/mcp-app-continuation-experiments.md`](agent/mcp-app-continuation-experiments.md); they do not change the current Result App contract.
 
 ## Existing Server
 
