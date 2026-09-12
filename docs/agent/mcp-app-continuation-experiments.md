@@ -139,6 +139,8 @@ Do not copy the temporary timer/map implementation into production. Reuse the au
 
 The static Result App follows the same sparsity rule: current tool descriptors bind it only to `list_jobs`, `validation_summary`, and `git_review_summary`. High-frequency observation, validation-run, and worktree-review calls keep native Host presentation; bounded legacy projections remain available only so already-cached older descriptors fail gracefully rather than forcing a compatibility break.
 
+The production Durable Goal G2 implementation now applies the same findings to a server-owned Goal: one explicit `present_goal_plan(goal_id)` binds `ui://webcodex/goal-plan/v1`, while the existing View uses the ModelHidden/app-only `goal_plan_state(goal_id)` exact read to converge on SQLite Goal revision. It deliberately adds no Wake, `ui/message`, model resume, timer-owned server state, or execution transition; those remain G3 concerns.
+
 ## Recommended implementation order
 
 The Host mechanism is no longer the main unknown. The lowest-risk implementation sequence is:
