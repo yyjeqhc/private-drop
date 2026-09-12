@@ -567,13 +567,14 @@
     const items = Array.isArray(presentation.items) ? presentation.items.slice(0, MAX_ITEMS) : [];
     if (presentation.kind === "job_list") {
       titleEl.textContent = "WebCodex Jobs";
-      const count = Number.isInteger(presentation.count) ? presentation.count : items.length;
-      const matched = Number.isInteger(presentation.matched_count) ? presentation.matched_count : count;
+      const returned = Number.isInteger(presentation.count) ? presentation.count : items.length;
+      const matched = Number.isInteger(presentation.matched_count) ? presentation.matched_count : returned;
+      const presented = Number.isInteger(presentation.presented_count) ? presentation.presented_count : items.length;
       const active = Number.isInteger(presentation.shown_active_count) ? presentation.shown_active_count : items.filter((item) => item && item.active === true).length;
       const terminal = Number.isInteger(presentation.shown_terminal_count) ? presentation.shown_terminal_count : items.filter((item) => item && item.terminal === true).length;
       const attention = Number.isInteger(presentation.shown_attention_count) ? presentation.shown_attention_count : 0;
       stateEl.textContent = active > 0 ? String(active) + " active" : attention > 0 ? String(attention) + " attention" : "No active jobs";
-      const parts = [String(count) + " shown", String(matched) + " matched"];
+      const parts = [String(presented) + " active/attention", String(matched) + " matched"];
       if (terminal > 0) parts.push(String(terminal) + " terminal");
       if (attention > 0) parts.push(String(attention) + " need attention");
       if (presentation.truncated === true) parts.push("canonical result truncated");

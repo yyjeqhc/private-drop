@@ -6,10 +6,20 @@ pub(super) const MCP_PRESENTATION_VERSION: u64 = 1;
 pub(super) const MAX_MCP_PRESENTATION_ITEMS: usize = 8;
 pub(super) const MAX_MCP_PRESENTATION_TEXT_CHARS: usize = 256;
 
-/// Static MCP App descriptor/presentation eligibility only. This is not a Tool
-/// registry or authority surface: the normal ToolSpec/runtime admission path
-/// remains canonical and decides whether any of these tools are callable.
+/// Static MCP App descriptor eligibility only. One advertised App binding creates
+/// one extra Host presentation per tool result, so keep this deliberately sparse:
+/// routine execution/observation stays on the Host's native tool card.
 pub(super) fn tool_supports_result_app(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "list_jobs" | "validation_summary" | "git_review_summary"
+    )
+}
+
+/// Bounded presentation projections retained for current milestone cards and for
+/// already-cached older tool descriptors. Projection support does not itself bind
+/// a new App card in tools/list.
+fn tool_has_result_presentation_projection(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "list_jobs"
@@ -194,9 +204,6 @@ fn static_guidance(
         Some("recovering") => {
             Some("Job recovery is in progress; this card does not poll or retry automatically.")
         }
-        Some("reconciled") => {
-            Some("Job state was reconciled from the canonical runtime record.")
-        }
         Some("lost_after_reconcile") => Some(
             "Job remained lost after reconciliation; inspect current runtime state before retrying.",
         ),
@@ -235,10 +242,25 @@ fn job_summary_presentation(job: &Value) -> Option<Value> {
 
 fn list_jobs_presentation(output: &Value) -> Option<Value> {
     let jobs = output.get("jobs")?.as_array()?;
-    let items = jobs
+    let projected = jobs
         .iter()
-        .take(MAX_MCP_PRESENTATION_ITEMS)
         .filter_map(job_summary_presentation)
+        .collect::<Vec<_>>();
+    let foreground_count = projected
+        .iter()
+        .filter(|item| {
+            item.get("active").and_then(Value::as_bool) == Some(true)
+                || job_item_needs_attention(item)
+        })
+        .count();
+    let routine_omitted_count = projected.len().saturating_sub(foreground_count);
+    let items = projected
+        .into_iter()
+        .filter(|item| {
+            item.get("active").and_then(Value::as_bool) == Some(true)
+                || job_item_needs_attention(item)
+        })
+        .take(MAX_MCP_PRESENTATION_ITEMS)
         .collect::<Vec<_>>();
     let shown_active_count = items
         .iter()
@@ -258,7 +280,9 @@ fn list_jobs_presentation(output: &Value) -> Option<Value> {
         "count": output.get("count").and_then(Value::as_u64)?,
         "matched_count": output.get("matched_count").and_then(Value::as_u64)?,
         "truncated": output.get("truncated").and_then(Value::as_bool)?,
-        "items_truncated": jobs.len() > MAX_MCP_PRESENTATION_ITEMS,
+        "presented_count": items.len(),
+        "routine_omitted_count": routine_omitted_count,
+        "items_truncated": foreground_count > MAX_MCP_PRESENTATION_ITEMS,
         "shown_active_count": shown_active_count,
         "shown_terminal_count": shown_terminal_count,
         "shown_attention_count": shown_attention_count,
@@ -1006,7 +1030,7 @@ fn git_review_presentation(output: &Value) -> Option<Value> {
 }
 
 fn presentation_from_call_result(tool_name: &str, call_result: &Value) -> Option<Value> {
-    if !tool_supports_result_app(tool_name) {
+    if !tool_has_result_presentation_projection(tool_name) {
         return None;
     }
     let structured = call_result.get("structuredContent")?;

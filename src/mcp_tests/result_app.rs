@@ -18,17 +18,13 @@ fn presentation<'a>(call_result: &'a Value) -> &'a Value {
     &call_result["_meta"][super::super::presentation::MCP_PRESENTATION_META_KEY]
 }
 
-const RESULT_APP_TOOLS: [&str; 8] = [
-    "list_jobs",
+const RESULT_APP_TOOLS: [&str; 3] = ["list_jobs", "validation_summary", "git_review_summary"];
+const UNBOUND_RESULT_APP_TOOLS: [&str; 14] = [
     "observe_jobs",
     "cargo_check",
     "cargo_test",
     "go_test",
-    "validation_summary",
     "show_changes",
-    "git_review_summary",
-];
-const UNBOUND_RESULT_APP_TOOLS: [&str; 9] = [
     "cargo_fmt",
     "run_shell",
     "run_process",
@@ -502,7 +498,13 @@ fn job_presentation_is_post_result_bounded_and_private() {
         .map(|index| {
             json!({
                 "job_id": format!("job-{index}"),
-                "status": if index == 0 { "lost" } else if index == 2 { "recovering" } else { "running" },
+                "status": match index {
+                    0 => "lost",
+                    1 => "running",
+                    2 => "recovering",
+                    4 => "failed",
+                    _ => "completed",
+                },
                 "project": "p".repeat(400),
                 "active": index != 0,
                 "blocking_active": index != 0,
@@ -553,9 +555,16 @@ fn job_presentation_is_post_result_bounded_and_private() {
 
     let meta = presentation(&framed);
     assert_eq!(meta["kind"], "job_list");
-    assert_eq!(meta["items"].as_array().unwrap().len(), 8);
-    assert_eq!(meta["items_truncated"], true);
+    assert_eq!(meta["items"].as_array().unwrap().len(), 4);
+    assert_eq!(meta["presented_count"], 4);
+    assert_eq!(meta["routine_omitted_count"], 8);
+    assert_eq!(meta["items_truncated"], false);
     assert_eq!(meta["truncated"], true);
+    assert!(meta["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["status"] != "completed"));
     assert_eq!(meta["items"][0]["status"], "lost");
     assert_eq!(
         meta["items"][0]["command_execution_state"],
@@ -566,9 +575,9 @@ fn job_presentation_is_post_result_bounded_and_private() {
     assert_eq!(meta["items"][0]["active"], false);
     assert_eq!(meta["items"][0]["blocking_active"], false);
     assert_eq!(meta["items"][0]["terminal_pending"], false);
-    assert_eq!(meta["shown_active_count"], 7);
-    assert_eq!(meta["shown_terminal_count"], 1);
-    assert_eq!(meta["shown_attention_count"], 2);
+    assert_eq!(meta["shown_active_count"], 2);
+    assert_eq!(meta["shown_terminal_count"], 2);
+    assert_eq!(meta["shown_attention_count"], 3);
     assert_eq!(meta["items"][1]["active"], true);
     assert_eq!(meta["items"][1]["blocking_active"], true);
     assert_eq!(meta["items"][1]["terminal"], false);
@@ -576,6 +585,8 @@ fn job_presentation_is_post_result_bounded_and_private() {
     assert_eq!(meta["items"][2]["active"], true);
     assert_eq!(meta["items"][2]["blocking_active"], true);
     assert_eq!(meta["items"][2]["terminal"], false);
+    assert_eq!(meta["items"][3]["status"], "failed");
+    assert_eq!(meta["items"][3]["terminal"], true);
     assert_eq!(meta["items"][1]["progress"]["state"], "working");
     assert_eq!(
         meta["items"][1]["progress"]["reason_code"],

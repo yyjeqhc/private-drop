@@ -137,6 +137,8 @@ A production workflow presentation should therefore prefer:
 
 Do not copy the temporary timer/map implementation into production. Reuse the authoritative Workflow Session, Job lifecycle/observation, ActionAudit/window correlation, and durable Agent continuation primitives that already own persistence, authority, and recovery semantics.
 
+The static Result App follows the same sparsity rule: current tool descriptors bind it only to `list_jobs`, `validation_summary`, and `git_review_summary`. High-frequency observation, validation-run, and worktree-review calls keep native Host presentation; bounded legacy projections remain available only so already-cached older descriptors fail gracefully rather than forcing a compatibility break.
+
 ## Recommended implementation order
 
 The Host mechanism is no longer the main unknown. The lowest-risk implementation sequence is:
