@@ -53,8 +53,9 @@ pub(super) const MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
 // Temporary gray-card diagnostic: force the host to re-read the canonical App
 // resource for every card so resource reuse/cache is not an unobserved variable.
 pub(super) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
-pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/result/v2";
-pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &["ui://webcodex/result/v1"];
+pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/result/v3";
+pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] =
+    &["ui://webcodex/result/v1", "ui://webcodex/result/v2"];
 pub(super) const MCP_UI_RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
 pub(super) const MCP_COMPUTER_APP_HTML: &str = include_str!("../mcp_computer_app.html");
 pub(super) const MCP_RESULT_APP_HTML: &str = include_str!("../mcp_result_app.html");
@@ -125,7 +126,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .push(json!({
             "uri": MCP_RESULT_UI_RESOURCE_URI,
             "name": "WebCodex Result",
-            "description": "Read-only WebCodex structured result presentation for list_jobs, observe_jobs, cargo_check, cargo_test, go_test, and validation_summary. The App renders bounded presentation metadata and never performs tool calls or owns runtime state.",
+            "description": "Read-only bounded WebCodex presentation for Jobs, validation evidence, and Git summaries. The App renders allowlisted presentation metadata and never performs tool calls or owns runtime state.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_result_app_resource_meta(domain)
         }));

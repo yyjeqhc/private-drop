@@ -383,31 +383,160 @@
     });
   }
 
+  function jobKindLabel(value) {
+    const kind = boundedString(value);
+    if (!kind) return null;
+    if (kind === "test") return "Test";
+    if (kind === "check") return "Check";
+    if (kind === "format") return "Format";
+    if (kind === "build") return "Build";
+    if (kind === "validation") return "Validation";
+    if (kind === "release") return "Release";
+    if (kind === "diagnostic") return "Diagnostic";
+    if (kind === "operation") return "Operation";
+    return null;
+  }
+
+  function jobState(item) {
+    const execution = boundedString(item.command_execution_state);
+    const recovery = boundedString(item.recovery_state);
+    const status = boundedString(item.status);
+    if (execution === "outcome_unknown") return "Outcome unknown";
+    if (recovery === "recovering") return "Recovering";
+    if (item.error_kind) return "Unavailable";
+    if (status === "queued" || status === "agent_queued") return "Queued";
+    if (status === "recovering") return "Recovering";
+    if (status === "started" || status === "running") return "Running";
+    if (status === "stop_requested") return "Stopping";
+    if (status === "completed") return "Completed";
+    if (status === "failed") return "Failed";
+    if (status === "stopped") return "Stopped";
+    if (status === "timeout" || status === "timed_out") return "Timed out";
+    if (status === "lost") return "State lost";
+    if (status === "cancelled") return "Cancelled";
+    return status || "Job";
+  }
+
+  function jobWorkText(item) {
+    const progress = item.progress && typeof item.progress === "object" ? item.progress : null;
+    const progressSummary = progress ? boundedString(progress.summary) : null;
+    if (progressSummary) return progressSummary;
+    const work = item.work && typeof item.work === "object" ? item.work : null;
+    if (!work) return null;
+    const parts = [];
+    const kind = jobKindLabel(work.kind);
+    const outcome = boundedString(work.outcome);
+    if (kind) parts.push(kind);
+    if (outcome) parts.push(outcome.replaceAll("_", " "));
+    if (Number.isInteger(work.tests_run_count)) parts.push(String(work.tests_run_count) + " tests");
+    if (Number.isInteger(work.tests_passed)) parts.push(String(work.tests_passed) + " passed");
+    if (Number.isInteger(work.tests_failed)) parts.push(String(work.tests_failed) + " failed");
+    if (work.zero_tests_run === true) parts.push("zero tests");
+    return parts.length ? parts.join(" · ") : null;
+  }
+
+  function appendJobDetails(card, item) {
+    const details = document.createElement("details");
+    details.style.marginTop = "10px";
+    details.style.borderTop = "1px solid var(--color-border-secondary,rgba(127,127,127,.2))";
+    details.style.paddingTop = "8px";
+    const summary = document.createElement("summary");
+    summary.style.cursor = "pointer";
+    summary.style.fontSize = "12px";
+    summary.style.fontWeight = "600";
+    summary.textContent = "Details";
+    details.appendChild(summary);
+    const body = document.createElement("div");
+    body.style.display = "grid";
+    body.style.gap = "6px";
+    body.style.marginTop = "8px";
+    addRow(body, "Job", boundedString(item.job_id));
+    addRow(body, "Status", boundedString(item.status));
+    addRow(body, "Project", boundedString(item.project));
+    addRow(body, "Terminal", typeof item.terminal === "boolean" ? (item.terminal ? "yes" : "no") : null);
+    addRow(body, "Active", typeof item.active === "boolean" ? (item.active ? "yes" : "no") : null);
+    addRow(body, "Blocking", typeof item.blocking_active === "boolean" ? (item.blocking_active ? "yes" : "no") : null);
+    addRow(body, "Stop pending", typeof item.terminal_pending === "boolean" ? (item.terminal_pending ? "yes" : "no") : null);
+    addRow(body, "Execution", boundedString(item.command_execution_state));
+    addRow(body, "Exit code", Number.isInteger(item.exit_code) ? item.exit_code : null);
+    addRow(body, "Duration", Number.isFinite(item.duration_ms) ? durationText(item.duration_ms) : null);
+    addRow(body, "Elapsed", Number.isFinite(item.elapsed_secs) ? String(item.elapsed_secs) + " s" : null);
+    addRow(body, "Recovery", boundedString(item.recovery_state));
+    addRow(body, "Recovery reason", boundedString(item.recovery_reason));
+    addRow(body, "Wait/log update", boundedString(item.log_delta_status));
+    addRow(body, "stdout lines", Number.isInteger(item.stdout_lines) ? item.stdout_lines : null);
+    addRow(body, "stderr lines", Number.isInteger(item.stderr_lines) ? item.stderr_lines : null);
+    addRow(body, "Error", boundedString(item.error_kind));
+    addRow(body, "Recovery action", boundedString(item.recovery_kind));
+    addRow(body, "Re-observe with", boundedString(item.recovery_tool));
+    const progress = item.progress && typeof item.progress === "object" ? item.progress : null;
+    if (progress) {
+      addRow(body, "Progress state", boundedString(progress.state));
+      addRow(body, "Progress reason", boundedString(progress.reason_code));
+    }
+    details.appendChild(body);
+    card.appendChild(details);
+  }
+
   function renderItem(item) {
     if (!item || typeof item !== "object") return;
     const card = document.createElement("div");
     card.style.border = "1px solid var(--color-border-secondary,rgba(127,127,127,.25))";
     card.style.borderRadius = "10px";
     card.style.padding = "12px";
-    addRow(card, "Job", boundedString(item.job_id));
-    addRow(card, "Status", boundedString(item.status));
-    addRow(card, "Project", boundedString(item.project));
-    addRow(card, "Terminal", typeof item.terminal === "boolean" ? (item.terminal ? "yes" : "no") : null);
-    addRow(card, "Active", typeof item.active === "boolean" ? (item.active ? "yes" : "no") : null);
-    addRow(card, "Blocking", typeof item.blocking_active === "boolean" ? (item.blocking_active ? "yes" : "no") : null);
-    addRow(card, "Stop pending", typeof item.terminal_pending === "boolean" ? (item.terminal_pending ? "yes" : "no") : null);
-    addRow(card, "Execution", boundedString(item.command_execution_state));
-    addRow(card, "Duration", Number.isFinite(item.duration_ms) ? String(item.duration_ms) + " ms" : null);
-    addRow(card, "Elapsed", Number.isFinite(item.elapsed_secs) ? String(item.elapsed_secs) + " s" : null);
-    addRow(card, "Recovery", boundedString(item.recovery_state));
-    addRow(card, "Recovery reason", boundedString(item.recovery_reason));
-    addRow(card, "Wait/log update", boundedString(item.log_delta_status));
-    addRow(card, "stdout lines", Number.isInteger(item.stdout_lines) ? item.stdout_lines : null);
-    addRow(card, "stderr lines", Number.isInteger(item.stderr_lines) ? item.stderr_lines : null);
-    addRow(card, "Error", boundedString(item.error_kind));
-    addRow(card, "Recovery action", boundedString(item.recovery_kind));
-    addRow(card, "Re-observe with", boundedString(item.recovery_tool));
-    addRow(card, "Guidance", boundedString(item.guidance));
+
+    const header = document.createElement("div");
+    header.style.display = "flex";
+    header.style.alignItems = "baseline";
+    header.style.justifyContent = "space-between";
+    header.style.gap = "12px";
+    const state = document.createElement("strong");
+    state.style.fontSize = "14px";
+    state.textContent = jobState(item);
+    const identity = document.createElement("span");
+    identity.style.fontSize = "11px";
+    identity.style.opacity = ".62";
+    identity.style.overflowWrap = "anywhere";
+    identity.textContent = boundedString(item.job_id) || "Job";
+    header.appendChild(state);
+    header.appendChild(identity);
+    card.appendChild(header);
+
+    const work = jobWorkText(item);
+    if (work && work !== state.textContent) {
+      const headline = document.createElement("div");
+      headline.style.marginTop = "5px";
+      headline.style.fontSize = "13px";
+      headline.textContent = work;
+      card.appendChild(headline);
+    }
+
+    const facts = [];
+    const project = boundedString(item.project);
+    if (project) facts.push(project);
+    if (Number.isFinite(item.elapsed_secs)) facts.push(String(item.elapsed_secs) + " s elapsed");
+    else if (Number.isFinite(item.duration_ms)) facts.push(durationText(item.duration_ms));
+    if (item.blocking_active === true) facts.push("blocking");
+    if (item.terminal_pending === true) facts.push("stop pending");
+    if (facts.length) {
+      const meta = document.createElement("div");
+      meta.style.marginTop = "5px";
+      meta.style.fontSize = "12px";
+      meta.style.opacity = ".68";
+      meta.textContent = facts.join(" · ");
+      card.appendChild(meta);
+    }
+
+    const guidance = boundedString(item.guidance);
+    if (guidance) {
+      const note = document.createElement("div");
+      note.style.marginTop = "8px";
+      note.style.fontSize = "12px";
+      note.style.lineHeight = "1.4";
+      note.textContent = guidance;
+      card.appendChild(note);
+    }
+    appendJobDetails(card, item);
     cardsEl.appendChild(card);
   }
 
@@ -440,24 +569,43 @@
       titleEl.textContent = "WebCodex Jobs";
       const count = Number.isInteger(presentation.count) ? presentation.count : items.length;
       const matched = Number.isInteger(presentation.matched_count) ? presentation.matched_count : count;
-      summaryEl.textContent = String(count) + " shown · " + String(matched) + " matched"
-        + (presentation.truncated === true ? " · canonical result truncated" : "")
-        + (presentation.items_truncated === true ? " · card subset bounded" : "");
+      const active = Number.isInteger(presentation.shown_active_count) ? presentation.shown_active_count : items.filter((item) => item && item.active === true).length;
+      const terminal = Number.isInteger(presentation.shown_terminal_count) ? presentation.shown_terminal_count : items.filter((item) => item && item.terminal === true).length;
+      const attention = Number.isInteger(presentation.shown_attention_count) ? presentation.shown_attention_count : 0;
+      stateEl.textContent = active > 0 ? String(active) + " active" : attention > 0 ? String(attention) + " attention" : "No active jobs";
+      const parts = [String(count) + " shown", String(matched) + " matched"];
+      if (terminal > 0) parts.push(String(terminal) + " terminal");
+      if (attention > 0) parts.push(String(attention) + " need attention");
+      if (presentation.truncated === true) parts.push("canonical result truncated");
+      if (presentation.items_truncated === true) parts.push("card subset bounded");
+      summaryEl.textContent = parts.join(" · ");
     } else if (presentation.kind === "job_observation") {
       titleEl.textContent = items.length === 1 ? "WebCodex Job" : "WebCodex Jobs";
       const wait = presentation.wait && typeof presentation.wait === "object" ? boundedString(presentation.wait.outcome) : null;
       const terminal = Number.isInteger(presentation.terminal_count) ? presentation.terminal_count : null;
-      summaryEl.textContent = (wait ? "Observation: " + wait : "Job observation")
-        + (terminal === null ? "" : " · " + String(terminal) + " terminal")
-        + (presentation.output_truncated === true ? " · canonical result truncated" : "")
-        + (presentation.items_truncated === true ? " · card subset bounded" : "");
+      if (items.length === 1) {
+        stateEl.textContent = jobState(items[0]);
+        const parts = [];
+        const work = jobWorkText(items[0]);
+        if (work) parts.push(work);
+        if (wait) parts.push("observation: " + wait);
+        if (terminal !== null && terminal > 0) parts.push("terminal");
+        if (presentation.output_truncated === true) parts.push("canonical result truncated");
+        if (presentation.items_truncated === true) parts.push("card subset bounded");
+        summaryEl.textContent = parts.length ? parts.join(" · ") : "Job observation";
+      } else {
+        stateEl.textContent = String(items.length) + " jobs";
+        summaryEl.textContent = (wait ? "Observation: " + wait : "Job observation")
+          + (terminal === null ? "" : " · " + String(terminal) + " terminal")
+          + (presentation.output_truncated === true ? " · canonical result truncated" : "")
+          + (presentation.items_truncated === true ? " · card subset bounded" : "");
+      }
     } else {
       stateEl.textContent = "result rejected";
       summaryEl.textContent = "Unsupported WebCodex presentation kind.";
       return;
     }
     items.forEach(renderItem);
-    stateEl.textContent = "result received";
   }
 
   function renderToolResult(result) {
@@ -487,7 +635,7 @@
     try {
       const result = await request("ui/initialize", {
         protocolVersion: APP_PROTOCOL,
-        appInfo: { name: "webcodex-result-app", title: "WebCodex Result", version: "1.0.0" },
+        appInfo: { name: "webcodex-result-app", title: "WebCodex Result", version: "1.1.0" },
         appCapabilities: {}
       });
       const protocol = result && typeof result === "object" ? boundedString(result.protocolVersion) : null;
