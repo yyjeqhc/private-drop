@@ -1246,6 +1246,115 @@ fn mcp_app_consume_ack_race_and_teardown_preserve_exact_wake_semantics() {
 }
 
 #[test]
+fn mcp_app_state_exposes_successive_wakes_after_exact_consume() {
+    for message_before_consume in [false, true] {
+        let fixture = mcp_continuation_fixture("mcp-successive-wakes");
+        let binding = bind_mcp_app(
+            &fixture.runtime,
+            &fixture.receiver,
+            &fixture.receiver_endpoint,
+            fixture.receiver_generation,
+        );
+        post_fixture_message(&fixture, "first work", "first-message");
+        let first_wake = wake_id_for(&fixture.db, &fixture.receiver);
+        let acquired = acquire_mcp_app(
+            &fixture.runtime,
+            &fixture.receiver,
+            &fixture.receiver_endpoint,
+            fixture.receiver_generation,
+            &binding,
+        );
+        let attempt = acquired["wake"]["attempt_id"].as_str().unwrap();
+        let (_, message) = prepare_mcp_app(
+            &fixture.runtime,
+            &fixture.receiver,
+            &fixture.receiver_endpoint,
+            fixture.receiver_generation,
+            &binding,
+            &first_wake,
+            attempt,
+        );
+        let state = || {
+            let result = fixture.runtime.agent_continuation_state(
+                None,
+                fixture.receiver.clone(),
+                fixture.receiver_endpoint.clone(),
+                fixture.receiver_generation,
+                binding.clone(),
+            );
+            assert!(result.success, "{:?}", result.output);
+            result.output["agent_continuation"].clone()
+        };
+        if message_before_consume {
+            post_fixture_message(&fixture, "second work", "second-message");
+            assert_eq!(state()["wake"]["wake_id"], first_wake);
+        }
+        let consumed = fixture.runtime.consume_agent_wake(
+            None,
+            fixture.receiver.clone(),
+            fixture.receiver_endpoint.clone(),
+            fixture.receiver_generation,
+            first_wake.clone(),
+            resume_field(&message, "consume_token"),
+        );
+        assert!(consumed.success, "{:?}", consumed.output);
+        if !message_before_consume {
+            assert_eq!(state()["dispatch_observation"], "continuation_consumed");
+            post_fixture_message(&fixture, "second work", "second-message");
+        }
+
+        let next_wake = wake_id_for(&fixture.db, &fixture.receiver);
+        assert_ne!(first_wake, next_wake);
+        let next = state();
+        assert_eq!(next["wake"]["wake_id"], next_wake);
+        assert_eq!(next["wake"]["state"], "pending");
+        assert!(next["dispatch_observation"].is_null());
+        let presented = fixture.runtime.present_agent_continuation(
+            None,
+            fixture.receiver.clone(),
+            fixture.receiver_endpoint.clone(),
+            fixture.receiver_generation,
+        );
+        assert!(presented.success);
+        assert_eq!(presented.output["agent_continuation"], next);
+
+        // Observation must preserve the old claim for a consume-before-ACK race.
+        let ack = fixture.runtime.agent_continuation_wake_finish(
+            None,
+            fixture.receiver.clone(),
+            fixture.receiver_endpoint.clone(),
+            fixture.receiver_generation,
+            binding.clone(),
+            first_wake,
+            attempt.to_string(),
+            "dispatch_accepted".to_string(),
+        );
+        assert!(ack.success, "{:?}", ack.output);
+        assert_eq!(ack.output["wake_state"], "consumed");
+        let acquired = acquire_mcp_app(
+            &fixture.runtime,
+            &fixture.receiver,
+            &fixture.receiver_endpoint,
+            fixture.receiver_generation,
+            &binding,
+        );
+        assert_eq!(acquired["wake"]["wake_id"], next_wake);
+        assert_eq!(acquired["wake"]["replayed"], false);
+        assert_ne!(acquired["wake"]["attempt_id"], attempt);
+        let (_, message) = prepare_mcp_app(
+            &fixture.runtime,
+            &fixture.receiver,
+            &fixture.receiver_endpoint,
+            fixture.receiver_generation,
+            &binding,
+            &next_wake,
+            acquired["wake"]["attempt_id"].as_str().unwrap(),
+        );
+        assert_eq!(resume_field(&message, "wake_id"), next_wake);
+    }
+}
+
+#[test]
 fn mcp_app_post_fence_unbind_is_unknown_but_exact_turn_can_still_consume() {
     let fixture = mcp_continuation_fixture("mcp-unbind-race");
     let binding = bind_mcp_app(

@@ -48,11 +48,15 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let bindingId = null;
   let timer = null;
   let coordinationInFlight = false;
+  let hostInitialized = false;
+  let bindingStarted = false;
   let tornDown = false;
   const pending = new Map();
-  const dispatchStarted = new Set();
-  const prepareUncertain = new Set();
-  const pendingFinishes = new Map();
+  // Coordination is serial and the Server owns one current claim per binding.
+  // Retain only that Attempt's local delivery/retry markers across polls.
+  let dispatchStarted = null;
+  let prepareUncertain = null;
+  let pendingFinish = null;
   const el = id => document.getElementById(id);
 
   function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
@@ -185,16 +189,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     try {
       const response = await callTool("agent_continuation_wake_finish", args);
       if (!toolCallSucceeded(response)) throw new Error("Continuation finish was not accepted");
-      pendingFinishes.delete(wake.attempt_id);
+      pendingFinish = null;
       return true;
     } catch (_) {
-      if (!tornDown) pendingFinishes.set(wake.attempt_id, { wake, outcome });
+      if (!tornDown) pendingFinish = { wake, outcome };
       return false;
     }
   }
 
   async function retryPendingFinish() {
-    const entry = pendingFinishes.values().next().value;
+    const entry = pendingFinish;
     if (!entry) return;
     await finishAttempt(entry.wake, entry.outcome);
   }
@@ -228,14 +232,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   async function dispatchWake(wake) {
-    if (dispatchStarted.has(wake.attempt_id) || prepareUncertain.has(wake.attempt_id)) return;
+    if (dispatchStarted === wake.attempt_id || prepareUncertain === wake.attempt_id) return;
     let automaticMessage;
     try {
       automaticMessage = await prepare(wake);
     } catch (_) {
       // A timed-out prepare may already have crossed the durable dispatch fence.
       // Never guess and never call ui/message without the returned exact envelope.
-      prepareUncertain.add(wake.attempt_id);
+      prepareUncertain = wake.attempt_id;
       try {
         const projection = await heartbeat();
         if (projection.dispatch_observation === "dispatch_prepared") {
@@ -245,9 +249,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       return;
     }
 
+    if (tornDown) return;
+    if (document.hidden) {
+      // Visibility may change while prepare is in flight. The fence already
+      // crossed, so reconcile conservatively without sending a background turn.
+      await finishAttempt(wake, "delivery_unknown");
+      return;
+    }
+
     // This process-local marker is set before the Host call. Reload/loss cannot
     // cause a blind resend: replacement binding reconciles prepared -> unknown.
-    dispatchStarted.add(wake.attempt_id);
+    dispatchStarted = wake.attempt_id;
     let outcome = "delivery_unknown";
     try {
       await request("ui/message", {
@@ -267,14 +279,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     try {
       await retryPendingFinish();
       const projection = await heartbeat();
-      if (document.hidden) return;
+      // Acquiring a successor retires the old Server-side claim. Reconcile its
+      // pending ACK first while still renewing the Endpoint on every poll.
+      if (document.hidden || pendingFinish) return;
       if (!projection.wake || projection.dispatch_observation === "continuation_consumed") return;
       const wake = await acquire();
-      if (!wake) return;
+      if (!wake || document.hidden || tornDown) return;
       if (wake.dispatch_observation === "dispatch_accepted" || wake.dispatch_observation === "dispatch_unknown") return;
       if (wake.dispatch_observation === "dispatch_prepared") {
         // A prepared Attempt without this View's pre-call marker is never resent.
-        if (!dispatchStarted.has(wake.attempt_id)) {
+        if (dispatchStarted !== wake.attempt_id) {
           await finishAttempt(wake, "delivery_unknown");
         }
         return;
@@ -288,7 +302,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     }
   }
 
-  async function acceptInitial(result) {
+  function acceptInitial(result) {
     const projection = projectionOf(result);
     if (!projection || identity || tornDown) return;
     identity = {
@@ -297,6 +311,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       controller_generation: projection.controller_generation,
     };
     render(projection);
+    void startBinding();
+  }
+
+  async function startBinding() {
+    if (!hostInitialized || !identity || bindingStarted || tornDown) return;
+    bindingStarted = true;
     try {
       await bind();
       void reconcile();
@@ -369,7 +389,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     protocolVersion: APP_PROTOCOL,
     appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "1.0.0" },
     appCapabilities: {},
-  }).then(() => notify("ui/notifications/initialized", {}))
+  }).then(() => {
+    if (tornDown) return;
+    hostInitialized = true;
+    notify("ui/notifications/initialized", {});
+    void startBinding();
+  })
     .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
 })();
 </script>

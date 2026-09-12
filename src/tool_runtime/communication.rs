@@ -195,8 +195,11 @@ fn agent_continuation_projection(
     let dispatch_observation = observation.as_ref().and_then(|observation| {
         if observation.active_wake_id.is_some() && wake.is_none() {
             Some("continuation_consumed")
-        } else {
+        } else if observation.active_wake_id.as_deref() == wake.map(|wake| wake.wake_id.as_str()) {
             observation.dispatch_phase.map(|phase| phase.as_str())
+        } else {
+            // A successor Wake must not inherit the previous Attempt's phase.
+            None
         }
     });
     json!({
@@ -579,7 +582,10 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
             None,
-            observation.active_wake_id.as_deref(),
+            // Observe the current unresolved Wake after the previous one is
+            // consumed. Keep the old claim in the controller for a late ACK;
+            // acquire retires it when the View actually takes the next Wake.
+            None,
         ) {
             Ok(bootstrap) => bootstrap,
             Err(error) => return communication_error(error, RecoveryKind::Reconcile),
