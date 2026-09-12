@@ -17,6 +17,59 @@ fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
         .find(|tool| tool["name"] == name)
 }
 
+fn schema_type_matches(value: &Value, schema: &Value) -> bool {
+    match schema.get("type").and_then(Value::as_str) {
+        Some("object") => value.is_object(),
+        Some("array") => value.is_array(),
+        Some("string") => value.is_string(),
+        Some("boolean") => value.is_boolean(),
+        Some("integer") => value.as_i64().is_some() || value.as_u64().is_some(),
+        Some("number") => value.is_number(),
+        Some("null") => value.is_null(),
+        Some(_) | None => true,
+    }
+}
+
+fn host_project_through_output_schema(value: &Value, schema: &Value) -> Value {
+    if let Some(variants) = schema.get("anyOf").and_then(Value::as_array) {
+        if let Some(branch) = variants
+            .iter()
+            .find(|branch| schema_type_matches(value, branch))
+        {
+            return host_project_through_output_schema(value, branch);
+        }
+    }
+    if schema.get("type").and_then(Value::as_str) == Some("object") {
+        let Some(object) = value.as_object() else {
+            return value.clone();
+        };
+        let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+            return value.clone();
+        };
+        let mut projected = serde_json::Map::new();
+        for (field, child_schema) in properties {
+            if let Some(child) = object.get(field) {
+                projected.insert(
+                    field.clone(),
+                    host_project_through_output_schema(child, child_schema),
+                );
+            }
+        }
+        return Value::Object(projected);
+    }
+    if schema.get("type").and_then(Value::as_str) == Some("array") {
+        if let (Some(items), Some(values)) = (schema.get("items"), value.as_array()) {
+            return Value::Array(
+                values
+                    .iter()
+                    .map(|child| host_project_through_output_schema(child, items))
+                    .collect(),
+            );
+        }
+    }
+    value.clone()
+}
+
 fn continuation_auth(username: &str) -> crate::auth::AuthContext {
     let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::ApiToken);
     auth.user_id = Some(format!("user-{username}"));
@@ -170,7 +223,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v11"
+        "ui://webcodex/agent-continuation/v12"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -371,6 +424,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v8"
                     | "ui://webcodex/agent-continuation/v9"
                     | "ui://webcodex/agent-continuation/v10"
+                    | "ui://webcodex/agent-continuation/v11"
             )
         )));
     for uri in [
@@ -385,6 +439,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v8",
         "ui://webcodex/agent-continuation/v9",
         "ui://webcodex/agent-continuation/v10",
+        "ui://webcodex/agent-continuation/v11",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -454,8 +509,8 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "App restart recovery must remain bounded"
     );
     assert!(
-        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"11.0.0\""),
-        "App protocol version must advance with the v11 resource"
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"12.0.0\""),
+        "App protocol version must advance with the v12 resource"
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("function restartRecoveryOf(projection)"),
@@ -476,6 +531,83 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
             "if (!toolCallSucceeded(response)) throw new Error(\"Continuation acquire was not accepted\")"
         ),
         "acquire must not reinterpret a business failure as no pending Wake"
+    );
+}
+
+#[test]
+fn restart_recovery_survives_published_projection_output_schema() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("agent-continuation-schema-restart.db");
+    let db = Arc::new(crate::db::Database::open(&path).unwrap());
+    let runtime = ToolRuntime::new_for_tests()
+        .with_model_surface(ModelSurface::AdaptiveRuntime)
+        .with_communication_database(db.clone());
+    let owner = continuation_auth("continuation-schema-restart");
+    let agent = create_agent(
+        &runtime,
+        &owner,
+        "continuation-schema-restart-agent",
+        "Schema Restart Agent",
+        "continuation-schema-restart-create",
+    );
+    let (endpoint, generation) = attach(
+        &runtime,
+        &owner,
+        &agent,
+        "continuation-schema-restart-endpoint",
+    );
+    let binding_id = format!("wc_host_binding_{}", "b".repeat(32));
+    let bind = runtime.agent_continuation_bind(
+        Some(&owner),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        binding_id.clone(),
+    );
+    assert!(bind.success, "{:?}", bind.output);
+    let ordinary = runtime.agent_continuation_state(
+        Some(&owner),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        binding_id.clone(),
+    );
+    assert!(ordinary.success, "{:?}", ordinary.output);
+    assert_eq!(
+        ordinary.output["agent_continuation"]["recovery"],
+        Value::Null
+    );
+
+    drop(runtime);
+    drop(db);
+    let reopened = Arc::new(crate::db::Database::open(&path).unwrap());
+    let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+    reopened
+        .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
+        .unwrap();
+    let runtime = ToolRuntime::new_for_tests()
+        .with_model_surface(ModelSurface::AdaptiveRuntime)
+        .with_communication_database(reopened);
+    let restart =
+        runtime.agent_continuation_state(Some(&owner), agent, endpoint, generation, binding_id);
+    assert!(restart.success, "{:?}", restart.output);
+    let runtime_projection = restart.output["agent_continuation"].clone();
+    assert_eq!(
+        runtime_projection["recovery"]["kind"],
+        "host_binding_missing_in_process"
+    );
+
+    let published = webcodex_tool_contracts::output_schema_for_tool("present_agent_continuation");
+    let projection_schema = &published["properties"]["output"]["properties"]["agent_continuation"];
+    let host_projection =
+        host_project_through_output_schema(&runtime_projection, projection_schema);
+    assert_eq!(
+        host_projection, runtime_projection,
+        "published continuation outputSchema must preserve every runtime projection field"
+    );
+    assert_eq!(
+        host_projection["recovery"]["kind"],
+        "host_binding_missing_in_process"
     );
 }
 

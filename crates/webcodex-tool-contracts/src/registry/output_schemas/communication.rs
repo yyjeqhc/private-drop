@@ -113,12 +113,26 @@ fn agent_continuation_projection_schema() -> Value {
                     {"type": "null"}
                 ],
                 "description": "Process-local Host observation only; only continuation_consumed proves a later turn exact-consumed the durable Wake."
+            },
+            "recovery": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "kind": {"type": "string", "const": "host_binding_missing_in_process"}
+                        },
+                        "required": ["kind"]
+                    },
+                    {"type": "null"}
+                ],
+                "description": "Null during ordinary state. The sole object variant is emitted only for fingerprint-proven Server-restart loss of this exact process-local MCP App binding."
             }
         },
         "required": [
             "version", "agent_id", "display_name", "endpoint_id", "controller_generation",
             "endpoint_lease_expires_at_unix_ms", "host_binding", "wake",
-            "queued_delivery_count", "dispatch_observation"
+            "queued_delivery_count", "dispatch_observation", "recovery"
         ]
     })
 }

@@ -30,6 +30,33 @@ const prepared = (current = wake, automatic_message = "Exact test continuation")
 });
 const hostMessages = view => view.sent.filter(message => message.method === "ui/message");
 
+// Simulate the strict published Agent continuation projection schema used by a Host:
+// undeclared fields are dropped recursively rather than being forwarded to the View.
+function projectContinuationByPublishedSchema(value) {
+  const projected = {
+    version: value.version,
+    agent_id: value.agent_id,
+    display_name: value.display_name,
+    endpoint_id: value.endpoint_id,
+    controller_generation: value.controller_generation,
+    endpoint_lease_expires_at_unix_ms: value.endpoint_lease_expires_at_unix_ms,
+    host_binding: {
+      bound: value.host_binding.bound,
+      adapter_kind: value.host_binding.adapter_kind,
+      production_auto_resume_available: value.host_binding.production_auto_resume_available,
+    },
+    wake: value.wake === null ? null : {
+      wake_id: value.wake.wake_id,
+      state: value.wake.state,
+      revision: value.wake.revision,
+    },
+    queued_delivery_count: value.queued_delivery_count,
+    dispatch_observation: value.dispatch_observation,
+    recovery: value.recovery === null ? null : { kind: value.recovery.kind },
+  };
+  return projected;
+}
+
 async function boundView(options = { deliverToolMeta: false }) {
   const view = app("mcp_agent_continuation_app.html", options);
   await view.initialize();
@@ -522,6 +549,62 @@ test("Host cancellation exposes only bounded bridge diagnostics", async () => {
   assert.ok(!view.nodes.status.textContent.includes(privateMessage));
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
+});
+
+test("published outputSchema projection preserves restart recovery and triggers exactly one rebind", async () => {
+  const view = await boundView();
+  const originalBinding = bindingId(view);
+  const runtimeRestartProjection = {
+    ...projection,
+    endpoint_lease_expires_at_unix_ms: 1789213200000,
+    host_binding: {
+      bound: false,
+      adapter_kind: null,
+      production_auto_resume_available: false,
+    },
+    wake: projection.wake && {
+      wake_id: projection.wake.wake_id,
+      state: projection.wake.state,
+      revision: projection.wake.revision,
+    },
+    recovery: { kind: "host_binding_missing_in_process" },
+  };
+  const projectedRestart = projectContinuationByPublishedSchema(runtimeRestartProjection);
+  assert.deepEqual(projectedRestart, runtimeRestartProjection,
+    "published schema must not drop the restart recovery observation");
+
+  await view.reply(
+    view.calls("agent_continuation_state")[0],
+    toolResult({ agent_continuation: projectedRestart }),
+  );
+  assert.equal(view.nodes.binding.textContent, "Rebinding");
+  await view.fireTimers(3000);
+  const rebind = view.calls("agent_continuation_bind")[1];
+  assert.ok(rebind);
+  assert.equal(rebind.params.arguments.binding_id, originalBinding);
+
+  const runtimeOrdinaryProjection = {
+    ...runtimeRestartProjection,
+    host_binding: {
+      bound: true,
+      adapter_kind: "mcp_app",
+      production_auto_resume_available: true,
+    },
+    wake: null,
+    queued_delivery_count: 0,
+    recovery: null,
+  };
+  const projectedOrdinary = projectContinuationByPublishedSchema(runtimeOrdinaryProjection);
+  assert.deepEqual(projectedOrdinary, runtimeOrdinaryProjection);
+  await view.reply(rebind, toolResult({ agent_continuation: projectedOrdinary }));
+  await view.reply(
+    view.calls("agent_continuation_state")[1],
+    toolResult({ agent_continuation: projectedRestart }),
+  );
+  await view.fireTimers(3000);
+  assert.equal(view.calls("agent_continuation_bind").length, 2,
+    "schema-preserved recovery remains bounded to one automatic rebind per View");
+  assert.equal(hostMessages(view).length, 0);
 });
 
 test("server-restart success observation performs one exact bounded rebind and resumes polling", async () => {
