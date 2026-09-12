@@ -45,13 +45,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     "projection-object-invalid", "projection-version-invalid", "projection-identity-invalid",
     "projection-display-name-invalid", "projection-queued-count-invalid", "projection-dispatch-invalid",
     "projection-wake-invalid", "projection-wake-id-invalid", "projection-wake-revision-invalid",
-    "projection-wake-state-invalid", "host-binding-missing", "host-binding-invalid",
+    "projection-wake-state-invalid", "projection-recovery-invalid", "host-binding-missing", "host-binding-invalid",
     "host-bound-not-true", "unexpected",
   ]);
   const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result"]);
   const CALL_TIMEOUT_MS = 10000;
   const MAX_BIND_ATTEMPTS = 3;
   const MAX_RECOVERY_REBINDS = 1;
+  const RESTART_RECOVERY_KIND = "host_binding_missing_in_process";
   const MAX_AUTOMATIC_MESSAGE_CHARS = 4096;
   const VISIBLE_POLL_MS = 3000;
   const HIDDEN_HEARTBEAT_MS = 15000;
@@ -249,15 +250,10 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return !!(callResult && callResult.isError !== true && structured && structured.success === true);
   }
 
-  function businessErrorKind(result) {
-    const structured = structuredOf(result);
-    const output = structured && structured.success === false && structured.output;
-    return output && typeof output === "object" && !Array.isArray(output)
-      && typeof output.error_kind === "string" ? output.error_kind : null;
-  }
-
-  function recoverableBindingLoss(result) {
-    return businessErrorKind(result) === "host_binding_missing_in_process";
+  function restartRecoveryOf(projection) {
+    return !!(projection && projection.recovery
+      && projection.recovery.kind === RESTART_RECOVERY_KIND
+      && projection.host_binding && projection.host_binding.bound === false);
   }
 
   function definitiveFailure() {
@@ -308,6 +304,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       if (!WAKE_ID.test(value.wake.wake_id || "")) return "projection-wake-id-invalid";
       if (!Number.isSafeInteger(value.wake.revision) || value.wake.revision < 1) return "projection-wake-revision-invalid";
       if (!["pending", "claimed", "prepared", "delivered", "delivery_unknown"].includes(value.wake.state)) return "projection-wake-state-invalid";
+    }
+    if (!Object.prototype.hasOwnProperty.call(value, "host_binding")) return "host-binding-missing";
+    if (!value.host_binding || typeof value.host_binding !== "object" || Array.isArray(value.host_binding)
+      || typeof value.host_binding.bound !== "boolean") return "host-binding-invalid";
+    if (!Object.prototype.hasOwnProperty.call(value, "recovery")) return "projection-recovery-invalid";
+    if (value.recovery !== null) {
+      if (!value.recovery || typeof value.recovery !== "object" || Array.isArray(value.recovery)
+        || Object.keys(value.recovery).length !== 1
+        || value.recovery.kind !== RESTART_RECOVERY_KIND
+        || value.host_binding.bound !== false) return "projection-recovery-invalid";
     }
     return null;
   }
@@ -406,12 +412,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
     const projection = projectionOf(response);
     if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) {
-      if (recoverableBindingLoss(response)) {
-        throw Object.assign(new Error("Process-local Host binding was lost"), { recoverableBindingLoss: true });
-      }
       const structured = structuredOf(response);
       if (structured && structured.success === false) throw new Error("Continuation state was not accepted");
       throw malformedResult(response);
+    }
+    if (restartRecoveryOf(projection)) {
+      throw Object.assign(new Error("Process-local Host binding was lost"), { recoverableBindingLoss: true });
     }
     render(projection);
     return projection;
@@ -684,7 +690,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "9.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "11.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

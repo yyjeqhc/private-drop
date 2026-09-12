@@ -17,7 +17,7 @@ const projection = {
   version: 1, agent_id: `wc_dagent_${"1".repeat(32)}`, endpoint_id: `wc_endpoint_${"2".repeat(32)}`,
   controller_generation: 1, display_name: "Reviewer", queued_delivery_count: 1,
   host_binding: { bound: true }, wake: { ...wake, state: "pending", revision: 1 },
-  dispatch_observation: null,
+  dispatch_observation: null, recovery: null,
 };
 const input = {
   agent_id: projection.agent_id, endpoint_id: projection.endpoint_id,
@@ -524,14 +524,16 @@ test("Host cancellation exposes only bounded bridge diagnostics", async () => {
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
 });
 
-test("server-restart binding loss performs one exact bounded rebind and resumes polling", async () => {
+test("server-restart success observation performs one exact bounded rebind and resumes polling", async () => {
   const view = await boundView();
   const originalBinding = bindingId(view);
   const state = view.calls("agent_continuation_state")[0];
-  await view.reply(state, { structuredContent: {
-    success: false,
-    output: { error_kind: "host_binding_missing_in_process", state_changed: false },
-  } });
+  const restartRecovery = {
+    ...projection,
+    host_binding: { bound: false },
+    recovery: { kind: "host_binding_missing_in_process" },
+  };
+  await view.reply(state, toolResult({ agent_continuation: restartRecovery }));
   assert.equal(view.nodes.binding.textContent, "Rebinding");
   assert.equal(view.nodes.status.textContent, "Server restarted · restoring exact Host binding");
   await view.fireTimers(3000);
@@ -548,18 +550,47 @@ test("server-restart binding loss performs one exact bounded rebind and resumes 
   assert.equal(hostMessages(view).length, 0);
 });
 
-test("repeated missing-process binding loss is bounded and does not rebind-loop", async () => {
+test("repeated restart success observation is bounded and does not rebind-loop", async () => {
   const view = await boundView();
-  const missing = { structuredContent: {
-    success: false,
-    output: { error_kind: "host_binding_missing_in_process", state_changed: false },
-  } };
+  const missing = toolResult({ agent_continuation: {
+    ...projection,
+    host_binding: { bound: false },
+    recovery: { kind: "host_binding_missing_in_process" },
+  } });
   await view.reply(view.calls("agent_continuation_state")[0], missing);
   await view.fireTimers(3000);
   await view.reply(view.calls("agent_continuation_bind")[1], toolResult({ agent_continuation: projection }));
   await view.reply(view.calls("agent_continuation_state")[1], missing);
   await view.fireTimers(3000);
   assert.equal(view.calls("agent_continuation_bind").length, 2, "only one recovery rebind is allowed per View");
+});
+
+test("recovery marker with a bound Host projection fails closed", async () => {
+  const view = await boundView();
+  const state = view.calls("agent_continuation_state")[0];
+  await view.reply(state, toolResult({ agent_continuation: {
+    ...projection,
+    recovery: { kind: "host_binding_missing_in_process" },
+  } }));
+  await view.fireTimers(3000);
+  assert.equal(view.calls("agent_continuation_bind").length, 1);
+  assert.match(view.nodes.status.textContent, /semantic=projection-recovery-invalid/);
+});
+
+test("ChatGPT projection of an isError ToolResult to rpc=-32000 never triggers restart recovery", async () => {
+  const view = await boundView();
+  const state = view.calls("agent_continuation_state")[0];
+  const serverFailure = {
+    isError: true,
+    structuredContent: {
+      success: false,
+      output: { error_kind: "host_binding_missing_in_process", state_changed: false },
+    },
+  };
+  assert.equal(serverFailure.isError, true, "production Server failure would be projected by Host");
+  await view.reject(state, { code: -32000, message: "Host projected failed tools/call" });
+  await view.fireTimers(3000);
+  assert.equal(view.calls("agent_continuation_bind").length, 1);
 });
 
 for (const failure of [

@@ -28,15 +28,6 @@ impl FakeHostAdapter {
         }
     }
 
-    fn unavailable() -> Self {
-        Self {
-            preflight_error: Some("host_bridge_unavailable"),
-            outcome: ContinuationDispatchOutcome::Delivered,
-            preflight_count: AtomicUsize::new(0),
-            envelopes: Mutex::new(Vec::new()),
-        }
-    }
-
     fn dispatch_count(&self) -> usize {
         self.envelopes.lock().unwrap().len()
     }
@@ -242,6 +233,16 @@ fn count(db: &Database, table: &str) -> i64 {
         .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
             row.get(0)
         })
+        .unwrap()
+}
+
+fn endpoint_recovery_fingerprint(db: &Database, endpoint_id: &str) -> Option<String> {
+    db.conn_for_tests()
+        .query_row(
+            "SELECT mcp_app_recovery_fingerprint FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+            [endpoint_id],
+            |row| row.get(0),
+        )
         .unwrap()
 }
 
@@ -597,19 +598,11 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         AgentWakeState::Pending
     );
 
-    let unavailable = Arc::new(FakeHostAdapter::unavailable());
-    let registration = runtime.register_agent_continuation_adapter(
-        None,
-        agent_b.clone(),
-        endpoint_b.clone(),
-        generation_b,
-        unavailable.clone(),
-    );
-    assert!(registration.success);
-    wait_until("failed preflight", || {
-        unavailable.preflight_count.load(Ordering::SeqCst) >= 1
-    });
-    assert_eq!(unavailable.dispatch_count(), 0);
+    let recovered_binding = bind_mcp_app(&runtime, &agent_b, &endpoint_b, generation_b);
+    let persisted_fingerprint = endpoint_recovery_fingerprint(&db, &endpoint_b)
+        .expect("a live MCP App must persist only its restart recovery fingerprint");
+    assert_eq!(persisted_fingerprint.len(), 64);
+    assert_ne!(persisted_fingerprint, recovered_binding);
     assert_eq!(
         db.agent_wake(&logical_wake_id).unwrap().unwrap().state,
         AgentWakeState::Pending
@@ -656,29 +649,55 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         old_process_registration.output["error_kind"], "endpoint_not_attached_in_process",
         "a successor process cannot assume a pre-restart Host callback survived"
     );
-    let recovered_binding = format!("wc_host_binding_{}", "a".repeat(32));
-    let missing_state = runtime.agent_continuation_state(
+    let wrong_binding = format!("wc_host_binding_{}", "b".repeat(32));
+    let wrong_state = runtime.agent_continuation_state(
+        None,
+        agent_b.clone(),
+        endpoint_b.clone(),
+        generation_b,
+        wrong_binding,
+    );
+    assert!(!wrong_state.success);
+    assert_eq!(wrong_state.output["error_kind"], "host_binding_stale");
+
+    let restart_state = runtime.agent_continuation_state(
         None,
         agent_b.clone(),
         endpoint_b.clone(),
         generation_b,
         recovered_binding.clone(),
     );
-    assert!(!missing_state.success);
+    assert!(restart_state.success, "{:?}", restart_state.output);
     assert_eq!(
-        missing_state.output["error_kind"], "host_binding_missing_in_process",
-        "restart recovery must be distinguishable from a replaced/stale View"
+        restart_state.output["agent_continuation"]["host_binding"]["bound"],
+        false
     );
-    let stale_generation_bind = runtime.agent_continuation_bind(
+    assert_eq!(
+        restart_state.output["agent_continuation"]["recovery"]["kind"],
+        "host_binding_missing_in_process"
+    );
+    assert_eq!(
+        restart_state.output["agent_continuation"]["wake"]["state"],
+        "pending"
+    );
+    assert!(
+        reopened
+            .agent_wake_attempts(&logical_wake_id)
+            .unwrap()
+            .is_empty(),
+        "a restart recovery observation must not claim or dispatch the pending Wake"
+    );
+
+    let stale_generation_state = runtime.agent_continuation_state(
         None,
         agent_b.clone(),
         endpoint_b.clone(),
         generation_b + 1,
         recovered_binding.clone(),
     );
-    assert!(!stale_generation_bind.success);
+    assert!(!stale_generation_state.success);
     assert_eq!(
-        stale_generation_bind.output["error_kind"], "endpoint_generation_stale",
+        stale_generation_state.output["error_kind"], "endpoint_generation_stale",
         "restart recovery must not bypass exact controller-generation fencing"
     );
     let old_app_registration = runtime.agent_continuation_bind(
@@ -696,7 +715,7 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
     assert_eq!(
         old_app_registration.output["agent_continuation"]["host_binding"]["bound"],
         true,
-        "the same exact durable Endpoint generation may recreate only its MCP App process-local binding after takeover"
+        "the exact fingerprint-proven View may recreate only its MCP App process-local binding after takeover"
     );
     let recovered_state = runtime.agent_continuation_state(
         None,
@@ -706,6 +725,7 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         recovered_binding,
     );
     assert!(recovered_state.success, "{:?}", recovered_state.output);
+    assert!(recovered_state.output["agent_continuation"]["recovery"].is_null());
 
     let (replacement_endpoint, replacement_generation) =
         attach(&runtime, &agent_b, "restart-endpoint-b2");
@@ -789,6 +809,365 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
         bootstrap.output["host_binding"]["adapter_registered"], true,
         "a rejected stale registration must not dislodge the current binding"
     );
+}
+
+#[test]
+fn mcp_app_restart_recovery_fingerprint_fences_replaced_and_unbound_views() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("restart-view-fingerprint.db");
+    let db = Arc::new(Database::open(&path).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let agent = create_agent(
+        &runtime,
+        "restart-view-agent",
+        "Restart View Agent",
+        "restart view description",
+        "restart-view-label",
+        "restart-view-agent-create",
+    );
+    let (endpoint, generation) = attach(&runtime, &agent, "restart-view-endpoint");
+    let view_a = bind_mcp_app(&runtime, &agent, &endpoint, generation);
+    let fingerprint_a = endpoint_recovery_fingerprint(&db, &endpoint).unwrap();
+    assert_eq!(fingerprint_a.len(), 64);
+    assert_ne!(fingerprint_a, view_a);
+
+    let view_b = bind_mcp_app(&runtime, &agent, &endpoint, generation);
+    let fingerprint_b = endpoint_recovery_fingerprint(&db, &endpoint).unwrap();
+    assert_ne!(view_a, view_b);
+    assert_ne!(
+        fingerprint_a, fingerprint_b,
+        "replacement must replace durable recovery provenance"
+    );
+    let stale_before_restart = runtime.agent_continuation_state(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        view_a.clone(),
+    );
+    assert!(!stale_before_restart.success);
+    assert_eq!(
+        stale_before_restart.output["error_kind"],
+        "host_binding_stale"
+    );
+
+    drop(runtime);
+    drop(db);
+    let reopened = Arc::new(Database::open(&path).unwrap());
+    let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+    reopened
+        .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
+        .unwrap();
+    assert_eq!(
+        endpoint_recovery_fingerprint(&reopened, &endpoint),
+        Some(fingerprint_b)
+    );
+    let runtime = runtime_with_db(reopened.clone());
+
+    let stale_a = runtime.agent_continuation_state(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        view_a.clone(),
+    );
+    assert!(!stale_a.success);
+    assert_eq!(stale_a.output["error_kind"], "host_binding_stale");
+    let wrong_view = format!("wc_host_binding_{}", "f".repeat(32));
+    let wrong = runtime.agent_continuation_state(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        wrong_view,
+    );
+    assert!(!wrong.success);
+    assert_eq!(wrong.output["error_kind"], "host_binding_stale");
+    let stale_generation = runtime.agent_continuation_state(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation + 1,
+        view_b.clone(),
+    );
+    assert!(!stale_generation.success);
+    assert_eq!(
+        stale_generation.output["error_kind"],
+        "endpoint_generation_stale"
+    );
+
+    let current_b = runtime.agent_continuation_state(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        view_b.clone(),
+    );
+    assert!(current_b.success, "{:?}", current_b.output);
+    assert_eq!(
+        current_b.output["agent_continuation"]["recovery"]["kind"],
+        "host_binding_missing_in_process"
+    );
+    let rebound = runtime.agent_continuation_bind(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        view_b.clone(),
+    );
+    assert!(rebound.success, "{:?}", rebound.output);
+
+    let unbound = runtime.agent_continuation_unbind(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        view_b.clone(),
+    );
+    assert!(unbound.success, "{:?}", unbound.output);
+    assert!(endpoint_recovery_fingerprint(&reopened, &endpoint).is_none());
+    drop(runtime);
+    drop(ownership);
+    drop(reopened);
+
+    let reopened = Arc::new(Database::open(&path).unwrap());
+    let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+    reopened
+        .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
+        .unwrap();
+    let runtime = runtime_with_db(reopened);
+    for stale_binding in [view_a, view_b] {
+        let state = runtime.agent_continuation_state(
+            None,
+            agent.clone(),
+            endpoint.clone(),
+            generation,
+            stale_binding,
+        );
+        assert!(!state.success);
+        assert_eq!(state.output["error_kind"], "host_binding_stale");
+    }
+}
+
+#[test]
+fn push_replacement_clears_mcp_app_restart_recovery_provenance() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("restart-push-replacement.db");
+    let db = Arc::new(Database::open(&path).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let agent = create_agent(
+        &runtime,
+        "restart-push-agent",
+        "Restart Push Agent",
+        "restart push description",
+        "restart-push-label",
+        "restart-push-agent-create",
+    );
+    let (endpoint, generation) = attach(&runtime, &agent, "restart-push-endpoint");
+    let view = bind_mcp_app(&runtime, &agent, &endpoint, generation);
+    assert!(endpoint_recovery_fingerprint(&db, &endpoint).is_some());
+
+    let push = runtime.register_agent_continuation_adapter(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        Arc::new(FakeHostAdapter::delivered()),
+    );
+    assert!(push.success, "{:?}", push.output);
+    assert!(endpoint_recovery_fingerprint(&db, &endpoint).is_none());
+
+    drop(runtime);
+    drop(db);
+    let reopened = Arc::new(Database::open(&path).unwrap());
+    let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+    reopened
+        .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
+        .unwrap();
+    let runtime = runtime_with_db(reopened);
+    let stale_view =
+        runtime.agent_continuation_state(None, agent.clone(), endpoint.clone(), generation, view);
+    assert!(!stale_view.success);
+    assert_eq!(stale_view.output["error_kind"], "host_binding_stale");
+    let stale_push = runtime.register_agent_continuation_adapter(
+        None,
+        agent,
+        endpoint,
+        generation,
+        Arc::new(FakeHostAdapter::delivered()),
+    );
+    assert!(!stale_push.success);
+    assert_eq!(
+        stale_push.output["error_kind"], "endpoint_not_attached_in_process",
+        "push adapters never gain the MCP App restart recovery path"
+    );
+}
+
+#[test]
+fn mcp_app_restart_recovery_never_bypasses_endpoint_lifecycle() {
+    let detached = mcp_continuation_fixture("mcp-recovery-detached");
+    let detached_binding = bind_mcp_app(
+        &detached.runtime,
+        &detached.receiver,
+        &detached.receiver_endpoint,
+        detached.receiver_generation,
+    );
+    let detached_result = detached
+        .runtime
+        .detach_agent_endpoint(None, detached.receiver_endpoint.clone());
+    assert!(detached_result.success, "{:?}", detached_result.output);
+    assert!(endpoint_recovery_fingerprint(&detached.db, &detached.receiver_endpoint).is_none());
+    let detached_state = detached.runtime.agent_continuation_state(
+        None,
+        detached.receiver.clone(),
+        detached.receiver_endpoint.clone(),
+        detached.receiver_generation,
+        detached_binding,
+    );
+    assert!(!detached_state.success);
+    assert_eq!(detached_state.output["error_kind"], "endpoint_detached");
+
+    let expired = mcp_continuation_fixture("mcp-recovery-expired");
+    let expired_binding = bind_mcp_app(
+        &expired.runtime,
+        &expired.receiver,
+        &expired.receiver_endpoint,
+        expired.receiver_generation,
+    );
+    let (_replacement, replacement_generation) = attach(
+        &expired.runtime,
+        &expired.receiver,
+        "mcp-recovery-expired-replacement",
+    );
+    assert_eq!(replacement_generation, expired.receiver_generation + 1);
+    assert!(endpoint_recovery_fingerprint(&expired.db, &expired.receiver_endpoint).is_none());
+    let expired_state = expired.runtime.agent_continuation_state(
+        None,
+        expired.receiver.clone(),
+        expired.receiver_endpoint.clone(),
+        expired.receiver_generation,
+        expired_binding,
+    );
+    assert!(!expired_state.success);
+    assert_eq!(expired_state.output["error_kind"], "endpoint_expired");
+}
+
+#[test]
+fn mcp_app_restart_recovery_preserves_prepared_delivery_unknown_without_redispatch() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("restart-prepared.db");
+    let db = Arc::new(Database::open(&path).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let sender = create_agent(
+        &runtime,
+        "prepared-sender",
+        "Prepared Sender",
+        "prepared sender description",
+        "prepared-sender-label",
+        "prepared-sender-create",
+    );
+    let receiver = create_agent(
+        &runtime,
+        "prepared-receiver",
+        "Prepared Receiver",
+        "prepared receiver description",
+        "prepared-receiver-label",
+        "prepared-receiver-create",
+    );
+    let (sender_endpoint, sender_generation) =
+        attach(&runtime, &sender, "prepared-sender-endpoint");
+    let (receiver_endpoint, receiver_generation) =
+        attach(&runtime, &receiver, "prepared-receiver-endpoint");
+    let conversation = create_conversation(&runtime, &sender, &receiver, "prepared-conversation");
+    let binding = bind_mcp_app(&runtime, &receiver, &receiver_endpoint, receiver_generation);
+    post_as_agent(
+        &runtime,
+        &conversation,
+        "prepared work",
+        &sender,
+        &sender_endpoint,
+        sender_generation,
+        &receiver,
+        Some("prepared-message"),
+        None,
+        None,
+    );
+    let wake_id = wake_id_for(&db, &receiver);
+    let acquired = acquire_mcp_app(
+        &runtime,
+        &receiver,
+        &receiver_endpoint,
+        receiver_generation,
+        &binding,
+    );
+    let attempt_id = acquired["wake"]["attempt_id"].as_str().unwrap().to_string();
+    let _ = prepare_mcp_app(
+        &runtime,
+        &receiver,
+        &receiver_endpoint,
+        receiver_generation,
+        &binding,
+        &wake_id,
+        &attempt_id,
+    );
+    assert_eq!(
+        db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Prepared
+    );
+
+    drop(runtime);
+    drop(db);
+    let reopened = Arc::new(Database::open(&path).unwrap());
+    let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+    reopened
+        .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
+        .unwrap();
+    assert_eq!(
+        reopened.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::DeliveryUnknown
+    );
+    let runtime = runtime_with_db(reopened.clone());
+    let state = runtime.agent_continuation_state(
+        None,
+        receiver.clone(),
+        receiver_endpoint.clone(),
+        receiver_generation,
+        binding.clone(),
+    );
+    assert!(state.success, "{:?}", state.output);
+    assert_eq!(
+        state.output["agent_continuation"]["recovery"]["kind"],
+        "host_binding_missing_in_process"
+    );
+    assert_eq!(
+        state.output["agent_continuation"]["wake"]["state"],
+        "delivery_unknown"
+    );
+    let rebound = runtime.agent_continuation_bind(
+        None,
+        receiver.clone(),
+        receiver_endpoint.clone(),
+        receiver_generation,
+        binding.clone(),
+    );
+    assert!(rebound.success, "{:?}", rebound.output);
+    let acquire_after_restart = runtime.agent_continuation_wake_acquire(
+        None,
+        receiver,
+        receiver_endpoint,
+        receiver_generation,
+        binding,
+    );
+    assert!(
+        acquire_after_restart.success,
+        "{:?}",
+        acquire_after_restart.output
+    );
+    assert!(
+        acquire_after_restart.output["wake"].is_null(),
+        "delivery_unknown must not create a second Attempt or blindly resend after restart recovery"
+    );
+    assert_eq!(reopened.agent_wake_attempts(&wake_id).unwrap().len(), 1);
 }
 
 #[test]

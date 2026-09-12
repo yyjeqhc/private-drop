@@ -17,6 +17,7 @@ pub(crate) const CONVERSATION_ID_PREFIX: &str = "wc_conv_";
 pub(crate) const CONVERSATION_PARTICIPANT_ID_PREFIX: &str = "wc_participant_";
 pub(crate) const CONVERSATION_MESSAGE_ID_PREFIX: &str = "wc_cmsg_";
 pub(crate) const AGENT_DELIVERY_ID_PREFIX: &str = "wc_delivery_";
+const MCP_APP_RECOVERY_FINGERPRINT_HEX_LEN: usize = 64;
 pub const COMMUNICATION_PRINCIPAL_DIGEST_PREFIX: &str = "wc_commprincipal_";
 
 pub(crate) const MAX_AGENT_HANDLE_CHARS: usize = 64;
@@ -469,6 +470,8 @@ impl Database {
                 host TEXT NOT NULL,
                 client_attachment_id TEXT,
                 wake_capable INTEGER NOT NULL CHECK(wake_capable IN (0, 1)),
+                mcp_app_recovery_fingerprint TEXT
+                    CHECK(mcp_app_recovery_fingerprint IS NULL OR length(mcp_app_recovery_fingerprint) = 64),
                 controller_generation INTEGER NOT NULL CHECK(controller_generation >= 0),
                 lifecycle TEXT NOT NULL CHECK(lifecycle IN ('attached', 'detached', 'expired')),
                 attached_at_unix_ms INTEGER NOT NULL,
@@ -588,6 +591,22 @@ impl Database {
                 ON wc_communication_idempotency(created_at_unix_ms DESC);
             ",
         )?;
+        let has_recovery_fingerprint: i64 = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM pragma_table_info('wc_agent_endpoints')
+                WHERE name = 'mcp_app_recovery_fingerprint'
+            )",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_recovery_fingerprint == 0 {
+            transaction.execute(
+                "ALTER TABLE wc_agent_endpoints
+                 ADD COLUMN mcp_app_recovery_fingerprint TEXT
+                 CHECK(mcp_app_recovery_fingerprint IS NULL OR length(mcp_app_recovery_fingerprint) = 64)",
+                [],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -975,7 +994,8 @@ impl Database {
                  SET lifecycle = 'expired',
                      expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2),
                      last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?2),
-                     lease_expires_at_unix_ms = ?2
+                     lease_expires_at_unix_ms = ?2,
+                     mcp_app_recovery_fingerprint = NULL
                  WHERE agent_id = ?1 AND lifecycle = 'attached'",
                 params![input.agent_id, now],
             )
@@ -1080,7 +1100,8 @@ impl Database {
             .execute(
                 "UPDATE wc_agent_endpoints
                  SET lifecycle = 'detached', detached_at_unix_ms = ?2,
-                     last_seen_at_unix_ms = ?2, lease_expires_at_unix_ms = ?2
+                     last_seen_at_unix_ms = ?2, lease_expires_at_unix_ms = ?2,
+                     mcp_app_recovery_fingerprint = NULL
                  WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
                 params![endpoint_id, now],
             )
@@ -1168,9 +1189,8 @@ impl Database {
     }
 
     /// Project one current process-local continuation binding onto the durable
-    /// Endpoint capability bit. Only Host/controller infrastructure calls this
-    /// exact Endpoint-generation transition; public attach requests always
-    /// create non-wake-capable Endpoints.
+    /// Endpoint capability bit. Push carriers never retain an MCP App restart
+    /// recovery fingerprint.
     pub fn set_agent_endpoint_wake_capability(
         &self,
         principal: &CommunicationPrincipal,
@@ -1179,7 +1199,58 @@ impl Database {
         expected_controller_generation: i64,
         wake_capable: bool,
     ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
+        self.set_agent_endpoint_binding_projection(
+            principal,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            wake_capable,
+            None,
+        )
+    }
+
+    /// Persist the exact current MCP App View recovery fingerprint together with
+    /// the durable Host-capability projection. The fingerprint is not authority:
+    /// every recovery probe still re-runs ordinary principal and exact current
+    /// Endpoint/generation validation first.
+    pub fn set_agent_endpoint_mcp_app_binding_projection(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        wake_capable: bool,
+        recovery_fingerprint: Option<&str>,
+    ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
+        if wake_capable && recovery_fingerprint.is_none() {
+            return Err(CommunicationStoreError::new(
+                "missing_mcp_app_recovery_fingerprint",
+                "A live MCP App binding requires a restart recovery fingerprint",
+            ));
+        }
+        self.set_agent_endpoint_binding_projection(
+            principal,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            wake_capable,
+            recovery_fingerprint,
+        )
+    }
+
+    fn set_agent_endpoint_binding_projection(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        wake_capable: bool,
+        recovery_fingerprint: Option<&str>,
+    ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
         validate_communication_principal(principal)?;
+        if let Some(fingerprint) = recovery_fingerprint {
+            validate_mcp_app_recovery_fingerprint(fingerprint)?;
+        }
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1191,12 +1262,22 @@ impl Database {
             endpoint_id,
             Some(expected_controller_generation),
         )?;
-        if current.wake_capable == wake_capable {
+        let current_recovery_fingerprint: Option<String> = transaction
+            .query_row(
+                "SELECT mcp_app_recovery_fingerprint
+                 FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                params![endpoint_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        if current.wake_capable == wake_capable
+            && current_recovery_fingerprint.as_deref() == recovery_fingerprint
+        {
             transaction.commit().map_err(store_error)?;
             return Ok(current);
         }
         let now = now_unix_ms();
-        if !wake_capable {
+        if current.wake_capable && !wake_capable {
             reconcile_wakes_for_endpoint_loss(
                 &transaction,
                 agent_id,
@@ -1209,12 +1290,14 @@ impl Database {
             .execute(
                 "UPDATE wc_agent_endpoints
                  SET wake_capable = ?2,
-                     last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?3)
-                 WHERE endpoint_id = ?1 AND agent_id = ?4
-                   AND controller_generation = ?5 AND lifecycle = 'attached'",
+                     mcp_app_recovery_fingerprint = ?3,
+                     last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?4)
+                 WHERE endpoint_id = ?1 AND agent_id = ?5
+                   AND controller_generation = ?6 AND lifecycle = 'attached'",
                 params![
                     endpoint_id,
                     wake_capable as i64,
+                    recovery_fingerprint,
                     now,
                     agent_id,
                     expected_controller_generation,
@@ -1225,6 +1308,41 @@ impl Database {
             .expect("current Endpoint must remain readable after capability transition");
         transaction.commit().map_err(store_error)?;
         Ok(endpoint)
+    }
+
+    /// Return the exact current Endpoint only when a restart-recovery fingerprint
+    /// matches. `wake_capable=false` is required so a live process carrier can
+    /// never use this path as an alternate controller claim.
+    pub fn verify_mcp_app_restart_recovery(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        recovery_fingerprint: &str,
+    ) -> Result<Option<AgentEndpointRecord>, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_mcp_app_recovery_fingerprint(recovery_fingerprint)?;
+        let conn = self.conn.lock().unwrap();
+        let current = require_current_endpoint(
+            &conn,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        if current.wake_capable {
+            return Ok(None);
+        }
+        let persisted: Option<String> = conn
+            .query_row(
+                "SELECT mcp_app_recovery_fingerprint
+                 FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                params![endpoint_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        Ok((persisted.as_deref() == Some(recovery_fingerprint)).then_some(current))
     }
 
     pub fn create_conversation(
@@ -2700,6 +2818,20 @@ fn canonicalize_specialty_labels(
         canonical.insert(label.to_string());
     }
     Ok(canonical.into_iter().collect())
+}
+
+fn validate_mcp_app_recovery_fingerprint(fingerprint: &str) -> Result<(), CommunicationStoreError> {
+    if fingerprint.len() != MCP_APP_RECOVERY_FINGERPRINT_HEX_LEN
+        || !fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CommunicationStoreError::new(
+            "invalid_mcp_app_recovery_fingerprint",
+            "MCP App recovery fingerprint must be 64 lowercase hexadecimal characters",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_handle(value: &str) -> Result<String, CommunicationStoreError> {

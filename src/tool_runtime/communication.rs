@@ -190,6 +190,7 @@ fn agent_continuation_projection(
     bootstrap: crate::db::AgentConversationBootstrapRecord,
     binding: crate::agent_wake::AgentHostBindingStatus,
     observation: Option<crate::agent_wake::McpAppHostBindingObservation>,
+    recovery_kind: Option<&str>,
 ) -> serde_json::Value {
     let wake = bootstrap.wake.as_ref();
     let dispatch_observation = observation.as_ref().and_then(|observation| {
@@ -222,6 +223,7 @@ fn agent_continuation_projection(
             })),
             "queued_delivery_count": bootstrap.inbox.queued_delivery_count,
             "dispatch_observation": dispatch_observation,
+            "recovery": recovery_kind.map(|kind| json!({ "kind": kind })),
         }
     })
 }
@@ -495,6 +497,7 @@ impl ToolRuntime {
             bootstrap,
             binding,
             observation,
+            None,
         ))
     }
 
@@ -544,7 +547,7 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
         );
-        let mut output = agent_continuation_projection(bootstrap, binding, observation);
+        let mut output = agent_continuation_projection(bootstrap, binding, observation, None);
         output["state_changed"] = json!(true);
         ToolResult::ok(output)
     }
@@ -567,7 +570,7 @@ impl ToolRuntime {
         let Some(db) = self.communication_db.as_ref() else {
             return communication_store_unavailable();
         };
-        let (_endpoint, observation) = match controller.mcp_app_binding_state(
+        let state = match controller.mcp_app_binding_state(
             &principal,
             &agent_id,
             &endpoint_id,
@@ -576,6 +579,12 @@ impl ToolRuntime {
         ) {
             Ok(result) => result,
             Err(error) => return communication_error(error, RecoveryKind::Reconcile),
+        };
+        let (observation, recovery_kind) = match state {
+            crate::agent_wake::McpAppBindingState::Bound(observation) => (Some(observation), None),
+            crate::agent_wake::McpAppBindingState::RestartRecovery => {
+                (None, Some("host_binding_missing_in_process"))
+            }
         };
         let bootstrap = match db.bootstrap_agent_conversation(
             &principal,
@@ -596,7 +605,8 @@ impl ToolRuntime {
         ToolResult::ok(agent_continuation_projection(
             bootstrap,
             binding,
-            Some(observation),
+            observation,
+            recovery_kind,
         ))
     }
 
