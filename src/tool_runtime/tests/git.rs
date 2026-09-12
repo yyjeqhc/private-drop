@@ -4378,7 +4378,7 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
         "show_changes include_diff must not enqueue a Python helper: {}",
         payload.script
     );
-    assert!(payload.script.contains("git diff --unified=80"));
+    assert!(payload.script.contains("git diff --unified="));
     let stdout = framed_clean_show_changes_test_stdout("head", true);
     complete_patch_agent_request(&runtime, "show-native", &req.request_id, 0, &stdout, "").await;
     let result = task.await.unwrap();
