@@ -127,6 +127,7 @@ fn watch_git_dirty_inputs(repo_root: &Path, git_dirty: &str) {
     if !output.status.success() {
         return;
     }
+    let mut watched_paths = std::collections::HashSet::new();
     for path in output.stdout.split(|byte| *byte == 0) {
         if path.is_empty() || path.contains(&b'\n') || path.contains(&b'\r') {
             continue;
@@ -134,7 +135,18 @@ fn watch_git_dirty_inputs(repo_root: &Path, git_dirty: &str) {
         let Ok(path) = std::str::from_utf8(path) else {
             continue;
         };
-        println!("cargo:rerun-if-changed={}", repo_root.join(path).display());
+        let path = repo_root.join(path);
+        // Deleted tracked files are valid dirty inputs, but a missing
+        // rerun-if-changed path makes Cargo rerun the build script forever.
+        // Watch the nearest existing ancestor instead; recreating the missing
+        // entry changes that directory and refreshes dirty state without
+        // sacrificing no-op caching while the deletion remains.
+        let Some(existing_path) = path.ancestors().find(|candidate| candidate.exists()) else {
+            continue;
+        };
+        if watched_paths.insert(existing_path.to_path_buf()) {
+            println!("cargo:rerun-if-changed={}", existing_path.display());
+        }
     }
 }
 

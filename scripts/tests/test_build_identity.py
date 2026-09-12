@@ -141,6 +141,14 @@ class BuildIdentityTests(unittest.TestCase):
                 self.assertEqual(run(repo, "git", "rev-parse", "HEAD"), head)
                 self.assertEqual(build(), "false")
 
+                (repo / "tracked.txt").unlink()
+                self.assertEqual(build(), "true")
+                deleted_stamp = outputs[0].stat().st_mtime_ns
+                self.assertEqual(build(), "true")
+                self.assertEqual(outputs[0].stat().st_mtime_ns, deleted_stamp)
+                run(repo, "git", "restore", "tracked.txt")
+                self.assertEqual(build(), "false")
+
                 env["WEBCODEX_GIT_DIRTY"] = "false"
                 self.assertEqual(build(), "false")
                 outputs = list((root / "target/debug/build").glob("identity-fixture-*/output"))
