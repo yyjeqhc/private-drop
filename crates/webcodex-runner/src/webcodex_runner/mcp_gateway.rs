@@ -39,10 +39,6 @@ struct McpGatewayState {
     request_timeout: Duration,
 }
 
-// Wired into the authoritative config reload transaction only after the Server
-// can accept same-Runner MCP inventory generation updates without weakening
-// exact provider identity fences.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct McpGatewayReloadSummary {
     pub(crate) preserved: usize,
@@ -171,7 +167,6 @@ impl McpGatewayManager {
     /// unchanged retain their instance id and live connection. Changed/new
     /// providers receive fresh instance ids; removed/replaced connections are
     /// retired after the new routing snapshot is committed.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn apply_config_candidate(
         &self,
         config: &McpGatewayConfig,
@@ -375,7 +370,6 @@ impl ProviderEntry {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     fn retire_connection_nonblocking(&self) {
         self.lifecycle
             .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);

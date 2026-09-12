@@ -1827,6 +1827,10 @@ pub struct RunnerPollPayload {
     pub request: RunnerPollRequest,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_providers: Option<ToolProvidersStatus>,
+    /// Optional changed-only bounded MCP provider inventory. `None` means no
+    /// metadata update; `Some([])` explicitly clears the active inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
     /// Optional bounded project inventory page for the canonical paged inventory protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_inventory_page: Option<ShellProjectInventoryPage>,
@@ -3195,7 +3199,11 @@ pub enum RunnerEnvelope {
     Ping { ts: i64 },
     /// Runner -> server changed-only sanitized runtime metadata. It reuses the
     /// active transport and never requires an acknowledgement round trip.
-    RuntimeMetadata { tool_providers: ToolProvidersStatus },
+    RuntimeMetadata {
+        tool_providers: ToolProvidersStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
+    },
     /// Runner -> Server bounded page of one project-inventory snapshot. New
     /// Runners send this only after the Registered view proved support.
     ProjectInventoryPage {
@@ -4813,6 +4821,11 @@ mod envelope_tests {
     fn runtime_metadata_and_legacy_poll_payloads_round_trip() {
         let env = RunnerEnvelope::RuntimeMetadata {
             tool_providers: sample_tool_providers(),
+            mcp_gateway_providers: Some(vec![crate::mcp_gateway::McpGatewayProvider {
+                provider_id: "blender".to_string(),
+                provider_instance_id: "instance-1".to_string(),
+                name: "Blender".to_string(),
+            }]),
         };
         let json = env.to_json().unwrap();
         assert!(json.contains(r#""type":"runtime_metadata""#));
@@ -4826,6 +4839,7 @@ mod envelope_tests {
         let payload: RunnerPollPayload = serde_json::from_str(legacy).unwrap();
         assert_eq!(payload.request.client_id, "oe");
         assert!(payload.tool_providers.is_none());
+        assert!(payload.mcp_gateway_providers.is_none());
     }
 
     #[test]

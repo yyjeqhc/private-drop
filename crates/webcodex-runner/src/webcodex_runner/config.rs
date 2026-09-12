@@ -611,6 +611,10 @@ impl ReloadableRunnerConfig {
     }
 
     pub(crate) fn begin_shutdown(&self) {
+        // Serialize shutdown with authoritative config activation. Once this
+        // guard is held, a successful reload cannot commit Plugin/MCP state
+        // after their managers have entered stopping state.
+        let _reload_guard = lock_unpoison(&self.reload_lock);
         self.stopping.store(true, Ordering::SeqCst);
         self.mcp_gateway.shutdown();
         self.plugins.shutdown();
@@ -821,6 +825,17 @@ impl ReloadableRunnerConfig {
         match self
             .plugins
             .apply_config_candidate_and_then(&candidate, || {
+                let mcp_reload = self
+                    .mcp_gateway
+                    .apply_config_candidate(&candidate.mcp_gateway)
+                    .expect("config reload lock serializes MCP activation with shutdown");
+                tracing::debug!(
+                    preserved = mcp_reload.preserved,
+                    replaced = mcp_reload.replaced,
+                    added = mcp_reload.added,
+                    removed = mcp_reload.removed,
+                    "webcodex-runner MCP provider config activated"
+                );
                 {
                     let mut routers = lock_unpoison(&self.external_routers);
                     routers.retain(|router| router.strong_count() > 0);
@@ -1016,7 +1031,7 @@ pub(crate) fn restart_required_fields(
     macro_rules! classify {
         ($($field:ident),+ $(,)?) => {{
             let RunnerConfig {
-                policy: _, shell: _, skills: _, ssh: _, plugins: _, tool_providers: _, legacy_projects_dir: _,
+                policy: _, shell: _, skills: _, ssh: _, plugins: _, tool_providers: _, mcp_gateway: _, legacy_projects_dir: _,
                 $($field: _),+
             } = candidate;
             [$((stringify!($field), startup.$field != candidate.$field)),+]
@@ -1033,7 +1048,6 @@ pub(crate) fn restart_required_fields(
         host_context,
         max_concurrent_jobs,
         acp,
-        mcp_gateway,
         owner,
         poll_interval_ms,
         project_registry_dir,

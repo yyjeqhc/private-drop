@@ -311,6 +311,57 @@ async fn bridge_dequeue_rejects_missing_exact_target_fence() {
 }
 
 #[tokio::test]
+async fn same_instance_registration_can_refresh_mcp_inventory() {
+    let registry = RunnerRegistry::default();
+    registry
+        .register(bridge_registration(
+            "bridge-refresh",
+            "bridge-instance",
+            Some(vec![bridge_provider("provider-instance")]),
+        ))
+        .await
+        .unwrap();
+    registry
+        .register(bridge_registration(
+            "bridge-refresh",
+            "bridge-instance",
+            Some(vec![bridge_provider("replacement-provider-instance")]),
+        ))
+        .await
+        .unwrap();
+
+    let view = registry.get_runner_view("bridge-refresh").await.unwrap();
+    assert_eq!(
+        view.policy.unwrap().mcp_gateway_providers.unwrap()[0].provider_instance_id,
+        "replacement-provider-instance"
+    );
+}
+
+#[tokio::test]
+async fn invalid_runtime_mcp_inventory_is_rejected_without_mutating_authority() {
+    let registry = RunnerRegistry::default();
+    register_bridge_runner(&registry).await;
+    let duplicate = vec![
+        bridge_provider("instance-a"),
+        McpGatewayProvider {
+            provider_id: "provider".to_string(),
+            provider_instance_id: "instance-b".to_string(),
+            name: "Duplicate".to_string(),
+        },
+    ];
+    assert!(registry
+        .update_runtime_metadata("bridge-runner", "bridge-instance", None, Some(duplicate),)
+        .await
+        .unwrap_err()
+        .contains("invalid MCP gateway provider inventory"));
+    let view = registry.get_runner_view("bridge-runner").await.unwrap();
+    assert_eq!(
+        view.policy.unwrap().mcp_gateway_providers.unwrap()[0].provider_instance_id,
+        "provider-instance"
+    );
+}
+
+#[tokio::test]
 async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change() {
     let registry = RunnerRegistry::default();
     register_bridge_runner(&registry).await;
@@ -326,17 +377,15 @@ async fn bridge_dequeue_rechecks_exact_provider_instance_after_inventory_change(
         .await
         .unwrap();
 
-    {
-        let mut inner = registry.inner.lock().await;
-        inner
-            .runners
-            .get_mut("bridge-runner")
-            .unwrap()
-            .policy
-            .as_mut()
-            .unwrap()
-            .mcp_gateway_providers = Some(vec![bridge_provider("replacement-provider-instance")]);
-    }
+    registry
+        .update_runtime_metadata(
+            "bridge-runner",
+            "bridge-instance",
+            None,
+            Some(vec![bridge_provider("replacement-provider-instance")]),
+        )
+        .await
+        .unwrap();
     let polled = registry
         .poll(RunnerPollRequest {
             client_id: "bridge-runner".to_string(),

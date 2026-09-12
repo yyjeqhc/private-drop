@@ -851,6 +851,11 @@ mod tests {
         ws.send(TungsteniteMessage::Text(
             RunnerEnvelope::RuntimeMetadata {
                 tool_providers: provider_status(),
+                mcp_gateway_providers: Some(vec![crate::mcp_gateway::McpGatewayProvider {
+                    provider_id: "blender".to_string(),
+                    provider_instance_id: "blender-instance".to_string(),
+                    name: "Blender".to_string(),
+                }]),
             }
             .to_json()
             .unwrap()
@@ -887,6 +892,11 @@ mod tests {
             .unwrap();
         assert_eq!(call.selected_provider, "claude_code");
         assert_eq!(call.write_state.as_deref(), Some("confirmed"));
+        let view = registry.get_runner_view("ws-roundtrip").await.unwrap();
+        assert_eq!(
+            view.policy.unwrap().mcp_gateway_providers.unwrap()[0].provider_instance_id,
+            "blender-instance"
+        );
     }
 
     #[tokio::test]
