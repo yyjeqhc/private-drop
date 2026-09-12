@@ -15,6 +15,7 @@ mod audit;
 mod communication;
 mod execution_model;
 mod executions;
+mod goal;
 mod memory;
 pub mod models;
 mod oauth;
@@ -59,6 +60,12 @@ pub use self::execution_model::{
 #[cfg(any(test, feature = "root-test-support"))]
 pub use self::execution_model::{
     ConnectorExecutionContinuationIntent, ConnectorTerminalContinuationClaim,
+};
+pub use self::goal::{
+    GoalCorrelation, GoalCorrelationKind, GoalDetail, GoalLifecycle, GoalMutation, GoalPage,
+    GoalPatch, GoalStoreError, GoalSummary, NewGoal, GOAL_ID_PREFIX, MAX_GOAL_CORRELATIONS,
+    MAX_GOAL_LIST_LIMIT, MAX_GOAL_OBJECTIVE_BYTES, MAX_GOAL_TERMINAL_REASON_BYTES,
+    MAX_GOAL_TITLE_CHARS, WORKFLOW_SESSION_ID_PREFIX,
 };
 #[allow(unused_imports)]
 pub use self::memory::{
@@ -138,5 +145,7 @@ mod continuation_delivery_tests;
 mod db_tests;
 #[cfg(test)]
 mod execution_intent_tests;
+#[cfg(test)]
+mod goal_tests;
 #[cfg(test)]
 mod memory_tests;

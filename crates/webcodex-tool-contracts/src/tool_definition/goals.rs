@@ -1,0 +1,227 @@
+use super::ToolVisibility::ModelVisible;
+use super::{def, model_spec, require_all_scopes, ToolDefinition, TOOL_CATEGORY_GOAL};
+use crate::metadata::{
+    ToolPathHint::None as NoPath,
+    ToolRisk::{Read, WorkflowManage},
+    COMMUNICATION_MANAGE, COMMUNICATION_READ, TOOL_PROVIDER_CONTROL,
+};
+use crate::registry::input_schemas::{
+    associate_goal_agent_task_input_schema, associate_goal_workflow_session_input_schema,
+    create_goal_input_schema, get_goal_input_schema, list_goals_input_schema,
+    update_goal_input_schema,
+};
+use webcodex_core::authority::{
+    COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES, SCOPE_COMMUNICATION_MANAGE,
+    SCOPE_COMMUNICATION_READ, SCOPE_SESSION_COLLABORATE,
+};
+
+const GOAL_SESSION_ASSOCIATE_SCOPES: &[&str] = &[
+    SCOPE_COMMUNICATION_READ,
+    SCOPE_COMMUNICATION_MANAGE,
+    SCOPE_SESSION_COLLABORATE,
+];
+
+pub(super) const DEFINITIONS: &[ToolDefinition] = &[
+    require_all_scopes(
+        model_spec(
+            def(
+                "create_goal",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("goal_id", "/goal/summary/goal_id"),
+                    super::ToolAuditResultField::pointer("lifecycle", "/goal/summary/lifecycle"),
+                    super::ToolAuditResultField::pointer("revision", "/goal/summary/revision"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_GOAL,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Create one explicit durable high-level Goal owned by the current management principal. Goal is intent/control state only: creation never selects a Project, starts a Workflow Session, claims an AgentTaskAttempt, reaches a Runner, or dispatches a Job.",
+            create_goal_input_schema,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "get_goal",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("goal_id", "/goal/summary/goal_id"),
+                    super::ToolAuditResultField::pointer("lifecycle", "/goal/summary/lifecycle"),
+                    super::ToolAuditResultField::pointer("revision", "/goal/summary/revision"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_GOAL,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(COMMUNICATION_READ),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Read one exact caller-owned durable Goal. Unauthorized and nonexistent ids are existence-hidden. Correlations expose only bounded identities and never target-domain authority, fences, tokens, credentials, Job state, or Workflow Session ledgers.",
+            get_goal_input_schema,
+        ),
+        COMMUNICATION_READ_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "list_goals",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("total_count"),
+                    super::ToolAuditResultField::array_len("returned_count", "goals"),
+                    super::ToolAuditResultField::value("offset"),
+                    super::ToolAuditResultField::value("next_offset"),
+                    super::ToolAuditResultField::value("truncated"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_GOAL,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(COMMUNICATION_READ),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "List bounded Goals visible to the current owner principal, optionally filtered by authoritative lifecycle. List projection omits objective, terminal reason, and exact correlation identities.",
+            list_goals_input_schema,
+        ),
+        COMMUNICATION_READ_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "update_goal",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("goal_id", "/goal/summary/goal_id"),
+                    super::ToolAuditResultField::pointer("lifecycle", "/goal/summary/lifecycle"),
+                    super::ToolAuditResultField::pointer("revision", "/goal/summary/revision"),
+                    super::ToolAuditResultField::value("created"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_GOAL,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Update bounded Goal metadata or explicitly transition active to completed/cancelled using an exact revision and idempotency key. Terminal Goal state is immutable. No execution domain is mutated or inferred from this transition.",
+            update_goal_input_schema,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "associate_goal_agent_task",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("goal_id", "/goal/summary/goal_id"),
+                    super::ToolAuditResultField::pointer("revision", "/goal/summary/revision"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_GOAL,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Explicitly correlate one owned active Goal with one exact owned AgentTask after independently re-authorizing that AgentTask. The link is identity-only and grants no TaskAttempt, CodingAgentRun, Project, Runner, filesystem, or Job authority.",
+            associate_goal_agent_task_input_schema,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        model_spec(
+            def(
+                "associate_goal_workflow_session",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("goal_id", "/goal/summary/goal_id"),
+                    super::ToolAuditResultField::pointer("revision", "/goal/summary/revision"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                TOOL_CATEGORY_GOAL,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: WorkflowManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Explicitly correlate one owned active Goal with one exact Workflow Session after independently re-authorizing the Session through its existing authority fingerprint and any bound Project authorization. The Goal link is never a Session or Project credential.",
+            associate_goal_workflow_session_input_schema,
+        ),
+        GOAL_SESSION_ASSOCIATE_SCOPES,
+    ),
+];

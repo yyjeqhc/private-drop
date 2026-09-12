@@ -56,6 +56,9 @@ pub(in crate::tool_runtime::tests) fn sample_tool_args_for_spec(spec: &ToolSpec)
         "work_on_project" => {
             args.insert("project".to_string(), json!(SAMPLE_PROJECT));
         }
+        "update_goal" => {
+            args.insert("expected_revision".to_string(), json!(1));
+        }
         "observe_jobs" => {
             args.insert("items".to_string(), json!([{"job_id": "job_123"}]));
         }
@@ -89,6 +92,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "text" => json!("// hi\n"),
         "content" => json!("fn main() {}\n"),
         "instruction" => json!("implement the requested change"),
+        "objective" => json!("Preserve durable high-level intent without execution authority."),
         "title" => json!("Durable agent work"),
         "include_project_instructions"
         | "include_workflow_guidance"
@@ -117,6 +121,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "agent_id" => json!(format!("wc_dagent_{}", "a".repeat(32))),
         "assignee_agent_id" => json!(format!("wc_dagent_{}", "a".repeat(32))),
         "task_id" => json!(format!("wc_agent_task_{}", "1".repeat(32))),
+        "goal_id" => json!(format!("wc_goal_{}", "0".repeat(32))),
         "attempt_id" => json!(format!("wc_agent_task_attempt_{}", "2".repeat(32))),
         "attempt_fence" => json!(format!("wc_agent_task_fence_{}", "3".repeat(32))),
         "attempt_controller_generation" | "expected_generation" => json!(1),
@@ -134,7 +139,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "provider_id" => json!("codex"),
         "run_id" => json!("wc_agent_run_sample_1234"),
         "shell_id" => json!("wc_shell_123"),
-        "session_id" => json!("wc_sess_existing"),
+        "session_id" => json!(format!("wc_sess_{}", "1".repeat(32))),
         "checkpoint_id" => json!("wc_ckpt_1234"),
         "confirm" => json!(true),
         "client_id" => json!("oe"),

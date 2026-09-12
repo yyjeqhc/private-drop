@@ -17,6 +17,7 @@ mod discovery;
 mod edits;
 mod files;
 mod git;
+mod goals;
 mod hygiene;
 mod jobs;
 mod lsp;
@@ -721,6 +722,7 @@ pub const TOOL_CATEGORY_CLEANUP: &str = "cleanup";
 pub const TOOL_CATEGORY_EDIT: &str = "edit";
 pub const TOOL_CATEGORY_FILE: &str = "file";
 pub const TOOL_CATEGORY_GIT: &str = "git";
+pub const TOOL_CATEGORY_GOAL: &str = "goal";
 pub const TOOL_CATEGORY_JOB: &str = "job";
 pub const TOOL_CATEGORY_LSP: &str = "lsp";
 pub const TOOL_CATEGORY_PATCH: &str = "patch";
@@ -987,6 +989,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     TOOL_DEFINITION_HEAD,
     sessions::DEFINITIONS,
     communication::DEFINITIONS,
+    goals::DEFINITIONS,
     agent_tasks::DEFINITIONS,
     memory::DEFINITIONS,
     skills::DEFINITIONS,

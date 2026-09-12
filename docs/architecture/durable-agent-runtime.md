@@ -53,6 +53,7 @@ domains and must remain explicit in code, schemas, documentation, and reviews.
 | Workflow Session | Existing execution/provenance/validation/handoff evidence context | Agent, Conversation, Agent Task |
 | Job | Concrete long-running process/validation execution | Agent Task or TaskAttempt |
 | CodingAgentRun | Existing ACP delegated coding execution | Agent Task itself |
+| Goal | Server-owned high-level durable intent/control state (`wc_goal_*`) | Agent Task, Workflow Session, Job, Project authority, scheduler |
 
 The `agent:` prefix in a runtime Project id is historical Runner-address syntax. It
 is unrelated to the durable `wc_dagent_*` Agent identity domain.
@@ -129,6 +130,7 @@ Important current invariants:
   and the same logical Wake remain durable until a new exact Endpoint generation
   registers a callable adapter.
 - project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
+- durable Goals are independent high-level intent/control truth; Goal identity, ownership, lifecycle, revision, and correlations grant no Project, Runner, filesystem, Workflow Session, AgentTaskAttempt, CodingAgentRun, or Job authority.
 
 No production ChatGPT auto-resume adapter currently exists in the repository. A
 September 2026 temporary MCP App probe did demonstrate that ChatGPT can accept an
@@ -145,6 +147,55 @@ dispatch semantics rather than production Host wake delivery.
 
 These invariants, the natural-conversation slice, and the durable A3 ownership
 substrate support asynchronous Agent work without introducing a scheduler.
+
+## Durable Goal Phase 1
+
+Phase 1 adds a deliberately small, Control-owned Goal domain. A Goal answers:
+
+> What does the user ultimately want completed, and what is the authoritative high-level durable state of that intent?
+
+It does **not** answer who owns the next execution attempt, which repository operation should run, or whether a concrete coding Session/Job succeeded. Those remain owned by AgentTask/TaskAttempt, Workflow Session, Project/Runner, and Job domains respectively.
+
+The authoritative model is persisted in the existing Server SQLite database using independent `wc_goals`, `wc_goal_correlations`, and `wc_goal_idempotency` tables. The first model is intentionally bounded:
+
+```text
+Goal
+  goal_id                 # Server-minted wc_goal_*
+  owner principal         # stable authorized communication-management principal
+  title                   # <= 200 characters
+  objective               # <= 8192 UTF-8 bytes
+  lifecycle               # active | completed | cancelled
+  revision                # monotonic, starts at 1
+  created_at / updated_at
+  terminal_at?
+  terminal_reason?        # <= 4096 UTF-8 bytes
+  correlations[]          # <= 64 explicit AgentTask / Workflow Session identities
+```
+
+`active`, `completed`, and `cancelled` are the complete Phase 1 authoritative lifecycle. Terminal state is immutable. Presentation phases such as `implementing`, `blocked`, or `waiting_validation` are not stored as Goal lifecycle. Unknown persisted lifecycle/correlation values fail closed rather than becoming a new state implicitly.
+
+Goal tools are Control-side only: `create_goal`, `get_goal`, `list_goals`, `update_goal`, `associate_goal_agent_task`, and `associate_goal_workflow_session`. They do not declare Project requirements or Runner capabilities. Reads use the existing stable communication-read principal model; mutations use communication management. Exact Goal reads combine id and owner in the durable lookup so a foreign id is indistinguishable from a nonexistent id. Create/update/association use durable keyed replay; exact duplicate retries replay, while changed reuse of the same key fails closed. `list_goals` returns bounded summaries rather than objective text or correlation identities.
+
+Correlation is explicit durable identity only:
+
+- Goal → AgentTask association first re-authorizes the exact AgentTask under its existing owner-principal rules.
+- Goal → Workflow Session association first runs the existing exact Session authority fence, including creation-time authority fingerprint validation and normal authorization for any bound Project.
+- the Goal store then persists only the target identity and timestamp; it never persists the target's fence, token, authority, ledger, Job state, or other private execution data;
+- Jobs remain traceable through their existing Workflow Session/AgentTask provenance. Phase 1 intentionally does not duplicate a Goal → Job truth.
+
+A Goal reference never becomes inherited authority. A Goal that references a Project indirectly through an AgentTask still has no Project authority; a Goal that references a Session is not a Session credential; a Goal linked to an AgentTask does not own that TaskAttempt. Any later dereference must run the target domain's normal checks again.
+
+No current execution path accepts or requires `goal_id`: `work_on_project`, read/edit/search, shell/process, Job handoff/observation, validation, Git, and `finish_coding_task` retain their existing semantics. Goal is not selected from ClientWindow, OpenAI/MCP session data, Project identity, credential, Conversation, or Workflow Session. The historical Runner/Codex metadata field named `goal_id` remains compatibility metadata and is **not** the `wc_goal_*` durable identity.
+
+Lifecycle is independent across domains. `finish_coding_task` reports/finishes one Workflow Session concern and does not complete a Goal. AgentTask/TaskAttempt terminal completion likewise does not transition a Goal without a future explicit contract. Phase 1 creates no Goal scheduler, Wake/controller, automatic AgentTask, TaskAttempt, Workflow Session, CodingAgentRun, Runner request, process, or Job.
+
+### Follow-on boundaries
+
+**G2 — bounded Plan presentation.** Project one exact Goal into a bounded Plan view, create at most one App-bound presentation for that presentation identity, and let the App poll exact bounded state through an App-only read path. Presentation phases may derive from Goal plus existing work/evidence, but they must not expand the authoritative Goal lifecycle. G2 has no wake or model-turn continuation.
+
+**G3 — production Host continuation adapter.** Add Host continuation only after presentation identity is stable. Reuse the existing durable Agent Endpoint / Wake / Wake Delivery Attempt controller generation, lease/dispatch fence, and exact consume semantics; do not invent a second continuation truth owned by Goal, App, iframe, or Job view.
+
+These phase boundaries intentionally follow the [September 11–12, 2026 MCP App continuation findings](../agent/mcp-app-continuation-experiments.md): one persistent presentation should converge from server-owned state through bounded App-only refresh; Host dispatch acceptance is not the same as model resumption; and the temporary probe's in-memory timer/map state machine must not be copied into production.
 
 ## Asynchronous Agent work
 

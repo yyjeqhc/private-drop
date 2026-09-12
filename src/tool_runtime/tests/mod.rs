@@ -20,6 +20,7 @@ mod execution_context;
 mod files;
 mod files_helpers;
 mod git;
+mod goals;
 mod handoff;
 mod handoff_brief;
 mod hygiene;

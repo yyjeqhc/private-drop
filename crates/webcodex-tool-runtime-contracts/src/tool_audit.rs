@@ -186,6 +186,106 @@ fn typed_structured_validation_request_audit(
 }
 
 #[derive(Debug, Clone, Copy)]
+enum GoalRequestAudit {
+    Create,
+    Get,
+    List,
+    Update,
+    AssociateAgentTask,
+    AssociateWorkflowSession,
+}
+
+fn typed_goal_request_audit(kind: GoalRequestAudit, arguments: &Value) -> Value {
+    let Some(obj) = arguments.as_object() else {
+        return empty_audit_projection();
+    };
+    let mut out = serde_json::Map::new();
+    match kind {
+        GoalRequestAudit::Create => {
+            out.insert(
+                "title_chars".to_string(),
+                Value::from(
+                    obj.get("title")
+                        .and_then(Value::as_str)
+                        .map(str::chars)
+                        .map(Iterator::count)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "objective_bytes".to_string(),
+                Value::from(
+                    obj.get("objective")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        GoalRequestAudit::Get => copy_keys(obj, &mut out, &["goal_id"]),
+        GoalRequestAudit::List => copy_keys(obj, &mut out, &["lifecycle", "offset", "limit"]),
+        GoalRequestAudit::Update => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["goal_id", "expected_revision", "lifecycle"],
+            );
+            out.insert(
+                "title_chars".to_string(),
+                Value::from(
+                    obj.get("title")
+                        .and_then(Value::as_str)
+                        .map(str::chars)
+                        .map(Iterator::count)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "objective_bytes".to_string(),
+                Value::from(
+                    obj.get("objective")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "terminal_reason_bytes".to_string(),
+                Value::from(
+                    obj.get("terminal_reason")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default(),
+                ),
+            );
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        GoalRequestAudit::AssociateAgentTask => {
+            copy_keys(obj, &mut out, &["goal_id", "task_id"]);
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        GoalRequestAudit::AssociateWorkflowSession => {
+            copy_keys(obj, &mut out, &["goal_id", "session_id"]);
+            out.insert(
+                "idempotency_key_present".to_string(),
+                Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+    }
+    Value::Object(out)
+}
+
+#[derive(Debug, Clone, Copy)]
 enum AgentTaskRequestAudit {
     Create,
     List,
@@ -3368,6 +3468,78 @@ impl ToolCall {
                 "items": items,
                 "with_line_numbers": with_line_numbers,
             }),
+            Self::CreateGoal {
+                title,
+                objective,
+                idempotency_key,
+            } => typed_goal_request_audit(
+                GoalRequestAudit::Create,
+                &serde_json::json!({
+                    "title": title,
+                    "objective": objective,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::GetGoal { goal_id } => typed_goal_request_audit(
+                GoalRequestAudit::Get,
+                &serde_json::json!({"goal_id": goal_id}),
+            ),
+            Self::ListGoals {
+                lifecycle,
+                offset,
+                limit,
+            } => typed_goal_request_audit(
+                GoalRequestAudit::List,
+                &serde_json::json!({
+                    "lifecycle": lifecycle,
+                    "offset": offset,
+                    "limit": limit,
+                }),
+            ),
+            Self::UpdateGoal {
+                goal_id,
+                expected_revision,
+                title,
+                objective,
+                lifecycle,
+                terminal_reason,
+                idempotency_key,
+            } => typed_goal_request_audit(
+                GoalRequestAudit::Update,
+                &serde_json::json!({
+                    "goal_id": goal_id,
+                    "expected_revision": expected_revision,
+                    "title": title,
+                    "objective": objective,
+                    "lifecycle": lifecycle,
+                    "terminal_reason": terminal_reason,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::AssociateGoalAgentTask {
+                goal_id,
+                task_id,
+                idempotency_key,
+            } => typed_goal_request_audit(
+                GoalRequestAudit::AssociateAgentTask,
+                &serde_json::json!({
+                    "goal_id": goal_id,
+                    "task_id": task_id,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::AssociateGoalWorkflowSession {
+                goal_id,
+                session_id,
+                idempotency_key,
+            } => typed_goal_request_audit(
+                GoalRequestAudit::AssociateWorkflowSession,
+                &serde_json::json!({
+                    "goal_id": goal_id,
+                    "session_id": session_id,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
             Self::CreateAgentTask {
                 title,
                 instruction,

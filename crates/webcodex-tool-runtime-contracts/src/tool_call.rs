@@ -1142,6 +1142,57 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Create explicit high-level durable intent/control state without execution authority.
+    CreateGoal {
+        title: String,
+        objective: String,
+        idempotency_key: String,
+    },
+
+    /// Read one exact caller-owned durable Goal.
+    GetGoal {
+        goal_id: String,
+    },
+
+    /// List caller-visible durable Goals with an optional authoritative lifecycle filter.
+    ListGoals {
+        #[serde(default)]
+        lifecycle: Option<String>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// CAS-update bounded Goal metadata or its closed lifecycle.
+    UpdateGoal {
+        goal_id: String,
+        expected_revision: i64,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        objective: Option<String>,
+        #[serde(default)]
+        lifecycle: Option<String>,
+        #[serde(default)]
+        terminal_reason: Option<String>,
+        idempotency_key: String,
+    },
+
+    /// Explicitly correlate an owned Goal with an independently authorized AgentTask.
+    AssociateGoalAgentTask {
+        goal_id: String,
+        task_id: String,
+        idempotency_key: String,
+    },
+
+    /// Explicitly correlate an owned Goal with an independently authorized Workflow Session.
+    AssociateGoalWorkflowSession {
+        goal_id: String,
+        session_id: String,
+        idempotency_key: String,
+    },
+
     /// Create explicit durable Agent work independent from communication messages and execution backends.
     CreateAgentTask {
         title: String,
@@ -2711,6 +2762,12 @@ impl ToolCall {
             Self::SkillInstall { .. } => "skill_install",
             Self::SkillActivate { .. } => "skill_activate",
             Self::SkillRemoveRevision { .. } => "skill_remove_revision",
+            Self::CreateGoal { .. } => "create_goal",
+            Self::GetGoal { .. } => "get_goal",
+            Self::ListGoals { .. } => "list_goals",
+            Self::UpdateGoal { .. } => "update_goal",
+            Self::AssociateGoalAgentTask { .. } => "associate_goal_agent_task",
+            Self::AssociateGoalWorkflowSession { .. } => "associate_goal_workflow_session",
             Self::CreateAgentTask { .. } => "create_agent_task",
             Self::ListAgentTasks { .. } => "list_agent_tasks",
             Self::ReadAgentTask { .. } => "read_agent_task",

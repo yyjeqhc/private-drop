@@ -59,7 +59,10 @@ this concrete Agent/Conversation model. Standing rules are:
 - the planned asynchronous work object is an independent **Agent Task** with an
   exact fenced **Agent TaskAttempt**. It is not the existing Connector Task and is
   not inferred merely because a Conversation Message exists;
-- references among Conversation, Agent Task, Workflow Session, Job, CodingAgentRun,
+- **Goal** is an independent `wc_goal_*` high-level durable intent/control domain. It is not an Agent Task, Workflow Session, Job, Project selector, execution primitive, or scheduler; Goal identity/status/revision/correlation is never a bearer credential;
+- Goal selection is exact durable identity or explicit creation only. Never infer the current Goal from Project, ClientWindow, credential, MCP/OpenAI session data, Conversation membership, Workflow Session, or shared timing;
+- Goal lifecycle is currently closed to `active | completed | cancelled`. `finish_coding_task`, AgentTask/TaskAttempt completion, Job terminal state, or validation evidence do not automatically transition a Goal;
+- references among Goal, Conversation, Agent Task, Workflow Session, Job, CodingAgentRun,
   commit, PR, or Artifact provide correlation only. Dereferencing always re-runs
   the referenced object's normal authorization;
 - automatic worker spawning, runnable-frontier scheduling, capacity management,

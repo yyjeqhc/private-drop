@@ -1799,6 +1799,54 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::CreateGoal {
+                title,
+                objective,
+                idempotency_key,
+            } => self.create_goal(auth, title, objective, idempotency_key),
+
+            ToolCall::GetGoal { goal_id } => self.get_goal(auth, goal_id),
+
+            ToolCall::ListGoals {
+                lifecycle,
+                offset,
+                limit,
+            } => self.list_goals(auth, lifecycle, offset, limit),
+
+            ToolCall::UpdateGoal {
+                goal_id,
+                expected_revision,
+                title,
+                objective,
+                lifecycle,
+                terminal_reason,
+                idempotency_key,
+            } => self.update_goal(
+                auth,
+                goal_id,
+                expected_revision,
+                title,
+                objective,
+                lifecycle,
+                terminal_reason,
+                idempotency_key,
+            ),
+
+            ToolCall::AssociateGoalAgentTask {
+                goal_id,
+                task_id,
+                idempotency_key,
+            } => self.associate_goal_agent_task(auth, goal_id, task_id, idempotency_key),
+
+            ToolCall::AssociateGoalWorkflowSession {
+                goal_id,
+                session_id,
+                idempotency_key,
+            } => {
+                self.associate_goal_workflow_session(auth, goal_id, session_id, idempotency_key)
+                    .await
+            }
+
             ToolCall::CreateAgentTask {
                 title,
                 instruction,
