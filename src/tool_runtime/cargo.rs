@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::time::{Duration, Instant};
 
 use super::helpers::{
     bounded_tail, command_outcome_unknown_message, command_rejected_message,
@@ -13,6 +14,7 @@ use super::structured_execution::structured_job_observation;
 use super::tool_result::ToolResult;
 use super::validation_profile::{
     validation_adapter_for_tool, ValidationAdapter, ValidationCommandOptions,
+    ValidationFailureEvidence,
 };
 use super::{ExecutionPurpose, ToolRuntime};
 use crate::auth::AuthContext;
@@ -29,6 +31,55 @@ const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
 const CARGO_VALIDATION_FAILURE_KIND: &str = "validation_failed";
 const VALIDATION_FAILURE_GUIDANCE: &str =
     "command was started; inspect bounded validation evidence, fix the reported issue, then rerun the same structured validation tool.";
+
+fn test_count_assertion_failure_message(tool_name: &str, payload: &Value) -> String {
+    if tool_name == "cargo_test"
+        && payload.get("zero_tests_run").and_then(Value::as_bool) == Some(true)
+    {
+        return "cargo_test completed but 0 tests executed; broaden or remove the substring filter, use the test's full qualified name if needed, or verify the selected package/target. Do not put --exact, --nocapture, or other Cargo/libtest flags in filter, and do not treat this result as validation success.".to_string();
+    }
+    if tool_name == "cargo_test" {
+        return "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string();
+    }
+    "structured test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
+}
+
+fn cargo_fmt_check_is_stable_diff(
+    adapter: &'static dyn ValidationAdapter,
+    output: &ProjectCommandOutput,
+) -> bool {
+    if output.execution_state != ShellCommandExecutionState::Completed
+        || output.exit_code == Some(0)
+    {
+        return false;
+    }
+    adapter.map_failure_kind(ValidationFailureEvidence {
+        success: false,
+        reported_failure_kind: None,
+        exit_code: output.exit_code.map(i64::from),
+        diagnostics: None,
+        stdout_excerpt: &output.stdout,
+        stderr_excerpt: &output.stderr,
+    }) == "format_diff"
+}
+
+fn annotate_cargo_fmt_effect(
+    result: &mut ToolResult,
+    changed: Option<bool>,
+    state_changed: Option<bool>,
+) {
+    result.output["changed"] = changed.map(Value::Bool).unwrap_or(Value::Null);
+    result.output["state_changed"] = state_changed.map(Value::Bool).unwrap_or(Value::Null);
+}
+
+fn append_cargo_fmt_uncertainty_guidance(result: &mut ToolResult) {
+    let guidance =
+        "cargo fmt mutation may have changed source; inspect the worktree before retrying.";
+    result.error = Some(match result.error.take() {
+        Some(error) => format!("{error} {guidance}"),
+        None => guidance.to_string(),
+    });
+}
 
 fn validate_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     match cwd {
@@ -327,9 +378,10 @@ impl ToolRuntime {
         if let Some(result) = reject_structured_validation_ssh_resource(ssh_resource) {
             return result;
         }
-        // Non-check `cargo fmt` mutates source and keeps the existing explicit
-        // synchronous semantics: it never auto-promotes to a Job after the
-        // tool has returned. Only `check=true` gets the read-only handoff path.
+        // Non-check `cargo_fmt` is an ensure-formatted operation. It first runs
+        // the read-only rustfmt check, mutating only when that check proves a
+        // stable formatting diff. The mutation stays synchronous and never
+        // continues after this ToolResult returns.
         if !check {
             let timeout =
                 match resolve_sync_timeout_secs(timeout_secs, DEFAULT_CARGO_FMT_TIMEOUT_SECS) {
@@ -350,17 +402,173 @@ impl ToolRuntime {
                     ))
                 }
             };
+            let config = match self.resolve_project(&project).await {
+                Ok(config) => config,
+                Err(e) => {
+                    return ToolResult::err(command_rejected_message(
+                        e.to_message(),
+                        "verify the project id/cwd and agent connectivity, then retry.",
+                    ))
+                }
+            };
             let adapter = validation_adapter_for_tool("cargo_fmt")
                 .expect("Rust validation profile must register cargo_fmt");
+            let check_command = adapter
+                .build_command(ValidationCommandOptions {
+                    check: true,
+                    ..ValidationCommandOptions::default()
+                })
+                .expect("cargo_fmt check command builder is infallible");
+            let started = Instant::now();
+            let check_output = match self
+                .run_project_command_capture(&project, check_command.clone(), timeout, cwd.clone())
+                .await
+            {
+                Ok(output) => output,
+                Err(e) => {
+                    return ToolResult::err(command_rejected_message(
+                        e,
+                        "verify the project id/cwd and agent connectivity, then retry.",
+                    ))
+                }
+            };
+            let already_formatted = check_output.execution_state
+                == ShellCommandExecutionState::Completed
+                && check_output.exit_code == Some(0);
+            if already_formatted {
+                let mut result = self
+                    .build_cargo_result(
+                        &project,
+                        &check_command,
+                        cwd.as_deref(),
+                        &config,
+                        adapter,
+                        check_output,
+                        timeout,
+                        0,
+                        false,
+                        false,
+                        false,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                annotate_cargo_fmt_effect(&mut result, Some(false), Some(false));
+                return result;
+            }
+            if !cargo_fmt_check_is_stable_diff(adapter, &check_output) {
+                let mut result = self
+                    .build_cargo_result(
+                        &project,
+                        &check_command,
+                        cwd.as_deref(),
+                        &config,
+                        adapter,
+                        check_output,
+                        timeout,
+                        0,
+                        false,
+                        false,
+                        false,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                annotate_cargo_fmt_effect(&mut result, Some(false), Some(false));
+                if let Some(error) = result.error.take() {
+                    result.error = Some(format!(
+                        "{error} No source formatting was attempted because the precheck did not prove a stable rustfmt diff."
+                    ));
+                }
+                return result;
+            }
+
+            let total_budget = Duration::from_secs(timeout);
+            let elapsed = started.elapsed();
+            let remaining_budget = total_budget.saturating_sub(elapsed);
+            if remaining_budget < Duration::from_secs(1) {
+                let mut result = self
+                    .build_cargo_result(
+                        &project,
+                        &check_command,
+                        cwd.as_deref(),
+                        &config,
+                        adapter,
+                        check_output,
+                        timeout,
+                        0,
+                        false,
+                        false,
+                        false,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                annotate_cargo_fmt_effect(&mut result, Some(false), Some(false));
+                result.output["failure_kind"] = json!("timeout");
+                result.error = Some(
+                    "cargo_fmt found formatting differences but exhausted its synchronous timeout before mutation; no source formatting was attempted."
+                        .to_string(),
+                );
+                return result;
+            }
+            let remaining = remaining_budget.as_secs();
             let command = adapter
                 .build_command(ValidationCommandOptions {
                     check: false,
                     ..ValidationCommandOptions::default()
                 })
                 .expect("cargo_fmt command builder is infallible");
-            // `cargo fmt` (mutating) uses the plain sync path.
-            self.run_cargo_command_sync(project, cwd, command, timeout, adapter)
+            let mutation_output = match self
+                .run_project_command_capture(&project, command.clone(), remaining, cwd.clone())
                 .await
+            {
+                Ok(output) => output,
+                Err(e) => {
+                    return ToolResult::err(command_rejected_message(
+                        e,
+                        "the formatting precheck proved a diff but the mutation command could not be dispatched; inspect the worktree before retrying.",
+                    ))
+                }
+            };
+            let mutation_state = mutation_output.execution_state;
+            let mutation_exit_code = mutation_output.exit_code;
+            let mut result = self
+                .build_cargo_result(
+                    &project,
+                    &command,
+                    cwd.as_deref(),
+                    &config,
+                    adapter,
+                    mutation_output,
+                    remaining,
+                    0,
+                    false,
+                    false,
+                    false,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            result.output["effective_timeout_secs"] = json!(timeout);
+            result.output["duration_ms"] = json!(started.elapsed().as_millis() as u64);
+            match (mutation_state, mutation_exit_code) {
+                (ShellCommandExecutionState::Completed, Some(0)) => {
+                    annotate_cargo_fmt_effect(&mut result, Some(true), Some(true));
+                }
+                (ShellCommandExecutionState::NotStarted, _) => {
+                    annotate_cargo_fmt_effect(&mut result, Some(false), Some(false));
+                }
+                _ => {
+                    annotate_cargo_fmt_effect(&mut result, None, None);
+                    append_cargo_fmt_uncertainty_guidance(&mut result);
+                }
+            }
+            result
         } else {
             self.run_readonly_validation(
                 "cargo_fmt",
@@ -1233,24 +1441,17 @@ impl ToolRuntime {
                 CARGO_VALIDATION_FAILURE_KIND
             };
             payload["failure_kind"] = json!(failure_kind);
+            let error = if timed_out {
+                command_timeout_message(handoff.effective_timeout_secs, &stdout_tail, &stderr_tail)
+            } else if process_passed {
+                test_count_assertion_failure_message(adapter.tool_identity(), &payload)
+            } else {
+                format!("structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}")
+            };
             let result = ToolResult {
                 success: false,
                 output: payload,
-                error: Some(if timed_out {
-                    command_timeout_message(
-                        handoff.effective_timeout_secs,
-                        &stdout_tail,
-                        &stderr_tail,
-                    )
-                } else {
-                    if process_passed {
-                        "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
-                    } else {
-                        format!(
-                            "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
-                        )
-                    }
-                }),
+                error: Some(error),
             };
             self.runner_registry
                 .remove_projected_hidden_terminal_job_record(&job_id)
@@ -1399,75 +1600,18 @@ impl ToolRuntime {
                 } else {
                     "process_exit"
                 });
+                let error = if process_passed {
+                    test_count_assertion_failure_message(adapter.tool_identity(), &payload)
+                } else {
+                    format!("structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}")
+                };
                 ToolResult {
                     success: false,
                     output: payload,
-                    error: Some(if process_passed {
-                        "cargo_test test-count assertion was not proven; inspect test_count_assertion and rerun with a scope that executes enough tests.".to_string()
-                    } else {
-                        format!(
-                            "structured validation command failed; {VALIDATION_FAILURE_GUIDANCE}"
-                        )
-                    }),
+                    error: Some(error),
                 }
             }
         }
-    }
-
-    /// The previous synchronous cargo path, used by mutating `cargo fmt` (and
-    /// the old `run_cargo_command`). Kept separate so the read-only tools go
-    /// through the shared exactly-once validation path.
-    async fn run_cargo_command_sync(
-        &self,
-        project: String,
-        cwd: Option<String>,
-        command: String,
-        timeout_secs: u64,
-        adapter: &'static dyn ValidationAdapter,
-    ) -> ToolResult {
-        let config = match self.resolve_project(&project).await {
-            Ok(config) => config,
-            Err(e) => {
-                return ToolResult::err(command_rejected_message(
-                    e.to_message(),
-                    "verify the project id/cwd and agent connectivity, then retry or use run_shell for custom diagnostics.",
-                ))
-            }
-        };
-        let output = match self
-            .run_project_command_capture(
-                &project,
-                command.clone(),
-                timeout_secs,
-                cwd.clone(),
-            )
-            .await
-        {
-            Ok(output) => output,
-            Err(e) => {
-                return ToolResult::err(command_rejected_message(
-                    e,
-                    "verify the project id/cwd and agent connectivity, then retry or use run_shell for custom diagnostics.",
-                ))
-            }
-        };
-        self.build_cargo_result(
-            &project,
-            &command,
-            cwd.as_deref(),
-            &config,
-            adapter,
-            output,
-            timeout_secs,
-            0,
-            false,
-            false,
-            false,
-            None,
-            None,
-            None,
-        )
-        .await
     }
 }
 

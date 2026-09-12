@@ -133,6 +133,24 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ("session_hint", session_hint_schema()),
             ("permission", permission_decision_schema()),
     ];
+    if tool_name == "cargo_fmt" {
+        fields.extend([
+            (
+                "changed",
+                nullable_schema(
+                    "boolean",
+                    "For check=false ensure-format: true when precheck proved formatting was needed and the mutating cargo fmt completed successfully, false when no mutation was needed or mutation definitely did not start, null when mutation may have changed source but the final effect is uncertain. Absent for check=true validation.",
+                ),
+            ),
+            (
+                "state_changed",
+                nullable_schema(
+                    "boolean",
+                    "Effect-state projection for check=false ensure-format. Mirrors changed on known outcomes and is null when post-dispatch mutation state is uncertain. Absent for check=true validation.",
+                ),
+            ),
+        ]);
+    }
     if matches!(tool_name, "cargo_check" | "cargo_test" | "go_test") {
         fields.push((
             "diagnostics",

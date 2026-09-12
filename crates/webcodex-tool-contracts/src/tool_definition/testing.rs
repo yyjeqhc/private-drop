@@ -34,7 +34,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.validation_identity(super::ToolValidationIdentityKind::CargoFmt),
         ),
-        "Run cargo fmt. With check=true it is read-only validation; optional sync_wait_secs shortens only the synchronous grace before the same execution is returned as a Job. Mutating format stays synchronous and rejects sync_wait_secs.",
+        "After source edits, use check=false (default) to ensure formatting: precheck first, mutate only for a proven rustfmt diff, and use changed/state_changed instead of reproducing rustfmt diffs with edit tools. Use check=true for pure read-only final validation; only that mode may hand off the same execution as a Job via sync_wait_secs. Ensure-format stays synchronous.",
         cargo_fmt_input_schema,
     )),
     adaptive_runtime_direct(
@@ -88,7 +88,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE.validation_identity(super::ToolValidationIdentityKind::CargoTest),
             ),
-            "Preferred structured cargo test with scoped args and bounded output. Normal execution requires non-zero executed-test evidence; explicit require_tests=false opts out when no min_tests minimum is requested, while require_tests=true/min_tests enforce a proven minimum. no_run=true is compile-only and does not require executed-test-count proof. Optional sync_wait_secs controls only synchronous grace before the same execution Job is returned; it never changes total timeout, test proof, or retry semantics.",
+            "Preferred structured cargo test with scoped args and bounded output. filter is one Rust substring passed as `cargo test FILTER`, not a place for `--exact`, `--nocapture`, or other CLI flags; zero-test results are not validation proof and return recovery guidance. Normal execution requires non-zero executed-test evidence; explicit require_tests=false opts out when no min_tests minimum is requested, while require_tests=true/min_tests enforce a proven minimum. no_run=true is compile-only and does not require executed-test-count proof. sync_wait_secs only controls same execution Job handoff grace.",
             cargo_test_input_schema,
         )),
         100,

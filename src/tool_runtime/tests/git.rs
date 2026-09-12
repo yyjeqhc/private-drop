@@ -4322,7 +4322,7 @@ fn show_changes_without_session_id_treats_dirty_workspace_as_advisory() {
         Some(0),
         "",
     );
-    apply_show_changes_session(&mut output, None, None);
+    apply_show_changes_session(&mut output, None, None, None);
     assert_eq!(output["clean"], false);
     assert_eq!(output["counts"]["modified"], 1);
     assert_review_verdict_shape(&output["verdict"]);
@@ -4338,7 +4338,7 @@ fn show_changes_without_session_id_treats_dirty_workspace_as_advisory() {
 }
 
 #[test]
-fn show_changes_with_session_id_includes_session_summary() {
+fn show_changes_with_session_id_defaults_to_compact_session_summary() {
     let runtime = test_runtime();
     let session = runtime.sessions.start_session(
         Some("agent:oe:webcodex".to_string()),
@@ -4379,7 +4379,7 @@ fn show_changes_with_session_id_includes_session_summary() {
         "",
     );
     let summary = runtime.sessions.summary(&session.session_id, Some(30));
-    apply_show_changes_session(&mut output, Some(&session.session_id), summary);
+    apply_show_changes_session(&mut output, Some(&session.session_id), summary, None);
 
     assert_eq!(output["session"]["found"], true);
     assert_eq!(output["session"]["session_id"], session.session_id);
@@ -4388,7 +4388,10 @@ fn show_changes_with_session_id_includes_session_summary() {
     assert_eq!(output["session"]["counts"]["write_like"], 1);
     assert_eq!(output["session"]["counts"]["shell_like"], 1);
     assert_eq!(output["session"]["changed_paths"], json!(["src/foo.rs"]));
-    assert!(output["session"]["recent_events"].as_array().unwrap().len() >= 2);
+    assert_eq!(output["session"]["signals"]["failed"], false);
+    assert_eq!(output["session"]["signals"]["write_like"], true);
+    assert_eq!(output["session"]["signals"]["shell_like"], true);
+    assert!(output["session"].get("recent_events").is_none());
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(actions
         .iter()
@@ -4411,7 +4414,7 @@ fn show_changes_with_missing_session_id_returns_warning_not_panic() {
         Some(0),
         "",
     );
-    apply_show_changes_session(&mut output, Some("wc_sess_missing"), None);
+    apply_show_changes_session(&mut output, Some("wc_sess_missing"), None, None);
     assert_eq!(output["session"]["found"], false);
     assert_eq!(output["session"]["session_id"], "wc_sess_missing");
     assert!(output["warnings"]
@@ -4451,7 +4454,7 @@ fn show_changes_session_changed_paths_are_deduped() {
         "",
     );
     let summary = runtime.sessions.summary(&session.session_id, Some(30));
-    apply_show_changes_session(&mut output, Some(&session.session_id), summary);
+    apply_show_changes_session(&mut output, Some(&session.session_id), summary, None);
     assert_eq!(
         output["session"]["changed_paths"],
         json!(["src/foo.rs", "src/bar.rs"])
@@ -4459,7 +4462,7 @@ fn show_changes_session_changed_paths_are_deduped() {
 }
 
 #[tokio::test]
-async fn show_changes_session_event_limit_is_bounded() {
+async fn show_changes_explicit_session_event_limit_is_bounded() {
     let runtime = runtime_with_agent_project("show");
     let caps = RunnerCapabilities {
         shell: true,
@@ -6471,10 +6474,8 @@ async fn show_changes_non_git_project_still_returns_session_summary() {
     assert_eq!(result.output["git_available"], false);
     assert_eq!(result.output["session"]["found"], true);
     assert_eq!(result.output["session"]["session_id"], session.session_id);
-    assert!(!result.output["session"]["recent_events"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(result.output["session"].get("recent_events").is_none());
+    assert_eq!(result.output["session"]["signals"]["write_like"], true);
     assert_eq!(
         result.output["session"]["changed_paths"],
         json!(["src/foo.rs"])

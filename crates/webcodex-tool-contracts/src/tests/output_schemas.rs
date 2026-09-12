@@ -167,6 +167,20 @@ fn git_log_and_directory_listing_expose_parser_ready_next_pages() {
 }
 
 #[test]
+fn cargo_fmt_output_schema_exposes_bounded_ensure_format_effect_state() {
+    let specs = registered_tool_specs();
+    let output = output_schema_properties(&specs, "cargo_fmt");
+    for field in ["changed", "state_changed"] {
+        assert!(output[field]["anyOf"].is_array(), "cargo_fmt.{field}");
+        let description = output[field]["description"].as_str().unwrap_or_default();
+        assert!(
+            description.contains("check=false"),
+            "{field}: {description}"
+        );
+    }
+}
+
+#[test]
 fn tracked_listing_schema_separates_source_incomplete_from_safe_page_truncation() {
     let specs = registered_tool_specs();
     let properties = output_schema_properties(&specs, "list_project_tracked_files");

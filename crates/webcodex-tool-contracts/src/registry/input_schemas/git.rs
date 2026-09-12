@@ -56,7 +56,7 @@ pub fn show_changes_input_schema() -> Value {
         (
             "session_event_limit",
             "integer",
-            "Maximum recent session events to include (clamped).",
+            "Optional recent session-event diagnostic projection (clamped). Omit or use 0 for the compact default, which keeps review signals and changed paths without event history.",
             false,
         ),
     ]))
