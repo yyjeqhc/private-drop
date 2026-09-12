@@ -130,12 +130,18 @@ Important current invariants:
   registers a callable adapter.
 - project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
 
-No demonstrated production ChatGPT auto-resume adapter currently exists in the
-repository or supported Host protocols. MCP Apps provide UI resources, MCP 2026
-Tasks and Connector continuation poll their own exact durable executions, and none
-is reused as a fictional arbitrary model-turn callback. Runtime Console is an
-explicit selection/attachment and polling surface only. The controller boundary and
-fake adapter tests prove dispatch semantics, not production Host wake delivery.
+No production ChatGPT auto-resume adapter currently exists in the repository. A
+September 2026 temporary MCP App probe did demonstrate that ChatGPT can accept an
+App `ui/message` continuation request and start a later model turn, including a
+bounded four-round autonomous loop while the View remained in the foreground. The
+same investigation also showed that Host acceptance does not prove immediate model
+execution: a background tab could continue App polling and reach dispatch-accepted
+state without starting the next turn. See
+[`../agent/mcp-app-continuation-experiments.md`](../agent/mcp-app-continuation-experiments.md).
+MCP 2026 Tasks, Connector continuation, and Runtime Console keep their existing exact
+polling/activation contracts; experimental Host behavior is not silently reused as
+a production callback. The controller boundary and fake adapter tests still prove
+dispatch semantics rather than production Host wake delivery.
 
 These invariants, the natural-conversation slice, and the durable A3 ownership
 substrate support asynchronous Agent work without introducing a scheduler.

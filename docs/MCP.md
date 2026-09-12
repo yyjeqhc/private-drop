@@ -72,6 +72,8 @@ Cards do not poll, retry, or invoke tools; the canonical tool result remains
 available independently. `WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata
 and resources without disabling the underlying tools.
 
+The current Result App is intentionally static. September 2026 Host experiments proved that a separately designed MCP App controller can poll server-owned state and request later ChatGPT model turns, including a bounded foreground autonomous multi-turn loop, but background-tab model-turn scheduling is not an immediate guarantee. Those findings and the production design constraints are recorded in [`agent/mcp-app-continuation-experiments.md`](agent/mcp-app-continuation-experiments.md); they do not change the current Result App contract.
+
 ## Existing Server
 
 For an existing hosted Server intentionally configured for shared-key clients,
