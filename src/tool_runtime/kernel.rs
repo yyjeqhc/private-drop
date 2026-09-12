@@ -106,6 +106,9 @@ pub(crate) struct ToolProtocolCapabilities {
     /// Protocol-surface support for privileged forensic trace retrieval. Caller
     /// authority is still derived only from the canonical ToolDefinition.
     pub(crate) trace_diagnostics: bool,
+    /// Protocol-surface support for the ModelHidden Goal Plan App polling read.
+    /// This never replaces canonical communication/Goal authorization.
+    pub(crate) goal_plan_app: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,6 +276,7 @@ impl ToolRuntime {
                 skill_management: false,
                 memory_surface: false,
                 trace_diagnostics: false,
+                goal_plan_app: false,
             },
         )
         .await
@@ -341,6 +345,19 @@ impl ToolRuntime {
                 result: None,
                 error_status: Some(ToolCallErrorStatus::InvalidArguments {
                     message: "Tool trace diagnostics are available only on Stateless MCP 2026 operator surfaces"
+                        .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+                correlation: Default::default(),
+            };
+        }
+        if request.tool_name == "goal_plan_state" && !capabilities.goal_plan_app {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "Goal Plan App state is available only on Stateless MCP 2026 App-enabled operator surfaces"
                         .to_string(),
                 }),
                 project: None,

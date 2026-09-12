@@ -1154,6 +1154,16 @@ pub enum ToolCall {
         goal_id: String,
     },
 
+    /// Build the bounded read-only Goal Plan projection for one explicit App presentation.
+    PresentGoalPlan {
+        goal_id: String,
+    },
+
+    /// App-only exact read of the same bounded Goal Plan projection.
+    GoalPlanState {
+        goal_id: String,
+    },
+
     /// List caller-visible durable Goals with an optional authoritative lifecycle filter.
     ListGoals {
         #[serde(default)]
@@ -2764,6 +2774,8 @@ impl ToolCall {
             Self::SkillRemoveRevision { .. } => "skill_remove_revision",
             Self::CreateGoal { .. } => "create_goal",
             Self::GetGoal { .. } => "get_goal",
+            Self::PresentGoalPlan { .. } => "present_goal_plan",
+            Self::GoalPlanState { .. } => "goal_plan_state",
             Self::ListGoals { .. } => "list_goals",
             Self::UpdateGoal { .. } => "update_goal",
             Self::AssociateGoalAgentTask { .. } => "associate_goal_agent_task",

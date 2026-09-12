@@ -16,6 +16,13 @@ pub(super) fn tool_supports_result_app(tool_name: &str) -> bool {
     )
 }
 
+/// Dedicated sparse Goal Plan App binding. Only the explicit presentation entry
+/// gets a resource; Goal mutations, execution tools, and app-only polling never
+/// create additional Host cards.
+pub(super) fn tool_supports_goal_plan_app(tool_name: &str) -> bool {
+    tool_name == "present_goal_plan"
+}
+
 /// Bounded presentation projections retained for current milestone cards and for
 /// already-cached older tool descriptors. Projection support does not itself bind
 /// a new App card in tools/list.

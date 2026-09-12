@@ -1149,6 +1149,7 @@ async fn handle_mcp_request_with_lifecycle(
                 auth,
                 stateless_2026,
                 mcp_app_enabled,
+                server_mcp_apps_enabled,
                 host_file_import_trust,
                 window,
                 lifecycle.as_deref_mut(),

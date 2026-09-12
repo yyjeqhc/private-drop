@@ -64,6 +64,14 @@ pub fn get_goal_input_schema() -> Value {
     })
 }
 
+pub fn present_goal_plan_input_schema() -> Value {
+    get_goal_input_schema()
+}
+
+pub fn goal_plan_state_input_schema() -> Value {
+    get_goal_input_schema()
+}
+
 pub fn list_goals_input_schema() -> Value {
     json!({
         "type": "object",

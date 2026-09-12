@@ -214,6 +214,8 @@ mod artifact_export;
 mod computer_app;
 #[path = "mcp_tests/file_import.rs"]
 mod file_import;
+#[path = "mcp_tests/goal_plan_app.rs"]
+mod goal_plan_app;
 #[path = "mcp_tests/http_transport.rs"]
 mod http_transport;
 #[path = "mcp_tests/model_ergonomics.rs"]

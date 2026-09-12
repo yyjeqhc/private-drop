@@ -95,8 +95,8 @@ pub use git::{
 };
 pub use goals::{
     associate_goal_agent_task_input_schema, associate_goal_workflow_session_input_schema,
-    create_goal_input_schema, get_goal_input_schema, list_goals_input_schema,
-    update_goal_input_schema,
+    create_goal_input_schema, get_goal_input_schema, goal_plan_state_input_schema,
+    list_goals_input_schema, present_goal_plan_input_schema, update_goal_input_schema,
 };
 pub use hygiene::workspace_hygiene_check_input_schema;
 pub use jobs::{

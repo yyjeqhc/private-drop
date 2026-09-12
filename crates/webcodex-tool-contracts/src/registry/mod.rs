@@ -13,7 +13,7 @@ pub use input_schemas::{
 pub use output_schemas::coding_workflow_diagnostic_output_schema_for_test;
 pub use output_schemas::output_schema_for_tool;
 pub use tool_specs::{
-    memory_management_tool_specs, memory_runtime_tool_specs, operator_diagnostic_tool_specs,
-    registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,
-    stateless_operator_extension_tool_specs,
+    goal_plan_app_tool_specs, memory_management_tool_specs, memory_runtime_tool_specs,
+    operator_diagnostic_tool_specs, registered_tool_specs, skill_management_tool_specs,
+    skill_runtime_tool_specs, stateless_operator_extension_tool_specs,
 };

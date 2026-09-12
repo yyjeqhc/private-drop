@@ -14,6 +14,17 @@ pub fn registered_tool_specs() -> Vec<ToolSpec> {
     resolve_tool_specs(model_visible_tool_definitions())
 }
 
+/// Fixed read-only Goal Plan polling contract for MCP App Views. The canonical
+/// ToolDefinition remains globally ModelHidden; only a UI-capable MCP adapter may
+/// project this spec with app-only visibility.
+pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
+    vec![tool_spec(
+        "goal_plan_state",
+        "App-only exact read of the current bounded Goal Plan projection. Requires explicit goal_id, re-authorizes the Goal on every call, grants no execution authority, and never mutates Goal state.",
+        super::input_schemas::goal_plan_state_input_schema(),
+    )]
+}
+
 /// Fixed admin-only forensic trace reader. It remains globally ModelHidden and
 /// is projected only by capable Stateless MCP 2026 operator adapters.
 pub fn operator_diagnostic_tool_specs() -> Vec<ToolSpec> {

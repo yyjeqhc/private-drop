@@ -1,10 +1,41 @@
 use super::{RecoveryKind, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::db::{GoalLifecycle, GoalPatch, GoalStoreError, NewGoal, MAX_GOAL_LIST_LIMIT};
+use crate::db::{
+    GoalDetail, GoalLifecycle, GoalPatch, GoalStoreError, NewGoal, MAX_GOAL_LIST_LIMIT,
+};
 use serde::Serialize;
 use serde_json::{json, to_value};
 
 const DEFAULT_GOAL_LIST_LIMIT: usize = 50;
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct GoalPlanProjection {
+    pub version: u8,
+    pub goal_id: String,
+    pub title: String,
+    pub objective: String,
+    pub lifecycle: GoalLifecycle,
+    pub revision: i64,
+    pub updated_at_unix_ms: i64,
+    pub terminal_at_unix_ms: Option<i64>,
+    pub agent_task_count: i64,
+    pub workflow_session_count: i64,
+}
+
+fn goal_plan_projection(goal: GoalDetail) -> GoalPlanProjection {
+    GoalPlanProjection {
+        version: 1,
+        goal_id: goal.summary.goal_id,
+        title: goal.summary.title,
+        objective: goal.objective,
+        lifecycle: goal.summary.lifecycle,
+        revision: goal.summary.revision,
+        updated_at_unix_ms: goal.summary.updated_at_unix_ms,
+        terminal_at_unix_ms: goal.summary.terminal_at_unix_ms,
+        agent_task_count: goal.summary.agent_task_count,
+        workflow_session_count: goal.summary.workflow_session_count,
+    }
+}
 
 fn goal_principal(
     auth: Option<&AuthContext>,
@@ -108,6 +139,38 @@ impl ToolRuntime {
             Ok(goal) => serialized_goal_success(json!({"goal": goal})),
             Err(error) => goal_error(error, RecoveryKind::Reobserve),
         }
+    }
+
+    fn exact_goal_plan(&self, auth: Option<&AuthContext>, goal_id: String) -> ToolResult {
+        let principal = match goal_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return goal_store_unavailable();
+        };
+        match db.read_goal(&principal, &goal_id) {
+            Ok(goal) => serialized_goal_success(json!({
+                "goal_plan": goal_plan_projection(goal),
+            })),
+            Err(error) => goal_error(error, RecoveryKind::Reobserve),
+        }
+    }
+
+    pub(crate) fn present_goal_plan(
+        &self,
+        auth: Option<&AuthContext>,
+        goal_id: String,
+    ) -> ToolResult {
+        self.exact_goal_plan(auth, goal_id)
+    }
+
+    pub(crate) fn goal_plan_state(
+        &self,
+        auth: Option<&AuthContext>,
+        goal_id: String,
+    ) -> ToolResult {
+        self.exact_goal_plan(auth, goal_id)
     }
 
     pub(crate) fn list_goals(

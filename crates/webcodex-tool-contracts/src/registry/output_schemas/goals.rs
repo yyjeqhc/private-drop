@@ -77,6 +77,31 @@ fn goal_detail_schema() -> Value {
     })
 }
 
+fn goal_plan_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "version": {"type": "integer", "const": 1, "description": "Goal Plan presentation projection version."},
+            "goal_id": {"type": "string", "pattern": "^wc_goal_[0-9a-f]{32}$", "description": "Exact durable Goal identity used for refresh/rehydration and app-only polling. Identity is never authority."},
+            "title": {"type": "string", "minLength": 1, "maxLength": 200, "description": "Bounded Goal title."},
+            "objective": {"type": "string", "minLength": 1, "maxLength": 8192, "description": "Bounded authoritative Goal objective; the Store enforces the same 8192-byte UTF-8 ceiling."},
+            "lifecycle": lifecycle_schema(),
+            "revision": {"type": "integer", "minimum": 1, "description": "Monotonic authoritative Goal revision."},
+            "updated_at_unix_ms": schema_type("integer", "Latest authoritative Goal mutation time."),
+            "terminal_at_unix_ms": nullable_integer("Terminal transition time, or null while active."),
+            "agent_task_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit AgentTask correlations; no target-domain state or authority is projected."},
+            "workflow_session_count": {"type": "integer", "minimum": 0, "maximum": 64, "description": "Count of explicit Workflow Session correlations; no Session ledger, Project state, or authority is projected."}
+        },
+        "required": [
+            "version", "goal_id", "title", "objective", "lifecycle", "revision",
+            "updated_at_unix_ms", "terminal_at_unix_ms", "agent_task_count",
+            "workflow_session_count"
+        ],
+        "description": "Read-only bounded Goal Plan presentation projection. It contains no execution authority, fences, tokens, credentials, Session ledger, Job logs, stdout, or stderr."
+    })
+}
+
 fn goal_mutation_schema() -> Value {
     wrapped_output_schema(vec![
         ("goal", goal_detail_schema()),
@@ -102,6 +127,9 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
         | "associate_goal_agent_task"
         | "associate_goal_workflow_session" => goal_mutation_schema(),
         "get_goal" => wrapped_output_schema(vec![("goal", goal_detail_schema())]),
+        "present_goal_plan" | "goal_plan_state" => {
+            wrapped_output_schema(vec![("goal_plan", goal_plan_schema())])
+        }
         "list_goals" => wrapped_output_schema(vec![
             (
                 "total_count",
