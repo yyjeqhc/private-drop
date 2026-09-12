@@ -487,11 +487,7 @@ impl PluginManager {
             "{PLUGIN_PROJECT_CATALOG_REVISION_PREFIX}{:x}",
             hasher.finalize()
         );
-        ProjectPluginCatalog {
-            catalog_revision,
-            total_count: entries.len(),
-            entries,
-        }
+        bounded_project_catalog(catalog_revision, entries)
     }
 
     pub(crate) fn handle(&self, request: PluginGatewayRequest) -> PluginGatewayResponse {
@@ -898,6 +894,38 @@ impl Drop for PluginManager {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+fn bounded_project_catalog(
+    catalog_revision: String,
+    entries: Vec<ProjectPluginCatalogEntry>,
+) -> ProjectPluginCatalog {
+    let mut catalog = ProjectPluginCatalog {
+        catalog_revision,
+        total_count: entries.len(),
+        entries: Vec::new(),
+    };
+    // Individual provider catalogs are bounded, but their combined selection
+    // metadata can exceed the gateway envelope (including JSON escaping).
+    // Keep a deterministic prefix and the complete count/revision for discovery.
+    let envelope = PluginGatewayResponse::success(PluginGatewayResponsePayload::ProjectCatalog {
+        catalog: catalog.clone(),
+    });
+    let mut bytes = serde_json::to_vec(&envelope)
+        .expect("Plugin catalog metadata is serializable")
+        .len();
+    for entry in entries {
+        let entry_bytes = serde_json::to_vec(&entry)
+            .expect("Plugin catalog entry is serializable")
+            .len()
+            + usize::from(!catalog.entries.is_empty());
+        if bytes + entry_bytes > PLUGIN_MAX_MESSAGE_BYTES {
+            break;
+        }
+        bytes += entry_bytes;
+        catalog.entries.push(entry);
+    }
+    catalog
 }
 
 fn bounded_project_catalog_description(value: &str) -> String {

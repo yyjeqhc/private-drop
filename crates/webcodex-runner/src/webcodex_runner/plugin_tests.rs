@@ -311,6 +311,48 @@ fn project_affine_catalog_uses_exact_committed_cwd_without_process_side_effects(
 }
 
 #[test]
+fn project_catalog_bounds_aggregate_wire_response_without_losing_total() {
+    let entries: Vec<_> = (0..webcodex_core::plugin::PLUGIN_MAX_PROJECT_CATALOG_ENTRIES)
+        .map(|index| ProjectPluginCatalogEntry {
+            plugin: format!("plugin-{:03}", index / 128),
+            name: "n".repeat(128),
+            tool: format!("tool-{index:04}"),
+            title: Some("t".repeat(128)),
+            description: Some("\\".repeat(512)),
+            annotations: PluginSelectionAnnotations::default(),
+        })
+        .collect();
+    let revision = format!("wc_plugcat_{}", "a".repeat(64));
+    let full = ProjectPluginCatalog {
+        catalog_revision: revision.clone(),
+        total_count: entries.len(),
+        entries: entries.clone(),
+    };
+    webcodex_core::plugin::validate_project_plugin_catalog(&full).unwrap();
+    assert!(
+        webcodex_core::plugin::validate_response(&PluginGatewayResponse::success(
+            PluginGatewayResponsePayload::ProjectCatalog { catalog: full },
+        ))
+        .is_err()
+    );
+    let catalog = bounded_project_catalog(revision.clone(), entries.clone());
+    assert_eq!(catalog.catalog_revision, revision);
+    assert_eq!(catalog.total_count, entries.len());
+    assert!(!catalog.entries.is_empty());
+    assert!(catalog.entries.len() < catalog.total_count);
+    assert_eq!(catalog.entries, entries[..catalog.entries.len()]);
+    let mut invalid = catalog.clone();
+    invalid.total_count = invalid.entries.len() - 1;
+    assert!(webcodex_core::plugin::validate_project_plugin_catalog(&invalid).is_err());
+    invalid.total_count = webcodex_core::plugin::PLUGIN_MAX_PROJECT_CATALOG_ENTRIES + 1;
+    assert!(webcodex_core::plugin::validate_project_plugin_catalog(&invalid).is_err());
+    let response =
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::ProjectCatalog { catalog });
+    webcodex_core::plugin::validate_response(&response).unwrap();
+    assert!(serde_json::to_vec(&response).unwrap().len() <= PLUGIN_MAX_MESSAGE_BYTES);
+}
+
+#[test]
 fn project_affine_catalog_excludes_absent_cwd_and_retired_provider() {
     let temp = tempfile::tempdir().unwrap();
     let project_root = temp.path().join("repo");
