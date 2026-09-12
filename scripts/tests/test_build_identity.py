@@ -159,5 +159,72 @@ class BuildIdentityTests(unittest.TestCase):
                 self.assertEqual(outputs[0].stat().st_mtime_ns, stamp)
 
 
+    def test_stat_only_change_is_clean_without_refreshing_index(self):
+        for linked_worktree in (False, True):
+            with self.subTest(linked_worktree=linked_worktree), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                env = os.environ.copy()
+                for key in (
+                    "WEBCODEX_GIT_COMMIT", "WEBCODEX_GIT_DIRTY", "WEBCODEX_BUILT_AT",
+                    "SOURCE_DATE_EPOCH", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                ):
+                    env.pop(key, None)
+                env["CARGO_TARGET_DIR"] = str(root / "target")
+                env["GIT_OPTIONAL_LOCKS"] = "0"
+
+                def run(cwd, *args):
+                    return subprocess.run(
+                        args, cwd=cwd, env=env, check=True, capture_output=True,
+                        text=True, timeout=60,
+                    ).stdout.strip()
+
+                repo = root / "repo"
+                repo.mkdir()
+                run(repo, "git", "init", "-b", "review/stat-only")
+                run(repo, "git", "config", "user.name", "Build fixture")
+                run(repo, "git", "config", "user.email", "fixture@example.invalid")
+                tracked = repo / "tracked.txt"
+                tracked.write_text("clean\n", encoding="utf-8")
+                package = repo / "crates/fixture"
+                (package / "src").mkdir(parents=True)
+                (package / "Cargo.toml").write_text(
+                    '[package]\nname = "identity-fixture"\nversion = "0.0.0"\n'
+                    'edition = "2021"\n', encoding="utf-8",
+                )
+                shutil.copyfile(BUILD_SCRIPT, package / "build.rs")
+                (package / "src/main.rs").write_text(
+                    'fn main() { println!("{}", env!("WEBCODEX_BUILD_GIT_DIRTY")); }\n',
+                    encoding="utf-8",
+                )
+                run(repo, "git", "add", ".")
+                run(repo, "git", "commit", "-m", "fixture")
+                if linked_worktree:
+                    checkout = root / "checkout"
+                    run(repo, "git", "worktree", "add", "-b", "review/linked", str(checkout))
+                    repo = checkout
+                    package = repo / "crates/fixture"
+                    tracked = repo / "tracked.txt"
+
+                # Change only stat data before the FIRST build, so this tests
+                # dirty computation independently of Cargo's rerun decisions.
+                original = tracked.read_bytes()
+                info = tracked.stat()
+                os.utime(tracked, ns=(info.st_atime_ns, info.st_mtime_ns + 2_000_000_000))
+                self.assertEqual(tracked.read_bytes(), original)
+                self.assertEqual(run(repo, "git", "status", "--porcelain=v1"), "")
+                stale = subprocess.run(
+                    ["git", "diff-index", "--quiet", "HEAD", "--"],
+                    cwd=repo, env=env, capture_output=True, timeout=60,
+                )
+                self.assertEqual(stale.returncode, 1)
+                self.assertEqual(run(package, "cargo", "run", "--offline", "--quiet"), "false")
+
+                # Real content changes must still be dirty, both unstaged and staged.
+                tracked.write_text("real change\n", encoding="utf-8")
+                self.assertEqual(run(package, "cargo", "run", "--offline", "--quiet"), "true")
+                run(repo, "git", "add", "tracked.txt")
+                self.assertEqual(run(package, "cargo", "run", "--offline", "--quiet"), "true")
+
+
 if __name__ == "__main__":
     unittest.main()
