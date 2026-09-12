@@ -1637,6 +1637,21 @@ fn mcp_app_expired_endpoint_replacement_replays_across_server_restart_without_ex
         replay.output["endpoint_recovery"]["replacement"]["controller_generation"],
         replacement_generation
     );
+    let stale_push = runtime.register_agent_continuation_adapter(
+        None,
+        agent.clone(),
+        replacement_endpoint.clone(),
+        replacement_generation,
+        Arc::new(FakeHostAdapter::delivered()),
+    );
+    assert!(
+        !stale_push.success,
+        "replaying a pre-restart replacement must not establish fresh push-attachment authority"
+    );
+    assert_eq!(
+        stale_push.output["error_kind"],
+        "endpoint_not_attached_in_process"
+    );
     let binding = format!("wc_host_binding_{}", "9".repeat(32));
     let rebound = runtime.agent_continuation_bind_for_window(
         None,

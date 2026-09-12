@@ -923,6 +923,142 @@ fn message_deliveries_and_wake_commit_atomically() {
 }
 
 #[test]
+fn detach_expired_mcp_app_endpoint_revokes_recovery_before_and_after_materialization() {
+    for materialized in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Database::open(&temp.path().join("expired-detach.db")).unwrap();
+        let owner = principal("user", 'd');
+        let agent = db
+            .create_agent_identity(&owner, new_agent("agent", "Agent", "agent-create"))
+            .unwrap()
+            .agent;
+        let endpoint = db
+            .attach_agent_endpoint(&owner, endpoint(&agent.agent_id, "ChatGPT", "endpoint"))
+            .unwrap()
+            .endpoint;
+        let window_key = "a".repeat(64);
+        db.conn_for_tests()
+            .execute(
+                "UPDATE wc_agent_endpoints
+                 SET mcp_app_client_window_key = ?2, lease_expires_at_unix_ms = 0,
+                     lifecycle = ?3,
+                     expired_at_unix_ms = CASE WHEN ?3 = 'expired' THEN 0 ELSE NULL END
+                 WHERE endpoint_id = ?1",
+                rusqlite::params![
+                    endpoint.endpoint_id,
+                    window_key,
+                    if materialized { "expired" } else { "attached" }
+                ],
+            )
+            .unwrap();
+        let detached = db
+            .detach_agent_endpoint(&owner, &endpoint.endpoint_id)
+            .unwrap();
+        assert!(detached.state_changed);
+        assert_eq!(
+            detached.endpoint.lifecycle,
+            AgentEndpointLifecycle::Detached
+        );
+        assert!(!detached.endpoint.wake_capable);
+        let retained_window: Option<String> = db
+            .conn_for_tests()
+            .query_row(
+                "SELECT mcp_app_client_window_key FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                [&endpoint.endpoint_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(retained_window.is_none());
+        assert!(db
+            .recover_expired_mcp_app_endpoint(
+                &owner,
+                &agent.agent_id,
+                &endpoint.endpoint_id,
+                endpoint.controller_generation,
+                &window_key,
+            )
+            .is_err());
+        let retry = db
+            .detach_agent_endpoint(&owner, &endpoint.endpoint_id)
+            .unwrap();
+        assert!(!retry.state_changed);
+        assert_eq!(retry.endpoint.lifecycle, AgentEndpointLifecycle::Detached);
+    }
+}
+
+#[test]
+fn mcp_app_endpoint_recovery_replay_respects_retired_window_continuity() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("retired-recovery.db")).unwrap();
+    let owner = principal("user", 'd');
+    let agent = db
+        .create_agent_identity(&owner, new_agent("agent", "Agent", "agent-create"))
+        .unwrap()
+        .agent;
+    let endpoint = db
+        .attach_agent_endpoint(&owner, endpoint(&agent.agent_id, "ChatGPT", "endpoint"))
+        .unwrap()
+        .endpoint;
+    let window_key = "a".repeat(64);
+    db.conn_for_tests().execute(
+        "UPDATE wc_agent_endpoints SET mcp_app_client_window_key = ?2, lease_expires_at_unix_ms = 0
+         WHERE endpoint_id = ?1",
+        rusqlite::params![endpoint.endpoint_id, window_key],
+    ).unwrap();
+    let recovery = db
+        .recover_expired_mcp_app_endpoint(
+            &owner,
+            &agent.agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &window_key,
+        )
+        .unwrap();
+    let McpAppEndpointRecovery::Replaced {
+        endpoint: successor,
+        ..
+    } = recovery
+    else {
+        panic!("expected expired Endpoint replacement");
+    };
+    // Push carrier takeover retires MCP App continuity. Server takeover then
+    // clears wake capability; neither transition deletes the replay record.
+    for capable in [true, false] {
+        db.set_agent_endpoint_wake_capability(
+            &owner,
+            &agent.agent_id,
+            &successor.endpoint_id,
+            successor.controller_generation,
+            capable,
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        db.recover_expired_mcp_app_endpoint(
+            &owner,
+            &agent.agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &window_key,
+        )
+        .unwrap_err()
+        .code(),
+        "host_binding_stale"
+    );
+    assert_eq!(
+        db.verify_current_agent_endpoint(
+            &owner,
+            &agent.agent_id,
+            &successor.endpoint_id,
+            successor.controller_generation,
+        )
+        .unwrap()
+        .endpoint_id,
+        successor.endpoint_id
+    );
+}
+
+#[test]
 fn expired_mcp_app_endpoint_recovery_is_concurrent_idempotent_and_window_fenced() {
     let temp = tempfile::tempdir().unwrap();
     let db =

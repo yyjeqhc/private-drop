@@ -1182,6 +1182,19 @@ impl Database {
                     "Recovered Agent Endpoint is no longer the authoritative successor",
                 ));
             }
+            let successor_window: Option<String> = transaction
+                .query_row(
+                    "SELECT mcp_app_client_window_key FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                    params![replacement_endpoint_id],
+                    |row| row.get(0),
+                )
+                .map_err(store_error)?;
+            if successor_window.as_deref() != Some(client_window_key) {
+                return Err(CommunicationStoreError::new(
+                    "host_binding_stale",
+                    "Recovered Agent Endpoint no longer retains this Host ClientWindow",
+                ));
+            }
             return Ok(McpAppEndpointRecovery::Replaced {
                 from_endpoint_id: endpoint_id.to_string(),
                 from_controller_generation: expected_controller_generation,
@@ -1356,7 +1369,7 @@ impl Database {
             .ok_or_else(|| {
                 CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist")
             })?;
-        if current.lifecycle != AgentEndpointLifecycle::Attached {
+        if current.lifecycle == AgentEndpointLifecycle::Detached {
             return Ok(AgentEndpointMutation {
                 endpoint: current,
                 created: false,
@@ -1364,13 +1377,10 @@ impl Database {
                 state_changed: false,
             });
         }
-        require_current_endpoint(
-            &transaction,
-            principal,
-            &current.agent_id,
-            endpoint_id,
-            Some(current.controller_generation),
-        )?;
+        // Exact principal-scoped lookup above authorizes withdrawing this
+        // Endpoint even after lease expiry. Requiring a live lease here would
+        // leave its retained MCP App Window eligible for automatic replacement.
+        // Detaching an older Endpoint never retargets the current generation.
         let now = now_unix_ms().max(current.last_seen_at_unix_ms);
         reconcile_wakes_for_endpoint_loss(
             &transaction,
@@ -1382,11 +1392,11 @@ impl Database {
         transaction
             .execute(
                 "UPDATE wc_agent_endpoints
-                 SET lifecycle = 'detached', detached_at_unix_ms = ?2,
+                 SET lifecycle = 'detached', detached_at_unix_ms = ?2, wake_capable = 0,
                      last_seen_at_unix_ms = ?2, lease_expires_at_unix_ms = ?2,
                      mcp_app_recovery_fingerprint = NULL,
                      mcp_app_client_window_key = NULL
-                 WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
+                 WHERE endpoint_id = ?1 AND lifecycle != 'detached'",
                 params![endpoint_id, now],
             )
             .map_err(store_error)?;

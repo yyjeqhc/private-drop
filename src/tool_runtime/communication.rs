@@ -501,6 +501,7 @@ impl ToolRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_continuation_bind(
         &self,
         auth: Option<&AuthContext>,
@@ -667,6 +668,7 @@ impl ToolRuntime {
         ToolResult::ok(output)
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_continuation_state(
         &self,
         auth: Option<&AuthContext>,
@@ -745,6 +747,7 @@ impl ToolRuntime {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_continuation_wake_acquire(
         &self,
         auth: Option<&AuthContext>,
@@ -814,6 +817,7 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) fn agent_continuation_wake_prepare(
         &self,
         auth: Option<&AuthContext>,
@@ -887,6 +891,7 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) fn agent_continuation_wake_finish(
         &self,
         auth: Option<&AuthContext>,
@@ -972,6 +977,7 @@ impl ToolRuntime {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_continuation_unbind(
         &self,
         auth: Option<&AuthContext>,

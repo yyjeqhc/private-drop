@@ -245,3 +245,57 @@ Production v13/v14 dogfood then separated short-term View recovery from long-ter
 v14 adds `agent_continuation_recover_endpoint` as an App-only idempotent probe+mutation. The App submits its exact stale Agent/Endpoint/generation and current iframe fence; the canonical ClientWindow is supplied only by the Host/runtime sideband and is not a tool argument. The Store's immediate transaction verifies same owner, same Agent, exact old generation, old Endpoint provenance, same durable Window hash, natural expiry, and absence of a newer authoritative generation. A live controller returns `controller_live` without mutation. An eligible stale controller commits E2/g2 and an idempotency record together; concurrent callers converge on that same successor, exact response-loss replay returns the same successor, and replay fails once any later generation becomes authoritative. Different-Window recovery fails closed. The 120-second lease is unchanged.
 
 The View still rejects all ordinary identity changes. Only the dedicated successful replacement envelope may move its identity from the exact current stale selector to exactly `generation+1`; it then increments a local identity epoch, clears obsolete process-local coordination state, shows `Reconnecting…`, and binds the returned Endpoint in the same card. Bind/state Promises and timers capture the epoch so delayed E1/g1 work is inert after E2/g2 is accepted. Generic `-32000` is never treated as proof of expiry: it can only lead to the dedicated probe, whose Server-side result decides live/no-op, authorized replacement, or failure. Restart recovery (`host_binding_missing_in_process` for the same Endpoint) and expired-Endpoint replacement (a new Endpoint/generation) remain separate protocols. The canonical resource advances to `ui://webcodex/agent-continuation/v14`, `appInfo.version` to `14.0.0`, and v1-v13 remain hidden read aliases.
+
+### Branch review follow-up — 2026-09-12
+
+The local review covered the 17 commits from `2d51da7c` through `69725871`,
+including Store transactions, process bindings, runtime admission, MCP schemas,
+App message ordering, and audit/trace privacy. Four demonstrated defects were
+corrected with focused regressions:
+
+- A canonical `endpoint_expired` bind result previously stopped the reopened
+  card before its dedicated recovery probe. It now permits that probe while
+  other definitive business failures remain terminal. App tests cover the full
+  successor bind/dispatch path, response-loss replay, invalid replacement
+  envelopes, late old notifications, and a later expiry after a healthy poll.
+- Detach previously rejected elapsed leases or returned a no-op for materialized
+  expiry, leaving automatic recovery eligible. Exact principal-owned Endpoint
+  detach now revokes both recovery values even after expiry.
+- Replacement replay previously recreated a fresh process attachment and did
+  not recheck the successor's Window continuity. Replay can no longer confer
+  push-registration authority after restart or undo a push carrier's revocation
+  of MCP App continuity.
+- `agent_continuation_recover_endpoint` was missing from the forensic payload
+  suppression list. Its binding fence now receives the same trace exclusion as
+  the other App coordination tools.
+
+**Open P2: reopening after the recovered successor also expires.** The original
+card's persisted tool input still names E1/g1; its accepted E2/g2 selector lives
+only in the iframe. If E2's lease also elapses before that original card is
+reopened, Store replay correctly finds the same authoritative E2, but
+`agent_continuation_recover_endpoint_for_window` then calls the ordinary live
+`bootstrap_agent_conversation`. This fails `endpoint_expired` before returning
+the replacement envelope, so the card cannot learn E2 and request E2 -> E3.
+Response loss lasting past E2's lease has the same failure.
+
+This was reproduced locally by setting only the successor's
+`lease_expires_at_unix_ms` to zero immediately before the replay in
+`mcp_app_expired_endpoint_replacement_replays_across_server_restart_without_extra_generation`:
+its expected successful replay instead returned `endpoint_expired`. The
+temporary fault injection was removed after verification; the regular test
+continues to cover replay while the successor is live. Fixing this requires an
+explicit successor-recovery protocol; ordinary live-Endpoint checks and the
+prohibition on retargeting an old replay after a later generation must remain
+intact. Until then, explicitly rotate and present a new Endpoint/card. This
+review does not claim repeated long-close recovery is complete.
+
+Focused validation passed: 113 App tests, 25 runtime/MCP continuation tests,
+11 Store communication tests, nine continuation contract/parser/privacy tests,
+and four tool-definition invariants. The six no-Window runtime wrappers have
+only test callers and are now compiled only in tests; production dispatch keeps
+the canonical ClientWindow sideband. `cargo check --locked -p webcodex --lib`,
+affected Rust formatting, and diff whitespace checks also passed.
+
+No deployment or production Host test was performed during this review. Real
+ChatGPT full-close/reopen scheduling and delivery remain a separate dogfood
+verification boundary.

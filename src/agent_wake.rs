@@ -552,15 +552,24 @@ impl AgentContinuationController {
             controller_generation,
             client_window_key,
         )?;
-        if let McpAppEndpointRecovery::Replaced { endpoint, .. } = &recovery {
-            self.state
-                .attached_endpoints
-                .lock()
-                .expect("Agent continuation attachment mutex poisoned")
-                .insert(
-                    agent_id.to_string(),
-                    (endpoint.endpoint_id.clone(), endpoint.controller_generation),
-                );
+        if let McpAppEndpointRecovery::Replaced {
+            endpoint,
+            state_changed,
+            ..
+        } = &recovery
+        {
+            // An idempotent replay may refer to a predecessor process's commit.
+            // Its Window continuity permits App recovery, never fresh push binding.
+            if *state_changed {
+                self.state
+                    .attached_endpoints
+                    .lock()
+                    .expect("Agent continuation attachment mutex poisoned")
+                    .insert(
+                        agent_id.to_string(),
+                        (endpoint.endpoint_id.clone(), endpoint.controller_generation),
+                    );
+            }
             let mut bindings = self
                 .state
                 .bindings
