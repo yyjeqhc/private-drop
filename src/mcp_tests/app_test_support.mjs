@@ -42,7 +42,13 @@ export function app(filename) {
   return {
     nodes, timers, sent,
     calls(name) { return sent.filter(message => message.method === "tools/call" && message.params.name === name); },
-    result(output, source) {
+    notification(method, params, source) {
+      deliver({ method, params }, source);
+    },
+    toolInput(args, source) {
+      deliver({ method: "ui/notifications/tool-input", params: { arguments: args } }, source);
+    },
+    toolResult(output, source) {
       deliver({ method: "ui/notifications/tool-result", params: toolResult(output) }, source);
     },
     async reply(request, result) {
@@ -71,8 +77,9 @@ export function app(filename) {
       emit("visibilitychange", {});
       await flush();
     },
-    async teardown() {
-      deliver({ method: "ui/resource-teardown", id: "host-teardown" });
+    async teardown(method = "ui/resource-teardown") {
+      if (method === "ui/resource-teardown") deliver({ method, id: "host-teardown" });
+      else emit(method, {});
       await flush();
     },
   };

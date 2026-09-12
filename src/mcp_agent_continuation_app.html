@@ -58,6 +58,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let prepareUncertain = null;
   let pendingFinish = null;
   const el = id => document.getElementById(id);
+  el("status").textContent = "App active · initializing Host";
 
   function request(method, params, timeoutMs = CALL_TIMEOUT_MS) {
     if (tornDown) return Promise.reject(new Error("App torn down"));
@@ -92,10 +93,41 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return value && typeof value === "object" ? value : null;
   }
 
+  function validIdentity(value) {
+    return !!(value && typeof value === "object" && !Array.isArray(value)
+      && typeof value.agent_id === "string" && AGENT_ID.test(value.agent_id)
+      && typeof value.endpoint_id === "string" && ENDPOINT_ID.test(value.endpoint_id)
+      && Number.isSafeInteger(value.controller_generation) && value.controller_generation >= 1);
+  }
+
+  function acceptIdentity(candidate) {
+    if (tornDown) return false;
+    if (!validIdentity(candidate) || (identity && (
+      identity.agent_id !== candidate.agent_id
+      || identity.endpoint_id !== candidate.endpoint_id
+      || identity.controller_generation !== candidate.controller_generation
+    ))) {
+      // Keep the first exact selector. Teardown can only unbind that same carrier;
+      // pending responses must never restart coordination or retarget this card.
+      teardown();
+      el("binding").textContent = "Unavailable";
+      el("status").textContent = "Invalid or conflicting continuation identity";
+      return false;
+    }
+    if (!identity) {
+      identity = {
+        agent_id: candidate.agent_id,
+        endpoint_id: candidate.endpoint_id,
+        controller_generation: candidate.controller_generation,
+      };
+      el("generation").textContent = String(identity.controller_generation);
+    }
+    return true;
+  }
+
   function validProjection(value) {
     if (!value || typeof value !== "object" || value.version !== 1) return null;
-    if (!AGENT_ID.test(value.agent_id || "") || !ENDPOINT_ID.test(value.endpoint_id || "")) return null;
-    if (!Number.isSafeInteger(value.controller_generation) || value.controller_generation < 1) return null;
+    if (!validIdentity(value)) return null;
     if (typeof value.display_name !== "string" || value.display_name.length === 0) return null;
     if (!Number.isSafeInteger(value.queued_delivery_count) || value.queued_delivery_count < 0) return null;
     if (value.dispatch_observation !== null && !DISPATCH_STATES.has(value.dispatch_observation)) return null;
@@ -135,14 +167,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   function render(projection) {
+    if (tornDown) return;
     el("agent").textContent = projection.display_name;
     el("generation").textContent = String(projection.controller_generation);
-    el("binding").textContent = projection.host_binding && projection.host_binding.bound ? "Host bound" : "Host unbound";
     el("visibility").textContent = document.hidden ? "Background" : "Foreground";
     el("queued").textContent = String(projection.queued_delivery_count);
     el("wake").textContent = projection.wake ? projection.wake.state : "None";
     el("revision").textContent = projection.wake ? String(projection.wake.revision) : "—";
     el("dispatch").textContent = dispatchLabel(projection.dispatch_observation);
+    // An initial projection cannot prove that this View has a live binding.
+    if (!bindingId) return;
+    el("binding").textContent = "Host bound";
     if (projection.dispatch_observation === "continuation_consumed") {
       el("status").textContent = "Exact durable Wake was consumed by a continuation model turn";
     } else if (document.hidden) {
@@ -162,11 +197,13 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   async function bind() {
     const response = await callTool("agent_continuation_bind", exactArgs());
+    if (tornDown) return;
     const projection = projectionOf(response);
     const privateMeta = privateContinuationMeta(response);
     if (!projection || !privateMeta || !BINDING_ID.test(privateMeta.binding_id || "")) {
       throw new Error("Invalid Host binding response");
     }
+    if (!acceptIdentity(projection)) return;
     bindingId = privateMeta.binding_id;
     render(projection);
   }
@@ -174,7 +211,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   async function heartbeat() {
     const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
     const projection = projectionOf(response);
-    if (!projection) throw new Error("Invalid continuation state");
+    if (!projection || !acceptIdentity(projection)) throw new Error("Invalid continuation state");
     render(projection);
     return projection;
   }
@@ -302,26 +339,39 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     }
   }
 
-  function acceptInitial(result) {
-    const projection = projectionOf(result);
-    if (!projection || identity || tornDown) return;
-    identity = {
-      agent_id: projection.agent_id,
-      endpoint_id: projection.endpoint_id,
-      controller_generation: projection.controller_generation,
-    };
-    render(projection);
-    void startBinding();
+  function acceptToolInput(params) {
+    // MCP Apps 2026-01-26: complete tool input is params.arguments.
+    // This is an exact selector only; every tool call is reauthorized by Server.
+    const args = params && params.arguments;
+    if (!acceptIdentity(args && !Array.isArray(args) && {
+      agent_id: args.agent_id,
+      endpoint_id: args.endpoint_id,
+      controller_generation: args.expected_controller_generation,
+    })) return;
+    void maybeStartBinding();
   }
 
-  async function startBinding() {
+  function acceptToolResult(result) {
+    const projection = projectionOf(result);
+    if (!projection || !acceptIdentity(projection)) return;
+    // A delayed initial result must not overwrite newer bind/heartbeat state.
+    if (!bindingId) render(projection);
+    void maybeStartBinding();
+  }
+
+  async function maybeStartBinding() {
     if (!hostInitialized || !identity || bindingStarted || tornDown) return;
     bindingStarted = true;
+    el("binding").textContent = "Binding";
+    el("status").textContent = "Exact identity received · binding Host carrier";
     try {
       await bind();
       void reconcile();
     } catch (_) {
-      if (!tornDown) el("status").textContent = "Host binding unavailable; durable Agent state is unchanged";
+      if (!tornDown) {
+        el("binding").textContent = "Unavailable";
+        el("status").textContent = "Host binding unavailable; durable Agent state is unchanged";
+      }
     }
   }
 
@@ -364,8 +414,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       else entry.resolve(msg.result);
       return;
     }
+    if (msg.method === "ui/notifications/tool-input") {
+      acceptToolInput(msg.params);
+      return;
+    }
     if (msg.method === "ui/notifications/tool-result") {
-      void acceptInitial(msg.params);
+      acceptToolResult(msg.params);
       return;
     }
     if (msg.method === "ui/resource-teardown") {
@@ -387,13 +441,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "1.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "2.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;
     hostInitialized = true;
+    el("status").textContent = "Host initialized · waiting for exact tool identity";
     notify("ui/notifications/initialized", {});
-    void startBinding();
+    void maybeStartBinding();
   })
     .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
 })();

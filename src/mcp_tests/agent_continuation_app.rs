@@ -168,6 +168,10 @@ fn post_message(
 
 #[tokio::test]
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
+    assert_eq!(
+        MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
+        "ui://webcodex/agent-continuation/v2"
+    );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
     let ui = handle_with_server_apps_enabled(
@@ -191,6 +195,18 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         Some(&json!(MCP_AGENT_CONTINUATION_UI_RESOURCE_URI))
     );
     assert!(present.pointer("/_meta/ui/visibility").is_none());
+    let bound_tools: Vec<_> = ui["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|tool| {
+            tool.pointer("/_meta/ui/resourceUri")
+                .and_then(Value::as_str)
+                == Some(MCP_AGENT_CONTINUATION_UI_RESOURCE_URI)
+        })
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(bound_tools, vec!["present_agent_continuation"]);
     for name in APP_TOOLS {
         let descriptor = tool(&ui["result"], name).unwrap_or_else(|| panic!("missing {name}"));
         assert_eq!(
@@ -320,24 +336,35 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         .find(|resource| resource["uri"] == MCP_AGENT_CONTINUATION_UI_RESOURCE_URI)
         .expect("Agent Continuation resource");
     assert_eq!(resource["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
-    let read = handle_with_server_apps_enabled(
-        &adaptive,
-        rpc(
-            "resources/read",
-            Some(json!(5107)),
-            mcp_2026_ui_params(json!({"uri": MCP_AGENT_CONTINUATION_UI_RESOURCE_URI})),
-        ),
-        Some(&auth),
-        true,
-    )
-    .await;
-    let McpOutcome::Ok(read) = read else {
-        panic!("expected resource read")
-    };
-    assert_eq!(
-        read["result"]["contents"][0]["text"],
-        MCP_AGENT_CONTINUATION_APP_HTML
-    );
+    assert!(!resources["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| resource["uri"] == "ui://webcodex/agent-continuation/v1"));
+    for uri in [
+        MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
+        "ui://webcodex/agent-continuation/v1",
+    ] {
+        let read = handle_with_server_apps_enabled(
+            &adaptive,
+            rpc(
+                "resources/read",
+                Some(json!(5107)),
+                mcp_2026_ui_params(json!({"uri": uri})),
+            ),
+            Some(&auth),
+            true,
+        )
+        .await;
+        let McpOutcome::Ok(read) = read else {
+            panic!("expected resource read")
+        };
+        assert_eq!(read["result"]["contents"][0]["uri"], uri);
+        assert_eq!(
+            read["result"]["contents"][0]["text"],
+            MCP_AGENT_CONTINUATION_APP_HTML
+        );
+    }
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("^wc_dagent_[0-9a-f]{32}$"),
         "App must validate the canonical durable Agent id prefix"
@@ -348,6 +375,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
     );
     for required in [
         "ui/initialize",
+        "ui/notifications/tool-input",
         "agent_continuation_bind",
         "agent_continuation_state",
         "agent_continuation_wake_acquire",

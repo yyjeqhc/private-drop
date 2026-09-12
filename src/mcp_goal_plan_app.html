@@ -50,6 +50,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const pending = new Map();
   const utf8Encoder = new TextEncoder();
   const el = id => document.getElementById(id);
+  el("status").textContent = "App active · initializing Host";
 
   function send(method, params) {
     if (tornDown) return Promise.reject(new Error("App torn down"));
@@ -68,9 +69,24 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
   }
 
+  function validGoalId(value) {
+    return typeof value === "string" && GOAL_ID.test(value);
+  }
+
+  function acceptIdentity(candidate) {
+    if (tornDown) return false;
+    if (!validGoalId(candidate) || (goalId && goalId !== candidate)) {
+      teardown();
+      el("status").textContent = "Invalid or conflicting Goal identity";
+      return false;
+    }
+    goalId = candidate;
+    return true;
+  }
+
   function validPlan(value) {
     if (!value || typeof value !== "object") return null;
-    if (value.version !== 1 || !GOAL_ID.test(value.goal_id || "")) return null;
+    if (value.version !== 1 || !validGoalId(value.goal_id)) return null;
     if (typeof value.title !== "string" || Array.from(value.title).length < 1 || Array.from(value.title).length > 200) return null;
     if (typeof value.objective !== "string" || utf8Encoder.encode(value.objective).length < 1 || utf8Encoder.encode(value.objective).length > 8192) return null;
     if (!LIFECYCLES.has(value.lifecycle) || !Number.isSafeInteger(value.revision) || value.revision < 1) return null;
@@ -93,6 +109,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   function render(plan) {
+    if (tornDown) return;
     el("title").textContent = plan.title;
     el("lifecycle").textContent = labelLifecycle(plan.lifecycle);
     el("objective").textContent = plan.objective;
@@ -102,7 +119,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const date = new Date(plan.updated_at_unix_ms);
     el("updated").textContent = Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
     el("meta").hidden = false;
-    el("status").textContent = plan.lifecycle === "active" ? "Tracking authoritative Goal state" : "Terminal Goal state";
+    if (hostInitialized) showTrackingStatus();
+  }
+
+  function showTrackingStatus() {
+    el("status").textContent = lastLifecycle === null ? "Exact identity received · reading authoritative Goal state"
+      : lastLifecycle === "active" ? "Tracking authoritative Goal state" : "Terminal Goal state";
+  }
+
+  function isTerminal() {
+    return lastLifecycle !== null && lastLifecycle !== "active";
   }
 
   function stopPolling() {
@@ -111,12 +137,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   async function poll() {
-    if (tornDown || !hostInitialized || !goalId || lastLifecycle !== "active" || pollInFlight) return;
+    if (tornDown || !hostInitialized || !goalId || isTerminal() || pollInFlight) return;
     pollInFlight = true;
     try {
       const response = await send("tools/call", { name: "goal_plan_state", arguments: { goal_id: goalId } });
       const plan = extractPlan(response);
-      if (!plan || plan.goal_id !== goalId) throw new Error("Invalid Goal Plan state");
+      if (!plan || !acceptIdentity(plan.goal_id)) throw new Error("Invalid Goal Plan state");
       if (plan.revision > lastRevision) {
         lastRevision = plan.revision;
         lastLifecycle = plan.lifecycle;
@@ -124,7 +150,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       } else if (plan.revision === lastRevision && plan.lifecycle === "active" && el("status").textContent === "State refresh pending") {
         el("status").textContent = "Tracking authoritative Goal state";
       }
-      if (lastLifecycle !== "active") stopPolling();
+      if (isTerminal()) stopPolling();
     } catch (_) {
       if (!tornDown) el("status").textContent = "State refresh pending";
     } finally {
@@ -133,16 +159,25 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   function ensurePolling() {
-    if (!hostInitialized || lastLifecycle !== "active" || tornDown) return stopPolling();
-    if (pollTimer === null) pollTimer = setInterval(poll, POLL_MS);
+    if (!hostInitialized || !goalId || isTerminal() || tornDown) return stopPolling();
+    if (pollTimer === null) {
+      showTrackingStatus();
+      pollTimer = setInterval(poll, POLL_MS);
+      void poll();
+    }
   }
 
-  function acceptInitial(result) {
+  function acceptToolInput(params) {
+    // MCP Apps 2026-01-26 supplies complete arguments here, never authority.
+    const args = params && params.arguments;
+    if (!acceptIdentity(args && !Array.isArray(args) && args.goal_id)) return;
+    ensurePolling();
+  }
+
+  function acceptToolResult(result) {
     if (tornDown) return;
     const plan = extractPlan(result);
-    if (!plan) return;
-    if (goalId && goalId !== plan.goal_id) return;
-    goalId = plan.goal_id;
+    if (!plan || !acceptIdentity(plan.goal_id)) return;
     if (plan.revision > lastRevision) {
       lastRevision = plan.revision;
       lastLifecycle = plan.lifecycle;
@@ -173,8 +208,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       else entry.resolve(msg.result);
       return;
     }
+    if (msg.method === "ui/notifications/tool-input") {
+      acceptToolInput(msg.params);
+      return;
+    }
     if (msg.method === "ui/notifications/tool-result") {
-      acceptInitial(msg.params);
+      acceptToolResult(msg.params);
       return;
     }
     if (msg.method === "ui/resource-teardown") {
@@ -191,10 +230,12 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "1.0.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "2.0.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;
+      if (goalId) showTrackingStatus();
+      else el("status").textContent = "Host initialized · waiting for exact tool identity";
       notify("ui/notifications/initialized", {});
       ensurePolling();
     })

@@ -77,6 +77,7 @@ async fn handle_with_server_apps_enabled(
 
 #[tokio::test]
 async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptive_direct() {
+    assert_eq!(MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v2");
     let (_temp, _db, adaptive) = goal_runtime(ModelSurface::AdaptiveRuntime);
     let auth = goal_auth("goal-plan-descriptor");
 
@@ -166,6 +167,20 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
     let McpOutcome::Ok(full_ui) = full_ui else {
         panic!("expected UI-capable Full Operator tools/list");
     };
+    for surface in [&ui, &full_ui] {
+        let bound_tools: Vec<_> = surface["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tool| {
+                tool.pointer("/_meta/ui/resourceUri")
+                    .and_then(Value::as_str)
+                    == Some(MCP_GOAL_PLAN_UI_RESOURCE_URI)
+            })
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(bound_tools, vec!["present_goal_plan"]);
+    }
     for name in [
         "create_goal",
         "get_goal",
@@ -214,30 +229,35 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         json!({"connectDomains": [], "resourceDomains": []})
     );
 
-    let read = handle_with_server_apps_enabled(
-        &full,
-        rpc(
-            "resources/read",
-            Some(json!(4105)),
-            mcp_2026_ui_params(json!({"uri": MCP_GOAL_PLAN_UI_RESOURCE_URI})),
-        ),
-        Some(&auth),
-        true,
-    )
-    .await;
-    let McpOutcome::Ok(read) = read else {
-        panic!("expected Goal Plan resource read");
-    };
-    assert_eq!(
-        read["result"]["contents"][0]["uri"],
-        MCP_GOAL_PLAN_UI_RESOURCE_URI
-    );
-    assert_eq!(
-        read["result"]["contents"][0]["text"],
-        MCP_GOAL_PLAN_APP_HTML
-    );
+    assert!(!resources["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|resource| resource["uri"] == "ui://webcodex/goal-plan/v1"));
+    for uri in [MCP_GOAL_PLAN_UI_RESOURCE_URI, "ui://webcodex/goal-plan/v1"] {
+        let read = handle_with_server_apps_enabled(
+            &full,
+            rpc(
+                "resources/read",
+                Some(json!(4105)),
+                mcp_2026_ui_params(json!({"uri": uri})),
+            ),
+            Some(&auth),
+            true,
+        )
+        .await;
+        let McpOutcome::Ok(read) = read else {
+            panic!("expected Goal Plan resource read");
+        };
+        assert_eq!(read["result"]["contents"][0]["uri"], uri);
+        assert_eq!(
+            read["result"]["contents"][0]["text"],
+            MCP_GOAL_PLAN_APP_HTML
+        );
+    }
     for required in [
         "goal_plan_state",
+        "ui/notifications/tool-input",
         "visibilitychange",
         "ui/resource-teardown",
         "lastRevision",
