@@ -290,6 +290,13 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return !!(snapshot && snapshot.epoch === identityEpoch && sameIdentity(snapshot, identity));
   }
 
+  function markCurrentEndpointHealthy() {
+    // A recovery probe is bounded only within one unhealthy episode. Once an
+    // exact bind/heartbeat proves this generation healthy again, a later lease
+    // expiry must be allowed to probe replacement on the same long-lived card.
+    endpointRecoveryProbeEpoch = -1;
+  }
+
   function acceptIdentity(candidate) {
     if (tornDown) return false;
     if (identity && validIdentity(candidate)
@@ -490,6 +497,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     }
     if (!acceptIdentity(projection)) return false;
     bindingId = viewBindingId;
+    markCurrentEndpointHealthy();
     render(projection);
     return true;
   }
@@ -508,6 +516,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (restartRecoveryOf(projection)) {
       throw Object.assign(new Error("Process-local Host binding was lost"), { recoverableBindingLoss: true });
     }
+    markCurrentEndpointHealthy();
     render(projection);
     return projection;
   }

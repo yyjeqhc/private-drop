@@ -536,6 +536,22 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "expired-endpoint replacement retries must remain bounded and replay-safe"
     );
     assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("function markCurrentEndpointHealthy()"),
+        "a healthy exact controller must reopen future expired-endpoint recovery eligibility"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains(
+            "bindingId = viewBindingId;\n    markCurrentEndpointHealthy();\n    render(projection);"
+        ),
+        "a successful exact bind must end the current recovery-probe episode"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains(
+            "markCurrentEndpointHealthy();\n    render(projection);\n    return projection;"
+        ),
+        "a successful exact heartbeat must allow a later lease expiry to probe again"
+    );
+    assert!(
         MCP_AGENT_CONTINUATION_APP_HTML
             .contains("function acceptReplacementIdentity(result, stale)"),
         "only the dedicated replacement envelope may retarget a live card"
