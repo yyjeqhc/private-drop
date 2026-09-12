@@ -18,6 +18,7 @@ pub(crate) const CONVERSATION_PARTICIPANT_ID_PREFIX: &str = "wc_participant_";
 pub(crate) const CONVERSATION_MESSAGE_ID_PREFIX: &str = "wc_cmsg_";
 pub(crate) const AGENT_DELIVERY_ID_PREFIX: &str = "wc_delivery_";
 const MCP_APP_RECOVERY_FINGERPRINT_HEX_LEN: usize = 64;
+const MCP_APP_CLIENT_WINDOW_KEY_HEX_LEN: usize = 64;
 pub const COMMUNICATION_PRINCIPAL_DIGEST_PREFIX: &str = "wc_commprincipal_";
 
 pub(crate) const MAX_AGENT_HANDLE_CHARS: usize = 64;
@@ -472,6 +473,8 @@ impl Database {
                 wake_capable INTEGER NOT NULL CHECK(wake_capable IN (0, 1)),
                 mcp_app_recovery_fingerprint TEXT
                     CHECK(mcp_app_recovery_fingerprint IS NULL OR length(mcp_app_recovery_fingerprint) = 64),
+                mcp_app_client_window_key TEXT
+                    CHECK(mcp_app_client_window_key IS NULL OR length(mcp_app_client_window_key) = 64),
                 controller_generation INTEGER NOT NULL CHECK(controller_generation >= 0),
                 lifecycle TEXT NOT NULL CHECK(lifecycle IN ('attached', 'detached', 'expired')),
                 attached_at_unix_ms INTEGER NOT NULL,
@@ -604,6 +607,22 @@ impl Database {
                 "ALTER TABLE wc_agent_endpoints
                  ADD COLUMN mcp_app_recovery_fingerprint TEXT
                  CHECK(mcp_app_recovery_fingerprint IS NULL OR length(mcp_app_recovery_fingerprint) = 64)",
+                [],
+            )?;
+        }
+        let has_client_window_key: i64 = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM pragma_table_info('wc_agent_endpoints')
+                WHERE name = 'mcp_app_client_window_key'
+            )",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_client_window_key == 0 {
+            transaction.execute(
+                "ALTER TABLE wc_agent_endpoints
+                 ADD COLUMN mcp_app_client_window_key TEXT
+                 CHECK(mcp_app_client_window_key IS NULL OR length(mcp_app_client_window_key) = 64)",
                 [],
             )?;
         }
@@ -995,7 +1014,8 @@ impl Database {
                      expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2),
                      last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?2),
                      lease_expires_at_unix_ms = ?2,
-                     mcp_app_recovery_fingerprint = NULL
+                     mcp_app_recovery_fingerprint = NULL,
+                     mcp_app_client_window_key = NULL
                  WHERE agent_id = ?1 AND lifecycle = 'attached'",
                 params![input.agent_id, now],
             )
@@ -1101,7 +1121,8 @@ impl Database {
                 "UPDATE wc_agent_endpoints
                  SET lifecycle = 'detached', detached_at_unix_ms = ?2,
                      last_seen_at_unix_ms = ?2, lease_expires_at_unix_ms = ?2,
-                     mcp_app_recovery_fingerprint = NULL
+                     mcp_app_recovery_fingerprint = NULL,
+                     mcp_app_client_window_key = NULL
                  WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
                 params![endpoint_id, now],
             )
@@ -1206,13 +1227,17 @@ impl Database {
             expected_controller_generation,
             wake_capable,
             None,
+            None,
         )
     }
 
-    /// Persist the exact current MCP App View recovery fingerprint together with
-    /// the durable Host-capability projection. The fingerprint is not authority:
-    /// every recovery probe still re-runs ordinary principal and exact current
-    /// Endpoint/generation validation first.
+    /// Persist the exact current MCP App View recovery fingerprint and optional
+    /// canonical ClientWindow key together with the durable Host-capability
+    /// projection. Neither value is authority by itself: every recovery probe
+    /// still re-runs ordinary principal and exact current Endpoint/generation
+    /// validation first. The ClientWindow value is already domain-separated and
+    /// hashed by the protocol adapter; raw Host session identifiers never enter
+    /// this store.
     pub fn set_agent_endpoint_mcp_app_binding_projection(
         &self,
         principal: &CommunicationPrincipal,
@@ -1221,6 +1246,7 @@ impl Database {
         expected_controller_generation: i64,
         wake_capable: bool,
         recovery_fingerprint: Option<&str>,
+        client_window_key: Option<&str>,
     ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
         if wake_capable && recovery_fingerprint.is_none() {
             return Err(CommunicationStoreError::new(
@@ -1235,6 +1261,7 @@ impl Database {
             expected_controller_generation,
             wake_capable,
             recovery_fingerprint,
+            client_window_key,
         )
     }
 
@@ -1246,10 +1273,14 @@ impl Database {
         expected_controller_generation: i64,
         wake_capable: bool,
         recovery_fingerprint: Option<&str>,
+        client_window_key: Option<&str>,
     ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
         validate_communication_principal(principal)?;
         if let Some(fingerprint) = recovery_fingerprint {
             validate_mcp_app_recovery_fingerprint(fingerprint)?;
+        }
+        if let Some(window_key) = client_window_key {
+            validate_mcp_app_client_window_key(window_key)?;
         }
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn
@@ -1262,16 +1293,20 @@ impl Database {
             endpoint_id,
             Some(expected_controller_generation),
         )?;
-        let current_recovery_fingerprint: Option<String> = transaction
+        let (current_recovery_fingerprint, current_client_window_key): (
+            Option<String>,
+            Option<String>,
+        ) = transaction
             .query_row(
-                "SELECT mcp_app_recovery_fingerprint
+                "SELECT mcp_app_recovery_fingerprint, mcp_app_client_window_key
                  FROM wc_agent_endpoints WHERE endpoint_id = ?1",
                 params![endpoint_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(store_error)?;
         if current.wake_capable == wake_capable
             && current_recovery_fingerprint.as_deref() == recovery_fingerprint
+            && current_client_window_key.as_deref() == client_window_key
         {
             transaction.commit().map_err(store_error)?;
             return Ok(current);
@@ -1291,13 +1326,15 @@ impl Database {
                 "UPDATE wc_agent_endpoints
                  SET wake_capable = ?2,
                      mcp_app_recovery_fingerprint = ?3,
-                     last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?4)
-                 WHERE endpoint_id = ?1 AND agent_id = ?5
-                   AND controller_generation = ?6 AND lifecycle = 'attached'",
+                     mcp_app_client_window_key = ?4,
+                     last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?5)
+                 WHERE endpoint_id = ?1 AND agent_id = ?6
+                   AND controller_generation = ?7 AND lifecycle = 'attached'",
                 params![
                     endpoint_id,
                     wake_capable as i64,
                     recovery_fingerprint,
+                    client_window_key,
                     now,
                     agent_id,
                     expected_controller_generation,
@@ -1343,6 +1380,127 @@ impl Database {
             )
             .map_err(store_error)?;
         Ok((persisted.as_deref() == Some(recovery_fingerprint)).then_some(current))
+    }
+
+    /// Return the exact current Endpoint only when the durable canonical
+    /// ClientWindow key matches and no process-local carrier is projected as
+    /// wake-capable. This is the refresh-after-restart continuity path: the
+    /// iframe binding fence may change, but the authenticated principal,
+    /// Endpoint generation, and Host window identity must remain exact.
+    pub fn verify_mcp_app_window_continuity(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        client_window_key: &str,
+    ) -> Result<Option<AgentEndpointRecord>, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_mcp_app_client_window_key(client_window_key)?;
+        let conn = self.conn.lock().unwrap();
+        let current = require_current_endpoint(
+            &conn,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        if current.wake_capable {
+            return Ok(None);
+        }
+        let persisted: Option<String> = conn
+            .query_row(
+                "SELECT mcp_app_client_window_key
+                 FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                params![endpoint_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        Ok((persisted.as_deref() == Some(client_window_key)).then_some(current))
+    }
+
+    /// Fence a current-process registration once an Endpoint has established
+    /// canonical ClientWindow provenance. Fresh attachment may establish the
+    /// first Window, but it must not let another Window bypass that provenance
+    /// after an iframe unbind/reload.
+    pub fn mcp_app_registration_window_allows(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        client_window_key: Option<&str>,
+    ) -> Result<bool, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        if let Some(window_key) = client_window_key {
+            validate_mcp_app_client_window_key(window_key)?;
+        }
+        let conn = self.conn.lock().unwrap();
+        let _current = require_current_endpoint(
+            &conn,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        let persisted: Option<String> = conn
+            .query_row(
+                "SELECT mcp_app_client_window_key
+                 FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                params![endpoint_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        Ok(match persisted.as_deref() {
+            Some(current_window) => client_window_key == Some(current_window),
+            None => true,
+        })
+    }
+
+    /// Authorize restart/refresh recovery without allowing an explicitly
+    /// different Host window to fall back through the older binding fingerprint.
+    /// If this Endpoint already has durable Window provenance, a caller that
+    /// supplies a Window must match it. Fingerprint fallback remains available
+    /// when the caller supplies no Window or when this is pre-v13 durable state
+    /// with no persisted Window key.
+    pub fn verify_mcp_app_recovery_continuity(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        recovery_fingerprint: &str,
+        client_window_key: Option<&str>,
+    ) -> Result<Option<AgentEndpointRecord>, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_mcp_app_recovery_fingerprint(recovery_fingerprint)?;
+        if let Some(window_key) = client_window_key {
+            validate_mcp_app_client_window_key(window_key)?;
+        }
+        let conn = self.conn.lock().unwrap();
+        let current = require_current_endpoint(
+            &conn,
+            principal,
+            agent_id,
+            endpoint_id,
+            Some(expected_controller_generation),
+        )?;
+        if current.wake_capable {
+            return Ok(None);
+        }
+        let (persisted_fingerprint, persisted_window): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT mcp_app_recovery_fingerprint, mcp_app_client_window_key
+                 FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                params![endpoint_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(store_error)?;
+        let allowed = match (client_window_key, persisted_window.as_deref()) {
+            (Some(caller_window), Some(current_window)) => caller_window == current_window,
+            _ => persisted_fingerprint.as_deref() == Some(recovery_fingerprint),
+        };
+        Ok(allowed.then_some(current))
     }
 
     pub fn create_conversation(
@@ -2829,6 +2987,20 @@ fn validate_mcp_app_recovery_fingerprint(fingerprint: &str) -> Result<(), Commun
         return Err(CommunicationStoreError::new(
             "invalid_mcp_app_recovery_fingerprint",
             "MCP App recovery fingerprint must be 64 lowercase hexadecimal characters",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_mcp_app_client_window_key(window_key: &str) -> Result<(), CommunicationStoreError> {
+    if window_key.len() != MCP_APP_CLIENT_WINDOW_KEY_HEX_LEN
+        || !window_key
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CommunicationStoreError::new(
+            "invalid_mcp_app_client_window_key",
+            "MCP App ClientWindow key must be 64 lowercase hexadecimal characters",
         ));
     }
     Ok(())

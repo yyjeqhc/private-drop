@@ -246,6 +246,16 @@ fn endpoint_recovery_fingerprint(db: &Database, endpoint_id: &str) -> Option<Str
         .unwrap()
 }
 
+fn endpoint_client_window_key(db: &Database, endpoint_id: &str) -> Option<String> {
+    db.conn_for_tests()
+        .query_row(
+            "SELECT mcp_app_client_window_key FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+            [endpoint_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
 fn wake_id_for(db: &Database, agent_id: &str) -> String {
     db.conn_for_tests()
         .query_row(
@@ -947,6 +957,264 @@ fn mcp_app_restart_recovery_fingerprint_fences_replaced_and_unbound_views() {
         assert!(!state.success);
         assert_eq!(state.output["error_kind"], "host_binding_stale");
     }
+}
+
+#[test]
+fn mcp_app_restart_refresh_recovers_only_same_client_window_without_attachment_shortcut() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("restart-refresh-window.db");
+    let db = Arc::new(Database::open(&path).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let agent = create_agent(
+        &runtime,
+        "restart-refresh-agent",
+        "Restart Refresh Agent",
+        "restart refresh description",
+        "restart-refresh-label",
+        "restart-refresh-agent-create",
+    );
+    let (endpoint, generation) = attach(&runtime, &agent, "restart-refresh-endpoint");
+    let window_a = crate::client_window::ClientWindow::for_test("refresh-window-a");
+    let window_b = crate::client_window::ClientWindow::for_test("refresh-window-b");
+    let mut old_binding = format!("wc_host_binding_{}", "a".repeat(32));
+    let initial = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(initial.success, "{:?}", initial.output);
+    assert_eq!(
+        endpoint_client_window_key(&db, &endpoint).as_deref(),
+        Some(window_a.key())
+    );
+    assert_ne!(window_a.key(), "refresh-window-a");
+
+    // Once the fresh attachment has established Window provenance, an iframe
+    // refresh in the same process may rotate its binding fence, but another
+    // Window cannot exploit the still-present attached_endpoints entry.
+    let pre_restart_unbind = runtime.agent_continuation_unbind_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(
+        pre_restart_unbind.success,
+        "{:?}",
+        pre_restart_unbind.output
+    );
+    assert!(endpoint_recovery_fingerprint(&db, &endpoint).is_none());
+    assert_eq!(
+        endpoint_client_window_key(&db, &endpoint).as_deref(),
+        Some(window_a.key())
+    );
+    let same_process_stale = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_b),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        format!("wc_host_binding_{}", "9".repeat(32)),
+    );
+    assert!(!same_process_stale.success);
+    assert_eq!(
+        same_process_stale.output["error_kind"],
+        "host_binding_stale"
+    );
+    old_binding = format!("wc_host_binding_{}", "1".repeat(32));
+    let same_process_refresh = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(
+        same_process_refresh.success,
+        "{:?}",
+        same_process_refresh.output
+    );
+    assert!(endpoint_recovery_fingerprint(&db, &endpoint).is_some());
+
+    drop(runtime);
+    drop(db);
+    let reopened = Arc::new(Database::open(&path).unwrap());
+    let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+    reopened
+        .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
+        .unwrap();
+    let runtime = runtime_with_db(reopened.clone());
+
+    // Even possession of the exact old iframe fence cannot cross an explicit
+    // durable ClientWindow mismatch after takeover.
+    let stale_window_state = runtime.agent_continuation_state_for_window(
+        None,
+        Some(&window_b),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(!stale_window_state.success);
+    assert_eq!(
+        stale_window_state.output["error_kind"],
+        "host_binding_stale"
+    );
+    let stale_window_bind = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_b),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(!stale_window_bind.success);
+    assert_eq!(stale_window_bind.output["error_kind"], "host_binding_stale");
+
+    let restart_state = runtime.agent_continuation_state_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(restart_state.success, "{:?}", restart_state.output);
+    assert_eq!(
+        restart_state.output["agent_continuation"]["recovery"]["kind"],
+        "host_binding_missing_in_process"
+    );
+    let rebound = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(rebound.success, "{:?}", rebound.output);
+
+    // A refresh tears down the old iframe. Its exact unbind withdraws only the
+    // iframe fence/fingerprint; the canonical Host-window continuity survives.
+    let unbound = runtime.agent_continuation_unbind_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding,
+    );
+    assert!(unbound.success, "{:?}", unbound.output);
+    assert_eq!(unbound.output["wake_capable"], false);
+    assert!(endpoint_recovery_fingerprint(&reopened, &endpoint).is_none());
+    assert_eq!(
+        endpoint_client_window_key(&reopened, &endpoint).as_deref(),
+        Some(window_a.key())
+    );
+
+    // Window continuity must not secretly repopulate the process-local fresh
+    // attachment registry. Push carriers remain restart-strict.
+    let stale_push = runtime.register_agent_continuation_adapter(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        Arc::new(FakeHostAdapter::delivered()),
+    );
+    assert!(!stale_push.success);
+    assert_eq!(
+        stale_push.output["error_kind"],
+        "endpoint_not_attached_in_process"
+    );
+
+    let refreshed_binding = format!("wc_host_binding_{}", "b".repeat(32));
+    let refreshed = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        refreshed_binding.clone(),
+    );
+    assert!(refreshed.success, "{:?}", refreshed.output);
+
+    let foreign_window_state = runtime.agent_continuation_state_for_window(
+        None,
+        Some(&window_b),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        refreshed_binding.clone(),
+    );
+    assert!(!foreign_window_state.success);
+    assert_eq!(
+        foreign_window_state.output["error_kind"],
+        "host_binding_stale"
+    );
+    let foreign_window_binding = format!("wc_host_binding_{}", "c".repeat(32));
+    let foreign_window_bind = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_b),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        foreign_window_binding,
+    );
+    assert!(!foreign_window_bind.success);
+    assert_eq!(
+        foreign_window_bind.output["error_kind"],
+        "host_binding_stale"
+    );
+
+    let refreshed_unbind = runtime.agent_continuation_unbind_for_window(
+        None,
+        Some(&window_a),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        refreshed_binding,
+    );
+    assert!(refreshed_unbind.success, "{:?}", refreshed_unbind.output);
+    assert!(endpoint_recovery_fingerprint(&reopened, &endpoint).is_none());
+    assert_eq!(
+        endpoint_client_window_key(&reopened, &endpoint).as_deref(),
+        Some(window_a.key())
+    );
+
+    // Missing Window metadata does not get the Window-continuity path. With the
+    // fingerprint cleared by unbind, a new iframe fence remains stale.
+    let no_window_binding = format!("wc_host_binding_{}", "d".repeat(32));
+    let no_window = runtime.agent_continuation_bind(
+        None,
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        no_window_binding,
+    );
+    assert!(!no_window.success);
+    assert_eq!(no_window.output["error_kind"], "host_binding_stale");
+
+    // Ordinary Endpoint lifecycle remains authoritative over Window continuity.
+    let (_replacement, replacement_generation) =
+        attach(&runtime, &agent, "restart-refresh-replacement");
+    assert_eq!(replacement_generation, generation + 1);
+    assert!(endpoint_client_window_key(&reopened, &endpoint).is_none());
+    let expired = runtime.agent_continuation_state_for_window(
+        None,
+        Some(&window_a),
+        agent,
+        endpoint,
+        generation,
+        format!("wc_host_binding_{}", "e".repeat(32)),
+    );
+    assert!(!expired.success);
+    assert_eq!(expired.output["error_kind"], "endpoint_expired");
 }
 
 #[test]

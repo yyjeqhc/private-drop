@@ -17,6 +17,22 @@ fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
         .find(|tool| tool["name"] == name)
 }
 
+fn mcp_2026_window_params(params: Value, raw_openai_session: &str) -> Value {
+    let mut params = mcp_2026_params(params);
+    params["_meta"]["openai/session"] = Value::String(raw_openai_session.to_string());
+    params
+}
+
+fn endpoint_client_window_key(db: &crate::db::Database, endpoint_id: &str) -> Option<String> {
+    db.conn_for_tests()
+        .query_row(
+            "SELECT mcp_app_client_window_key FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+            [endpoint_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
 fn schema_type_matches(value: &Value, schema: &Value) -> bool {
     match schema.get("type").and_then(Value::as_str) {
         Some("object") => value.is_object(),
@@ -104,6 +120,7 @@ async fn handle_with_server_apps_enabled(
     enabled: bool,
 ) -> McpOutcome {
     let protocol_era = super::super::inferred_protocol_era(&request);
+    let window = crate::client_window::stateless_mcp_window(&request.params);
     super::super::handle_mcp_request_with_lifecycle(
         runtime,
         None,
@@ -111,7 +128,7 @@ async fn handle_with_server_apps_enabled(
         auth,
         protocol_era,
         super::super::HostFileImportTrust::Untrusted,
-        None,
+        window.identity.as_ref(),
         None,
         None,
         crate::model_surface::effective_mcp_compact_schemas(
@@ -223,7 +240,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v12"
+        "ui://webcodex/agent-continuation/v13"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -425,6 +442,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v9"
                     | "ui://webcodex/agent-continuation/v10"
                     | "ui://webcodex/agent-continuation/v11"
+                    | "ui://webcodex/agent-continuation/v12"
             )
         )));
     for uri in [
@@ -440,6 +458,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v9",
         "ui://webcodex/agent-continuation/v10",
         "ui://webcodex/agent-continuation/v11",
+        "ui://webcodex/agent-continuation/v12",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -509,8 +528,8 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "App restart recovery must remain bounded"
     );
     assert!(
-        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"12.0.0\""),
-        "App protocol version must advance with the v12 resource"
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"13.0.0\""),
+        "App protocol version must advance with the v13 resource"
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("function restartRecoveryOf(projection)"),
@@ -532,6 +551,151 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         ),
         "acquire must not reinterpret a business failure as no pending Wake"
     );
+}
+
+#[tokio::test]
+async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fence() {
+    let (_temp, db, runtime) = continuation_runtime(ModelSurface::AdaptiveRuntime);
+    let owner = continuation_auth("continuation-window-owner");
+    let foreign = continuation_auth("continuation-window-foreign");
+    let agent = create_agent(
+        &runtime,
+        &owner,
+        "continuation-window-agent",
+        "Window Agent",
+        "continuation-window-create",
+    );
+    let (endpoint, generation) = attach(&runtime, &owner, &agent, "continuation-window-endpoint");
+    let raw_session = "production-openai-session-window-a";
+    let binding_id = format!("wc_host_binding_{}", "7".repeat(32));
+    let bind = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5151)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_bind",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(bind) = bind else {
+        panic!("window-bound continuation bind failed")
+    };
+    assert_eq!(bind["result"]["structuredContent"]["success"], true);
+
+    let expected_window =
+        crate::client_window::ClientWindow::from_opaque("openai-session", raw_session).unwrap();
+    let persisted = endpoint_client_window_key(&db, &endpoint).expect("persisted ClientWindow key");
+    assert_eq!(persisted, expected_window.key());
+    assert_ne!(
+        persisted, raw_session,
+        "raw OpenAI session must never be durable"
+    );
+    assert_eq!(persisted.len(), 64);
+
+    let wrong_window = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5152)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_state",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                "production-openai-session-window-b",
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(wrong_window) = wrong_window else {
+        panic!("wrong-window state must be a tool failure")
+    };
+    assert_eq!(
+        wrong_window["result"]["structuredContent"]["success"],
+        false
+    );
+    assert_eq!(
+        wrong_window["result"]["structuredContent"]["output"]["error_kind"],
+        "host_binding_stale"
+    );
+
+    let foreign_binding = format!("wc_host_binding_{}", "8".repeat(32));
+    let foreign_bind = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5153)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_bind",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": foreign_binding
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&foreign),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(foreign_bind) = foreign_bind else {
+        panic!("foreign principal must be represented as a tool failure")
+    };
+    assert_eq!(
+        foreign_bind["result"]["structuredContent"]["success"],
+        false
+    );
+
+    let owner_state = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5154)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_state",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(owner_state) = owner_state else {
+        panic!("owner window state failed")
+    };
+    assert_eq!(owner_state["result"]["structuredContent"]["success"], true);
 }
 
 #[test]

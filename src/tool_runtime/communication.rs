@@ -509,6 +509,25 @@ impl ToolRuntime {
         expected_controller_generation: i64,
         binding_id: String,
     ) -> ToolResult {
+        self.agent_continuation_bind_for_window(
+            auth,
+            None,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            binding_id,
+        )
+    }
+
+    pub(crate) fn agent_continuation_bind_for_window(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
             Err(result) => return result,
@@ -525,6 +544,7 @@ impl ToolRuntime {
             endpoint_id.clone(),
             expected_controller_generation,
             binding_id,
+            window.map(crate::client_window::ClientWindow::key),
         ) {
             Ok(result) => result,
             Err(error) => return communication_error(error, RecoveryKind::Reconcile),
@@ -560,6 +580,25 @@ impl ToolRuntime {
         expected_controller_generation: i64,
         binding_id: String,
     ) -> ToolResult {
+        self.agent_continuation_state_for_window(
+            auth,
+            None,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            binding_id,
+        )
+    }
+
+    pub(crate) fn agent_continuation_state_for_window(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
             Err(result) => return result,
@@ -576,6 +615,7 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
             &binding_id,
+            window.map(crate::client_window::ClientWindow::key),
         ) {
             Ok(result) => result,
             Err(error) => return communication_error(error, RecoveryKind::Reconcile),
@@ -618,6 +658,25 @@ impl ToolRuntime {
         expected_controller_generation: i64,
         binding_id: String,
     ) -> ToolResult {
+        self.agent_continuation_wake_acquire_for_window(
+            auth,
+            None,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            binding_id,
+        )
+    }
+
+    pub(crate) fn agent_continuation_wake_acquire_for_window(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
             Err(result) => return result,
@@ -631,6 +690,7 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
             &binding_id,
+            window.map(crate::client_window::ClientWindow::key),
         ) {
             Ok(acquisition) => {
                 let state_changed = acquisition
@@ -669,6 +729,30 @@ impl ToolRuntime {
         wake_id: String,
         attempt_id: String,
     ) -> ToolResult {
+        self.agent_continuation_wake_prepare_for_window(
+            auth,
+            None,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            binding_id,
+            wake_id,
+            attempt_id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn agent_continuation_wake_prepare_for_window(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+        wake_id: String,
+        attempt_id: String,
+    ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
             Err(result) => return result,
@@ -682,6 +766,7 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
             &binding_id,
+            window.map(crate::client_window::ClientWindow::key),
             &wake_id,
             &attempt_id,
         ) {
@@ -718,6 +803,32 @@ impl ToolRuntime {
         attempt_id: String,
         outcome: String,
     ) -> ToolResult {
+        self.agent_continuation_wake_finish_for_window(
+            auth,
+            None,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            binding_id,
+            wake_id,
+            attempt_id,
+            outcome,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn agent_continuation_wake_finish_for_window(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+        wake_id: String,
+        attempt_id: String,
+        outcome: String,
+    ) -> ToolResult {
         let dispatch_accepted = match outcome.as_str() {
             "dispatch_accepted" => true,
             "delivery_unknown" => false,
@@ -745,6 +856,7 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
             &binding_id,
+            window.map(crate::client_window::ClientWindow::key),
             &wake_id,
             &attempt_id,
             dispatch_accepted,
@@ -773,6 +885,25 @@ impl ToolRuntime {
         expected_controller_generation: i64,
         binding_id: String,
     ) -> ToolResult {
+        self.agent_continuation_unbind_for_window(
+            auth,
+            None,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            binding_id,
+        )
+    }
+
+    pub(crate) fn agent_continuation_unbind_for_window(
+        &self,
+        auth: Option<&AuthContext>,
+        window: Option<&crate::client_window::ClientWindow>,
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    ) -> ToolResult {
         let principal = match communication_principal(auth) {
             Ok(principal) => principal,
             Err(result) => return result,
@@ -786,6 +917,7 @@ impl ToolRuntime {
             &endpoint_id,
             expected_controller_generation,
             &binding_id,
+            window.map(crate::client_window::ClientWindow::key),
         ) {
             Ok(endpoint) => serialized_success(json!({
                 "agent_id": agent_id,

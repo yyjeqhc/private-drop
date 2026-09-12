@@ -343,9 +343,10 @@ impl Database {
         // Process-local Host callbacks/adapters never survive a Server
         // takeover. Clear their durable capability projection before any
         // successor can treat an old Endpoint as dispatchable. Deliberately
-        // preserve the last current MCP App recovery fingerprint: it is not
-        // authority, but after ordinary exact Endpoint checks it fences which
-        // already-open View may recreate only its lost process-local binding.
+        // preserve the last current MCP App recovery fingerprint and canonical
+        // ClientWindow key: neither is authority, but after ordinary exact
+        // Endpoint checks they fence which View/Host window may recreate only
+        // the lost process-local binding.
         transaction
             .execute(
                 "UPDATE wc_agent_endpoints
@@ -1536,7 +1537,8 @@ fn expire_stale_endpoints(
             .execute(
                 "UPDATE wc_agent_endpoints
                  SET lifecycle = 'expired', expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2),
-                     mcp_app_recovery_fingerprint = NULL
+                     mcp_app_recovery_fingerprint = NULL,
+                     mcp_app_client_window_key = NULL
                  WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
                 params![endpoint_id, now],
             )

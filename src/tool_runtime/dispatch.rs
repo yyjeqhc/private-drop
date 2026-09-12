@@ -1027,7 +1027,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         mut recorder_metadata: sessions::ToolCallRecorderMetadata,
-        _window: Option<&crate::client_window::ClientWindow>,
+        window: Option<&crate::client_window::ClientWindow>,
         inner_model_facing_recording: bool,
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
@@ -1420,6 +1420,7 @@ impl ToolRuntime {
                 call,
                 auth,
                 transport,
+                window,
                 ssh_resource.as_deref(),
                 validation_assertion_name,
                 project_resolution,
@@ -1503,6 +1504,7 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
+        window: Option<&crate::client_window::ClientWindow>,
         ssh_resource: Option<&str>,
         validation_assertion_name: Option<&str>,
         project_resolution: Option<Result<ResolvedProject, ProjectResolverError>>,
@@ -2027,8 +2029,9 @@ impl ToolRuntime {
                 endpoint_id,
                 expected_controller_generation,
                 binding_id,
-            } => self.agent_continuation_bind(
+            } => self.agent_continuation_bind_for_window(
                 auth,
+                window,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
@@ -2040,8 +2043,9 @@ impl ToolRuntime {
                 endpoint_id,
                 expected_controller_generation,
                 binding_id,
-            } => self.agent_continuation_state(
+            } => self.agent_continuation_state_for_window(
                 auth,
+                window,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
@@ -2053,8 +2057,9 @@ impl ToolRuntime {
                 endpoint_id,
                 expected_controller_generation,
                 binding_id,
-            } => self.agent_continuation_wake_acquire(
+            } => self.agent_continuation_wake_acquire_for_window(
                 auth,
+                window,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
@@ -2068,8 +2073,9 @@ impl ToolRuntime {
                 binding_id,
                 wake_id,
                 attempt_id,
-            } => self.agent_continuation_wake_prepare(
+            } => self.agent_continuation_wake_prepare_for_window(
                 auth,
+                window,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
@@ -2086,8 +2092,9 @@ impl ToolRuntime {
                 wake_id,
                 attempt_id,
                 outcome,
-            } => self.agent_continuation_wake_finish(
+            } => self.agent_continuation_wake_finish_for_window(
                 auth,
+                window,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
@@ -2102,8 +2109,9 @@ impl ToolRuntime {
                 endpoint_id,
                 expected_controller_generation,
                 binding_id,
-            } => self.agent_continuation_unbind(
+            } => self.agent_continuation_unbind_for_window(
                 auth,
+                window,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,

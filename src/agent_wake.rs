@@ -193,9 +193,16 @@ enum EndpointContinuationCarrier {
     Push(Arc<dyn ContinuationAdapter>),
     McpApp {
         binding_id: String,
+        client_window_key: Option<String>,
         active_claim: Option<AgentWakeClaim>,
         dispatch_phase: Option<McpAppDispatchPhase>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpAppRegistrationTarget {
+    SameView,
+    ReplaceOrRecover,
 }
 
 impl EndpointContinuationCarrier {
@@ -400,8 +407,9 @@ impl AgentContinuationController {
     }
 
     /// Bind one live MCP App View as the pull-style Host carrier for an exact
-    /// Endpoint generation. The View supplies a stable, process-local fence, not
-    /// authority. Same-View response-loss retries renew without replacing claims.
+    /// Endpoint generation. `binding_id` is the iframe/process-instance fence;
+    /// canonical ClientWindow identity is a separate Host-window continuity
+    /// dimension. Same-View response-loss retries renew without replacing claims.
     pub(crate) fn register_mcp_app_binding(
         &self,
         principal: CommunicationPrincipal,
@@ -409,6 +417,7 @@ impl AgentContinuationController {
         endpoint_id: String,
         controller_generation: i64,
         binding_id: String,
+        client_window_key: Option<&str>,
     ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
         let _transition = self
             .state
@@ -422,30 +431,18 @@ impl AgentContinuationController {
             controller_generation,
             &binding_id,
         );
-        self.verify_mcp_app_registration_target(
+        let target = self.verify_mcp_app_registration_target(
             &principal,
             &agent_id,
             &endpoint_id,
             controller_generation,
             &binding_id,
+            client_window_key,
             &recovery_fingerprint,
         )?;
-        let same_view = self
-            .state
-            .bindings
-            .lock()
-            .expect("Agent continuation registry mutex poisoned")
-            .get(&agent_id)
-            .is_some_and(|binding| {
-                binding.principal == principal
-                    && binding.endpoint_id == endpoint_id
-                    && binding.controller_generation == controller_generation
-                    && matches!(&binding.carrier, EndpointContinuationCarrier::McpApp {
-                        binding_id: current, ..
-                    } if current == &binding_id)
-            });
-        if same_view {
-            // Do not withdraw capability, revoke a claim, or reset dispatch phase.
+        if target == McpAppRegistrationTarget::SameView {
+            // Do not withdraw capability, revoke a claim, reset dispatch phase,
+            // or rewrite durable Window provenance on a response-loss retry.
             return Ok(self
                 .state
                 .db
@@ -458,6 +455,7 @@ impl AgentContinuationController {
             &endpoint_id,
             controller_generation,
         )?;
+        let client_window_key = client_window_key.map(str::to_string);
         self.state
             .bindings
             .lock()
@@ -471,6 +469,7 @@ impl AgentContinuationController {
                     controller_generation,
                     carrier: EndpointContinuationCarrier::McpApp {
                         binding_id,
+                        client_window_key: client_window_key.clone(),
                         active_claim: None,
                         dispatch_phase: None,
                     },
@@ -483,6 +482,7 @@ impl AgentContinuationController {
             controller_generation,
             true,
             Some(&recovery_fingerprint),
+            client_window_key.as_deref(),
         ) {
             Ok(endpoint) => endpoint,
             Err(error) => {
@@ -494,8 +494,8 @@ impl AgentContinuationController {
     }
 
     /// App heartbeat/state path. A live process-local binding remains the normal
-    /// path. After Server takeover only the durable fingerprint of the exact
-    /// pre-restart current View may receive the explicit restart-recovery state.
+    /// path. After Server takeover the exact pre-restart binding fingerprint or
+    /// the same canonical ClientWindow may receive the explicit recovery state.
     pub(crate) fn mcp_app_binding_state(
         &self,
         principal: &CommunicationPrincipal,
@@ -503,6 +503,7 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
         binding_id: &str,
+        client_window_key: Option<&str>,
     ) -> Result<McpAppBindingState, CommunicationStoreError> {
         let _transition = self
             .state
@@ -531,9 +532,15 @@ impl AgentContinuationController {
                     match &binding.carrier {
                         EndpointContinuationCarrier::McpApp {
                             binding_id: current_binding_id,
+                            client_window_key: current_window_key,
                             active_claim,
                             dispatch_phase,
-                        } if current_binding_id == binding_id => {
+                        } if current_binding_id == binding_id
+                            && !mcp_app_window_conflicts(
+                                current_window_key.as_deref(),
+                                client_window_key,
+                            ) =>
+                        {
                             Some(McpAppHostBindingObservation {
                                 active_wake_id: active_claim
                                     .as_ref()
@@ -562,12 +569,13 @@ impl AgentContinuationController {
         if self
             .state
             .db
-            .verify_mcp_app_restart_recovery(
+            .verify_mcp_app_recovery_continuity(
                 principal,
                 agent_id,
                 endpoint_id,
                 controller_generation,
                 &recovery_fingerprint,
+                client_window_key,
             )?
             .is_some()
         {
@@ -586,6 +594,7 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
         binding_id: &str,
+        client_window_key: Option<&str>,
     ) -> Result<Option<McpAppWakeAcquisition>, CommunicationStoreError> {
         let _transition = self
             .state
@@ -598,6 +607,7 @@ impl AgentContinuationController {
             endpoint_id,
             controller_generation,
             binding_id,
+            client_window_key,
         )?;
         self.state
             .db
@@ -656,6 +666,7 @@ impl AgentContinuationController {
                         binding_id: current_binding_id,
                         active_claim,
                         dispatch_phase,
+                        ..
                     },
                 ..
             }) = bindings.get_mut(agent_id)
@@ -689,6 +700,7 @@ impl AgentContinuationController {
                     binding_id: current_binding_id,
                     active_claim,
                     dispatch_phase,
+                    ..
                 } if current_binding_id == binding_id => {
                     *active_claim = Some(claim.clone());
                     *dispatch_phase = None;
@@ -707,6 +719,7 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
         binding_id: &str,
+        client_window_key: Option<&str>,
         wake_id: &str,
         attempt_id: &str,
     ) -> Result<McpAppWakePreparation, CommunicationStoreError> {
@@ -721,6 +734,7 @@ impl AgentContinuationController {
             endpoint_id,
             controller_generation,
             binding_id,
+            client_window_key,
         )?;
         let claim = self.exact_mcp_app_claim(agent_id, binding_id, wake_id, attempt_id)?;
         let phase = self.mcp_app_dispatch_phase(agent_id, binding_id)?;
@@ -772,6 +786,7 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
         binding_id: &str,
+        client_window_key: Option<&str>,
         wake_id: &str,
         attempt_id: &str,
         dispatch_accepted: bool,
@@ -787,6 +802,7 @@ impl AgentContinuationController {
             endpoint_id,
             controller_generation,
             binding_id,
+            client_window_key,
         )?;
         let claim = self.exact_mcp_app_claim(agent_id, binding_id, wake_id, attempt_id)?;
         let Some(previous_phase) = self.mcp_app_dispatch_phase(agent_id, binding_id)? else {
@@ -839,6 +855,7 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
         binding_id: &str,
+        client_window_key: Option<&str>,
     ) -> Result<AgentEndpointRecord, CommunicationStoreError> {
         let _transition = self
             .state
@@ -852,7 +869,7 @@ impl AgentContinuationController {
             endpoint_id,
             controller_generation,
         )?;
-        let process_binding = {
+        let process_window = {
             let bindings = self
                 .state
                 .bindings
@@ -862,43 +879,87 @@ impl AgentContinuationController {
                 Some(binding)
                     if binding.principal == *principal
                         && binding.endpoint_id == endpoint_id
-                        && binding.controller_generation == controller_generation
-                        && matches!(
-                            &binding.carrier,
-                            EndpointContinuationCarrier::McpApp {
-                                binding_id: current_binding_id,
-                                ..
-                            } if current_binding_id == binding_id
-                        ) =>
+                        && binding.controller_generation == controller_generation =>
                 {
-                    true
+                    match &binding.carrier {
+                        EndpointContinuationCarrier::McpApp {
+                            binding_id: current_binding_id,
+                            client_window_key: current_window_key,
+                            ..
+                        } if current_binding_id == binding_id
+                            && !mcp_app_window_conflicts(
+                                current_window_key.as_deref(),
+                                client_window_key,
+                            ) =>
+                        {
+                            Some(current_window_key.clone())
+                        }
+                        _ => return Err(stale_host_binding()),
+                    }
                 }
                 Some(_) => return Err(stale_host_binding()),
-                None => false,
+                None => None,
             }
         };
-        if !process_binding {
-            let recovery_fingerprint = mcp_app_recovery_fingerprint(
-                agent_id,
-                endpoint_id,
-                controller_generation,
-                binding_id,
-            );
-            if self
-                .state
-                .db
-                .verify_mcp_app_restart_recovery(
-                    principal,
+        let (process_binding, continuity_window_key) = match process_window {
+            Some(current_window_key) => (
+                true,
+                current_window_key.or_else(|| client_window_key.map(str::to_string)),
+            ),
+            None => {
+                let recovery_fingerprint = mcp_app_recovery_fingerprint(
                     agent_id,
                     endpoint_id,
                     controller_generation,
-                    &recovery_fingerprint,
-                )?
-                .is_none()
-            {
-                return Err(stale_host_binding());
+                    binding_id,
+                );
+                if self
+                    .state
+                    .db
+                    .verify_mcp_app_restart_recovery(
+                        principal,
+                        agent_id,
+                        endpoint_id,
+                        controller_generation,
+                        &recovery_fingerprint,
+                    )?
+                    .is_none()
+                    || self
+                        .state
+                        .db
+                        .verify_mcp_app_recovery_continuity(
+                            principal,
+                            agent_id,
+                            endpoint_id,
+                            controller_generation,
+                            &recovery_fingerprint,
+                            client_window_key,
+                        )?
+                        .is_none()
+                {
+                    return Err(stale_host_binding());
+                }
+                let continuity = match client_window_key {
+                    Some(window_key)
+                        if self
+                            .state
+                            .db
+                            .verify_mcp_app_window_continuity(
+                                principal,
+                                agent_id,
+                                endpoint_id,
+                                controller_generation,
+                                window_key,
+                            )?
+                            .is_some() =>
+                    {
+                        Some(window_key.to_string())
+                    }
+                    _ => None,
+                };
+                (false, continuity)
             }
-        }
+        };
         let endpoint = self
             .state
             .db
@@ -909,6 +970,7 @@ impl AgentContinuationController {
                 controller_generation,
                 false,
                 None,
+                continuity_window_key.as_deref(),
             )?;
         if process_binding {
             self.remove_exact_mcp_app_binding(
@@ -1102,27 +1164,20 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
         binding_id: &str,
+        client_window_key: Option<&str>,
         recovery_fingerprint: &str,
-    ) -> Result<(), CommunicationStoreError> {
+    ) -> Result<McpAppRegistrationTarget, CommunicationStoreError> {
         self.state.db.verify_current_agent_endpoint(
             principal,
             agent_id,
             endpoint_id,
             controller_generation,
         )?;
-        let attached_here = self
-            .state
-            .attached_endpoints
-            .lock()
-            .expect("Agent continuation attachment mutex poisoned")
-            .get(agent_id)
-            .is_some_and(|(attached_endpoint_id, attached_generation)| {
-                attached_endpoint_id == endpoint_id && *attached_generation == controller_generation
-            });
-        if attached_here {
-            return Ok(());
-        }
-        let has_same_recovered_view = {
+
+        // A live process binding owns the current iframe fence. A canonical
+        // ClientWindow permits another iframe instance only from that same Host
+        // window; a request with no Window may retry only the exact current fence.
+        {
             let bindings = self
                 .state
                 .bindings
@@ -1132,38 +1187,70 @@ impl AgentContinuationController {
                 Some(binding)
                     if binding.principal == *principal
                         && binding.endpoint_id == endpoint_id
-                        && binding.controller_generation == controller_generation
-                        && matches!(
-                            &binding.carrier,
-                            EndpointContinuationCarrier::McpApp {
-                                binding_id: current_binding_id,
-                                ..
-                            } if current_binding_id == binding_id
-                        ) =>
+                        && binding.controller_generation == controller_generation =>
                 {
-                    true
+                    if let EndpointContinuationCarrier::McpApp {
+                        binding_id: current_binding_id,
+                        client_window_key: current_window_key,
+                        ..
+                    } = &binding.carrier
+                    {
+                        if current_binding_id == binding_id {
+                            if mcp_app_window_conflicts(
+                                current_window_key.as_deref(),
+                                client_window_key,
+                            ) {
+                                return Err(stale_host_binding());
+                            }
+                            return Ok(McpAppRegistrationTarget::SameView);
+                        }
+                        if let Some(current_window_key) = current_window_key.as_deref() {
+                            if client_window_key == Some(current_window_key) {
+                                return Ok(McpAppRegistrationTarget::ReplaceOrRecover);
+                            }
+                            return Err(stale_host_binding());
+                        }
+                    }
                 }
                 Some(_) => return Err(stale_host_binding()),
-                None => false,
+                None => {}
             }
-        };
-        if has_same_recovered_view {
-            // Same-View response-loss retry after a successful restart rebind.
-            return Ok(());
+        }
+
+        let attached_here = self
+            .state
+            .attached_endpoints
+            .lock()
+            .expect("Agent continuation attachment mutex poisoned")
+            .get(agent_id)
+            .is_some_and(|(attached_endpoint_id, attached_generation)| {
+                attached_endpoint_id == endpoint_id && *attached_generation == controller_generation
+            });
+        if attached_here
+            && self.state.db.mcp_app_registration_window_allows(
+                principal,
+                agent_id,
+                endpoint_id,
+                controller_generation,
+                client_window_key,
+            )?
+        {
+            return Ok(McpAppRegistrationTarget::ReplaceOrRecover);
         }
         if self
             .state
             .db
-            .verify_mcp_app_restart_recovery(
+            .verify_mcp_app_recovery_continuity(
                 principal,
                 agent_id,
                 endpoint_id,
                 controller_generation,
                 recovery_fingerprint,
+                client_window_key,
             )?
             .is_some()
         {
-            return Ok(());
+            return Ok(McpAppRegistrationTarget::ReplaceOrRecover);
         }
         Err(stale_host_binding())
     }
@@ -1175,24 +1262,44 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
     ) -> Result<(), CommunicationStoreError> {
-        let exact_exists = self
+        let exact_carrier = self
             .state
             .bindings
             .lock()
             .expect("Agent continuation registry mutex poisoned")
             .get(agent_id)
-            .is_some_and(|binding| {
+            .filter(|binding| {
                 binding.endpoint_id == endpoint_id
                     && binding.controller_generation == controller_generation
-            });
-        if exact_exists {
-            self.state.db.set_agent_endpoint_wake_capability(
-                principal,
-                agent_id,
-                endpoint_id,
-                controller_generation,
-                false,
-            )?;
+            })
+            .map(|binding| binding.carrier.clone());
+        if let Some(carrier) = exact_carrier {
+            match carrier {
+                EndpointContinuationCarrier::McpApp {
+                    client_window_key, ..
+                } => {
+                    self.state
+                        .db
+                        .set_agent_endpoint_mcp_app_binding_projection(
+                            principal,
+                            agent_id,
+                            endpoint_id,
+                            controller_generation,
+                            false,
+                            None,
+                            client_window_key.as_deref(),
+                        )?;
+                }
+                EndpointContinuationCarrier::Push(_) => {
+                    self.state.db.set_agent_endpoint_wake_capability(
+                        principal,
+                        agent_id,
+                        endpoint_id,
+                        controller_generation,
+                        false,
+                    )?;
+                }
+            }
             self.remove_exact_binding(agent_id, endpoint_id, controller_generation);
         }
         Ok(())
@@ -1205,6 +1312,7 @@ impl AgentContinuationController {
         endpoint_id: &str,
         controller_generation: i64,
         binding_id: &str,
+        client_window_key: Option<&str>,
     ) -> Result<McpAppHostBindingObservation, CommunicationStoreError> {
         validate_mcp_app_binding_id(binding_id)?;
         // Durable authorization deliberately runs before process-local probing.
@@ -1231,17 +1339,22 @@ impl AgentContinuationController {
         match &binding.carrier {
             EndpointContinuationCarrier::McpApp {
                 binding_id: current_binding_id,
+                client_window_key: current_window_key,
                 active_claim,
                 dispatch_phase,
-            } if current_binding_id == binding_id => Ok(McpAppHostBindingObservation {
-                active_wake_id: active_claim
-                    .as_ref()
-                    .map(|claim| claim.wake.wake_id.clone()),
-                active_attempt_id: active_claim
-                    .as_ref()
-                    .map(|claim| claim.attempt.attempt_id.clone()),
-                dispatch_phase: *dispatch_phase,
-            }),
+            } if current_binding_id == binding_id
+                && !mcp_app_window_conflicts(current_window_key.as_deref(), client_window_key) =>
+            {
+                Ok(McpAppHostBindingObservation {
+                    active_wake_id: active_claim
+                        .as_ref()
+                        .map(|claim| claim.wake.wake_id.clone()),
+                    active_attempt_id: active_claim
+                        .as_ref()
+                        .map(|claim| claim.attempt.attempt_id.clone()),
+                    dispatch_phase: *dispatch_phase,
+                })
+            }
             _ => Err(stale_host_binding()),
         }
     }
@@ -1320,6 +1433,7 @@ impl AgentContinuationController {
                 binding_id: current_binding_id,
                 active_claim: Some(claim),
                 dispatch_phase,
+                ..
             }) if current_binding_id == binding_id
                 && claim.wake.wake_id == wake_id
                 && claim.attempt.attempt_id == attempt_id =>
@@ -1372,6 +1486,10 @@ impl AgentContinuationController {
             bindings.remove(agent_id);
         }
     }
+}
+
+fn mcp_app_window_conflicts(current: Option<&str>, caller: Option<&str>) -> bool {
+    matches!((current, caller), (Some(current), Some(caller)) if current != caller)
 }
 
 fn stale_host_binding() -> CommunicationStoreError {
