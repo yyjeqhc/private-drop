@@ -77,6 +77,11 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return structured && (structured.output || structured);
   }
 
+  function toolCallSucceeded(result) {
+    const structured = result && (result.structuredContent || result.structured_content);
+    return !!(structured && structured.success === true);
+  }
+
   function privateContinuationMeta(result) {
     const meta = result && result._meta;
     const value = meta && meta["webcodex/agentContinuation"];
@@ -178,7 +183,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       outcome,
     });
     try {
-      await callTool("agent_continuation_wake_finish", args);
+      const response = await callTool("agent_continuation_wake_finish", args);
+      if (!toolCallSucceeded(response)) throw new Error("Continuation finish was not accepted");
       pendingFinishes.delete(wake.attempt_id);
       return true;
     } catch (_) {
@@ -202,6 +208,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   async function acquire() {
     const response = await callTool("agent_continuation_wake_acquire", exactArgs({ binding_id: bindingId }));
+    if (!toolCallSucceeded(response)) throw new Error("Continuation acquire was not accepted");
     const output = outputOf(response);
     return validAcquiredWake(output && output.wake);
   }

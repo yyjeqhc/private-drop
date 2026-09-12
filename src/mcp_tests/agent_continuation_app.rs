@@ -376,6 +376,22 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
             "App source contains forbidden marker {forbidden}"
         );
     }
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("function toolCallSucceeded(result)"),
+        "App must distinguish a successful JSON-RPC exchange from a failed ToolResult"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains(
+            "if (!toolCallSucceeded(response)) throw new Error(\"Continuation finish was not accepted\")"
+        ),
+        "post-fence finish must remain pending when the tool returns business failure"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains(
+            "if (!toolCallSucceeded(response)) throw new Error(\"Continuation acquire was not accepted\")"
+        ),
+        "acquire must not reinterpret a business failure as no pending Wake"
+    );
 }
 
 #[tokio::test]
