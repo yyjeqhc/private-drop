@@ -1209,6 +1209,10 @@ fn mcp_app_consume_ack_race_and_teardown_preserve_exact_wake_semantics() {
     assert!(late_ack.success, "{:?}", late_ack.output);
     assert_eq!(late_ack.output["continuation_consumed"], true);
     assert_eq!(late_ack.output["wake_state"], "consumed");
+    assert_eq!(
+        late_ack.output["state_changed"], false,
+        "a late Host ACK after exact consume is idempotent telemetry, not a new transition"
+    );
     let late_ack_retry = fixture.runtime.agent_continuation_wake_finish(
         None,
         fixture.receiver.clone(),
@@ -1220,6 +1224,10 @@ fn mcp_app_consume_ack_race_and_teardown_preserve_exact_wake_semantics() {
         "dispatch_accepted".to_string(),
     );
     assert!(late_ack_retry.success, "{:?}", late_ack_retry.output);
+    assert_eq!(
+        late_ack_retry.output["state_changed"], false,
+        "repeating the same exact late ACK remains idempotent"
+    );
     assert_eq!(
         fixture.db.agent_wake(&wake_id).unwrap().unwrap().state,
         AgentWakeState::Consumed,

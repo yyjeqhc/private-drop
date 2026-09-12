@@ -338,6 +338,14 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         read["result"]["contents"][0]["text"],
         MCP_AGENT_CONTINUATION_APP_HTML
     );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("^wc_dagent_[0-9a-f]{32}$"),
+        "App must validate the canonical durable Agent id prefix"
+    );
+    assert!(
+        !MCP_AGENT_CONTINUATION_APP_HTML.contains("^wc_agent_[0-9a-f]{32}$"),
+        "App must not accept the obsolete/nonexistent wc_agent_ prefix"
+    );
     for required in [
         "ui/initialize",
         "agent_continuation_bind",
@@ -609,7 +617,7 @@ async fn agent_continuation_hidden_kernel_entry_is_fail_closed_without_protocol_
             ToolCallRequest {
                 tool_name: "agent_continuation_bind".to_string(),
                 arguments: json!({
-                    "agent_id": format!("wc_agent_{}", "a".repeat(32)),
+                    "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
                     "endpoint_id": format!("wc_endpoint_{}", "b".repeat(32)),
                     "expected_controller_generation": 1
                 }),

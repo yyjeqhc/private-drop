@@ -142,6 +142,7 @@ pub(crate) struct McpAppWakePreparation {
 pub(crate) struct McpAppWakeFinish {
     pub(crate) wake: AgentWakeRecord,
     pub(crate) dispatch_phase: McpAppDispatchPhase,
+    pub(crate) state_changed: bool,
 }
 
 #[derive(Clone)]
@@ -660,12 +661,12 @@ impl AgentContinuationController {
             binding_id,
         )?;
         let claim = self.exact_mcp_app_claim(agent_id, binding_id, wake_id, attempt_id)?;
-        if self.mcp_app_dispatch_phase(agent_id, binding_id)?.is_none() {
+        let Some(previous_phase) = self.mcp_app_dispatch_phase(agent_id, binding_id)? else {
             return Err(CommunicationStoreError::new(
                 "wake_not_prepared",
                 "MCP App Host delivery outcome requires an Attempt that already crossed the durable dispatch fence",
             ));
-        }
+        };
         let (wake, dispatch_phase) = if dispatch_accepted {
             (
                 self.state.db.complete_agent_wake_delivery(
@@ -694,9 +695,12 @@ impl AgentContinuationController {
             )
         };
         self.set_mcp_app_dispatch_phase(agent_id, binding_id, wake_id, attempt_id, dispatch_phase)?;
+        let state_changed =
+            wake.state != AgentWakeState::Consumed && previous_phase != dispatch_phase;
         Ok(McpAppWakeFinish {
             wake,
             dispatch_phase,
+            state_changed,
         })
     }
 

@@ -738,7 +738,7 @@ impl ToolRuntime {
                 "wake_revision": finished.wake.revision,
                 "dispatch_observation": finished.dispatch_phase.as_str(),
                 "continuation_consumed": finished.wake.state == AgentWakeState::Consumed,
-                "state_changed": finished.wake.state != AgentWakeState::Consumed,
+                "state_changed": finished.state_changed,
             })),
             Err(error) => communication_error(error, RecoveryKind::Reconcile),
         }
