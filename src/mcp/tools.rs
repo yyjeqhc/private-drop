@@ -583,6 +583,16 @@ fn is_agent_continuation_app_tool_name(tool_name: &str) -> bool {
     )
 }
 
+fn attach_app_tool_content_fallback(result: &mut Value) {
+    let Some(structured) = result.get("structuredContent") else {
+        return;
+    };
+    let Ok(text) = serde_json::to_string(structured) else {
+        return;
+    };
+    result["content"] = json!([{ "type": "text", "text": text }]);
+}
+
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
     if matches!(
@@ -1916,6 +1926,15 @@ pub(super) async fn handle_call(
             mcp_runtime_tool_result_fallback(result)
         }
     };
+    if app_only_agent_continuation {
+        // ChatGPT production has been observed to complete View-originated
+        // tools/call server-side while not forwarding structuredContent back to
+        // the View. Keep structuredContent canonical, but duplicate this bounded
+        // app-only envelope into standard text content as a compatibility path.
+        // These tools are ModelHidden/app-visible only, so ordinary model tool
+        // results retain the compact text fallback.
+        attach_app_tool_content_fallback(&mut result);
+    }
     if app_enabled {
         presentation::attach_result_app_presentation(&params.name, &mut result);
     }

@@ -5,7 +5,7 @@ import { webcrypto } from "node:crypto";
 export const flush = () => new Promise(resolve => setImmediate(resolve));
 
 // Execute the shipped App script with deterministic Host messages and timers.
-export function app(filename, { deliverToolMeta = true, crypto = webcrypto } = {}) {
+export function app(filename, { deliverToolMeta = true, deliverToolStructuredContent = true, crypto = webcrypto } = {}) {
   const html = readFileSync(new URL(`../${filename}`, import.meta.url), "utf8");
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const nodes = {};
@@ -55,7 +55,10 @@ export function app(filename, { deliverToolMeta = true, crypto = webcrypto } = {
     async reply(request, result) {
       // Only App-originated tools/call crosses this policy. Initial model-tool
       // result notifications remain a separate lifecycle with their own shape.
-      if (!deliverToolMeta && request.method === "tools/call") result = stripToolResultMeta(result);
+      if (request.method === "tools/call") {
+        if (!deliverToolMeta) result = stripToolResultMeta(result);
+        if (!deliverToolStructuredContent) result = stripToolResultStructuredContent(result);
+      }
       deliver({ id: request.id, result });
       await flush();
     },
@@ -95,6 +98,11 @@ export function app(filename, { deliverToolMeta = true, crypto = webcrypto } = {
 
 export function stripToolResultMeta(result) {
   const { _meta, ...standard } = result;
+  return standard;
+}
+
+export function stripToolResultStructuredContent(result) {
+  const { structuredContent, structured_content, ...standard } = result;
   return standard;
 }
 

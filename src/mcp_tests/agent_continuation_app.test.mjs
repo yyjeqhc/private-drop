@@ -379,6 +379,40 @@ test("all App coordination survives stripped ToolResult metadata through success
   assert.equal(view.timers.size, 0);
 });
 
+test("App coordination survives Host stripping structuredContent from View tools/call", async () => {
+  const view = app("mcp_agent_continuation_app.html", {
+    deliverToolMeta: false,
+    deliverToolStructuredContent: false,
+  });
+  await view.initialize();
+  view.toolInput(input);
+  const bind = view.calls("agent_continuation_bind")[0];
+  const bindResult = toolResult({ agent_continuation: projection });
+  bindResult.content = [{ type: "text", text: JSON.stringify(bindResult.structuredContent) }];
+  await view.reply(bind, bindResult);
+  assert.equal(view.nodes.binding.textContent, "Host bound");
+
+  const stateResult = toolResult({ agent_continuation: projection });
+  stateResult.content = [{ type: "text", text: JSON.stringify(stateResult.structuredContent) }];
+  await view.reply(view.calls("agent_continuation_state")[0], stateResult);
+
+  const acquireResult = toolResult({ wake });
+  acquireResult.content = [{ type: "text", text: JSON.stringify(acquireResult.structuredContent) }];
+  await view.reply(view.calls("agent_continuation_wake_acquire")[0], acquireResult);
+
+  const prepareResult = prepared();
+  prepareResult.content = [{ type: "text", text: JSON.stringify(prepareResult.structuredContent) }];
+  await view.reply(view.calls("agent_continuation_wake_prepare")[0], prepareResult);
+  assert.equal(hostMessages(view).length, 1);
+  assert.equal(hostMessages(view)[0].params.content[0].text, "Exact test continuation");
+
+  await view.reply(hostMessages(view)[0], {});
+  const finishResult = toolResult({});
+  finishResult.content = [{ type: "text", text: JSON.stringify(finishResult.structuredContent) }];
+  await view.reply(view.calls("agent_continuation_wake_finish")[0], finishResult);
+  assert.equal(view.nodes.binding.textContent, "Host bound");
+});
+
 for (const loss of ["timeout", "Host error", "malformed result"]) {
   test(`same View retries bind with the same secure fence after ${loss}`, async () => {
     const view = app("mcp_agent_continuation_app.html", { deliverToolMeta: false });

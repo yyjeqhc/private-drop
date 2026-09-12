@@ -170,7 +170,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v3"
+        "ui://webcodex/agent-continuation/v4"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -558,6 +558,13 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
             ["bound"],
         true
     );
+    let bind_content: Value = serde_json::from_str(
+        bind["result"]["content"][0]["text"]
+            .as_str()
+            .expect("app-only bind must carry a standard text compatibility envelope"),
+    )
+    .expect("app-only bind text compatibility envelope must be JSON");
+    assert_eq!(bind_content, bind["result"]["structuredContent"]);
     let bind_structured = bind["result"]["structuredContent"].to_string();
     assert!(!bind_structured.contains("wc_host_binding_"));
     assert!(!bind_structured.contains("_app_private"));
@@ -663,9 +670,21 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
     assert!(!automatic_message.contains("PRIVATE Agent description"));
     assert!(!automatic_message.contains("PRIVATE-specialty-label"));
     assert!(automatic_message.len() <= 4096);
-    assert!(!prepare["result"]["content"]
-        .to_string()
-        .contains("consume_token"));
+    let prepare_content: Value = serde_json::from_str(
+        prepare["result"]["content"][0]["text"]
+            .as_str()
+            .expect("app-only prepare must carry a standard text compatibility envelope"),
+    )
+    .expect("app-only prepare text compatibility envelope must be JSON");
+    assert_eq!(prepare_content, prepare["result"]["structuredContent"]);
+    for forbidden in [
+        "wc_host_binding_",
+        "claim_fence",
+        private_body,
+        "_app_private",
+    ] {
+        assert!(!prepare_content.to_string().contains(forbidden));
+    }
 
     // Knowing the current binding and exact Attempt never grants authority.
     let mut read_only_owner = owner.clone();

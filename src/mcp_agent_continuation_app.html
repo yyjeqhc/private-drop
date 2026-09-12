@@ -87,13 +87,32 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
   }
 
+  function structuredOf(result) {
+    if (!result || typeof result !== "object") return null;
+    const direct = result.structuredContent || result.structured_content;
+    if (direct && typeof direct === "object" && !Array.isArray(direct)) return direct;
+    // Some Hosts preserve only standard CallToolResult content for View-originated
+    // tools/call. App-only WebCodex tools duplicate their bounded structured
+    // envelope as JSON text there so coordination never depends on private _meta
+    // or Host-specific structuredContent forwarding.
+    const blocks = Array.isArray(result.content) ? result.content : [];
+    for (const block of blocks) {
+      if (!block || block.type !== "text" || typeof block.text !== "string") continue;
+      try {
+        const parsed = JSON.parse(block.text);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch (_) {}
+    }
+    return null;
+  }
+
   function outputOf(result) {
-    const structured = result && (result.structuredContent || result.structured_content || result);
+    const structured = structuredOf(result) || result;
     return structured && (structured.output || structured);
   }
 
   function toolCallSucceeded(result) {
-    const structured = result && (result.structuredContent || result.structured_content);
+    const structured = structuredOf(result);
     return !!(result && result.isError !== true && structured && structured.success === true);
   }
 
@@ -211,7 +230,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     bindAttempts++;
     const response = await callTool("agent_continuation_bind", exactArgs({ binding_id: viewBindingId }));
     if (tornDown) return;
-    const structured = response && (response.structuredContent || response.structured_content);
+    const structured = structuredOf(response);
     if (response && (response.isError === true || (structured && structured.success === false))) throw definitiveFailure();
     const projection = projectionOf(response);
     if (!toolCallSucceeded(response) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
@@ -470,7 +489,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "3.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "4.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;
