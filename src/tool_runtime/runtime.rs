@@ -167,8 +167,9 @@ pub struct ToolRuntime {
     /// the server from the existing webcodex.db handle; Runner-native project
     /// filesystems never own Memory v1 persistence.
     pub(crate) memory_db: Option<Arc<crate::Database>>,
-    /// Optional Control-owned durable Agent and Conversation store. It shares
-    /// the Server SQLite handle with other durable domains but owns independent tables.
+    /// Optional Control-owned durable user-domain store. Durable Agent, Conversation,
+    /// AgentTask, and Goal state share this Server SQLite handle while remaining
+    /// independent tables, lifecycles, and authority domains.
     pub(crate) communication_db: Option<Arc<crate::Database>>,
     /// Optional process-local Host continuation registry/controller. It is
     /// created only when the durable communication database is injected and is

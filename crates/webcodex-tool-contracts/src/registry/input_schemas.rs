@@ -11,6 +11,7 @@ mod computer;
 mod discovery;
 mod files;
 mod git;
+mod goals;
 mod hygiene;
 mod jobs;
 mod line_edits;
@@ -91,6 +92,11 @@ pub use files::{
 pub use git::{
     git_commit_paths_input_schema, git_diff_hunks_input_schema, git_log_input_schema,
     git_review_summary_input_schema, git_status_input_schema, show_changes_input_schema,
+};
+pub use goals::{
+    associate_goal_agent_task_input_schema, associate_goal_workflow_session_input_schema,
+    create_goal_input_schema, get_goal_input_schema, list_goals_input_schema,
+    update_goal_input_schema,
 };
 pub use hygiene::workspace_hygiene_check_input_schema;
 pub use jobs::{

@@ -13,6 +13,7 @@ mod discovery;
 mod edits;
 mod files;
 mod git;
+mod goals;
 mod hygiene;
 mod jobs;
 mod lsp;
@@ -28,6 +29,9 @@ use common::default_output_schema;
 
 pub fn output_schema_for_tool(name: &str) -> Value {
     if let Some(schema) = agent_tasks::output_schema_for_tool(name) {
+        return schema;
+    }
+    if let Some(schema) = goals::output_schema_for_tool(name) {
         return schema;
     }
     if let Some(schema) = coding_agents::output_schema_for_tool(name) {
