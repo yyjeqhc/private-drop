@@ -14,18 +14,18 @@ fn main() {
     println!("cargo:rerun-if-changed={}", head_path.display());
     // A symbolic branch may be stored only in packed-refs. Emitting a Cargo
     // dependency on the corresponding missing loose-ref path makes the build
-    // script permanently dirty in managed worktrees. Watch only metadata files
-    // that actually exist, and also watch the worktree-local HEAD reflog so a
-    // normal commit still refreshes build identity when the branch starts packed.
+    // script permanently dirty in managed worktrees. Watch an existing ancestor
+    // while the loose ref is absent, so its creation refreshes build identity
+    // even when reflogs are disabled. The next run watches the loose ref itself.
     if let Some(head_log) = git_metadata_path(&repo_root, "logs/HEAD").filter(|path| path.exists())
     {
         println!("cargo:rerun-if-changed={}", head_log.display());
     }
     if let Some(head_ref) = current_head_ref(&repo_root) {
-        if let Some(head_ref_path) =
-            git_metadata_path(&repo_root, &head_ref).filter(|path| path.exists())
-        {
-            println!("cargo:rerun-if-changed={}", head_ref_path.display());
+        if let Some(head_ref_path) = git_metadata_path(&repo_root, &head_ref) {
+            if let Some(existing_path) = head_ref_path.ancestors().find(|path| path.exists()) {
+                println!("cargo:rerun-if-changed={}", existing_path.display());
+            }
         }
     }
     if let Some(packed_refs) =
