@@ -219,7 +219,10 @@ fn provider_status_is_passive_and_tracks_connection_lifecycle() {
 fn provider_status_reports_busy_without_waiting_or_starting_work() {
     let fixture = Fixture::new("normal", 2);
     let provider = fixture.provider();
-    let entry = fixture.manager.providers.get("fake").unwrap();
+    let entry = {
+        let state = fixture.manager.state.read().unwrap();
+        Arc::clone(state.providers.get("fake").unwrap())
+    };
     let _guard = entry.session.lock().unwrap();
 
     assert_eq!(
@@ -227,6 +230,147 @@ fn provider_status_reports_busy_without_waiting_or_starting_work() {
         McpGatewayProviderState::Busy
     );
     assert_eq!(fixture.marker_count("start"), 0);
+}
+
+fn replacement_config(
+    fixture: &Fixture,
+    id: &str,
+    name: &str,
+    scenario: &str,
+    request_timeout_secs: u64,
+) -> McpGatewayConfig {
+    McpGatewayConfig {
+        request_timeout_secs,
+        providers: vec![McpGatewayProviderConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            executable: fixture._fake.path.to_string_lossy().into_owned(),
+            args: vec![
+                scenario.to_string(),
+                fixture.marker.to_string_lossy().into_owned(),
+            ],
+            cwd: None,
+            env_from_env: BTreeMap::new(),
+            timeout_secs: None,
+        }],
+    }
+}
+
+#[test]
+fn config_candidate_preserves_unchanged_provider_identity_and_connection() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    assert!(fixture.list(&before).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "fake",
+            "Fake provider",
+            "normal",
+            17,
+        ))
+        .unwrap();
+    assert_eq!(
+        summary,
+        McpGatewayReloadSummary {
+            preserved: 1,
+            replaced: 0,
+            added: 0,
+            removed: 0,
+        }
+    );
+    let after = fixture.provider();
+    assert_eq!(after.provider_instance_id, before.provider_instance_id);
+    assert!(fixture.list(&before).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 1);
+}
+
+#[test]
+fn config_candidate_replaces_changed_provider_without_retargeting_old_identity() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    assert!(fixture.list(&before).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "fake",
+            "Renamed provider",
+            "normal",
+            10,
+        ))
+        .unwrap();
+    assert_eq!(summary.replaced, 1);
+    let after = fixture.provider();
+    assert_ne!(after.provider_instance_id, before.provider_instance_id);
+    let stale = fixture.list(&before);
+    assert_eq!(stale.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(stale.error.as_ref().unwrap().code, "stale_provider");
+    assert_eq!(
+        provider_state(fixture.status(&after)),
+        McpGatewayProviderState::NeverStarted
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
+    assert!(fixture.list(&after).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 2);
+}
+
+#[test]
+fn config_candidate_does_not_wait_for_busy_retired_provider() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    let entry = {
+        let state = fixture.manager.state.read().unwrap();
+        Arc::clone(state.providers.get("fake").unwrap())
+    };
+    let _guard = entry.session.lock().unwrap();
+
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "fake",
+            "Changed while busy",
+            "normal",
+            10,
+        ))
+        .unwrap();
+    assert_eq!(summary.replaced, 1);
+    let after = fixture.provider();
+    assert_ne!(after.provider_instance_id, before.provider_instance_id);
+    assert_eq!(
+        provider_state(fixture.status(&after)),
+        McpGatewayProviderState::NeverStarted
+    );
+}
+
+#[test]
+fn config_candidate_adds_and_removes_provider_identities_atomically() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "replacement",
+            "Replacement",
+            "normal",
+            10,
+        ))
+        .unwrap();
+    assert_eq!(summary.added, 1);
+    assert_eq!(summary.removed, 1);
+    let inventory = fixture.manager.provider_inventory();
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(inventory[0].provider_id, "replacement");
+    let stale = fixture.status(&before);
+    assert_eq!(stale.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(stale.error.as_ref().unwrap().code, "stale_provider");
 }
 
 #[test]

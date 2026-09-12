@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{mpsc, Mutex, TryLockError};
+use std::sync::{mpsc, Arc, Mutex, RwLock, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_process::ManagedChild;
 
@@ -30,9 +30,25 @@ const PROVIDER_HEALTHY: u8 = 1;
 const PROVIDER_CONNECTION_RETIRED: u8 = 2;
 
 pub(crate) struct McpGatewayManager {
-    providers: BTreeMap<String, ProviderEntry>,
-    request_timeout: Duration,
+    state: RwLock<McpGatewayState>,
     stopping: AtomicBool,
+}
+
+struct McpGatewayState {
+    providers: BTreeMap<String, Arc<ProviderEntry>>,
+    request_timeout: Duration,
+}
+
+// Wired into the authoritative config reload transaction only after the Server
+// can accept same-Runner MCP inventory generation updates without weakening
+// exact provider identity fences.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct McpGatewayReloadSummary {
+    pub(crate) preserved: usize,
+    pub(crate) replaced: usize,
+    pub(crate) added: usize,
+    pub(crate) removed: usize,
 }
 
 struct ProviderEntry {
@@ -125,21 +141,14 @@ impl McpGatewayManager {
         let providers = config
             .providers
             .iter()
-            .map(|provider| {
-                (
-                    provider.id.clone(),
-                    ProviderEntry {
-                        config: provider.clone(),
-                        instance_id: uuid::Uuid::new_v4().simple().to_string(),
-                        lifecycle: AtomicU8::new(PROVIDER_NEVER_STARTED),
-                        session: Mutex::new(None),
-                    },
-                )
-            })
+            .cloned()
+            .map(|provider| (provider.id.clone(), Arc::new(ProviderEntry::new(provider))))
             .collect();
         Self {
-            providers,
-            request_timeout: Duration::from_secs(config.request_timeout_secs.clamp(1, 120)),
+            state: RwLock::new(McpGatewayState {
+                providers,
+                request_timeout: Duration::from_secs(config.request_timeout_secs.clamp(1, 120)),
+            }),
             stopping: AtomicBool::new(false),
         }
     }
@@ -148,10 +157,81 @@ impl McpGatewayManager {
     /// registration. Reading it does not start a provider process and does not
     /// expose executable, argv, environment, PID, stderr, or secret material.
     pub(crate) fn provider_inventory(&self) -> Vec<McpGatewayProvider> {
-        self.providers
+        self.state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .providers
             .values()
-            .map(ProviderEntry::advertisement)
+            .map(|provider| provider.advertisement())
             .collect()
+    }
+
+    /// Atomically replace the configured provider set without retargeting any
+    /// exact provider identity. Providers whose complete local config is
+    /// unchanged retain their instance id and live connection. Changed/new
+    /// providers receive fresh instance ids; removed/replaced connections are
+    /// retired after the new routing snapshot is committed.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn apply_config_candidate(
+        &self,
+        config: &McpGatewayConfig,
+    ) -> Result<McpGatewayReloadSummary, &'static str> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("mcp_gateway_stopping");
+        }
+        let mut retired = Vec::new();
+        let summary;
+        {
+            let mut state = self
+                .state
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.stopping.load(Ordering::SeqCst) {
+                return Err("mcp_gateway_stopping");
+            }
+            let mut current = std::mem::take(&mut state.providers);
+            let mut next = BTreeMap::new();
+            let mut preserved = 0usize;
+            let mut replaced = 0usize;
+            let mut added = 0usize;
+            for provider_config in &config.providers {
+                match current.remove(&provider_config.id) {
+                    Some(existing) if existing.config == *provider_config => {
+                        preserved += 1;
+                        next.insert(provider_config.id.clone(), existing);
+                    }
+                    Some(existing) => {
+                        replaced += 1;
+                        retired.push(existing);
+                        next.insert(
+                            provider_config.id.clone(),
+                            Arc::new(ProviderEntry::new(provider_config.clone())),
+                        );
+                    }
+                    None => {
+                        added += 1;
+                        next.insert(
+                            provider_config.id.clone(),
+                            Arc::new(ProviderEntry::new(provider_config.clone())),
+                        );
+                    }
+                }
+            }
+            let removed = current.len();
+            retired.extend(current.into_values());
+            state.providers = next;
+            state.request_timeout = Duration::from_secs(config.request_timeout_secs.clamp(1, 120));
+            summary = McpGatewayReloadSummary {
+                preserved,
+                replaced,
+                added,
+                removed,
+            };
+        }
+        for provider in retired {
+            provider.retire_connection_nonblocking();
+        }
+        Ok(summary)
     }
 
     pub(crate) fn handle(&self, request: McpGatewayRequest) -> McpGatewayResponse {
@@ -174,7 +254,7 @@ impl McpGatewayManager {
                 provider_id,
                 provider_instance_id,
             } => {
-                let Some(provider) = self.exact_provider(&provider_id, &provider_instance_id)
+                let Some((provider, _)) = self.exact_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
@@ -186,14 +266,14 @@ impl McpGatewayManager {
                 provider_id,
                 provider_instance_id,
             } => {
-                let Some(provider) = self.exact_provider(&provider_id, &provider_instance_id)
+                let Some((provider, timeout)) =
+                    self.exact_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
-                match provider.with_connection(
-                    provider.request_timeout(self.request_timeout),
-                    |connection, timeout| connection.tools_list(timeout),
-                ) {
+                match provider.with_connection(timeout, |connection, timeout| {
+                    connection.tools_list(timeout)
+                }) {
                     Ok(tools) => {
                         McpGatewayResponse::success(McpGatewayResponsePayload::Tools { tools })
                     }
@@ -207,32 +287,30 @@ impl McpGatewayManager {
                 arguments,
                 expected_schema,
             } => {
-                let Some(provider) = self.exact_provider(&provider_id, &provider_instance_id)
+                let Some((provider, timeout)) =
+                    self.exact_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
-                match provider.with_connection(
-                    provider.request_timeout(self.request_timeout),
-                    |connection, timeout| {
-                        let started = Instant::now();
-                        let tools = connection
-                            .tools_list(timeout)
-                            .map_err(ProviderFailure::preflight)?;
-                        let Some(current) = tools.iter().find(|tool| tool.name == name) else {
-                            return Err(ProviderFailure::not_started("provider_tool_missing"));
-                        };
-                        if current.schema_observation() != expected_schema {
-                            return Err(ProviderFailure::not_started("provider_schema_changed"));
-                        }
-                        let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
-                            return Err(ProviderFailure::not_started("provider_timeout"));
-                        };
-                        if remaining.is_zero() {
-                            return Err(ProviderFailure::not_started("provider_timeout"));
-                        }
-                        connection.tools_call(&name, arguments, remaining)
-                    },
-                ) {
+                match provider.with_connection(timeout, |connection, timeout| {
+                    let started = Instant::now();
+                    let tools = connection
+                        .tools_list(timeout)
+                        .map_err(ProviderFailure::preflight)?;
+                    let Some(current) = tools.iter().find(|tool| tool.name == name) else {
+                        return Err(ProviderFailure::not_started("provider_tool_missing"));
+                    };
+                    if current.schema_observation() != expected_schema {
+                        return Err(ProviderFailure::not_started("provider_schema_changed"));
+                    }
+                    let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
+                        return Err(ProviderFailure::not_started("provider_timeout"));
+                    };
+                    if remaining.is_zero() {
+                        return Err(ProviderFailure::not_started("provider_timeout"));
+                    }
+                    connection.tools_call(&name, arguments, remaining)
+                }) {
                     Ok(result) => {
                         McpGatewayResponse::success(McpGatewayResponsePayload::ToolResult {
                             result,
@@ -248,22 +326,35 @@ impl McpGatewayManager {
         &self,
         provider_id: &str,
         provider_instance_id: &str,
-    ) -> Option<&ProviderEntry> {
-        self.providers
-            .get(provider_id)
-            .filter(|provider| provider.instance_id == provider_instance_id)
+    ) -> Option<(Arc<ProviderEntry>, Duration)> {
+        let state = self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let provider = state.providers.get(provider_id)?;
+        if provider.instance_id != provider_instance_id {
+            return None;
+        }
+        Some((
+            Arc::clone(provider),
+            provider.request_timeout(state.request_timeout),
+        ))
     }
 
     pub(crate) fn shutdown(&self) {
         if self.stopping.swap(true, Ordering::SeqCst) {
             return;
         }
-        for provider in self.providers.values() {
-            let mut session = provider
-                .session
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            drop(session.take());
+        let providers = self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .providers
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for provider in providers {
+            provider.shutdown_connection();
         }
     }
 }
@@ -275,6 +366,43 @@ impl Drop for McpGatewayManager {
 }
 
 impl ProviderEntry {
+    fn new(config: McpGatewayProviderConfig) -> Self {
+        Self {
+            config,
+            instance_id: uuid::Uuid::new_v4().simple().to_string(),
+            lifecycle: AtomicU8::new(PROVIDER_NEVER_STARTED),
+            session: Mutex::new(None),
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn retire_connection_nonblocking(&self) {
+        self.lifecycle
+            .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
+        match self.session.try_lock() {
+            Ok(mut session) => drop(session.take()),
+            Err(TryLockError::WouldBlock) => {
+                // An already-dispatched request owns the connection. Do not
+                // interrupt it or block config reload; once that request drops
+                // the last Arc<ProviderEntry>, the old connection is retired.
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                let mut session = poisoned.into_inner();
+                drop(session.take());
+            }
+        }
+    }
+
+    fn shutdown_connection(&self) {
+        let mut session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        drop(session.take());
+        self.lifecycle
+            .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
+    }
+
     fn advertisement(&self) -> McpGatewayProvider {
         McpGatewayProvider {
             provider_id: self.config.id.clone(),
