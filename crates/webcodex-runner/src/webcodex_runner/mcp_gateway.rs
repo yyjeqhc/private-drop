@@ -10,20 +10,24 @@ use super::config::{McpGatewayConfig, McpGatewayProviderConfig, MCP_GATEWAY_MAX_
 use super::shell::{env_keys_equal, is_sensitive_env_key};
 use crate::mcp_gateway::{
     validate_json_value, validate_request, validate_tool_result, validate_tools, McpGatewayContent,
-    McpGatewayDispatchState, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
-    McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult, MCP_GATEWAY_MAX_MESSAGE_BYTES,
+    McpGatewayDispatchState, McpGatewayProvider, McpGatewayProviderState, McpGatewayRequest,
+    McpGatewayResponse, McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult,
+    MCP_GATEWAY_MAX_MESSAGE_BYTES,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{mpsc, Mutex, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_process::ManagedChild;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS: usize = 32;
+const PROVIDER_NEVER_STARTED: u8 = 0;
+const PROVIDER_HEALTHY: u8 = 1;
+const PROVIDER_CONNECTION_RETIRED: u8 = 2;
 
 pub(crate) struct McpGatewayManager {
     providers: BTreeMap<String, ProviderEntry>,
@@ -34,6 +38,7 @@ pub(crate) struct McpGatewayManager {
 struct ProviderEntry {
     config: McpGatewayProviderConfig,
     instance_id: String,
+    lifecycle: AtomicU8,
     session: Mutex<Option<ProviderConnection>>,
 }
 
@@ -126,6 +131,7 @@ impl McpGatewayManager {
                     ProviderEntry {
                         config: provider.clone(),
                         instance_id: uuid::Uuid::new_v4().simple().to_string(),
+                        lifecycle: AtomicU8::new(PROVIDER_NEVER_STARTED),
                         session: Mutex::new(None),
                     },
                 )
@@ -164,6 +170,18 @@ impl McpGatewayManager {
             );
         }
         match request {
+            McpGatewayRequest::ProviderStatus {
+                provider_id,
+                provider_instance_id,
+            } => {
+                let Some(provider) = self.exact_provider(&provider_id, &provider_instance_id)
+                else {
+                    return stale_provider();
+                };
+                McpGatewayResponse::success(McpGatewayResponsePayload::ProviderStatus {
+                    state: provider.lifecycle_state(),
+                })
+            }
             McpGatewayRequest::ToolsList {
                 provider_id,
                 provider_instance_id,
@@ -272,6 +290,37 @@ impl ProviderEntry {
             .unwrap_or(default)
     }
 
+    fn lifecycle_state(&self) -> McpGatewayProviderState {
+        let mut session = match self.session.try_lock() {
+            Ok(session) => session,
+            Err(TryLockError::WouldBlock) => return McpGatewayProviderState::Busy,
+            Err(TryLockError::Poisoned(_)) => return McpGatewayProviderState::ConnectionRetired,
+        };
+        if let Some(connection) = session.as_mut() {
+            match connection.child.try_wait() {
+                Ok(None) => {
+                    self.lifecycle.store(PROVIDER_HEALTHY, Ordering::SeqCst);
+                    return McpGatewayProviderState::Healthy;
+                }
+                Ok(Some(_)) | Err(_) => {
+                    // Reap/drop the dead owned connection without starting a
+                    // replacement. A later explicit interaction owns reconnect.
+                    drop(session.take());
+                    self.lifecycle
+                        .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
+                    return McpGatewayProviderState::ConnectionRetired;
+                }
+            }
+        }
+        match self.lifecycle.load(Ordering::SeqCst) {
+            PROVIDER_NEVER_STARTED => McpGatewayProviderState::NeverStarted,
+            PROVIDER_HEALTHY | PROVIDER_CONNECTION_RETIRED => {
+                McpGatewayProviderState::ConnectionRetired
+            }
+            _ => McpGatewayProviderState::ConnectionRetired,
+        }
+    }
+
     fn with_connection<T>(
         &self,
         timeout: Duration,
@@ -293,8 +342,13 @@ impl ProviderEntry {
         let started = Instant::now();
         if session.is_none() {
             match ProviderConnection::spawn(&self.config, timeout) {
-                Ok(connection) => *session = Some(connection),
+                Ok(connection) => {
+                    self.lifecycle.store(PROVIDER_HEALTHY, Ordering::SeqCst);
+                    *session = Some(connection);
+                }
                 Err(mut error) => {
+                    self.lifecycle
+                        .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
                     // Initialization is provider lifecycle setup, not the
                     // requested tools/list or tools/call. Even if initialize
                     // reached the child, the caller's operation did not. A
@@ -308,6 +362,8 @@ impl ProviderEntry {
             .checked_sub(started.elapsed())
             .filter(|remaining| !remaining.is_zero())
         else {
+            self.lifecycle
+                .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
             if let Some(mut connection) = session.take() {
                 connection.terminate();
             }
@@ -318,6 +374,8 @@ impl ProviderEntry {
             remaining,
         );
         if result.as_ref().is_err_and(|error| error.fatal) {
+            self.lifecycle
+                .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
             // Retire only the desynchronized connection. Never replay the
             // failed request here; a later explicit request may spawn a fresh
             // connection under the same logical provider identity.

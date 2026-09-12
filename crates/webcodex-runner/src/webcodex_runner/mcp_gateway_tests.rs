@@ -131,6 +131,13 @@ impl Fixture {
             .unwrap()
     }
 
+    fn status(&self, provider: &McpGatewayProvider) -> McpGatewayResponse {
+        self.manager.handle(McpGatewayRequest::ProviderStatus {
+            provider_id: provider.provider_id.clone(),
+            provider_instance_id: provider.provider_instance_id.clone(),
+        })
+    }
+
     fn list(&self, provider: &McpGatewayProvider) -> McpGatewayResponse {
         self.manager.handle(McpGatewayRequest::ToolsList {
             provider_id: provider.provider_id.clone(),
@@ -162,6 +169,64 @@ impl Fixture {
             .filter(|line| *line == value)
             .count()
     }
+}
+
+fn provider_state(response: McpGatewayResponse) -> McpGatewayProviderState {
+    let Some(McpGatewayResponsePayload::ProviderStatus { state }) = response.payload else {
+        panic!("provider status payload missing: {:?}", response.error);
+    };
+    state
+}
+
+#[test]
+fn provider_status_is_passive_and_tracks_connection_lifecycle() {
+    let fixture = Fixture::new("crash", 2);
+    let provider = fixture.provider();
+
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::NeverStarted
+    );
+    assert_eq!(fixture.marker_count("start"), 0);
+
+    assert!(fixture.list(&provider).error.is_none());
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::Healthy
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    let failed = fixture.call(&provider);
+    assert_eq!(
+        failed.dispatch_state,
+        McpGatewayDispatchState::OutcomeUnknown
+    );
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::ConnectionRetired
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    assert!(fixture.list(&provider).error.is_none());
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::Healthy
+    );
+    assert_eq!(fixture.marker_count("start"), 2);
+}
+
+#[test]
+fn provider_status_reports_busy_without_waiting_or_starting_work() {
+    let fixture = Fixture::new("normal", 2);
+    let provider = fixture.provider();
+    let entry = fixture.manager.providers.get("fake").unwrap();
+    let _guard = entry.session.lock().unwrap();
+
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::Busy
+    );
+    assert_eq!(fixture.marker_count("start"), 0);
 }
 
 #[test]
@@ -396,6 +461,20 @@ fn provider_notifications_are_consumed_without_retiring_the_session() {
     assert!(fixture.list(&provider).error.is_none());
     assert_eq!(fixture.marker_count("start"), 1);
     assert_eq!(fixture.marker_count("initialize"), 1);
+}
+
+#[test]
+fn provider_status_reaps_an_exited_connection_without_restarting_it() {
+    let fixture = Fixture::new("exit_after_list", 2);
+    let provider = fixture.provider();
+    assert!(fixture.list(&provider).error.is_none());
+    std::thread::sleep(Duration::from_millis(50));
+
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::ConnectionRetired
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
 }
 
 #[test]

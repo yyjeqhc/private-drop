@@ -132,13 +132,13 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 pub(crate) fn tool_spec() -> Value {
     json!({
         "name": MCP_TOOL_NAME,
-        "description": "Access explicitly authorized Runner-owned local MCP servers through WebCodex's built-in gateway. No-argument action=list reports registration routing resolvability, not provider process health; action=list with server and action=describe interact with the provider. Use action=describe before action=call, and re-describe when WebCodex reports a schema change. Provider process identities and schema revision tokens are intentionally hidden.",
+        "description": "Access explicitly authorized Runner-owned local MCP servers through WebCodex's built-in gateway. No-argument action=list reports registration routing resolvability. action=status with server passively reports bounded provider lifecycle state without starting, initializing, or pinging the provider; healthy means the retained connection's child is still running, not an end-to-end protocol probe. action=list with server and action=describe interact with the provider. Use action=describe before action=call, and re-describe when WebCodex reports a schema change. Provider process identities, paths, stderr, environment, and schema revision tokens are intentionally hidden.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "describe", "call"]
+                    "enum": ["list", "status", "describe", "call"]
                 },
                 "server": {
                     "type": "string",
@@ -187,6 +187,9 @@ pub(crate) async fn call(
         "list" => list(runtime, parsed, auth)
             .await
             .map(GatewaySuccess::Metadata),
+        "status" => status(runtime, parsed, auth)
+            .await
+            .map(GatewaySuccess::Metadata),
         "describe" => describe(runtime, parsed, auth)
             .await
             .map(GatewaySuccess::Metadata),
@@ -195,7 +198,7 @@ pub(crate) async fn call(
             .map(GatewaySuccess::UpstreamToolResult),
         _ => Err(GatewayError::local(
             "invalid_action",
-            "action must be one of list, describe, or call",
+            "action must be one of list, status, describe, or call",
         )),
     };
     render_gateway_result(result)
@@ -264,6 +267,38 @@ fn registration_routing_summary(candidates: &BTreeMap<String, Vec<ResolvedProvid
         }));
     }
     json!({"servers": servers})
+}
+
+async fn status(
+    runtime: &ToolRuntime,
+    args: McpToolArguments,
+    auth: Option<&AuthContext>,
+) -> Result<Value, GatewayError> {
+    if args.tool.is_some() || args.arguments.is_some() {
+        return Err(GatewayError::local(
+            "invalid_arguments",
+            "action=status does not accept tool or arguments",
+        ));
+    }
+    let server = required_id(args.server.as_deref(), "server")?;
+    let candidates = visible_provider_candidates(runtime, auth).await;
+    let provider = resolve_provider(&candidates, server)?;
+    let response = execute_exact(
+        runtime,
+        &provider,
+        McpGatewayRequest::ProviderStatus {
+            provider_id: provider.provider_id.clone(),
+            provider_instance_id: provider.provider_instance_id.clone(),
+        },
+        auth,
+    )
+    .await?;
+    let state = response_provider_status(response)?;
+    Ok(json!({
+        "server": provider.provider_id,
+        "name": provider.name,
+        "state": state,
+    }))
 }
 
 async fn describe(
@@ -542,6 +577,34 @@ async fn execute_exact(
                 dispatch_state: Some(state),
             })
         }
+    }
+}
+
+fn response_provider_status(
+    response: McpGatewayResponse,
+) -> Result<McpGatewayProviderState, GatewayError> {
+    if let Some(error) = response.error {
+        let stale_provider = error.code == "stale_provider";
+        let code = if stale_provider {
+            "provider_replaced".to_string()
+        } else {
+            error.code
+        };
+        return Err(GatewayError {
+            code,
+            message: error.message,
+            recovery: stale_provider.then_some(
+                "The exact provider instance changed. Re-list before checking status again; status itself never starts, reconnects, or replays provider work.",
+            ),
+            dispatch_state: Some(response.dispatch_state),
+        });
+    }
+    match response.payload {
+        Some(McpGatewayResponsePayload::ProviderStatus { state }) => Ok(state),
+        _ => Err(GatewayError::local(
+            "invalid_provider_status",
+            "Runner returned an unexpected provider status response",
+        )),
     }
 }
 

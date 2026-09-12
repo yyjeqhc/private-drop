@@ -168,6 +168,9 @@ fn main() -> io::Result<()> {
                         r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","description":"{description}","inputSchema":{{"type":"object","properties":{{"value":{{"type":"{value_type}"}}}}}}}}]}}}}"#
                     ),
                 )?;
+                if scenario == "exit_after_list" {
+                    return Ok(());
+                }
                 if scenario == "notifications" {
                     send(
                         &mut writer,

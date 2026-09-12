@@ -178,7 +178,7 @@ provider 不会整体继承 Runner 环境。`env_from_env` 只复制显式列出
 
 把 credential 映射给 provider，就等于把这份 credential 委托给该 provider process。provider 可以按自身实现使用它，也可以通过正常 tool result 返回派生值甚至原始值；WebCodex 不会尝试对任意 provider output 做 secret redaction。因此应把 configured provider 视为 credential recipient，使用 least-privilege provider credential，并注意任何拥有 `mcp:local` 权限的 caller 都能行使这些 credential 为 provider 提供的能力。
 
-provider connection 在第一次真实交互时启动，并在健康时复用。发生 fatal stdio/protocol failure 时只会退休当前 connection；WebCodex 绝不会重放刚才失败的 request。后续由 caller 明确发起的新 request 可以在同一逻辑 provider identity 下建立新 connection；effectful `tools/call` 在 dispatch 前仍会重新 `tools/list` 并核对已绑定 schema。Server 只看到逻辑 provider `id`/`name`，不会拿到 executable path、环境 value、PID、stderr 或 Runner credential。`mcp_tool(action=list)` 只表示 provider id 是否可路由；`list(server=...)` 与 `describe` 才会与 provider 交互。
+provider connection 在第一次真实交互时启动，并在健康时复用。发生 fatal stdio/protocol failure 时只会退休当前 connection；WebCodex 绝不会重放刚才失败的 request。后续由 caller 明确发起的新 request 可以在同一逻辑 provider identity 下建立新 connection；effectful `tools/call` 在 dispatch 前仍会重新 `tools/list` 并核对已绑定 schema。Server 只看到逻辑 provider `id`/`name`，不会拿到 executable path、环境 value、PID、stderr 或 Runner credential。`mcp_tool(action=list)` 只表示 provider id 是否可路由。`mcp_tool(action=status, server=...)` 是纯 Runner-side lifecycle observation，不会启动、initialize 或 ping provider，只返回 `never_started`、`healthy`、`connection_retired` 或 `busy`。这里的 `healthy` 只表示当前保留 connection 的子进程仍在运行，不代表执行过端到端 MCP health probe。`list(server=...)` 与 `describe` 才会与 provider 交互。
 
 ### Provider-side gateway V1 compatibility
 
