@@ -23,6 +23,37 @@ enum ContextAckShape {
     Invalid,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkOnProjectSource {
+    Project,
+    Path,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkOnProjectMode {
+    Checkout,
+    Worktree,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) struct WorkOnProjectErgonomicsFacts {
+    resume_requested: bool,
+    source: WorkOnProjectSource,
+    mode: WorkOnProjectMode,
+    mode_explicit: bool,
+    base_ref_present: bool,
+    include_project_instructions: Option<bool>,
+    include_project_instructions_explicit: bool,
+    include_workflow_guidance: Option<bool>,
+    include_workflow_guidance_explicit: bool,
+    include_extension_catalog: Option<bool>,
+    include_extension_catalog_explicit: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct ModelErgonomicsTimer {
     tool_name: &'static str,
@@ -30,6 +61,7 @@ pub(crate) struct ModelErgonomicsTimer {
     started: Instant,
     context_ack_shape: ContextAckShape,
     finish_summary_only: Option<bool>,
+    work_on_project: Option<WorkOnProjectErgonomicsFacts>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -39,6 +71,7 @@ pub(crate) struct ModelErgonomicsCompletion {
     duration_ms: u64,
     context_ack_shape: ContextAckShape,
     finish_summary_only: Option<bool>,
+    work_on_project: Option<WorkOnProjectErgonomicsFacts>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -72,6 +105,8 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) edit_outcome: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) edit_conflict_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) work_on_project: Option<WorkOnProjectErgonomicsFacts>,
 }
 
 impl ModelErgonomicsRecord {
@@ -116,12 +151,14 @@ impl ModelErgonomicsTimer {
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         });
+        let work_on_project = work_on_project_facts(tool_name, arguments);
         Some(Self {
             tool_name: definition.name,
             tool_category: definition.category,
             started: Instant::now(),
             context_ack_shape,
             finish_summary_only,
+            work_on_project,
         })
     }
 
@@ -133,6 +170,7 @@ impl ModelErgonomicsTimer {
             duration_ms: elapsed.as_millis().min(u64::MAX as u128) as u64,
             context_ack_shape: self.context_ack_shape,
             finish_summary_only: self.finish_summary_only,
+            work_on_project: self.work_on_project,
         }
     }
 
@@ -144,6 +182,7 @@ impl ModelErgonomicsTimer {
             duration_ms: elapsed.as_millis().min(u64::MAX as u128) as u64,
             context_ack_shape: self.context_ack_shape,
             finish_summary_only: self.finish_summary_only,
+            work_on_project: self.work_on_project,
         }
     }
 }
@@ -216,7 +255,7 @@ impl ModelErgonomicsCompletion {
         let continuity = continuity_facts(self.context_ack_shape, output);
         let edit = edit_facts(self.tool_name, success, output);
         ModelErgonomicsRecord {
-            schema_version: 3,
+            schema_version: 4,
             tool_name: self.tool_name,
             tool_category: self.tool_category,
             success,
@@ -237,7 +276,69 @@ impl ModelErgonomicsCompletion {
             edit_surface: edit.surface,
             edit_outcome: edit.outcome,
             edit_conflict_kind: edit.conflict_kind,
+            work_on_project: self.work_on_project,
         }
+    }
+}
+
+fn work_on_project_facts(
+    tool_name: &str,
+    arguments: &Value,
+) -> Option<WorkOnProjectErgonomicsFacts> {
+    if tool_name != "work_on_project" {
+        return None;
+    }
+    let object = arguments.as_object()?;
+    let source = match (
+        object.get("project"),
+        object.get("client_id"),
+        object.get("path"),
+    ) {
+        (Some(Value::String(project)), None, None) if !project.is_empty() => {
+            WorkOnProjectSource::Project
+        }
+        (None, Some(Value::String(client_id)), Some(Value::String(path)))
+            if !client_id.is_empty() && !path.is_empty() =>
+        {
+            WorkOnProjectSource::Path
+        }
+        _ => WorkOnProjectSource::Invalid,
+    };
+    let mode_explicit = object.contains_key("mode");
+    let mode = match object.get("mode") {
+        None => WorkOnProjectMode::Checkout,
+        Some(Value::String(mode)) if mode == "checkout" => WorkOnProjectMode::Checkout,
+        Some(Value::String(mode)) if mode == "worktree" => WorkOnProjectMode::Worktree,
+        _ => WorkOnProjectMode::Invalid,
+    };
+    let (include_project_instructions, include_project_instructions_explicit) =
+        effective_default_true_boolean(object, "include_project_instructions");
+    let (include_workflow_guidance, include_workflow_guidance_explicit) =
+        effective_default_true_boolean(object, "include_workflow_guidance");
+    let (include_extension_catalog, include_extension_catalog_explicit) =
+        effective_default_true_boolean(object, "include_extension_catalog");
+    Some(WorkOnProjectErgonomicsFacts {
+        resume_requested: object.contains_key("session_id"),
+        source,
+        mode,
+        mode_explicit,
+        base_ref_present: object.contains_key("base_ref"),
+        include_project_instructions,
+        include_project_instructions_explicit,
+        include_workflow_guidance,
+        include_workflow_guidance_explicit,
+        include_extension_catalog,
+        include_extension_catalog_explicit,
+    })
+}
+
+fn effective_default_true_boolean(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+) -> (Option<bool>, bool) {
+    match object.get(field) {
+        None => (Some(true), false),
+        Some(value) => (value.as_bool(), true),
     }
 }
 
@@ -456,6 +557,18 @@ mod tests {
             .finish_after(Duration::from_millis(duration_ms))
     }
 
+    fn work_on_project_record(arguments: Value) -> ModelErgonomicsRecord {
+        ModelErgonomicsTimer::start_with_protocol(
+            "work_on_project",
+            &arguments,
+            SessionContextRevisionAck::Unsupported,
+        )
+        .expect("work_on_project telemetry")
+        .finish_after(Duration::ZERO)
+        .record_for_tool_result(&ToolResult::ok(json!({})))
+        .expect("serializable telemetry")
+    }
+
     #[test]
     fn success_record_uses_exact_utf8_tool_result_bytes() {
         let result = ToolResult::ok(json!({"text": "中文", "count": 2}));
@@ -476,6 +589,131 @@ mod tests {
         assert_eq!(record.error_kind, None);
         assert_eq!(record.failure_kind, None);
         assert_eq!(record.recovery_kind, None);
+    }
+
+    #[test]
+    fn non_work_on_project_omits_bootstrap_preference_facts() {
+        let record = completion("tool_manifest", 0)
+            .record_for_tool_result(&ToolResult::ok(json!({})))
+            .unwrap();
+        assert_eq!(record.schema_version, 4);
+        assert_eq!(record.work_on_project, None);
+        assert!(!serde_json::to_string(&record)
+            .unwrap()
+            .contains("work_on_project"));
+    }
+
+    #[test]
+    fn work_on_project_fresh_defaults_are_queryable_without_raw_values() {
+        let record = work_on_project_record(json!({
+            "project": "agent:private:project",
+            "instruction": "private instruction"
+        }));
+        let facts = record.work_on_project.expect("work_on_project facts");
+        assert!(!facts.resume_requested);
+        assert_eq!(facts.source, WorkOnProjectSource::Project);
+        assert_eq!(facts.mode, WorkOnProjectMode::Checkout);
+        assert!(!facts.mode_explicit);
+        assert!(!facts.base_ref_present);
+        assert_eq!(facts.include_project_instructions, Some(true));
+        assert!(!facts.include_project_instructions_explicit);
+        assert_eq!(facts.include_workflow_guidance, Some(true));
+        assert!(!facts.include_workflow_guidance_explicit);
+        assert_eq!(facts.include_extension_catalog, Some(true));
+        assert!(!facts.include_extension_catalog_explicit);
+    }
+
+    #[test]
+    fn work_on_project_explicit_resume_and_false_preferences_are_queryable() {
+        let record = work_on_project_record(json!({
+            "project": "agent:private:project",
+            "instruction": "private instruction",
+            "session_id": "wc_sess_private",
+            "include_project_instructions": false,
+            "include_workflow_guidance": false,
+            "include_extension_catalog": false
+        }));
+        let facts = record.work_on_project.expect("work_on_project facts");
+        assert!(facts.resume_requested);
+        assert_eq!(facts.include_project_instructions, Some(false));
+        assert!(facts.include_project_instructions_explicit);
+        assert_eq!(facts.include_workflow_guidance, Some(false));
+        assert!(facts.include_workflow_guidance_explicit);
+        assert_eq!(facts.include_extension_catalog, Some(false));
+        assert!(facts.include_extension_catalog_explicit);
+    }
+
+    #[test]
+    fn work_on_project_path_worktree_records_only_closed_preferences() {
+        let record = work_on_project_record(json!({
+            "client_id": "private-client",
+            "path": "/private/path",
+            "mode": "worktree",
+            "base_ref": "private/base-ref",
+            "instruction": "private instruction"
+        }));
+        let facts = record.work_on_project.expect("work_on_project facts");
+        assert_eq!(facts.source, WorkOnProjectSource::Path);
+        assert_eq!(facts.mode, WorkOnProjectMode::Worktree);
+        assert!(facts.mode_explicit);
+        assert!(facts.base_ref_present);
+    }
+
+    #[test]
+    fn work_on_project_malformed_values_fail_closed_without_guessing_effective_booleans() {
+        let record = work_on_project_record(json!({
+            "project": 42,
+            "instruction": "private instruction",
+            "session_id": 7,
+            "mode": 9,
+            "base_ref": {"private": true},
+            "include_project_instructions": "false",
+            "include_workflow_guidance": null,
+            "include_extension_catalog": []
+        }));
+        let facts = record.work_on_project.expect("work_on_project facts");
+        assert!(facts.resume_requested);
+        assert_eq!(facts.source, WorkOnProjectSource::Invalid);
+        assert_eq!(facts.mode, WorkOnProjectMode::Invalid);
+        assert!(facts.mode_explicit);
+        assert!(facts.base_ref_present);
+        assert_eq!(facts.include_project_instructions, None);
+        assert!(facts.include_project_instructions_explicit);
+        assert_eq!(facts.include_workflow_guidance, None);
+        assert!(facts.include_workflow_guidance_explicit);
+        assert_eq!(facts.include_extension_catalog, None);
+        assert!(facts.include_extension_catalog_explicit);
+    }
+
+    #[test]
+    fn work_on_project_telemetry_never_serializes_private_request_bodies() {
+        let sentinels = [
+            "PRIVATE_INSTRUCTION_SENTINEL",
+            "PRIVATE_PROJECT_SENTINEL",
+            "PRIVATE_CLIENT_SENTINEL",
+            "PRIVATE_PATH_SENTINEL",
+            "PRIVATE_SESSION_SENTINEL",
+            "PRIVATE_BASE_REF_SENTINEL",
+        ];
+        let record = work_on_project_record(json!({
+            "instruction": sentinels[0],
+            "project": sentinels[1],
+            "client_id": sentinels[2],
+            "path": sentinels[3],
+            "session_id": sentinels[4],
+            "base_ref": sentinels[5],
+            "mode": "worktree",
+            "include_project_instructions": false,
+            "include_workflow_guidance": true,
+            "include_extension_catalog": false
+        }));
+        let serialized = serde_json::to_string(&record).unwrap();
+        for sentinel in sentinels {
+            assert!(
+                !serialized.contains(sentinel),
+                "work_on_project telemetry leaked {sentinel}: {serialized}"
+            );
+        }
     }
 
     #[test]
@@ -638,7 +876,7 @@ mod tests {
             let record = completion("apply_text_edits", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 3);
+            assert_eq!(record.schema_version, 4);
             assert_eq!(record.edit_surface.as_deref(), Some("canonical"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -838,7 +1076,7 @@ mod tests {
             .finish_after(Duration::ZERO)
             .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
             .unwrap();
-            assert_eq!(record.schema_version, 3);
+            assert_eq!(record.schema_version, 4);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();
