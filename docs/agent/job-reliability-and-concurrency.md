@@ -16,7 +16,7 @@ Three identities have different lifetimes:
 | Thing | Meaning | Expected across Control Server restart |
 |---|---|---|
 | MCP / HTTP request | One transport request or bounded wait | No. The connection/request may fail immediately. |
-| `job_id` | Identity of one already-dispatched execution | Yes, when the same reconciliation-capable Runner process survives and reports the Job in inventory. |
+| `job_id` | Identity of one already-dispatched execution | Active: when the same reconciliation-capable Runner process survives and reports inventory. Terminal public ordinary Jobs: also via the Server receipt within its original bounded retention window. |
 | `after_observation_token` | Opaque lifecycle and bounded log-delta state for one observed Job snapshot | No. Its Server epoch is process-local; a surviving Job should return a reset baseline and fresh token immediately after restart. |
 
 A dropped `observe_jobs`, `job_tail`, or other observation request therefore does **not**
@@ -59,6 +59,22 @@ the original command.
 
 A command that finishes while the Server is down is also recoverable when its
 terminal snapshot is still in the Runner's bounded retained inventory.
+
+The production Server also hydrates accepted public ordinary terminal receipts
+from `wc_job_receipts` before accepting traffic. Receipt writes happen after the
+registry lock is released and cannot change a terminal verdict. The receipt
+reuses the safe Job snapshot, excludes executable validation metadata, and fixes
+`terminal_observed_at` / `expires_at` at the first accepted terminal observation.
+SQLite retains at most 64 receipts per logical Runner for 15 minutes. Expired
+receipts are pruned on database open, writes, reads, and the existing recovery
+sweep. Historical owner attribution is independent of replacement registration.
+A new observation epoch resets old tokens without granting execution authority.
+
+Only Server-admitted Jobs with proven public visibility are receipt candidates.
+Inventory-only reconstruction retains its existing reconciliation behavior; it
+cannot prove whether an unknown Job was previously a hidden synchronous result,
+so it does not independently create a durable receipt. Receipt hydration never
+creates a pending request, execution mapping, waiter, or stop/retry/adopt lease.
 
 ### What is expected and what is a bug
 

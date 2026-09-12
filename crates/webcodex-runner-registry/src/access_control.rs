@@ -75,9 +75,16 @@ pub(crate) fn assert_runner_access(
 
 pub(crate) fn job_visible_to_access(
     access: Option<&RunnerAccess>,
-    inner: &RunnerRegistryInner,
+    _inner: &RunnerRegistryInner,
     job: &ShellJobRecord,
 ) -> bool {
+    if job
+        .observation
+        .receipt_expires_at
+        .is_some_and(|expires| expires <= crate::now_ts())
+    {
+        return false;
+    }
     let Some(access) = access else {
         return true;
     };
@@ -87,9 +94,8 @@ pub(crate) fn job_visible_to_access(
     if let Some(group) = job.auth_group.as_ref() {
         return lightweight_group_matches(Some(access), Some(group));
     }
-    inner
-        .runners
-        .get(&job.client_id)
-        .map(|runner| assert_runner_access(Some(access), runner).is_ok())
-        .unwrap_or(false)
+    access.group.is_none()
+        && access.username.as_deref().is_some_and(|username| {
+            !username.trim().is_empty() && job.owner_at_admission.as_deref() == Some(username)
+        })
 }

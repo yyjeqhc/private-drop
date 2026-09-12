@@ -1,4 +1,3 @@
-use super::RunnerRegistry;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use webcodex_core::runner_operation::RunnerOperation;
@@ -96,10 +95,6 @@ fn ssh_resource_trace_payload(
     })
 }
 
-pub(crate) fn registry_with_tool_request_trace() -> RunnerRegistry {
-    RunnerRegistry::with_telemetry(Arc::new(ToolRequestTraceRunnerRegistryTelemetry))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,4 +121,9 @@ mod tests {
         assert_eq!(payload["target_present"], true);
         assert_eq!(payload["default_cwd_present"], true);
     }
+}
+
+pub(crate) fn tool_request_trace_telemetry(
+) -> Arc<dyn webcodex_runner_registry::RunnerRegistryTelemetry> {
+    Arc::new(ToolRequestTraceRunnerRegistryTelemetry)
 }

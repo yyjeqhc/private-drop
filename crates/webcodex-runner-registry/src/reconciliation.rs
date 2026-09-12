@@ -551,6 +551,11 @@ pub(super) fn preflight_inventory_locked(
                 snapshot.job_id
             ));
         }
+        if existing.lifecycle.is_terminal() && existing.observation.receipt_expires_at.is_some() {
+            // Historical receipts have no live lease or executable validation
+            // plan. Incoming inventory is ignored, never applied to this record.
+            continue;
+        }
         let detached_instance_transfer = existing.runner_instance_id != runner_instance_id
             && detached_instance_transfer_allowed(existing, snapshot);
         if existing.runner_instance_id != runner_instance_id && !detached_instance_transfer {
@@ -644,7 +649,7 @@ fn remove_job_control_requests(
     }
 }
 
-fn record_from_snapshot(
+pub(crate) fn record_from_snapshot(
     client_id: &str,
     runner_instance_id: &str,
     auth_group: Option<RunnerAccessGroup>,
@@ -658,6 +663,7 @@ fn record_from_snapshot(
         request_id: Some(snapshot.request_id.clone()),
         client_id: client_id.to_string(),
         auth_group,
+        owner_at_admission: None,
         runner_instance_id: runner_instance_id.to_string(),
         kind: context
             .structured_execution
@@ -945,6 +951,8 @@ pub async fn recovery_timeout_sweep(registry: &RunnerRegistry) {
     prune_projected_structured_terminal_suppressions_locked(&mut inner, now);
     expire_recovering_jobs_locked(&mut inner, None, now, RECOVERY_SWEEP_PASS_CAP);
     registry.prune_expired_terminal_jobs_locked(&mut inner, now);
+    drop(inner);
+    registry.prune_job_receipts(now);
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1067,6 +1075,10 @@ pub(super) fn reconcile_inventory_locked(
                 snapshot,
                 now,
             );
+            record.owner_at_admission = inner
+                .runners
+                .get(client_id)
+                .and_then(|runner| runner.owner.clone());
             replace_log_from_snapshot(&mut record.stdout, &snapshot.stdout);
             replace_log_from_snapshot(&mut record.stderr, &snapshot.stderr);
             notify_job_update(&record);

@@ -14,16 +14,7 @@ pub struct RunnerAccess {
     pub group: Option<RunnerAccessGroup>,
 }
 
-/// Non-secret isolation partition captured when a Runner or Job is admitted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunnerAccessGroup {
-    /// Existing SHA-256 shared-key/OAuth-bridge group; never plaintext.
-    SharedKey(String),
-    /// Stable non-secret project grant identity.
-    ProjectGrant(String),
-    /// Explicit open-anonymous partition.
-    OpenAnonymous,
-}
+pub use webcodex_core::runner_job_receipt::RunnerAccessGroup;
 
 /// Opaque, stable, non-secret identity used only to partition detached Job
 /// idempotency. Root authentication policy decides how credentials map to this

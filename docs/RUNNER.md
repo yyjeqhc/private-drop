@@ -421,6 +421,21 @@ the same logical detached Job and route observation or stop through its durable
 control state. This does not make ordinary process execution detachable, and it
 does not promise survival across a machine reboot.
 
+Completed caller-visible ordinary Jobs have a separate Server-owned SQLite
+receipt. Within the original 15-minute terminal retention window, up to 64
+receipts per logical Runner survive a coordinated Server/Runner restart and
+remain available through `list_jobs`, `observe_jobs`, and bounded log reads.
+Receipts preserve the Job id, terminal result, retained log cursors and tails,
+and original authorization partition/owner; Runner registration is not required
+to observe them. Restarts and receipt replay do not renew their deadlines.
+Storage failure degrades restart observability without changing execution success.
+
+These receipts are read-only evidence. They contain no command input, stdin,
+environment, validation argv, replay intent, process handle, or execution lease.
+Active ordinary Jobs remain process-owned; only `run_detached_process` has an
+explicit durable execution ownership handoff. Hidden synchronous results and
+detached ownership state are excluded from ordinary receipt persistence.
+
 The Server distinguishes the stable Runner `client_id` from the current live process lease. A stale or replacement process cannot keep submitting results under the old lease, and ordinary child-process Jobs are not adopted by a replacement Runner. The exact lease identifier is an internal wire detail.
 
 Reconnect happens automatically with a short delay. Authentication failure and

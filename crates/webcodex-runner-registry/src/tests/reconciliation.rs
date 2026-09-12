@@ -3501,3 +3501,6 @@ async fn sweep_only_transitions_expired_jobs_and_leaves_recent_recovering() {
         "non-expired recovering job is left alone by the sweep"
     );
 }
+
+#[path = "job_receipts.rs"]
+mod job_receipts;

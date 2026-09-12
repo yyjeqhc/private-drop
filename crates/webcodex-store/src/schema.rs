@@ -29,6 +29,7 @@ impl Database {
         // than running a background reaper.
         let now = chrono::Utc::now().timestamp();
         db.purge_stale_auth_rows(now)?;
+        db.prune_job_receipts(now)?;
         Ok(db)
     }
 
@@ -75,6 +76,22 @@ impl Database {
         let mut conn = self.conn.lock().unwrap();
         conn.execute_batch(
             "
+            CREATE TABLE IF NOT EXISTS wc_job_receipts (
+                job_id TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                runner_instance_id TEXT NOT NULL,
+                auth_kind TEXT NOT NULL,
+                auth_partition TEXT,
+                owner_at_admission TEXT,
+                kind TEXT NOT NULL,
+                snapshot TEXT NOT NULL,
+                terminal_observed_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_receipts_expiry ON wc_job_receipts(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_job_receipts_runner_history
+                ON wc_job_receipts(client_id, terminal_observed_at DESC, job_id DESC);
+
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,

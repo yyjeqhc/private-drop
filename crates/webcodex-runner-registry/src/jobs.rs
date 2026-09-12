@@ -486,6 +486,11 @@ pub(super) fn notify_job_update(job: &ShellJobRecord) {
     use std::sync::atomic::Ordering;
     job.observation.revision.fetch_add(1, Ordering::Relaxed);
     job.observation.notify.notify_waiters();
+    if job.lifecycle.is_terminal() {
+        if let Some(candidates) = &job.observation.receipt_candidates {
+            candidates.lock().unwrap().insert(job.job_id.clone());
+        }
+    }
 }
 
 pub(super) fn is_runner_active_job_status(status: &str) -> bool {

@@ -16,6 +16,7 @@ mod communication;
 mod execution_model;
 mod executions;
 mod goal;
+mod job_receipts;
 mod memory;
 pub mod models;
 mod oauth;
@@ -150,3 +151,6 @@ mod execution_intent_tests;
 mod goal_tests;
 #[cfg(test)]
 mod memory_tests;
+
+#[cfg(test)]
+mod job_receipts_tests;

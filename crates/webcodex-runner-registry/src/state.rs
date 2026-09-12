@@ -363,6 +363,9 @@ pub(super) struct JobObservationState {
     /// lifecycle. Runner-reported `ended_at` remains the public execution time
     /// and never controls Server registry retention.
     pub(super) terminal_observed_at: Option<i64>,
+    pub(super) receipt_candidates: Option<crate::receipts::ReceiptCandidates>,
+    /// Fixed historical deadline, also identifies a receipt with no live lease.
+    pub(super) receipt_expires_at: Option<i64>,
 }
 
 impl JobObservationState {
@@ -372,6 +375,8 @@ impl JobObservationState {
             revision: Arc::new(AtomicU64::new(0)),
             notify: Arc::new(Notify::new()),
             terminal_observed_at: None,
+            receipt_candidates: None,
+            receipt_expires_at: None,
         }
     }
 }
@@ -402,6 +407,8 @@ pub(super) struct ShellJobRecord {
     /// plaintext key. Keeping this on the Job preserves authorization after
     /// the originating runner registration is removed.
     pub(super) auth_group: Option<RunnerAccessGroup>,
+    /// Immutable historical attribution; registration replacement cannot retarget it.
+    pub(super) owner_at_admission: Option<String>,
     /// Internal lease owner. Never exposed through public job tools.
     pub(super) runner_instance_id: String,
     pub(super) kind: String,
