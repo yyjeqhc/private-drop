@@ -1506,6 +1506,7 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "jobState",
         "jobWorkText",
         "No active jobs",
+        "No active jobs shown",
         "Progress reason",
         "Array.from",
         "Cargo test zero tests",

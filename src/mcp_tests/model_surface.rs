@@ -495,16 +495,25 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         import["_meta"]["openai/fileParams"],
         json!(["openaiFileIdRefs"])
     );
-    for job_tool in ["list_jobs", "observe_jobs"] {
-        let tool = compact_tools
-            .iter()
-            .find(|tool| tool["name"] == job_tool)
-            .unwrap_or_else(|| panic!("missing {job_tool}"));
-        assert_eq!(
-            tool["_meta"]["ui"]["resourceUri"], MCP_RESULT_UI_RESOURCE_URI,
-            "compact projection lost MCP App metadata for {job_tool}"
-        );
-    }
+    let list_jobs = compact_tools
+        .iter()
+        .find(|tool| tool["name"] == "list_jobs")
+        .expect("missing list_jobs");
+    assert_eq!(
+        list_jobs["_meta"]["ui"]["resourceUri"], MCP_RESULT_UI_RESOURCE_URI,
+        "compact projection lost MCP App metadata for list_jobs"
+    );
+    let observe_jobs = compact_tools
+        .iter()
+        .find(|tool| tool["name"] == "observe_jobs")
+        .expect("missing observe_jobs");
+    assert_ne!(
+        observe_jobs
+            .pointer("/_meta/ui/resourceUri")
+            .and_then(Value::as_str),
+        Some(MCP_RESULT_UI_RESOURCE_URI),
+        "routine observe_jobs must remain unbound from the Result App"
+    );
     let tools = compact_tools;
     let names: Vec<&str> = tools
         .iter()

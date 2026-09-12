@@ -573,7 +573,11 @@
       const active = Number.isInteger(presentation.shown_active_count) ? presentation.shown_active_count : items.filter((item) => item && item.active === true).length;
       const terminal = Number.isInteger(presentation.shown_terminal_count) ? presentation.shown_terminal_count : items.filter((item) => item && item.terminal === true).length;
       const attention = Number.isInteger(presentation.shown_attention_count) ? presentation.shown_attention_count : 0;
-      stateEl.textContent = active > 0 ? String(active) + " active" : attention > 0 ? String(attention) + " attention" : "No active jobs";
+      stateEl.textContent = active > 0
+        ? String(active) + " active"
+        : attention > 0
+          ? String(attention) + " attention"
+          : presentation.truncated === true ? "No active jobs shown" : "No active jobs";
       const parts = [String(presented) + " active/attention", String(matched) + " matched"];
       if (terminal > 0) parts.push(String(terminal) + " terminal");
       if (attention > 0) parts.push(String(attention) + " need attention");
