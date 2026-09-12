@@ -1573,6 +1573,7 @@ fn tool_suppresses_payload_capture(tool_name: Option<&str>) -> bool {
         Some(
             "read_tool_trace"
                 | "agent_continuation_bind"
+                | "agent_continuation_recover_endpoint"
                 | "agent_continuation_state"
                 | "agent_continuation_wake_acquire"
                 | "agent_continuation_wake_prepare"
@@ -2198,6 +2199,7 @@ mod tests {
 
         for tool_name in [
             "agent_continuation_bind",
+            "agent_continuation_recover_endpoint",
             "agent_continuation_state",
             "agent_continuation_wake_acquire",
             "agent_continuation_wake_prepare",
