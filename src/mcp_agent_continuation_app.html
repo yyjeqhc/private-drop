@@ -40,7 +40,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const ATTEMPT_ID = /^wc_wake_attempt_[0-9a-f]{32}$/;
   const APP_CALL_ID = /^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$/;
   const SAFE_RESULT_SHAPE = /^(nested-)?(null|array|string|number|boolean|undefined|function|symbol|bigint|structured|structured-direct|content-json|content-only|empty-object|other-object)$/;
-  const SAFE_RESULT_SEMANTICS = new Set(["structured-envelope-invalid", "success-not-true", "output-invalid", "projection-missing", "projection-invalid", "host-binding-missing", "host-binding-invalid", "host-bound-not-true", "unexpected"]);
+  const SAFE_RESULT_SEMANTICS = new Set([
+    "structured-envelope-invalid", "success-not-true", "output-invalid", "projection-missing",
+    "projection-object-invalid", "projection-version-invalid", "projection-identity-invalid",
+    "projection-display-name-invalid", "projection-queued-count-invalid", "projection-dispatch-invalid",
+    "projection-wake-invalid", "projection-wake-id-invalid", "projection-wake-revision-invalid",
+    "projection-wake-state-invalid", "host-binding-missing", "host-binding-invalid",
+    "host-bound-not-true", "unexpected",
+  ]);
   const SAFE_HOST_FAILURE_KINDS = new Set(["bridge-error", "bridge-timeout", "bridge-cancelled", "malformed-result"]);
   const CALL_TIMEOUT_MS = 10000;
   const MAX_BIND_ATTEMPTS = 3;
@@ -136,23 +143,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         || Object.prototype.hasOwnProperty.call(value, "error")));
   }
 
-  function structuredOf(result) {
-    const callResult = callToolResultOf(result);
-    if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return null;
-    const direct = callResult.structuredContent || callResult.structured_content;
-    // A Host may synthesize or project structuredContent independently from the
-    // standard CallToolResult content. Prefer it only when the canonical WebCodex
-    // success envelope survived; otherwise keep looking for the standard JSON
-    // compatibility envelope instead of letting malformed structuredContent mask it.
-    if (canonicalStructuredEnvelope(direct)) return direct;
-    // Some Hosts expose the structuredContent value itself rather than the full
-    // CallToolResult. Accept it only when it retains the canonical success envelope.
-    if (canonicalStructuredEnvelope(callResult)) return callResult;
-    // Some Hosts preserve only standard CallToolResult content for View-originated
-    // tools/call. App-only WebCodex tools duplicate their bounded structured
-    // envelope as JSON text there so coordination never depends on private _meta
-    // or Host-specific structuredContent forwarding.
-    const blocks = Array.isArray(callResult.content) ? callResult.content : [];
+  function standardContentEnvelopeOf(callResult) {
+    const blocks = Array.isArray(callResult && callResult.content) ? callResult.content : [];
     for (const block of blocks) {
       if (!block || block.type !== "text" || typeof block.text !== "string") continue;
       try {
@@ -161,6 +153,21 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       } catch (_) {}
     }
     return null;
+  }
+
+  function structuredOf(result) {
+    const callResult = callToolResultOf(result);
+    if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return null;
+    // A direct bridge return has no CallToolResult carrier to prefer.
+    if (canonicalStructuredEnvelope(callResult)) return callResult;
+    // WebCodex duplicates the exact Server envelope into standard text content for
+    // these app-only tools. Production shows Hosts may independently project
+    // structuredContent while preserving the outer success/output envelope, so a
+    // complete CallToolResult prefers the canonical standard content copy first.
+    const standard = standardContentEnvelopeOf(callResult);
+    if (standard) return standard;
+    const direct = callResult.structuredContent || callResult.structured_content;
+    return canonicalStructuredEnvelope(direct) ? direct : null;
   }
 
   function toolResultShape(result) {
@@ -192,22 +199,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return "unexpected";
     const advertisedStructured = callResult.structuredContent || callResult.structured_content;
     if (advertisedStructured && !canonicalStructuredEnvelope(advertisedStructured)
-      && !canonicalStructuredEnvelope(callResult)) {
-      const blocks = Array.isArray(callResult.content) ? callResult.content : [];
-      let canonicalContent = false;
-      for (const block of blocks) {
-        if (!block || block.type !== "text" || typeof block.text !== "string") continue;
-        try { canonicalContent ||= canonicalStructuredEnvelope(JSON.parse(block.text)); } catch (_) {}
-      }
-      if (!canonicalContent) return "structured-envelope-invalid";
-    }
+      && !canonicalStructuredEnvelope(callResult)
+      && !standardContentEnvelopeOf(callResult)) return "structured-envelope-invalid";
     const structured = structuredOf(callResult);
     if (!structured) return advertisedStructured ? "structured-envelope-invalid" : "unexpected";
     if (structured.success !== true) return "success-not-true";
     if (!structured.output || typeof structured.output !== "object" || Array.isArray(structured.output)) return "output-invalid";
     if (!Object.prototype.hasOwnProperty.call(structured.output, "agent_continuation")) return "projection-missing";
     const projection = structured.output.agent_continuation;
-    if (!validProjection(projection)) return "projection-invalid";
+    const projectionFailure = projectionSemanticFailure(projection);
+    if (projectionFailure) return projectionFailure;
     if (!Object.prototype.hasOwnProperty.call(projection, "host_binding")) return "host-binding-missing";
     if (!projection.host_binding || typeof projection.host_binding !== "object" || Array.isArray(projection.host_binding)) return "host-binding-invalid";
     if (projection.host_binding.bound !== true) return "host-bound-not-true";
@@ -282,18 +283,24 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return true;
   }
 
-  function validProjection(value) {
-    if (!value || typeof value !== "object" || value.version !== 1) return null;
-    if (!validIdentity(value)) return null;
-    if (typeof value.display_name !== "string" || value.display_name.length === 0) return null;
-    if (!Number.isSafeInteger(value.queued_delivery_count) || value.queued_delivery_count < 0) return null;
-    if (value.dispatch_observation !== null && !DISPATCH_STATES.has(value.dispatch_observation)) return null;
+  function projectionSemanticFailure(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "projection-object-invalid";
+    if (value.version !== 1) return "projection-version-invalid";
+    if (!validIdentity(value)) return "projection-identity-invalid";
+    if (typeof value.display_name !== "string" || value.display_name.length === 0) return "projection-display-name-invalid";
+    if (!Number.isSafeInteger(value.queued_delivery_count) || value.queued_delivery_count < 0) return "projection-queued-count-invalid";
+    if (value.dispatch_observation !== null && !DISPATCH_STATES.has(value.dispatch_observation)) return "projection-dispatch-invalid";
     if (value.wake !== null) {
-      if (!value.wake || !WAKE_ID.test(value.wake.wake_id || "")) return null;
-      if (!Number.isSafeInteger(value.wake.revision) || value.wake.revision < 1) return null;
-      if (!["pending", "claimed", "prepared", "delivered", "delivery_unknown"].includes(value.wake.state)) return null;
+      if (!value.wake || typeof value.wake !== "object" || Array.isArray(value.wake)) return "projection-wake-invalid";
+      if (!WAKE_ID.test(value.wake.wake_id || "")) return "projection-wake-id-invalid";
+      if (!Number.isSafeInteger(value.wake.revision) || value.wake.revision < 1) return "projection-wake-revision-invalid";
+      if (!["pending", "claimed", "prepared", "delivered", "delivery_unknown"].includes(value.wake.state)) return "projection-wake-state-invalid";
     }
-    return value;
+    return null;
+  }
+
+  function validProjection(value) {
+    return projectionSemanticFailure(value) === null ? value : null;
   }
 
   function projectionOf(result) {
@@ -648,7 +655,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "8.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "9.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

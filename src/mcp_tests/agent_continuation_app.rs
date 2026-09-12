@@ -170,7 +170,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v8"
+        "ui://webcodex/agent-continuation/v9"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -368,6 +368,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v5"
                     | "ui://webcodex/agent-continuation/v6"
                     | "ui://webcodex/agent-continuation/v7"
+                    | "ui://webcodex/agent-continuation/v8"
             )
         )));
     for uri in [
@@ -379,6 +380,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v5",
         "ui://webcodex/agent-continuation/v6",
         "ui://webcodex/agent-continuation/v7",
+        "ui://webcodex/agent-continuation/v8",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,

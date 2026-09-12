@@ -451,6 +451,22 @@ test("non-canonical Host structuredContent cannot mask canonical standard conten
   assert.equal(view.calls("agent_continuation_state").length, 1);
 });
 
+test("canonical standard content wins over Host-projected nested continuation state", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  const response = toolResult({ agent_continuation: projection });
+  const canonical = response.structuredContent;
+  response.content = [{ type: "text", text: JSON.stringify(canonical) }];
+  const projected = { ...projection };
+  delete projected.wake;
+  delete projected.dispatch_observation;
+  response.structuredContent = { success: true, output: { agent_continuation: projected } };
+  await view.reply(view.calls("agent_continuation_bind")[0], response);
+  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(view.calls("agent_continuation_state").length, 1);
+});
+
 test("malformed bind response exposes only a bounded response-shape diagnostic", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
@@ -473,6 +489,21 @@ test("non-canonical structured result reports only a fixed semantic gate", async
   await view.reply(bind, { structuredContent: { agent_continuation: projection } });
   assert.equal(view.nodes.status.textContent,
     `Host binding malformed-result · response=structured · semantic=structured-envelope-invalid · call=${appCallId(bind)} · reconciling`);
+  assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
+  assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
+  assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
+});
+
+test("projected continuation state reports the exact fixed projection gate without content fallback", async () => {
+  const view = app("mcp_agent_continuation_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  const bind = view.calls("agent_continuation_bind")[0];
+  const projected = { ...projection };
+  delete projected.wake;
+  await view.reply(bind, { structuredContent: { success: true, output: { agent_continuation: projected } } });
+  assert.equal(view.nodes.status.textContent,
+    `Host binding malformed-result · response=structured · semantic=projection-wake-invalid · call=${appCallId(bind)} · reconciling`);
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
