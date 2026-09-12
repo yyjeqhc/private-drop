@@ -572,24 +572,6 @@ impl ToolRuntime {
         ToolResult::ok(output)
     }
 
-    pub(crate) fn agent_continuation_recover_endpoint(
-        &self,
-        auth: Option<&AuthContext>,
-        agent_id: String,
-        endpoint_id: String,
-        expected_controller_generation: i64,
-        binding_id: String,
-    ) -> ToolResult {
-        self.agent_continuation_recover_endpoint_for_window(
-            auth,
-            None,
-            agent_id,
-            endpoint_id,
-            expected_controller_generation,
-            binding_id,
-        )
-    }
-
     pub(crate) fn agent_continuation_recover_endpoint_for_window(
         &self,
         auth: Option<&AuthContext>,

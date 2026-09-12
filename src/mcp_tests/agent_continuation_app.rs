@@ -590,6 +590,18 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "App protocol version must advance with the v14 resource"
     );
     assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("const DEBUG_DIAGNOSTICS = false;"),
+        "transport diagnostics must stay disabled in the normal product card"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("id=\"diagnostics\" class=\"meta\" hidden"),
+        "technical continuation fields must be hidden by default"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("app_call_id"),
+        "server-side App call correlation must remain available while UI diagnostics are hidden"
+    );
+    assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("function restartRecoveryOf(projection)"),
         "App restart recovery must consume only a successful validated projection"
     );

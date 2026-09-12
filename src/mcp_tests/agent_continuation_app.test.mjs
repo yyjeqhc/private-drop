@@ -70,26 +70,27 @@ for (const outcome of ["success", "error", "timeout"]) {
   for (const early of [true, false]) {
     test(`continuation input ${early ? "before" : "after"} initialize ${outcome}, without initial result`, async () => {
       const view = app("mcp_agent_continuation_app.html");
-      assert.equal(view.nodes.status.textContent, "App active · initializing Host");
+      assert.equal(view.nodes.status.textContent, "Connecting…");
+      assert.equal(view.nodes.diagnostics.hidden, true, "technical diagnostics stay hidden in the normal card");
       if (early) view.toolInput(input);
       assert.equal(view.calls("agent_continuation_bind").length, 0);
       await view.initialize(outcome);
       if (outcome === "success" && !early) {
-        assert.equal(view.nodes.status.textContent, "Host initialized · waiting for exact tool identity");
+        assert.equal(view.nodes.status.textContent, "Waiting for Agent connection…");
       }
       if (!early) view.toolInput(input);
       await flush();
       assert.equal(view.calls("agent_continuation_bind").length, outcome === "success" ? 1 : 0);
       assert.equal(view.nodes.status.textContent, outcome === "success"
-        ? "Exact identity received · binding Host carrier" : "Host initialization unavailable");
+        ? "Connecting…" : "Connection unavailable");
       if (outcome === "success") {
         assert.match(bindingId(view), /^wc_host_binding_[0-9a-f]{32}$/);
         assertAppCallId(view.calls("agent_continuation_bind")[0]);
         assert.deepEqual(businessArgs(view.calls("agent_continuation_bind")[0]), { ...input, binding_id: bindingId(view) });
         const quiet = { ...projection, wake: null, queued_delivery_count: 0 };
         await view.reply(view.calls("agent_continuation_bind")[0], toolResult({ agent_continuation: quiet }));
-        assert.equal(view.nodes.binding.textContent, "Host bound");
-        assert.equal(view.nodes.status.textContent, "Host carrier live; no pending durable Wake");
+        assert.equal(view.nodes.binding.textContent, "Connected");
+        assert.equal(view.nodes.status.textContent, "Ready for queued work");
         await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: quiet }));
         await view.fireTimers(3000);
         assert.equal(view.calls("agent_continuation_state").length, 2);
@@ -122,7 +123,7 @@ for (const order of [
     view.toolResult({ agent_continuation: projection });
     assert.equal(view.nodes.agent.textContent, "Current");
     assert.equal(view.nodes.wake.textContent, "None");
-    assert.equal(view.nodes.binding.textContent, "Host bound");
+    assert.equal(view.nodes.binding.textContent, "Connected");
     assert.equal(view.calls("agent_continuation_bind").length, 1);
   });
 }
@@ -174,7 +175,7 @@ for (const [field, value] of Object.entries(conflicts)) {
       await view.fireTimers(10000);
       assert.equal(view.sent.length, count);
       assert.equal(view.timers.size, 0);
-      assert.equal(view.nodes.status.textContent, "Invalid or conflicting continuation identity");
+      assert.equal(view.nodes.status.textContent, "Connection unavailable. Agent connection could not be verified.");
       assert.equal(view.nodes.binding.textContent, "Unavailable");
       assert.notEqual(view.nodes.agent?.textContent, "Foreign");
       assert.equal(hostMessages(view).length, stage === "dispatch" ? 1 : 0);
@@ -194,7 +195,7 @@ for (const [field, value] of Object.entries(conflicts)) {
     view.toolInput({ ...input, [key]: value });
     await view.initialize();
     assert.equal(view.calls("agent_continuation_bind").length, 0);
-    assert.equal(view.nodes.status.textContent, "Invalid or conflicting continuation identity");
+    assert.equal(view.nodes.status.textContent, "Connection unavailable. Agent connection could not be verified.");
   });
 }
 
@@ -214,7 +215,7 @@ for (const invalid of [
     view.toolResult({ agent_continuation: projection });
     await flush();
     assert.equal(view.calls("agent_continuation_bind").length, 0);
-    assert.equal(view.nodes.status.textContent, "Invalid or conflicting continuation identity");
+    assert.equal(view.nodes.status.textContent, "Connection unavailable. Agent connection could not be verified.");
     assert.equal(view.timers.size, 0);
   });
 }
@@ -225,10 +226,10 @@ test("continuation accepts only parent complete input with canonical arguments",
   view.toolInput(input, {});
   view.notification("ui/notifications/tool-input-partial", { arguments: input });
   assert.equal(view.calls("agent_continuation_bind").length, 0);
-  assert.equal(view.nodes.status.textContent, "Host initialized · waiting for exact tool identity");
+  assert.equal(view.nodes.status.textContent, "Waiting for Agent connection…");
   view.notification("ui/notifications/tool-input", { input });
   assert.equal(view.calls("agent_continuation_bind").length, 0);
-  assert.equal(view.nodes.status.textContent, "Invalid or conflicting continuation identity");
+  assert.equal(view.nodes.status.textContent, "Connection unavailable. Agent connection could not be verified.");
 });
 
 test("business bind failure has a stable bounded diagnostic even after a late matching result", async () => {
@@ -237,7 +238,7 @@ test("business bind failure has a stable bounded diagnostic even after a late ma
   view.toolInput(input);
   await view.reply(view.calls("agent_continuation_bind")[0], { structuredContent: { success: false, output: { error_kind: "endpoint_expired" } } });
   view.toolResult({ agent_continuation: projection });
-  assert.equal(view.nodes.status.textContent, "Host binding unavailable; durable Agent state is unchanged");
+  assert.equal(view.nodes.status.textContent, "Connection unavailable. Queued work is preserved.");
   assert.equal(view.calls("agent_continuation_bind").length, 1);
   assert.equal(view.calls("agent_continuation_state").length, 0);
 });
@@ -272,7 +273,7 @@ test("input-only background carrier heartbeats and reconciles immediately on for
   assert.equal(view.calls("agent_continuation_state").length, 3);
   await view.reply(view.calls("agent_continuation_state")[2], toolResult({ agent_continuation: projection }));
   assert.equal(view.calls("agent_continuation_wake_acquire").length, 1);
-  assert.equal(view.nodes.status.textContent, "Reconciling authoritative durable Wake state");
+  assert.equal(view.nodes.status.textContent, "Continuing queued work…");
 });
 
 test("input-only dispatch never displays its private binding or consume envelope", async () => {
@@ -298,7 +299,7 @@ for (const stage of ["bind", "state"]) {
     await view.reply(view.calls(`agent_continuation_${stage}`)[0], toolResult(
       { agent_continuation: { ...projection, endpoint_id: conflicts.endpoint_id } },
     ));
-    assert.equal(view.nodes.status.textContent, "Invalid or conflicting continuation identity");
+    assert.equal(view.nodes.status.textContent, "Connection unavailable. Agent connection could not be verified.");
     assert.equal(view.calls("agent_continuation_wake_acquire").length, 0);
     assert.equal(view.timers.size, 0);
   });
@@ -427,7 +428,7 @@ test("App coordination survives Host stripping structuredContent from View tools
   const bindResult = toolResult({ agent_continuation: projection });
   bindResult.content = [{ type: "text", text: JSON.stringify(bindResult.structuredContent) }];
   await view.reply(bind, bindResult);
-  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(view.nodes.binding.textContent, "Connected");
 
   const stateResult = toolResult({ agent_continuation: projection });
   stateResult.content = [{ type: "text", text: JSON.stringify(stateResult.structuredContent) }];
@@ -447,7 +448,7 @@ test("App coordination survives Host stripping structuredContent from View tools
   const finishResult = toolResult({});
   finishResult.content = [{ type: "text", text: JSON.stringify(finishResult.structuredContent) }];
   await view.reply(view.calls("agent_continuation_wake_finish")[0], finishResult);
-  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(view.nodes.binding.textContent, "Connected");
 });
 
 for (const [shape, wrap] of [
@@ -460,7 +461,7 @@ for (const [shape, wrap] of [
     view.toolInput(input);
     const response = toolResult({ agent_continuation: projection });
     await view.reply(view.calls("agent_continuation_bind")[0], wrap(response));
-    assert.equal(view.nodes.binding.textContent, "Host bound");
+    assert.equal(view.nodes.binding.textContent, "Connected");
     assert.equal(view.calls("agent_continuation_state").length, 1);
   });
 }
@@ -474,7 +475,7 @@ test("non-canonical Host structuredContent cannot mask canonical standard conten
   response.content = [{ type: "text", text: JSON.stringify(canonical) }];
   response.structuredContent = { agent_continuation: projection };
   await view.reply(view.calls("agent_continuation_bind")[0], response);
-  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(view.nodes.binding.textContent, "Connected");
   assert.equal(view.calls("agent_continuation_state").length, 1);
 });
 
@@ -490,38 +491,38 @@ test("canonical standard content wins over Host-projected nested continuation st
   delete projected.dispatch_observation;
   response.structuredContent = { success: true, output: { agent_continuation: projected } };
   await view.reply(view.calls("agent_continuation_bind")[0], response);
-  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(view.nodes.binding.textContent, "Connected");
   assert.equal(view.calls("agent_continuation_state").length, 1);
 });
 
-test("malformed bind response exposes only a bounded response-shape diagnostic", async () => {
+test("malformed bind response keeps correlation diagnostics out of the normal card", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
   view.toolInput(input);
   const bind = view.calls("agent_continuation_bind")[0];
   assertAppCallId(bind);
   await view.reply(bind, {});
-  assert.equal(view.nodes.status.textContent,
-    `Host binding malformed-result · response=empty-object · semantic=unexpected · call=${appCallId(bind)} · reconciling`);
+  assert.equal(view.nodes.status.textContent, "Connection interrupted · retrying…");
+  assert.ok(!view.nodes.status.textContent.includes(appCallId(bind)), "diagnostic correlation stays out of the normal card");
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
 });
 
-test("non-canonical structured result reports only a fixed semantic gate", async () => {
+test("non-canonical structured result keeps semantic diagnostics out of the normal card", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
   view.toolInput(input);
   const bind = view.calls("agent_continuation_bind")[0];
   await view.reply(bind, { structuredContent: { agent_continuation: projection } });
-  assert.equal(view.nodes.status.textContent,
-    `Host binding malformed-result · response=structured · semantic=structured-envelope-invalid · call=${appCallId(bind)} · reconciling`);
+  assert.equal(view.nodes.status.textContent, "Connection interrupted · retrying…");
+  assert.ok(!view.nodes.status.textContent.includes(appCallId(bind)));
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
 });
 
-test("projected continuation state reports the exact fixed projection gate without content fallback", async () => {
+test("projected continuation state keeps projection diagnostics out of the normal card", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
   view.toolInput(input);
@@ -529,14 +530,14 @@ test("projected continuation state reports the exact fixed projection gate witho
   const projected = { ...projection };
   delete projected.wake;
   await view.reply(bind, { structuredContent: { success: true, output: { agent_continuation: projected } } });
-  assert.equal(view.nodes.status.textContent,
-    `Host binding malformed-result · response=structured · semantic=projection-wake-invalid · call=${appCallId(bind)} · reconciling`);
+  assert.equal(view.nodes.status.textContent, "Connection interrupted · retrying…");
+  assert.ok(!view.nodes.status.textContent.includes(appCallId(bind)));
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
 });
 
-test("Host cancellation exposes only bounded bridge diagnostics", async () => {
+test("Host cancellation keeps bridge diagnostics out of the normal card", async () => {
   const view = app("mcp_agent_continuation_app.html");
   await view.initialize();
   view.toolInput(input);
@@ -544,8 +545,8 @@ test("Host cancellation exposes only bounded bridge diagnostics", async () => {
   assertAppCallId(bind);
   const privateMessage = `PRIVATE_HOST_MESSAGE_${input.agent_id}_${bindingId(view)}`;
   await view.reject(bind, { code: -32800, message: privateMessage });
-  assert.equal(view.nodes.status.textContent,
-    `Host binding bridge-cancelled · rpc=-32800 · call=${appCallId(bind)} · reconciling`);
+  assert.equal(view.nodes.status.textContent, "Connection interrupted · retrying…");
+  assert.ok(!view.nodes.status.textContent.includes(appCallId(bind)));
   assert.ok(!view.nodes.status.textContent.includes(privateMessage));
   assert.ok(!view.nodes.status.textContent.includes(input.agent_id));
   assert.ok(!view.nodes.status.textContent.includes(bindingId(view)));
@@ -577,7 +578,7 @@ test("published outputSchema projection preserves restart recovery and triggers 
     view.calls("agent_continuation_state")[0],
     toolResult({ agent_continuation: projectedRestart }),
   );
-  assert.equal(view.nodes.binding.textContent, "Rebinding");
+  assert.equal(view.nodes.binding.textContent, "Reconnecting");
   await view.fireTimers(3000);
   const rebind = view.calls("agent_continuation_bind")[1];
   assert.ok(rebind);
@@ -617,8 +618,8 @@ test("server-restart success observation performs one exact bounded rebind and r
     recovery: { kind: "host_binding_missing_in_process" },
   };
   await view.reply(state, toolResult({ agent_continuation: restartRecovery }));
-  assert.equal(view.nodes.binding.textContent, "Rebinding");
-  assert.equal(view.nodes.status.textContent, "Server restarted · restoring exact Host binding");
+  assert.equal(view.nodes.binding.textContent, "Reconnecting");
+  assert.equal(view.nodes.status.textContent, "Reconnecting…");
   await view.fireTimers(3000);
   const rebind = view.calls("agent_continuation_bind")[1];
   assert.ok(rebind, "recoverable loss must issue one fresh bind");
@@ -629,7 +630,7 @@ test("server-restart success observation performs one exact bounded rebind and r
   assert.equal(view.calls("agent_continuation_state").length, 2);
   assert.equal(view.calls("agent_continuation_state")[1].params.arguments.binding_id, originalBinding);
   await view.reply(view.calls("agent_continuation_state")[1], toolResult({ agent_continuation: quiet }));
-  assert.equal(view.nodes.binding.textContent, "Host bound");
+  assert.equal(view.nodes.binding.textContent, "Connected");
   assert.equal(hostMessages(view).length, 0);
 });
 
@@ -657,7 +658,8 @@ test("recovery marker with a bound Host projection fails closed", async () => {
   } }));
   await view.fireTimers(3000);
   assert.equal(view.calls("agent_continuation_bind").length, 1);
-  assert.match(view.nodes.status.textContent, /semantic=projection-recovery-invalid/);
+  assert.equal(view.nodes.status.textContent, "Reconnecting…");
+  assert.ok(!view.nodes.status.textContent.includes("projection-recovery-invalid"));
 });
 
 test("ChatGPT projection of an isError ToolResult to rpc=-32000 never triggers restart recovery", async () => {
@@ -701,8 +703,8 @@ test("heartbeat Host rejection keeps durable state authoritative with exact App 
   assertAppCallId(state);
   const privateMessage = `PRIVATE_HEARTBEAT_ERROR_${input.endpoint_id}`;
   await view.reject(state, { code: -32042, message: privateMessage });
-  assert.equal(view.nodes.status.textContent,
-    `Host reconciliation bridge-error · rpc=-32042 · call=${appCallId(state)}; durable Wake remains authoritative`);
+  assert.equal(view.nodes.status.textContent, "Reconnecting…");
+  assert.ok(!view.nodes.status.textContent.includes(appCallId(state)));
   assert.ok(!view.nodes.status.textContent.includes(privateMessage));
   assert.ok(!view.nodes.status.textContent.includes(input.endpoint_id));
 });
@@ -719,12 +721,8 @@ for (const loss of ["timeout", "Host error", "malformed result"]) {
     if (loss === "timeout") await view.fireTimers(10000);
     else if (loss === "Host error") await view.reject(first);
     else await view.reply(first, {});
-    const expectedDiagnostic = loss === "timeout"
-      ? `bridge-timeout · call=${appCallId(first)}`
-      : loss === "Host error"
-        ? `bridge-error · rpc=-32000 · call=${appCallId(first)}`
-        : `malformed-result · response=empty-object · semantic=unexpected · call=${appCallId(first)}`;
-    assert.equal(view.nodes.status.textContent, `Host binding ${expectedDiagnostic} · reconciling`);
+    assert.equal(view.nodes.status.textContent, "Connection interrupted · retrying…");
+    assert.ok(!view.nodes.status.textContent.includes(appCallId(first)), "App call correlation remains server-side by default");
     view.toolResult({ agent_continuation: projection });
     view.toolInput(input);
     await flush();
@@ -735,7 +733,7 @@ for (const loss of ["timeout", "Host error", "malformed result"]) {
     assert.deepEqual(businessArgs(retry), businessArgs(first));
     assert.notEqual(appCallId(retry), appCallId(first), "each Host attempt gets a fresh diagnostic id");
     await view.reply(retry, toolResult({ agent_continuation: projection }, { binding_id: "Wrong metadata fence" }));
-    assert.equal(view.nodes.binding.textContent, "Host bound");
+    assert.equal(view.nodes.binding.textContent, "Connected");
     assert.equal(view.calls("agent_continuation_state")[0].params.arguments.binding_id, serverBinding);
     await view.reply(first, toolResult({ agent_continuation: projection }));
     assert.equal(view.calls("agent_continuation_state").length, 1, "late original reply is ignored");
@@ -755,7 +753,19 @@ test("bind response-loss retries are bounded even with repeated bootstrap notifi
   view.toolResult({ agent_continuation: projection });
   await view.fireTimers(3000);
   assert.equal(view.calls("agent_continuation_bind").length, 3);
+  const recovery = view.calls("agent_continuation_recover_endpoint")[0];
+  assert.ok(recovery, "bounded bind loss may perform one authoritative expiry probe");
+  assertAppCallId(recovery);
+  assert.deepEqual(businessArgs(recovery), { ...input, binding_id: bindingId(view) });
+  assert.equal(view.calls("agent_continuation_recover_endpoint").length, 1);
+  await view.reply(recovery, toolResult({
+    agent_continuation: projection,
+    endpoint_recovery: { kind: "controller_live", replacement: null },
+    replayed: false,
+    state_changed: false,
+  }));
   assert.equal(view.nodes.binding.textContent, "Unavailable");
+  assert.equal(view.nodes.status.textContent, "Connection unavailable. Queued work is preserved.");
   assert.equal(view.timers.size, 0);
   await view.teardown();
   assert.equal(view.calls("agent_continuation_unbind")[0].params.arguments.binding_id, bindingId(view));
@@ -784,7 +794,7 @@ for (const invalid of [
     view.toolInput(input);
     await view.reply(view.calls("agent_continuation_bind")[0], invalid);
     assert.equal(view.calls("agent_continuation_state").length, 0);
-    assert.notEqual(view.nodes.binding.textContent, "Host bound");
+    assert.notEqual(view.nodes.binding.textContent, "Connected");
   });
 }
 
@@ -864,6 +874,6 @@ for (const stage of ["state", "acquire", "finish"]) {
       await second.fireTimers(3000);
     }
     assert.equal(second.calls("agent_continuation_state").length, 3);
-    assert.equal(second.nodes.binding.textContent, "Host bound");
+    assert.equal(second.nodes.binding.textContent, "Connected");
   });
 }

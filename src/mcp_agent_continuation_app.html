@@ -12,28 +12,34 @@ body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
 .header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 .badge { padding: 2px 7px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.summary { font-size: 12px; color: color-mix(in srgb, CanvasText 72%, transparent); }
+.summary b { color: CanvasText; font-weight: 600; }
 .meta { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 14px; font-size: 12px; color: color-mix(in srgb, CanvasText 72%, transparent); }
 .meta b { color: CanvasText; font-weight: 600; overflow-wrap: anywhere; }
+#diagnostics[hidden] { display: none; }
 .status { min-height: 1.4em; font-size: 11px; color: color-mix(in srgb, CanvasText 60%, transparent); }
 </style>
 </head>
 <body>
 <main class="card" aria-live="polite">
-  <div class="header"><h1 id="agent">Agent</h1><span id="binding" class="badge">Initializing</span></div>
-  <div class="meta">
+  <div class="header"><h1 id="agent">Agent</h1><span id="binding" class="badge">Connecting</span></div>
+  <div class="summary">Queued work <b id="queued">0</b></div>
+  <div id="status" class="status">Connecting…</div>
+  <div id="diagnostics" class="meta" hidden>
     <span>Endpoint generation <b id="generation">—</b></span>
     <span>Controller <b id="visibility">Foreground</b></span>
     <span>Wake <b id="wake">None</b></span>
-    <span>Queued deliveries <b id="queued">0</b></span>
     <span>Wake revision <b id="revision">—</b></span>
     <span>Dispatch <b id="dispatch">Idle</b></span>
   </div>
-  <div id="status" class="status">Waiting for authoritative continuation state…</div>
 </main>
 <script>
 (() => {
   "use strict";
   const APP_PROTOCOL = "2026-01-26";
+  // Keep transport/projection diagnostics available for dogfood builds without
+  // exposing protocol internals in the normal product card.
+  const DEBUG_DIAGNOSTICS = false;
   const AGENT_ID = /^wc_dagent_[0-9a-f]{32}$/;
   const ENDPOINT_ID = /^wc_endpoint_[0-9a-f]{32}$/;
   const WAKE_ID = /^wc_wake_[0-9a-f]{32}$/;
@@ -80,7 +86,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let prepareUncertain = null;
   let pendingFinish = null;
   const el = id => document.getElementById(id);
-  el("status").textContent = "App active · initializing Host";
+  el("diagnostics").hidden = !DEBUG_DIAGNOSTICS;
+  el("status").textContent = "Connecting…";
   // One secure random fence per View, stable across response-loss retries.
   // This selector grants no authority and is never durable browser state.
   let viewBindingId = null;
@@ -222,7 +229,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   function hostFailureDiagnostic(error) {
-    if (!error || typeof error !== "object" || !SAFE_HOST_FAILURE_KINDS.has(error.hostFailureKind)) return "";
+    if (!DEBUG_DIAGNOSTICS || !error || typeof error !== "object" || !SAFE_HOST_FAILURE_KINDS.has(error.hostFailureKind)) return "";
     const parts = [error.hostFailureKind];
     if ((error.hostFailureKind === "bridge-error" || error.hostFailureKind === "bridge-cancelled")
       && Number.isSafeInteger(error.rpcCode)) parts.push(`rpc=${error.rpcCode}`);
@@ -312,7 +319,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       // may perform E1/g1 -> E2/g2; ordinary projections still fail closed.
       teardown();
       el("binding").textContent = "Unavailable";
-      el("status").textContent = "Invalid or conflicting continuation identity";
+      el("status").textContent = "Connection unavailable. Agent connection could not be verified.";
       return false;
     }
     if (!identity) {
@@ -371,8 +378,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (timer !== null) clearTimeout(timer);
     timer = null;
     el("generation").textContent = String(identity.controller_generation);
-    el("binding").textContent = "Reconnecting…";
-    el("status").textContent = "Expired controller replaced · restoring Host binding";
+    el("binding").textContent = "Reconnecting";
+    el("status").textContent = "Restoring connection…";
     return true;
   }
 
@@ -458,15 +465,15 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     el("dispatch").textContent = dispatchLabel(projection.dispatch_observation);
     // An initial projection cannot prove that this View has a live binding.
     if (!bindingId) return;
-    el("binding").textContent = "Host bound";
+    el("binding").textContent = "Connected";
     if (projection.dispatch_observation === "continuation_consumed") {
-      el("status").textContent = "Exact durable Wake was consumed by a continuation model turn";
+      el("status").textContent = "Work resumed successfully";
     } else if (document.hidden) {
-      el("status").textContent = "Background controller: heartbeat only; automatic Host dispatch is deferred";
+      el("status").textContent = "Connected in background; queued work is preserved";
     } else if (projection.wake) {
-      el("status").textContent = "Reconciling authoritative durable Wake state";
+      el("status").textContent = "Continuing queued work…";
     } else {
-      el("status").textContent = "Host carrier live; no pending durable Wake";
+      el("status").textContent = "Ready for queued work";
     }
   }
 
@@ -633,8 +640,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const stale = identitySnapshot();
     if (!stale || !viewBindingId || endpointRecoveryProbeEpoch === stale.epoch) return false;
     endpointRecoveryProbeEpoch = stale.epoch;
-    el("binding").textContent = "Reconnecting…";
-    el("status").textContent = "Checking expired controller recovery";
+    el("binding").textContent = "Reconnecting";
+    el("status").textContent = "Reconnecting…";
     let lastError = null;
     for (let attempt = 0; attempt < MAX_ENDPOINT_RECOVERY_ATTEMPTS; attempt++) {
       try {
@@ -649,7 +656,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
           const projection = projectionOf(response);
           if (!projection || !sameIdentity(projection, stale)) throw malformedResult(response);
           el("binding").textContent = "Unavailable";
-          el("status").textContent = "Controller is still live; replacement was not authorized";
+          el("status").textContent = "Connection unavailable. Queued work is preserved.";
           return false;
         }
         if (acceptReplacementIdentity(response, stale)) return true;
@@ -663,8 +670,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       const diagnostic = hostFailureDiagnostic(lastError);
       el("binding").textContent = "Unavailable";
       el("status").textContent = diagnostic
-        ? `Recovery ${diagnostic}; durable Agent state is unchanged`
-        : "Expired controller recovery unavailable; durable Agent state is unchanged";
+        ? `Connection unavailable · ${diagnostic}. Durable Agent state is preserved.`
+        : "Connection unavailable. Queued work is preserved.";
     }
     return false;
   }
@@ -695,17 +702,18 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       if (!tornDown && error && error.recoverableBindingLoss === true && recoveryRebinds < MAX_RECOVERY_REBINDS) {
         recoveryRebinds++;
         resetLostProcessBindingForRebind();
-        el("binding").textContent = "Rebinding";
-        el("status").textContent = "Server restarted · restoring exact Host binding";
+        el("binding").textContent = "Reconnecting";
+        el("status").textContent = "Reconnecting…";
       } else if (!tornDown) {
         const recovered = await recoverExpiredEndpoint();
         if (recovered) {
           void maybeStartBinding();
         } else if (!tornDown && endpointRecoveryProbeEpoch !== identityEpoch) {
           const diagnostic = hostFailureDiagnostic(error);
+          el("binding").textContent = "Reconnecting";
           el("status").textContent = diagnostic
-            ? `Host reconciliation ${diagnostic}; durable Wake remains authoritative`
-            : "Host reconciliation pending; durable Wake remains authoritative";
+            ? `Reconnecting · ${diagnostic}`
+            : "Reconnecting…";
         }
       }
     } finally {
@@ -737,8 +745,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   async function maybeStartBinding() {
     if (!hostInitialized || !identity || bindingStarted || timer !== null || tornDown) return;
     bindingStarted = true;
-    el("binding").textContent = "Binding";
-    el("status").textContent = "Exact identity received · binding Host carrier";
+    el("binding").textContent = "Connecting";
+    el("status").textContent = "Connecting…";
     try {
       if (await bind()) void reconcile();
     } catch (error) {
@@ -747,8 +755,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         if (!error.definitive && bindAttempts < MAX_BIND_ATTEMPTS) {
           bindingStarted = false;
           el("status").textContent = diagnostic
-            ? `Host binding ${diagnostic} · reconciling`
-            : "Host binding response unavailable · reconciling";
+            ? `Connection interrupted · ${diagnostic} · retrying…`
+            : "Connection interrupted · retrying…";
           scheduleNext();
         } else {
           const recovered = !error.definitive && await recoverExpiredEndpoint();
@@ -757,8 +765,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
           } else if (!tornDown) {
             el("binding").textContent = "Unavailable";
             el("status").textContent = diagnostic
-              ? `Host binding ${diagnostic}; durable Agent state is unchanged`
-              : "Host binding unavailable; durable Agent state is unchanged";
+              ? `Connection unavailable · ${diagnostic}. Durable Agent state is preserved.`
+              : "Connection unavailable. Queued work is preserved.";
           }
         }
       }
@@ -843,11 +851,11 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }).then(() => {
     if (tornDown) return;
     hostInitialized = true;
-    el("status").textContent = "Host initialized · waiting for exact tool identity";
+    el("status").textContent = "Waiting for Agent connection…";
     notify("ui/notifications/initialized", {});
     void maybeStartBinding();
   })
-    .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
+    .catch(() => { if (!tornDown) el("status").textContent = "Connection unavailable"; });
 })();
 </script>
 </body>
