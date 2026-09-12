@@ -1326,6 +1326,16 @@ pub enum ToolCall {
         specialty_labels: Option<Vec<String>>,
     },
 
+    /// Rotate the server-local continuation Endpoint/controller generation for a durable Agent.
+    RotateAgentContinuationEndpoint {
+        agent_id: String,
+        host: String,
+        #[serde(default)]
+        client_attachment_id: Option<String>,
+        idempotency_key: String,
+    },
+
+    /// Compatibility name for server-local continuation Endpoint rotation.
     /// Attach a current Host/Client Endpoint to a durable Agent.
     AttachAgentEndpoint {
         agent_id: String,
@@ -2860,6 +2870,7 @@ impl ToolCall {
             Self::CreateAgentIdentity { .. } => "create_agent_identity",
             Self::ListAgentIdentities { .. } => "list_agent_identities",
             Self::UpdateAgentIdentity { .. } => "update_agent_identity",
+            Self::RotateAgentContinuationEndpoint { .. } => "rotate_agent_continuation_endpoint",
             Self::AttachAgentEndpoint { .. } => "attach_agent_endpoint",
             Self::PresentAgentContinuation { .. } => "present_agent_continuation",
             Self::AgentContinuationBind { .. } => "agent_continuation_bind",

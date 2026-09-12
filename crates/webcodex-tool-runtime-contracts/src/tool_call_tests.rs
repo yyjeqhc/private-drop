@@ -643,6 +643,28 @@ fn from_tool_name_rejects_retired_inspection_tools_and_parses_retained_git_tools
 }
 
 #[test]
+fn continuation_endpoint_rotation_has_canonical_and_legacy_tool_names() {
+    let args = json!({
+        "agent_id": format!("wc_dagent_{}", "a".repeat(32)),
+        "host": "ChatGPT",
+        "client_attachment_id": "window-a",
+        "idempotency_key": "rotate-endpoint-1"
+    });
+
+    let canonical =
+        ToolCall::from_tool_name("rotate_agent_continuation_endpoint", args.clone()).unwrap();
+    assert_eq!(canonical.tool_name(), "rotate_agent_continuation_endpoint");
+    assert!(matches!(
+        canonical,
+        ToolCall::RotateAgentContinuationEndpoint { .. }
+    ));
+
+    let legacy = ToolCall::from_tool_name("attach_agent_endpoint", args).unwrap();
+    assert_eq!(legacy.tool_name(), "attach_agent_endpoint");
+    assert!(matches!(legacy, ToolCall::AttachAgentEndpoint { .. }));
+}
+
+#[test]
 fn from_tool_name_rejects_unknown_tool_name() {
     let err = ToolCall::from_tool_name("not_a_tool", Value::Null).unwrap_err();
     assert!(err.contains("not_a_tool"));

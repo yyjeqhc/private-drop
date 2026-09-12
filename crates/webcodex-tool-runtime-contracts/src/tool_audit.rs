@@ -3769,7 +3769,13 @@ impl ToolCall {
                     "specialty_labels": specialty_labels,
                 }),
             ),
-            Self::AttachAgentEndpoint {
+            Self::RotateAgentContinuationEndpoint {
+                agent_id,
+                host,
+                client_attachment_id,
+                idempotency_key,
+            }
+            | Self::AttachAgentEndpoint {
                 agent_id,
                 host,
                 client_attachment_id,

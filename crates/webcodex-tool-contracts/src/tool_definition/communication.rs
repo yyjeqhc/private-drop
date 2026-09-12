@@ -129,6 +129,55 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(
+        adaptive_runtime_direct(
+            permission_risk(
+                model_spec(
+                    def(
+                        "rotate_agent_continuation_endpoint",
+                        super::ToolAuditPolicy::typed_fields(&[
+                            super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
+                            super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
+                            super::ToolAuditResultField::pointer_non_null("detached", "/endpoint/detached_at_unix_ms"),
+                            super::ToolAuditResultField::value("created"),
+                            super::ToolAuditResultField::value("replayed"),
+                            super::ToolAuditResultField::value("state_changed"),
+                            super::ToolAuditResultField::value("error_kind"),
+                        ])
+                        .context(super::ToolAuditContextPolicy::Fields(&[
+                            super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
+                            super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
+                            super::ToolAuditResultField::value("created"),
+                            super::ToolAuditResultField::value("replayed"),
+                            super::ToolAuditResultField::value("state_changed"),
+                            super::ToolAuditResultField::value("error_kind"),
+                        ])),
+                        ModelVisible,
+                        TOOL_CATEGORY_COMMUNICATION,
+                        None,
+                        TOOL_PROVIDER_CONTROL,
+                        super::ToolSemanticContract {
+                            effect: super::ToolEffect::Mutate,
+                            risk: CommunicationManage,
+                            approval: super::ToolApprovalPolicy::Standard,
+                            idempotency: super::ToolIdempotency::Keyed,
+                        },
+                        Some(COMMUNICATION_MANAGE),
+                        false,
+                        NoPath,
+                        true,
+                        false,
+                        super::ToolSessionEvidencePolicy::NONE,
+                    ),
+                    "Rotate the server-local continuation Endpoint for an owned durable Agent. This creates a new Endpoint record and monotonic controller generation and makes older generations stale. It does not connect to, configure, or control ChatGPT or any external Host. The new Endpoint is not wake-capable until a separately authorized process-local Host binding is established. Exact idempotency replay returns the same Endpoint.",
+                    attach_agent_endpoint_input_schema,
+                ),
+                PERMISSION_RISK_WRITE,
+            ),
+            19,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
         permission_risk(
             model_spec(
             def(
@@ -167,7 +216,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Attach a replacement Host/Client Endpoint to an owned durable Agent. The Server assigns a new monotonic controller generation and fences every older attachment. Public attachment is not wake-capable; only callable process-local Host adapter registration may enable continuation. Exact idempotency replay returns the original Endpoint.",
+            "Compatibility name for rotate_agent_continuation_endpoint. Rotates only the server-local continuation Endpoint record for an owned durable Agent, assigns a new monotonic controller generation, and makes older generations stale. It does not connect to, configure, or control ChatGPT or any external Host. Public rotation is not wake-capable until a separately authorized process-local Host binding is established. Exact idempotency replay returns the same Endpoint.",
             attach_agent_endpoint_input_schema,
             ),
             PERMISSION_RISK_WRITE,

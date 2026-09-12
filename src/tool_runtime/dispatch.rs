@@ -2000,7 +2000,13 @@ impl ToolRuntime {
                 specialty_labels,
             ),
 
-            ToolCall::AttachAgentEndpoint {
+            ToolCall::RotateAgentContinuationEndpoint {
+                agent_id,
+                host,
+                client_attachment_id,
+                idempotency_key,
+            }
+            | ToolCall::AttachAgentEndpoint {
                 agent_id,
                 host,
                 client_attachment_id,

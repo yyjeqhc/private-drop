@@ -1779,6 +1779,7 @@ async fn full_operator_tools_list_projects_destructive_hints_for_non_additive_mu
         "heartbeat_agent_task_attempt",
         "complete_agent_task_attempt",
         "update_agent_identity",
+        "rotate_agent_continuation_endpoint",
         "attach_agent_endpoint",
         "detach_agent_endpoint",
         "consume_agent_deliveries",

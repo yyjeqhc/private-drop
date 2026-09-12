@@ -338,22 +338,22 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("replayed", schema_type("boolean", "True when the exact expired-endpoint replacement was replayed.")),
             ("state_changed", schema_type("boolean", "True only when this call created the replacement Endpoint.")),
         ]),
-        "attach_agent_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
+        "rotate_agent_continuation_endpoint" | "attach_agent_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
             ("endpoint", endpoint_schema()),
             (
                 "created",
                 schema_type(
                     "boolean",
-                    "True only for first attachment; false for detach.",
+                    "True only when this call created a new Endpoint; false for detach or exact replay.",
                 ),
             ),
             (
                 "replayed",
-                schema_type("boolean", "True for exact idempotent attach replay."),
+                schema_type("boolean", "True when an exact idempotent Endpoint creation or rotation request replayed the original result."),
             ),
             (
                 "state_changed",
-                schema_type("boolean", "Whether attachment state changed."),
+                schema_type("boolean", "Whether Endpoint/controller lifecycle state changed."),
             ),
         ]),
         "bootstrap_agent_conversation" => wrapped_output_schema(vec![
