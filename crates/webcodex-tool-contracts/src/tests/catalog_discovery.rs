@@ -183,20 +183,18 @@ fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
         &[
             "run_process",
             "run_shell",
-            "run_job",
             "run_detached_process",
+            "run_job",
             "observe_jobs",
             "stop_job",
         ]
     );
     let text = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_ascii_lowercase();
     for phrase in [
-        "run_process/run_shell",
-        "same runner-owned job",
-        "immediate asynchronous shell start",
+        "ordinary long work stays runner-owned",
         "run_detached_process",
-        "outlive the runner",
-        "supervisor",
+        "native child that must survive",
+        "run_job is only for intentional immediate asynchronous shell start",
     ] {
         assert!(
             text.contains(phrase),
@@ -330,10 +328,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "ssh_resource list/register -> restart -> list -> bind -> open/reuse",
         "local persistent shell is only for true same-process state",
         "one-shot ssh uses run_process",
-        "execution lifetime: start ordinary work with run_process/run_shell or structured validation",
-        "same runner-owned job",
-        "run_job only for intentional immediate asynchronous shell start",
-        "run_detached_process only when work must outlive the runner",
+        "execution lifetime: ordinary long work stays runner-owned",
+        "run_detached_process",
+        "native child that must survive",
+        "run_job is only for intentional immediate asynchronous shell start",
         "inspect: on adaptive runtime prefer search_project_texts/read_files even for one query/range",
         "run_shell for a short tightly related shell chain",
         "run_script for program-like shell content",

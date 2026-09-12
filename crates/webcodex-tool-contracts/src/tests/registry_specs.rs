@@ -459,6 +459,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "replacement",
         "ownership is handed off before payload start",
         "expired keys are not retry tokens",
+        "workflow will restart, upgrade, stop, or replace this runner",
+        "duration alone is not a reason to detach",
     ] {
         assert!(
             detached_desc.contains(phrase),

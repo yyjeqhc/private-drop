@@ -155,6 +155,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     for (name, expected_rank) in [
         ("import_conversation_files_to_project", 55),
         ("export_project_artifact", 56),
+        ("run_detached_process", 72),
         ("run_shell", 75),
     ] {
         let definition = derived

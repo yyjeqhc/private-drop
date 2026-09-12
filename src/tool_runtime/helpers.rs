@@ -630,7 +630,7 @@ pub(crate) fn sync_timeout_out_of_range_result(
                 "{tool_name} timeout_secs must be between {MIN_SYNC_TIMEOUT_SECS} and {MAX_SYNC_TIMEOUT_SECS}"
             ),
             format!(
-                "pass timeout_secs between {MIN_SYNC_TIMEOUT_SECS} and {MAX_SYNC_TIMEOUT_SECS}, or omit it for the default of {default} seconds. For longer work use run_job."
+                "pass timeout_secs between {MIN_SYNC_TIMEOUT_SECS} and {MAX_SYNC_TIMEOUT_SECS}, or omit it for the default of {default} seconds. Duration alone does not select run_job or run_detached_process: ordinary long work should keep the canonical tool/Job handoff; use run_job only for intentional asynchronous shell start, and run_detached_process only for a native child that must survive Runner restart/replacement."
             ),
         ),
         json!({
@@ -683,7 +683,7 @@ pub(crate) fn command_timeout_message(
     stderr_tail: &str,
 ) -> String {
     format!(
-        "Command timed out after {}s.\nCommand definitely started, but WebCodex cannot prove its side effects ended with the timeout.\nOutput tails before timeout:\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: do not blindly retry. First inspect the actual process, service, and target state. If validation is safe and idempotent, use run_job for longer observation or a narrower invocation.",
+        "Command timed out after {}s.\nCommand definitely started, but WebCodex cannot prove its side effects ended with the timeout.\nOutput tails before timeout:\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: do not blindly retry. First inspect the actual Job, process, service, and target state. On a fresh safe attempt, keep ordinary long work on its canonical execution tool and Job handoff; use run_job only for intentional asynchronous shell start. If a new native child must survive Runner restart/replacement, use run_detached_process from the start instead of changing tools merely for duration.",
         timeout_secs, stdout_tail, stderr_tail
     )
 }
