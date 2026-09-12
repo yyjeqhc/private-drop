@@ -5,7 +5,6 @@ use webcodex_admin::ServerHttpOptions;
 
 use super::{call_runtime_tool_status, http_post_json_status, resolve_user_api_token};
 
-const DEFAULT_EXPECTED_TOOL_COUNT: u64 = 66;
 pub(crate) const DEFAULT_RUNNER_REQUEST_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -633,15 +632,26 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
     }
 
     let tools_count = runtime.pointer("/tools/count").and_then(Value::as_u64);
-    if tools_count != Some(DEFAULT_EXPECTED_TOOL_COUNT) {
-        verdict.warn_reason(
-            format!(
-                "tools_count_unexpected:{}",
-                tools_count
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "unknown".to_string())
-            ),
-            "confirm runtime tool registry count before deployment",
+    // This is the Server's internal registry, not the caller's MCP surface.
+    // Its size changes across releases; validate self-consistency instead of
+    // comparing it to a historical constant. Older compact reports omit names.
+    let inventory_valid = tools_count.is_some_and(|count| count > 0)
+        && match runtime.pointer("/tools/names") {
+            None => true,
+            Some(Value::Array(names)) => {
+                let mut seen = std::collections::HashSet::new();
+                Some(names.len() as u64) == tools_count
+                    && names.iter().all(|name| {
+                        name.as_str()
+                            .is_some_and(|name| !name.trim().is_empty() && seen.insert(name))
+                    })
+            }
+            Some(_) => false,
+        };
+    if !inventory_valid {
+        verdict.fail_reason(
+            "malformed_tool_inventory",
+            "inspect the runtime tool count and optional names; verify required MCP capabilities separately",
         );
     }
 

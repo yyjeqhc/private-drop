@@ -881,6 +881,51 @@ fn ops_status_runtime_ok_passes() {
 }
 
 #[test]
+fn ops_status_tool_inventory_accepts_different_release_sizes() {
+    for count in [1_u64, 47, 66, 135, 200] {
+        let mut runtime = runtime_status_fixture();
+        runtime["tools"] = json!({"count": count});
+        let report = ops_status_report("https://ops.example.test", &Some(runtime.clone()));
+        assert_eq!(report.verdict.status, "pass", "compact count {count}");
+        runtime["tools"]["names"] =
+            json!((0..count).map(|i| format!("tool_{i}")).collect::<Vec<_>>());
+        let report = ops_status_report("https://ops.example.test", &Some(runtime));
+        assert_eq!(report.verdict.status, "pass", "full count {count}");
+        assert!(report.verdict.warning_reasons.is_empty());
+    }
+}
+
+#[test]
+fn ops_status_tool_inventory_rejects_missing_empty_or_inconsistent_data() {
+    for tools in [
+        Value::Null,
+        json!({}),
+        json!({"count": 0}),
+        json!({"count": -1}),
+        json!({"count": "135"}),
+        json!({"count": 1.5}),
+        json!({"count": 2, "names": ["one"]}),
+        json!({"count": 2, "names": ["one", "one"]}),
+        json!({"count": 1, "names": [""]}),
+        json!({"count": 1, "names": [" "]}),
+        json!({"count": 1, "names": [42]}),
+        json!({"count": 1, "names": null}),
+        json!({"count": 1, "names": "one"}),
+    ] {
+        let mut runtime = runtime_status_fixture();
+        runtime["tools"] = tools;
+        let report = ops_status_report("https://ops.example.test", &Some(runtime));
+        assert_eq!(report.verdict.status, "fail");
+        assert!(report.verdict.blocking);
+        assert!(report
+            .verdict
+            .blocking_reasons
+            .contains(&"malformed_tool_inventory".to_string()));
+        assert_eq!(ops_exit_code(true, report.verdict.status), 2);
+    }
+}
+
+#[test]
 fn ops_status_no_online_agents_fails() {
     let mut runtime = runtime_status_fixture();
     runtime["agents"]["online_count"] = json!(0);
