@@ -349,6 +349,7 @@ mod tests {
         "export_project_artifact",
         "apply_text_edits",
         "run_process",
+        "run_detached_process",
         "run_shell",
         "observe_jobs",
         "list_jobs",

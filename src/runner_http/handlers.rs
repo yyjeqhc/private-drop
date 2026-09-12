@@ -207,10 +207,11 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
         return;
     }
     let _ = registry
-        .update_tool_providers(
+        .update_runtime_metadata(
             &body.request.client_id,
             &body.request.runner_instance_id,
             body.tool_providers,
+            body.mcp_gateway_providers,
         )
         .await;
     let client_id = body.request.client_id.clone();

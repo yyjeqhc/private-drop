@@ -1,40 +1,56 @@
 //! Persistent Runner-owned stdio MCP providers for the built-in MCP gateway.
 //!
-//! Each configured provider is initialized lazily at most once for this
-//! Runner process. A protocol/transport failure permanently closes that
-//! provider instance; it is never silently restarted under the same identity.
+//! Each configured provider has one process-lifetime logical identity. Its stdio
+//! connection is initialized lazily and reused while healthy. A fatal protocol/
+//! transport failure retires only that connection: the failed request is never
+//! replayed, while a later explicit request may establish a fresh connection
+//! under the same provider identity and revalidate tool schema before dispatch.
 
 use super::config::{McpGatewayConfig, McpGatewayProviderConfig, MCP_GATEWAY_MAX_CWD_BYTES};
-use super::shell::is_sensitive_env_key;
+use super::shell::{env_keys_equal, is_sensitive_env_key};
 use crate::mcp_gateway::{
     validate_json_value, validate_request, validate_tool_result, validate_tools, McpGatewayContent,
-    McpGatewayDispatchState, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
-    McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult, MCP_GATEWAY_MAX_MESSAGE_BYTES,
+    McpGatewayDispatchState, McpGatewayProvider, McpGatewayProviderState, McpGatewayRequest,
+    McpGatewayResponse, McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult,
+    MCP_GATEWAY_MAX_MESSAGE_BYTES,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{mpsc, Mutex, TryLockError};
+use std::sync::{mpsc, Arc, Mutex, RwLock, TryLockError};
 use std::time::{Duration, Instant};
 use webcodex_process::ManagedChild;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
-const PROVIDER_AVAILABLE: u8 = 0;
-const PROVIDER_FAILED: u8 = 1;
 const MCP_GATEWAY_MAX_IGNORED_NOTIFICATIONS: usize = 32;
+const PROVIDER_NEVER_STARTED: u8 = 0;
+const PROVIDER_HEALTHY: u8 = 1;
+const PROVIDER_CONNECTION_RETIRED: u8 = 2;
 
 pub(crate) struct McpGatewayManager {
-    providers: BTreeMap<String, ProviderEntry>,
-    request_timeout: Duration,
+    state: RwLock<McpGatewayState>,
     stopping: AtomicBool,
+}
+
+struct McpGatewayState {
+    providers: BTreeMap<String, Arc<ProviderEntry>>,
+    request_timeout: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct McpGatewayReloadSummary {
+    pub(crate) preserved: usize,
+    pub(crate) replaced: usize,
+    pub(crate) added: usize,
+    pub(crate) removed: usize,
 }
 
 struct ProviderEntry {
     config: McpGatewayProviderConfig,
     instance_id: String,
-    failed: AtomicU8,
+    lifecycle: AtomicU8,
     session: Mutex<Option<ProviderConnection>>,
 }
 
@@ -121,21 +137,14 @@ impl McpGatewayManager {
         let providers = config
             .providers
             .iter()
-            .map(|provider| {
-                (
-                    provider.id.clone(),
-                    ProviderEntry {
-                        config: provider.clone(),
-                        instance_id: uuid::Uuid::new_v4().simple().to_string(),
-                        failed: AtomicU8::new(PROVIDER_AVAILABLE),
-                        session: Mutex::new(None),
-                    },
-                )
-            })
+            .cloned()
+            .map(|provider| (provider.id.clone(), Arc::new(ProviderEntry::new(provider))))
             .collect();
         Self {
-            providers,
-            request_timeout: Duration::from_secs(config.request_timeout_secs.clamp(1, 120)),
+            state: RwLock::new(McpGatewayState {
+                providers,
+                request_timeout: Duration::from_secs(config.request_timeout_secs.clamp(1, 120)),
+            }),
             stopping: AtomicBool::new(false),
         }
     }
@@ -144,10 +153,80 @@ impl McpGatewayManager {
     /// registration. Reading it does not start a provider process and does not
     /// expose executable, argv, environment, PID, stderr, or secret material.
     pub(crate) fn provider_inventory(&self) -> Vec<McpGatewayProvider> {
-        self.providers
+        self.state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .providers
             .values()
-            .map(ProviderEntry::advertisement)
+            .map(|provider| provider.advertisement())
             .collect()
+    }
+
+    /// Atomically replace the configured provider set without retargeting any
+    /// exact provider identity. Providers whose complete local config is
+    /// unchanged retain their instance id and live connection. Changed/new
+    /// providers receive fresh instance ids; removed/replaced connections are
+    /// retired after the new routing snapshot is committed.
+    pub(crate) fn apply_config_candidate(
+        &self,
+        config: &McpGatewayConfig,
+    ) -> Result<McpGatewayReloadSummary, &'static str> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("mcp_gateway_stopping");
+        }
+        let mut retired = Vec::new();
+        let summary;
+        {
+            let mut state = self
+                .state
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.stopping.load(Ordering::SeqCst) {
+                return Err("mcp_gateway_stopping");
+            }
+            let mut current = std::mem::take(&mut state.providers);
+            let mut next = BTreeMap::new();
+            let mut preserved = 0usize;
+            let mut replaced = 0usize;
+            let mut added = 0usize;
+            for provider_config in &config.providers {
+                match current.remove(&provider_config.id) {
+                    Some(existing) if existing.config == *provider_config => {
+                        preserved += 1;
+                        next.insert(provider_config.id.clone(), existing);
+                    }
+                    Some(existing) => {
+                        replaced += 1;
+                        retired.push(existing);
+                        next.insert(
+                            provider_config.id.clone(),
+                            Arc::new(ProviderEntry::new(provider_config.clone())),
+                        );
+                    }
+                    None => {
+                        added += 1;
+                        next.insert(
+                            provider_config.id.clone(),
+                            Arc::new(ProviderEntry::new(provider_config.clone())),
+                        );
+                    }
+                }
+            }
+            let removed = current.len();
+            retired.extend(current.into_values());
+            state.providers = next;
+            state.request_timeout = Duration::from_secs(config.request_timeout_secs.clamp(1, 120));
+            summary = McpGatewayReloadSummary {
+                preserved,
+                replaced,
+                added,
+                removed,
+            };
+        }
+        for provider in retired {
+            provider.retire_connection_nonblocking();
+        }
+        Ok(summary)
     }
 
     pub(crate) fn handle(&self, request: McpGatewayRequest) -> McpGatewayResponse {
@@ -166,18 +245,30 @@ impl McpGatewayManager {
             );
         }
         match request {
+            McpGatewayRequest::ProviderStatus {
+                provider_id,
+                provider_instance_id,
+            } => {
+                let Some((provider, _)) = self.exact_provider(&provider_id, &provider_instance_id)
+                else {
+                    return stale_provider();
+                };
+                McpGatewayResponse::success(McpGatewayResponsePayload::ProviderStatus {
+                    state: provider.lifecycle_state(),
+                })
+            }
             McpGatewayRequest::ToolsList {
                 provider_id,
                 provider_instance_id,
             } => {
-                let Some(provider) = self.exact_provider(&provider_id, &provider_instance_id)
+                let Some((provider, timeout)) =
+                    self.exact_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
-                match provider.with_connection(
-                    provider.request_timeout(self.request_timeout),
-                    |connection, timeout| connection.tools_list(timeout),
-                ) {
+                match provider.with_connection(timeout, |connection, timeout| {
+                    connection.tools_list(timeout)
+                }) {
                     Ok(tools) => {
                         McpGatewayResponse::success(McpGatewayResponsePayload::Tools { tools })
                     }
@@ -191,32 +282,30 @@ impl McpGatewayManager {
                 arguments,
                 expected_schema,
             } => {
-                let Some(provider) = self.exact_provider(&provider_id, &provider_instance_id)
+                let Some((provider, timeout)) =
+                    self.exact_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
-                match provider.with_connection(
-                    provider.request_timeout(self.request_timeout),
-                    |connection, timeout| {
-                        let started = Instant::now();
-                        let tools = connection
-                            .tools_list(timeout)
-                            .map_err(ProviderFailure::preflight)?;
-                        let Some(current) = tools.iter().find(|tool| tool.name == name) else {
-                            return Err(ProviderFailure::not_started("provider_tool_missing"));
-                        };
-                        if current.schema_observation() != expected_schema {
-                            return Err(ProviderFailure::not_started("provider_schema_changed"));
-                        }
-                        let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
-                            return Err(ProviderFailure::not_started("provider_timeout"));
-                        };
-                        if remaining.is_zero() {
-                            return Err(ProviderFailure::not_started("provider_timeout"));
-                        }
-                        connection.tools_call(&name, arguments, remaining)
-                    },
-                ) {
+                match provider.with_connection(timeout, |connection, timeout| {
+                    let started = Instant::now();
+                    let tools = connection
+                        .tools_list(timeout)
+                        .map_err(ProviderFailure::preflight)?;
+                    let Some(current) = tools.iter().find(|tool| tool.name == name) else {
+                        return Err(ProviderFailure::not_started("provider_tool_missing"));
+                    };
+                    if current.schema_observation() != expected_schema {
+                        return Err(ProviderFailure::not_started("provider_schema_changed"));
+                    }
+                    let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
+                        return Err(ProviderFailure::not_started("provider_timeout"));
+                    };
+                    if remaining.is_zero() {
+                        return Err(ProviderFailure::not_started("provider_timeout"));
+                    }
+                    connection.tools_call(&name, arguments, remaining)
+                }) {
                     Ok(result) => {
                         McpGatewayResponse::success(McpGatewayResponsePayload::ToolResult {
                             result,
@@ -232,23 +321,35 @@ impl McpGatewayManager {
         &self,
         provider_id: &str,
         provider_instance_id: &str,
-    ) -> Option<&ProviderEntry> {
-        self.providers.get(provider_id).filter(|provider| {
-            provider.instance_id == provider_instance_id
-                && provider.failed.load(Ordering::SeqCst) == PROVIDER_AVAILABLE
-        })
+    ) -> Option<(Arc<ProviderEntry>, Duration)> {
+        let state = self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let provider = state.providers.get(provider_id)?;
+        if provider.instance_id != provider_instance_id {
+            return None;
+        }
+        Some((
+            Arc::clone(provider),
+            provider.request_timeout(state.request_timeout),
+        ))
     }
 
     pub(crate) fn shutdown(&self) {
         if self.stopping.swap(true, Ordering::SeqCst) {
             return;
         }
-        for provider in self.providers.values() {
-            let mut session = provider
-                .session
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            drop(session.take());
+        let providers = self
+            .state
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .providers
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for provider in providers {
+            provider.shutdown_connection();
         }
     }
 }
@@ -260,6 +361,42 @@ impl Drop for McpGatewayManager {
 }
 
 impl ProviderEntry {
+    fn new(config: McpGatewayProviderConfig) -> Self {
+        Self {
+            config,
+            instance_id: uuid::Uuid::new_v4().simple().to_string(),
+            lifecycle: AtomicU8::new(PROVIDER_NEVER_STARTED),
+            session: Mutex::new(None),
+        }
+    }
+
+    fn retire_connection_nonblocking(&self) {
+        self.lifecycle
+            .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
+        match self.session.try_lock() {
+            Ok(mut session) => drop(session.take()),
+            Err(TryLockError::WouldBlock) => {
+                // An already-dispatched request owns the connection. Do not
+                // interrupt it or block config reload; once that request drops
+                // the last Arc<ProviderEntry>, the old connection is retired.
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                let mut session = poisoned.into_inner();
+                drop(session.take());
+            }
+        }
+    }
+
+    fn shutdown_connection(&self) {
+        let mut session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        drop(session.take());
+        self.lifecycle
+            .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
+    }
+
     fn advertisement(&self) -> McpGatewayProvider {
         McpGatewayProvider {
             provider_id: self.config.id.clone(),
@@ -275,14 +412,42 @@ impl ProviderEntry {
             .unwrap_or(default)
     }
 
+    fn lifecycle_state(&self) -> McpGatewayProviderState {
+        let mut session = match self.session.try_lock() {
+            Ok(session) => session,
+            Err(TryLockError::WouldBlock) => return McpGatewayProviderState::Busy,
+            Err(TryLockError::Poisoned(_)) => return McpGatewayProviderState::ConnectionRetired,
+        };
+        if let Some(connection) = session.as_mut() {
+            match connection.child.try_wait() {
+                Ok(None) => {
+                    self.lifecycle.store(PROVIDER_HEALTHY, Ordering::SeqCst);
+                    return McpGatewayProviderState::Healthy;
+                }
+                Ok(Some(_)) | Err(_) => {
+                    // Reap/drop the dead owned connection without starting a
+                    // replacement. A later explicit interaction owns reconnect.
+                    drop(session.take());
+                    self.lifecycle
+                        .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
+                    return McpGatewayProviderState::ConnectionRetired;
+                }
+            }
+        }
+        match self.lifecycle.load(Ordering::SeqCst) {
+            PROVIDER_NEVER_STARTED => McpGatewayProviderState::NeverStarted,
+            PROVIDER_HEALTHY | PROVIDER_CONNECTION_RETIRED => {
+                McpGatewayProviderState::ConnectionRetired
+            }
+            _ => McpGatewayProviderState::ConnectionRetired,
+        }
+    }
+
     fn with_connection<T>(
         &self,
         timeout: Duration,
         operation: impl FnOnce(&mut ProviderConnection, Duration) -> Result<T, ProviderFailure>,
     ) -> Result<T, ProviderFailure> {
-        if self.failed.load(Ordering::SeqCst) == PROVIDER_FAILED {
-            return Err(ProviderFailure::before_send("provider_unavailable"));
-        }
         let mut session = match self.session.try_lock() {
             Ok(session) => session,
             Err(TryLockError::WouldBlock) => {
@@ -293,20 +458,24 @@ impl ProviderEntry {
                 })
             }
             Err(TryLockError::Poisoned(_)) => {
-                self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
                 return Err(ProviderFailure::before_send("provider_unavailable"));
             }
         };
         let started = Instant::now();
         if session.is_none() {
             match ProviderConnection::spawn(&self.config, timeout) {
-                Ok(connection) => *session = Some(connection),
+                Ok(connection) => {
+                    self.lifecycle.store(PROVIDER_HEALTHY, Ordering::SeqCst);
+                    *session = Some(connection);
+                }
                 Err(mut error) => {
+                    self.lifecycle
+                        .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
                     // Initialization is provider lifecycle setup, not the
                     // requested tools/list or tools/call. Even if initialize
-                    // reached the child, the caller's operation did not.
+                    // reached the child, the caller's operation did not. A
+                    // later explicit request may attempt a fresh connection.
                     error.dispatch_state = McpGatewayDispatchState::NotStarted;
-                    self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
                     return Err(error);
                 }
             }
@@ -315,7 +484,8 @@ impl ProviderEntry {
             .checked_sub(started.elapsed())
             .filter(|remaining| !remaining.is_zero())
         else {
-            self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
+            self.lifecycle
+                .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
             if let Some(mut connection) = session.take() {
                 connection.terminate();
             }
@@ -326,7 +496,11 @@ impl ProviderEntry {
             remaining,
         );
         if result.as_ref().is_err_and(|error| error.fatal) {
-            self.failed.store(PROVIDER_FAILED, Ordering::SeqCst);
+            self.lifecycle
+                .store(PROVIDER_CONNECTION_RETIRED, Ordering::SeqCst);
+            // Retire only the desynchronized connection. Never replay the
+            // failed request here; a later explicit request may spawn a fresh
+            // connection under the same logical provider identity.
             if let Some(mut connection) = session.take() {
                 connection.terminate();
             }
@@ -338,7 +512,20 @@ impl ProviderEntry {
 fn resolve_provider_environment(
     config: &McpGatewayProviderConfig,
 ) -> Result<Vec<(String, std::ffi::OsString)>, ProviderFailure> {
-    let mut resolved = Vec::with_capacity(config.env_from_env.len());
+    let mut resolved = Vec::with_capacity(config.env_from_env.len() + usize::from(cfg!(windows)));
+    #[cfg(windows)]
+    if !config
+        .env_from_env
+        .keys()
+        .any(|destination| env_keys_equal(destination, "SYSTEMROOT"))
+    {
+        // Keep Windows process bootstrap usable after env_clear() without
+        // inheriting PATH, user profile data, proxy settings, or credentials.
+        // Operators may still explicitly map SYSTEMROOT to another source.
+        if let Some(system_root) = std::env::var_os("SYSTEMROOT") {
+            resolved.push(("SYSTEMROOT".to_string(), system_root));
+        }
+    }
     for (destination, source) in &config.env_from_env {
         // Keep the Runner transport/account secret invariant authoritative even
         // if a caller constructs config without going through load_config.
@@ -386,8 +573,9 @@ impl ProviderConnection {
         let mut command = Command::new(&config.executable);
         command
             .args(&config.args)
-            // Never inherit the Runner process environment implicitly. Only the
-            // explicit env_from_env mapping below crosses this trust boundary.
+            // Never inherit the Runner process environment implicitly. The
+            // resolved environment below is limited to explicit env_from_env
+            // mappings plus the minimal non-secret Windows OS bootstrap.
             .env_clear();
         for (destination, value) in environment {
             command.env(destination, value);

@@ -142,7 +142,15 @@ fn send_provider_metadata(
 ) {
     runtime.with_active(|config| {
         if expected_generation.is_some_and(|expected| expected != config.generation) {
-            return;
+            // An accepted result may belong to the generation that performed a
+            // successful config reload. Treat that result only as a delivery
+            // trigger: metadata is always read from the current active
+            // generation below, so stale work can never publish stale routing.
+            tracing::debug!(
+                expected_generation,
+                active_generation = config.generation,
+                "publishing current Runner metadata after config generation changed"
+            );
         }
         let Some((mut status, revision)) = config.external_tools.claim_status_update() else {
             return;
@@ -151,6 +159,7 @@ fn send_provider_metadata(
         if tx
             .try_send(RunnerEnvelope::RuntimeMetadata {
                 tool_providers: status,
+                mcp_gateway_providers: Some(runtime.mcp_gateway().provider_inventory()),
             })
             .is_err()
         {

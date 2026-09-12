@@ -407,13 +407,23 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
         config_reload: Default::default(),
     };
 
-    // Current connection B reports a provider status.
+    let mcp_inventory = |instance: &str| {
+        vec![webcodex_core::mcp_gateway::McpGatewayProvider {
+            provider_id: "blender".to_string(),
+            provider_instance_id: instance.to_string(),
+            name: "Blender".to_string(),
+        }]
+    };
+
+    // Current connection B reports both observational provider status and the
+    // authoritative MCP routing inventory in one lease-fenced metadata update.
     registry
-        .update_tool_providers_for_connection(
+        .update_runtime_metadata_for_connection(
             "oe",
             "inst-x",
             "conn-b",
             Some(provider_status("claude_code")),
+            Some(mcp_inventory("mcp-b")),
         )
         .await
         .unwrap();
@@ -431,17 +441,28 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
                 .strategy,
             "claude_code"
         );
+        assert_eq!(
+            client
+                .policy
+                .as_ref()
+                .unwrap()
+                .mcp_gateway_providers
+                .as_ref()
+                .unwrap()[0]
+                .provider_instance_id,
+            "mcp-b"
+        );
     }
 
-    // Stale connection A tries to overwrite with a different valid
-    // strategy; it must be rejected and must not change the recorded
-    // strategy.
+    // Stale connection A tries to overwrite both metadata families. The exact
+    // connection lease rejects the whole update, including MCP routing authority.
     let err = registry
-        .update_tool_providers_for_connection(
+        .update_runtime_metadata_for_connection(
             "oe",
             "inst-x",
             "conn-a",
             Some(provider_status("native")),
+            Some(mcp_inventory("mcp-stale")),
         )
         .await
         .unwrap_err();
@@ -464,7 +485,38 @@ async fn stale_connection_runtime_metadata_does_not_overwrite_current() {
             "claude_code",
             "stale connection must not overwrite current metadata"
         );
+        assert_eq!(
+            client
+                .policy
+                .as_ref()
+                .unwrap()
+                .mcp_gateway_providers
+                .as_ref()
+                .unwrap()[0]
+                .provider_instance_id,
+            "mcp-b",
+            "stale connection must not overwrite MCP routing authority"
+        );
     }
+
+    // The active connection can explicitly clear the MCP inventory. `None`
+    // means no update, while `Some([])` is an authoritative empty inventory.
+    registry
+        .update_runtime_metadata_for_connection("oe", "inst-x", "conn-b", None, Some(Vec::new()))
+        .await
+        .unwrap();
+    let inner = registry.inner.lock().await;
+    assert!(inner
+        .runners
+        .get("oe")
+        .unwrap()
+        .policy
+        .as_ref()
+        .unwrap()
+        .mcp_gateway_providers
+        .as_ref()
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]

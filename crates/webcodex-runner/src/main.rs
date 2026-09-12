@@ -5658,6 +5658,9 @@ fn handle_one_poll(
         tool_providers: provider_update
             .as_ref()
             .map(|(status, _, _)| status.clone()),
+        mcp_gateway_providers: provider_update
+            .as_ref()
+            .map(|_| runtime.mcp_gateway().provider_inventory()),
         project_inventory_page,
     };
     let response: RunnerPollResponse = match post_json(client, cfg, RUNNER_POLL_PATH, &poll) {

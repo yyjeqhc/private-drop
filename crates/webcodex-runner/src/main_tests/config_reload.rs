@@ -74,6 +74,7 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     hot_only.shell.program = "bash".to_string();
     hot_only.skills.roots.push(PathBuf::from("live-skill-root"));
     hot_only.plugins.request_timeout_secs += 1;
+    hot_only.mcp_gateway.request_timeout_secs += 1;
     hot_only.tool_providers.strategy =
         webcodex_runner::config::ToolProviderStrategy::ClaudeCodeThenNative;
     assert!(webcodex_runner::config::restart_required_fields(&startup, &hot_only).is_empty());
@@ -94,13 +95,12 @@ fn reload_field_classification_is_exhaustive_and_allowlisted() {
     changed.poll_interval_ms += 1;
     changed.capabilities = Some(RunnerCapabilities::default());
     changed.max_concurrent_jobs = Some(4);
-    changed.mcp_gateway.request_timeout_secs += 1;
     changed.transport = Some(TRANSPORT_QUIC.to_string());
     changed.websocket_connect_timeout_secs += 1;
     changed.quic = Some(quic_client_config());
     assert_eq!(
             webcodex_runner::config::restart_required_fields(&startup, &changed).join(" "),
-            "capabilities client_id display_name hostname host_context max_concurrent_jobs mcp_gateway owner poll_interval_ms project_registry_dir quic server_url token transport websocket_connect_timeout_secs"
+            "capabilities client_id display_name hostname host_context max_concurrent_jobs owner poll_interval_ms project_registry_dir quic server_url token transport websocket_connect_timeout_secs"
         );
 }
 
@@ -142,6 +142,82 @@ fn skill_roots_config_change_is_hot_reloadable_and_generation_fenced() {
     assert_eq!(active.generation, 2);
     assert_eq!(active.skills.roots, vec![live_root]);
     assert!(old.skills.roots.is_empty());
+}
+
+#[test]
+fn mcp_provider_config_is_hot_reloadable_with_exact_identity_replacement() {
+    let (_tmp, path, runtime) = reload_fixture();
+    assert!(runtime.mcp_gateway().provider_inventory().is_empty());
+    let executable = std::env::current_exe().unwrap();
+    let base = reload_toml(
+        "oe",
+        None,
+        60,
+        1024,
+        "sh",
+        "native",
+        false,
+        "claude",
+        "project_search_generation_1",
+    );
+    let candidate = format!(
+        "{base}\n[mcp]\nrequest_timeout_secs = 31\n[[mcp.providers]]\nid = \"hot-mcp\"\nname = \"Hot MCP\"\nexecutable = {:?}\nargs = []\n",
+        executable.to_string_lossy().as_ref()
+    );
+    std::fs::write(&path, &candidate).unwrap();
+
+    let checked = runtime.check_config();
+    assert_eq!(checked.valid, Some(true));
+    assert!(!checked.restart_required);
+    assert!(checked.restart_required_fields.is_empty());
+
+    let reloaded = runtime.reload_config(1);
+    assert_eq!(reloaded.valid, Some(true));
+    assert!(!reloaded.restart_required);
+    assert_eq!(reloaded.current_generation, Some(2));
+    let active = runtime.snapshot();
+    let (_, metadata_revision) = active
+        .external_tools
+        .claim_status_update()
+        .expect("a successful MCP-only reload must make current runtime metadata publishable");
+    active
+        .external_tools
+        .release_status_update(metadata_revision);
+    let added = runtime.mcp_gateway().provider_inventory();
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].provider_id, "hot-mcp");
+    let first_instance = added[0].provider_instance_id.clone();
+
+    let timeout_only = candidate.replace("request_timeout_secs = 31", "request_timeout_secs = 32");
+    std::fs::write(&path, timeout_only).unwrap();
+    let reloaded = runtime.reload_config(2);
+    assert_eq!(reloaded.valid, Some(true));
+    assert!(!reloaded.restart_required);
+    assert_eq!(reloaded.current_generation, Some(3));
+    let timeout_updated = runtime.mcp_gateway().provider_inventory();
+    assert_eq!(timeout_updated[0].provider_instance_id, first_instance);
+
+    let changed_provider = candidate
+        .replace("request_timeout_secs = 31", "request_timeout_secs = 32")
+        .replace("name = \"Hot MCP\"", "name = \"Hot MCP v2\"");
+    std::fs::write(&path, changed_provider).unwrap();
+    let reloaded = runtime.reload_config(3);
+    assert_eq!(reloaded.valid, Some(true));
+    assert!(!reloaded.restart_required);
+    assert_eq!(reloaded.current_generation, Some(4));
+    let replaced = runtime.mcp_gateway().provider_inventory();
+    assert_ne!(replaced[0].provider_instance_id, first_instance);
+    let stale = runtime.mcp_gateway().handle(
+        webcodex_core::mcp_gateway::McpGatewayRequest::ProviderStatus {
+            provider_id: "hot-mcp".to_string(),
+            provider_instance_id: first_instance,
+        },
+    );
+    assert_eq!(
+        stale.dispatch_state,
+        webcodex_core::mcp_gateway::McpGatewayDispatchState::NotStarted
+    );
+    assert_eq!(stale.error.as_ref().unwrap().code, "stale_provider");
 }
 
 #[test]

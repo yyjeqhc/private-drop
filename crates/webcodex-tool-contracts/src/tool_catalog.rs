@@ -344,14 +344,14 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "execution_lifetime",
-        summary: "Execution lifetime: start ordinary work with run_process/run_shell or structured validation; long work continues as the same Runner-owned Job. Use run_job only for intentional immediate asynchronous shell start, and run_detached_process only when work must outlive the Runner.",
+        summary: "Execution lifetime: ordinary long work stays Runner-owned. Before restarting/upgrading/stopping/replacing the Runner, use run_detached_process for any native child that must survive. run_job is only for intentional immediate asynchronous shell start.",
         manifest_purpose:
-            "Choose execution by lifetime ownership: ordinary process/shell/validation work starts on its canonical tool and may hand off as the same Runner-owned Job; run_job is only for intentionally asynchronous shell launch from the first call. run_detached_process explicitly hands accepted native argv work to a supervisor so it can outlive Runner exit/restart/replacement.",
+            "Choose execution by lifetime ownership, not duration. Ordinary process/shell/validation work starts on its canonical tool and may hand off as the same Runner-owned Job. When the workflow itself will restart, upgrade, stop, or replace the current Runner, any native service, GUI application, daemon, or other child that must survive must be started with run_detached_process before the Runner lifecycle change; run_job does not provide that ownership transfer. run_job is only for intentionally asynchronous shell launch from the first call.",
         tools: &[
             "run_process",
             "run_shell",
-            "run_job",
             "run_detached_process",
+            "run_job",
             "observe_jobs",
             "stop_job",
         ],

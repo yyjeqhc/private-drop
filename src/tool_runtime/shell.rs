@@ -732,7 +732,7 @@ impl ToolRuntime {
                 return Self::run_shell_tool_failure_result(
                         command_rejected_message(
                             e,
-                            "confirm the agent is connected and the command request is allowed, then retry or use run_job for long-running work.",
+                            "confirm the agent is connected and the command request is allowed, then retry with the same shell path. Use run_job only when immediate asynchronous shell start is intentional; if a native child must survive Runner restart/replacement, use run_detached_process from the start.",
                         ),
                         failure_kind,
                         ShellCommandExecutionState::NotStarted,
@@ -819,7 +819,7 @@ impl ToolRuntime {
                     Self::run_shell_tool_failure_result(
                             command_rejected_message(
                                 "shell request waiter was dropped before the queued request was dispatched",
-                                "check Runner connectivity, then retry or use run_job for recoverable long-running work.",
+                                "check Runner connectivity, then retry with the same shell path. Use run_job only for intentional asynchronous shell start; use run_detached_process only when a native child must survive Runner restart/replacement.",
                             ),
                             "runtime_error",
                             ShellCommandExecutionState::NotStarted,
@@ -841,7 +841,7 @@ impl ToolRuntime {
                                 format!(
                                     "timed out waiting {wait_timeout} seconds before the queued Runner request was dispatched"
                                 ),
-                                "check Runner connectivity and availability, then retry or use run_job for long-running work.",
+                                "check Runner connectivity and availability, then retry with the same shell path. Use run_job only for intentional asynchronous shell start; use run_detached_process only when a native child must survive Runner restart/replacement.",
                             ),
                             "timeout",
                             ShellCommandExecutionState::NotStarted,

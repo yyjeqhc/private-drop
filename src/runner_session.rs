@@ -501,13 +501,17 @@ async fn dispatch_inbound(
                 );
             }
         }
-        RunnerEnvelope::RuntimeMetadata { tool_providers } => {
+        RunnerEnvelope::RuntimeMetadata {
+            tool_providers,
+            mcp_gateway_providers,
+        } => {
             let _ = registry
-                .update_tool_providers_for_connection(
+                .update_runtime_metadata_for_connection(
                     client_id,
                     runner_instance_id,
                     connection_id,
                     Some(tool_providers),
+                    mcp_gateway_providers,
                 )
                 .await;
         }

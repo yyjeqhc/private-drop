@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tempfile::TempDir;
 
 static FAKE_SERVER: OnceLock<Mutex<Weak<FakeBinary>>> = OnceLock::new();
+const TEST_PARALLEL_TIMEOUT_FLOOR_SECS: u64 = 10;
+const TEST_INTENTIONAL_TIMEOUT_SECS: u64 = 5;
 
 struct FakeBinary {
     _temp: TempDir,
@@ -63,7 +65,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(scenario: &str, timeout_secs: u64) -> Self {
-        Self::with_provider_timeout(scenario, timeout_secs, None)
+        // Windows CI can spawn many fake providers in parallel. Keep ordinary
+        // fixture deadlines above that startup jitter; timing-specific tests use
+        // with_provider_timeout directly to preserve a deliberately short bound.
+        Self::with_provider_timeout(
+            scenario,
+            timeout_secs.max(TEST_PARALLEL_TIMEOUT_FLOOR_SECS),
+            None,
+        )
     }
 
     fn with_provider_timeout(
@@ -122,6 +131,13 @@ impl Fixture {
             .unwrap()
     }
 
+    fn status(&self, provider: &McpGatewayProvider) -> McpGatewayResponse {
+        self.manager.handle(McpGatewayRequest::ProviderStatus {
+            provider_id: provider.provider_id.clone(),
+            provider_instance_id: provider.provider_instance_id.clone(),
+        })
+    }
+
     fn list(&self, provider: &McpGatewayProvider) -> McpGatewayResponse {
         self.manager.handle(McpGatewayRequest::ToolsList {
             provider_id: provider.provider_id.clone(),
@@ -153,6 +169,208 @@ impl Fixture {
             .filter(|line| *line == value)
             .count()
     }
+}
+
+fn provider_state(response: McpGatewayResponse) -> McpGatewayProviderState {
+    let Some(McpGatewayResponsePayload::ProviderStatus { state }) = response.payload else {
+        panic!("provider status payload missing: {:?}", response.error);
+    };
+    state
+}
+
+#[test]
+fn provider_status_is_passive_and_tracks_connection_lifecycle() {
+    let fixture = Fixture::new("crash", 2);
+    let provider = fixture.provider();
+
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::NeverStarted
+    );
+    assert_eq!(fixture.marker_count("start"), 0);
+
+    assert!(fixture.list(&provider).error.is_none());
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::Healthy
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    let failed = fixture.call(&provider);
+    assert_eq!(
+        failed.dispatch_state,
+        McpGatewayDispatchState::OutcomeUnknown
+    );
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::ConnectionRetired
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    assert!(fixture.list(&provider).error.is_none());
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::Healthy
+    );
+    assert_eq!(fixture.marker_count("start"), 2);
+}
+
+#[test]
+fn provider_status_reports_busy_without_waiting_or_starting_work() {
+    let fixture = Fixture::new("normal", 2);
+    let provider = fixture.provider();
+    let entry = {
+        let state = fixture.manager.state.read().unwrap();
+        Arc::clone(state.providers.get("fake").unwrap())
+    };
+    let _guard = entry.session.lock().unwrap();
+
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::Busy
+    );
+    assert_eq!(fixture.marker_count("start"), 0);
+}
+
+fn replacement_config(
+    fixture: &Fixture,
+    id: &str,
+    name: &str,
+    scenario: &str,
+    request_timeout_secs: u64,
+) -> McpGatewayConfig {
+    McpGatewayConfig {
+        request_timeout_secs,
+        providers: vec![McpGatewayProviderConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            executable: fixture._fake.path.to_string_lossy().into_owned(),
+            args: vec![
+                scenario.to_string(),
+                fixture.marker.to_string_lossy().into_owned(),
+            ],
+            cwd: None,
+            env_from_env: BTreeMap::new(),
+            timeout_secs: None,
+        }],
+    }
+}
+
+#[test]
+fn config_candidate_preserves_unchanged_provider_identity_and_connection() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    assert!(fixture.list(&before).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "fake",
+            "Fake provider",
+            "normal",
+            17,
+        ))
+        .unwrap();
+    assert_eq!(
+        summary,
+        McpGatewayReloadSummary {
+            preserved: 1,
+            replaced: 0,
+            added: 0,
+            removed: 0,
+        }
+    );
+    let after = fixture.provider();
+    assert_eq!(after.provider_instance_id, before.provider_instance_id);
+    assert!(fixture.list(&before).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 1);
+}
+
+#[test]
+fn config_candidate_replaces_changed_provider_without_retargeting_old_identity() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    assert!(fixture.list(&before).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 1);
+
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "fake",
+            "Renamed provider",
+            "normal",
+            10,
+        ))
+        .unwrap();
+    assert_eq!(summary.replaced, 1);
+    let after = fixture.provider();
+    assert_ne!(after.provider_instance_id, before.provider_instance_id);
+    let stale = fixture.list(&before);
+    assert_eq!(stale.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(stale.error.as_ref().unwrap().code, "stale_provider");
+    assert_eq!(
+        provider_state(fixture.status(&after)),
+        McpGatewayProviderState::NeverStarted
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
+    assert!(fixture.list(&after).error.is_none());
+    assert_eq!(fixture.marker_count("start"), 2);
+}
+
+#[test]
+fn config_candidate_does_not_wait_for_busy_retired_provider() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    let entry = {
+        let state = fixture.manager.state.read().unwrap();
+        Arc::clone(state.providers.get("fake").unwrap())
+    };
+    let _guard = entry.session.lock().unwrap();
+
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "fake",
+            "Changed while busy",
+            "normal",
+            10,
+        ))
+        .unwrap();
+    assert_eq!(summary.replaced, 1);
+    let after = fixture.provider();
+    assert_ne!(after.provider_instance_id, before.provider_instance_id);
+    assert_eq!(
+        provider_state(fixture.status(&after)),
+        McpGatewayProviderState::NeverStarted
+    );
+}
+
+#[test]
+fn config_candidate_adds_and_removes_provider_identities_atomically() {
+    let fixture = Fixture::new("normal", 2);
+    let before = fixture.provider();
+    let summary = fixture
+        .manager
+        .apply_config_candidate(&replacement_config(
+            &fixture,
+            "replacement",
+            "Replacement",
+            "normal",
+            10,
+        ))
+        .unwrap();
+    assert_eq!(summary.added, 1);
+    assert_eq!(summary.removed, 1);
+    let inventory = fixture.manager.provider_inventory();
+    assert_eq!(inventory.len(), 1);
+    assert_eq!(inventory[0].provider_id, "replacement");
+    let stale = fixture.status(&before);
+    assert_eq!(stale.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(stale.error.as_ref().unwrap().code, "stale_provider");
 }
 
 #[test]
@@ -257,7 +475,7 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
     let cwd = tempfile::tempdir().unwrap();
     let fixture = Fixture::with_execution_context(
         "execution_context",
-        2,
+        TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
         None,
         Some(cwd.path().to_string_lossy().into_owned()),
         BTreeMap::from([
@@ -284,6 +502,12 @@ fn provider_execution_context_is_explicit_cleared_and_private() {
     ] {
         assert_eq!(fixture.marker_count(marker), 1, "missing marker {marker}");
     }
+    #[cfg(windows)]
+    assert_eq!(
+        fixture.marker_count("systemroot-bootstrap-ok"),
+        1,
+        "Windows MCP providers need the minimal SYSTEMROOT bootstrap after env_clear()"
+    );
     let encoded = serde_json::to_string(&response).unwrap();
     assert!(!encoded.contains("github-provider-secret-value"));
     assert!(!encoded.contains("mapped-provider-secret-value"));
@@ -384,6 +608,20 @@ fn provider_notifications_are_consumed_without_retiring_the_session() {
 }
 
 #[test]
+fn provider_status_reaps_an_exited_connection_without_restarting_it() {
+    let fixture = Fixture::new("exit_after_list", 2);
+    let provider = fixture.provider();
+    assert!(fixture.list(&provider).error.is_none());
+    std::thread::sleep(Duration::from_millis(50));
+
+    assert_eq!(
+        provider_state(fixture.status(&provider)),
+        McpGatewayProviderState::ConnectionRetired
+    );
+    assert_eq!(fixture.marker_count("start"), 1);
+}
+
+#[test]
 fn provider_callback_after_dispatch_remains_unsupported_and_unknown() {
     let fixture = Fixture::new("callback", 2);
     let provider = fixture.provider();
@@ -398,15 +636,14 @@ fn provider_callback_after_dispatch_remains_unsupported_and_unknown() {
         response.error.as_ref().unwrap().code,
         "provider_callbacks_unsupported"
     );
-    assert_eq!(
-        fixture.call(&provider).error.as_ref().unwrap().code,
-        "stale_provider"
-    );
-    assert_eq!(fixture.marker_count("start"), 1);
+    let recovered = fixture.list(&provider);
+    assert!(recovered.error.is_none(), "{:?}", recovered.error);
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(fixture.marker_count("call"), 1);
 }
 
 #[test]
-fn provider_notification_flood_is_bounded_and_retires_after_dispatch() {
+fn provider_notification_flood_is_bounded_and_reconnects_on_next_request() {
     let fixture = Fixture::new("notification_flood", 2);
     let provider = fixture.provider();
 
@@ -419,15 +656,16 @@ fn provider_notification_flood_is_bounded_and_retires_after_dispatch() {
         response.error.as_ref().unwrap().code,
         "provider_notification_flood"
     );
+    let retried = fixture.list(&provider);
     assert_eq!(
-        fixture.list(&provider).error.as_ref().unwrap().code,
-        "stale_provider"
+        retried.error.as_ref().unwrap().code,
+        "provider_notification_flood"
     );
-    assert_eq!(fixture.marker_count("start"), 1);
+    assert_eq!(fixture.marker_count("start"), 2);
 }
 
 #[test]
-fn crash_is_outcome_unknown_and_never_restarted_or_replayed() {
+fn crash_is_outcome_unknown_but_later_request_reconnects_without_replay() {
     let fixture = Fixture::new("crash", 2);
     let provider = fixture.provider();
     assert!(fixture.list(&provider).error.is_none());
@@ -438,21 +676,29 @@ fn crash_is_outcome_unknown_and_never_restarted_or_replayed() {
     );
     assert_eq!(first.error.as_ref().unwrap().code, "provider_eof");
 
-    let second = fixture.call(&provider);
-    assert_eq!(second.dispatch_state, McpGatewayDispatchState::NotStarted);
-    assert_eq!(second.error.as_ref().unwrap().code, "stale_provider");
-    assert_eq!(fixture.marker_count("start"), 1);
+    let recovered = fixture.list(&provider);
+    assert!(recovered.error.is_none(), "{:?}", recovered.error);
+    assert_eq!(
+        fixture.provider().provider_instance_id,
+        provider.provider_instance_id
+    );
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(fixture.marker_count("initialize"), 2);
     assert_eq!(fixture.marker_count("call"), 1);
 }
 
 #[test]
-fn initialization_failure_is_not_misreported_as_tool_dispatch() {
+fn initialization_failure_is_not_tool_dispatch_and_later_requests_retry_spawn() {
     for (scenario, code) in [
         ("init_crash", "provider_eof"),
         ("init_timeout", "provider_timeout"),
         ("init_missing_tools", "provider_initialize_invalid"),
     ] {
-        let fixture = Fixture::new(scenario, 1);
+        let fixture = Fixture::with_provider_timeout(
+            scenario,
+            TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
+            Some(TEST_INTENTIONAL_TIMEOUT_SECS),
+        );
         let provider = fixture.provider();
         let response = fixture.call(&provider);
         assert_eq!(
@@ -463,13 +709,57 @@ fn initialization_failure_is_not_misreported_as_tool_dispatch() {
         assert_eq!(response.error.as_ref().unwrap().code, code, "{scenario}");
         assert_eq!(fixture.marker_count("call"), 0, "{scenario}");
         assert_eq!(fixture.marker_count("start"), 1, "{scenario}");
+        let retried = fixture.call(&provider);
         assert_eq!(
-            fixture.call(&provider).error.as_ref().unwrap().code,
-            "stale_provider",
+            retried.dispatch_state,
+            McpGatewayDispatchState::NotStarted,
             "{scenario}"
         );
-        assert_eq!(fixture.marker_count("start"), 1, "{scenario}");
+        assert_eq!(retried.error.as_ref().unwrap().code, code, "{scenario}");
+        assert_eq!(fixture.marker_count("start"), 2, "{scenario}");
     }
+}
+
+#[test]
+fn transient_initialization_failure_recovers_on_next_explicit_request() {
+    let fixture = Fixture::new("init_crash_once", 2);
+    let provider = fixture.provider();
+    let first = fixture.list(&provider);
+    assert_eq!(first.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(first.error.as_ref().unwrap().code, "provider_eof");
+
+    let second = fixture.list(&provider);
+    assert!(second.error.is_none(), "{:?}", second.error);
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(fixture.marker_count("initialize"), 2);
+}
+
+#[test]
+fn reconnect_revalidates_schema_before_effectful_dispatch() {
+    let fixture = Fixture::new("recover_schema_change", 2);
+    let provider = fixture.provider();
+    assert!(fixture.list(&provider).error.is_none());
+
+    let first = fixture.call(&provider);
+    assert_eq!(
+        first.dispatch_state,
+        McpGatewayDispatchState::OutcomeUnknown
+    );
+    assert_eq!(first.error.as_ref().unwrap().code, "provider_eof");
+    assert_eq!(fixture.marker_count("call"), 1);
+
+    let second = fixture.call(&provider);
+    assert_eq!(second.dispatch_state, McpGatewayDispatchState::NotStarted);
+    assert_eq!(
+        second.error.as_ref().unwrap().code,
+        "provider_schema_changed"
+    );
+    assert_eq!(fixture.marker_count("start"), 2);
+    assert_eq!(
+        fixture.marker_count("call"),
+        1,
+        "unknown call must not be replayed"
+    );
 }
 
 #[test]
@@ -499,7 +789,11 @@ fn malformed_unknown_and_duplicate_responses_fail_closed() {
 
 #[test]
 fn timeout_and_invalid_untrusted_outputs_are_bounded() {
-    let timeout = Fixture::new("timeout", 1);
+    let timeout = Fixture::with_provider_timeout(
+        "timeout",
+        TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
+        Some(TEST_INTENTIONAL_TIMEOUT_SECS),
+    );
     let provider = timeout.provider();
     assert!(timeout.list(&provider).error.is_none());
     let response = timeout.call(&provider);
@@ -508,6 +802,10 @@ fn timeout_and_invalid_untrusted_outputs_are_bounded() {
         response.dispatch_state,
         McpGatewayDispatchState::OutcomeUnknown
     );
+    let recovered = timeout.list(&provider);
+    assert!(recovered.error.is_none(), "{:?}", recovered.error);
+    assert_eq!(timeout.marker_count("start"), 2);
+    assert_eq!(timeout.marker_count("call"), 1);
 
     for (scenario, operation, code, state) in [
         (
@@ -582,7 +880,11 @@ fn provider_timeout_override_and_default_fallback_are_enforced() {
     assert!(inherited.list(&inherited_provider).error.is_none());
     assert!(inherited.call(&inherited_provider).error.is_none());
 
-    let overridden = Fixture::with_provider_timeout("slow", 2, Some(1));
+    let overridden = Fixture::with_provider_timeout(
+        "slow",
+        TEST_PARALLEL_TIMEOUT_FLOOR_SECS,
+        Some(TEST_INTENTIONAL_TIMEOUT_SECS),
+    );
     let overridden_provider = overridden.provider();
     assert!(overridden.list(&overridden_provider).error.is_none());
     let response = overridden.call(&overridden_provider);

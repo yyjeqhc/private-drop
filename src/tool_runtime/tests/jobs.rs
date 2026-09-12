@@ -1098,7 +1098,8 @@ async fn run_shell_runner_timeout_preserves_known_timeout_state() {
     let error = result.error.as_deref().unwrap_or_default();
     assert!(error.contains("Command timed out after 1s"));
     assert!(error.contains("do not blindly retry"));
-    assert!(error.contains("First inspect the actual process, service, and target state"));
+    assert!(error.contains("First inspect the actual Job, process, service, and target state"));
+    assert!(error.contains("use run_detached_process from the start"));
 }
 
 #[tokio::test]

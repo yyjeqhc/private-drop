@@ -2,7 +2,7 @@
 // directly with rustc so no closed-source or installed MCP server is needed.
 
 use std::env;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::thread;
@@ -48,6 +48,15 @@ fn main() -> io::Result<()> {
                 "path-leaked\n"
             },
         )?;
+        #[cfg(windows)]
+        append(
+            marker,
+            if env::var_os("SYSTEMROOT").is_some() {
+                "systemroot-bootstrap-ok\n"
+            } else {
+                "systemroot-bootstrap-missing\n"
+            },
+        )?;
         let cwd_matches = match (args.get(2), env::current_dir()) {
             (Some(expected), Ok(current)) => {
                 std::fs::canonicalize(current).ok() == std::fs::canonicalize(expected).ok()
@@ -70,11 +79,13 @@ fn main() -> io::Result<()> {
         match method.as_str() {
             "initialize" => {
                 append(marker, "initialize\n")?;
-                if scenario == "init_crash" {
+                if scenario == "init_crash"
+                    || (scenario == "init_crash_once" && marker_count(marker, "initialize") == 1)
+                {
                     return Ok(());
                 }
                 if scenario == "init_timeout" {
-                    thread::sleep(Duration::from_secs(3));
+                    thread::sleep(Duration::from_secs(6));
                 }
                 let capabilities = if scenario == "init_missing_tools" {
                     r#"{}"#
@@ -144,7 +155,9 @@ fn main() -> io::Result<()> {
                 } else {
                     "Persistent fake echo".to_string()
                 };
-                let value_type = if scenario == "schema_change" && lists >= 2 {
+                let value_type = if (scenario == "schema_change" && lists >= 2)
+                    || (scenario == "recover_schema_change" && marker_count(marker, "start") >= 2)
+                {
                     "number"
                 } else {
                     "string"
@@ -155,6 +168,9 @@ fn main() -> io::Result<()> {
                         r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"echo","description":"{description}","inputSchema":{{"type":"object","properties":{{"value":{{"type":"{value_type}"}}}}}}}}]}}}}"#
                     ),
                 )?;
+                if scenario == "exit_after_list" {
+                    return Ok(());
+                }
                 if scenario == "notifications" {
                     send(
                         &mut writer,
@@ -193,7 +209,7 @@ fn main() -> io::Result<()> {
                     continue;
                 }
                 match scenario {
-                    "crash" => return Ok(()),
+                    "crash" | "recover_schema_change" => return Ok(()),
                     "notifications" => {
                         send(
                             &mut writer,
@@ -211,10 +227,10 @@ fn main() -> io::Result<()> {
                         r#"{"jsonrpc":"2.0","id":9000,"method":"sampling/createMessage","params":{}}"#,
                     )?,
                     "timeout" => {
-                        thread::sleep(Duration::from_secs(3));
+                        thread::sleep(Duration::from_secs(6));
                     }
                     "slow" => {
-                        thread::sleep(Duration::from_millis(1_250));
+                        thread::sleep(Duration::from_secs(6));
                         send(
                             &mut writer,
                             &format!(
@@ -277,6 +293,12 @@ fn append(path: Option<&Path>, value: &str) -> io::Result<()> {
         .append(true)
         .open(path)?
         .write_all(value.as_bytes())
+}
+
+fn marker_count(path: Option<&Path>, value: &str) -> usize {
+    path.and_then(|path| fs::read_to_string(path).ok())
+        .map(|contents| contents.lines().filter(|line| *line == value).count())
+        .unwrap_or(0)
 }
 
 fn string_field(body: &str, field: &str) -> Option<String> {
