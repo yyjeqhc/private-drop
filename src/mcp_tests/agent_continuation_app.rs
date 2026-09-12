@@ -1,8 +1,9 @@
 use super::*;
 use std::sync::Arc;
 
-const APP_TOOLS: [&str; 6] = [
+const APP_TOOLS: [&str; 7] = [
     "agent_continuation_bind",
+    "agent_continuation_recover_endpoint",
     "agent_continuation_state",
     "agent_continuation_wake_acquire",
     "agent_continuation_wake_prepare",
@@ -240,7 +241,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v13"
+        "ui://webcodex/agent-continuation/v14"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -443,6 +444,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v10"
                     | "ui://webcodex/agent-continuation/v11"
                     | "ui://webcodex/agent-continuation/v12"
+                    | "ui://webcodex/agent-continuation/v13"
             )
         )));
     for uri in [
@@ -459,6 +461,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v10",
         "ui://webcodex/agent-continuation/v11",
         "ui://webcodex/agent-continuation/v12",
+        "ui://webcodex/agent-continuation/v13",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -492,6 +495,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui/initialize",
         "ui/notifications/tool-input",
         "agent_continuation_bind",
+        "agent_continuation_recover_endpoint",
         "agent_continuation_state",
         "agent_continuation_wake_acquire",
         "agent_continuation_wake_prepare",
@@ -528,8 +532,46 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "App restart recovery must remain bounded"
     );
     assert!(
-        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"13.0.0\""),
-        "App protocol version must advance with the v13 resource"
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("MAX_ENDPOINT_RECOVERY_ATTEMPTS = 2"),
+        "expired-endpoint replacement retries must remain bounded and replay-safe"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("function acceptReplacementIdentity(result, stale)"),
+        "only the dedicated replacement envelope may retarget a live card"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("candidate.controller_generation < identity.controller_generation"),
+        "strictly delayed old-generation responses must be inert after replacement"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (tornDown || !snapshotIsCurrent(selector)) return false;"),
+        "a delayed old bind response must be discarded after replacement"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (tornDown || !snapshotIsCurrent(selector)) return null;"),
+        "a delayed old state response must be discarded after replacement"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (scheduledEpoch !== identityEpoch) return scheduleNext();"),
+        "old timer callbacks must not coordinate the replacement generation"
+    );
+    assert!(
+        !MCP_AGENT_CONTINUATION_APP_HTML.contains("rpcCode === -32000"),
+        "generic Host -32000 must never be classified as endpoint expiry"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("if (acceptReplacementIdentity(response, stale)) return true;"),
+        "identity replacement must be gated by the dedicated recovery ToolResult"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"14.0.0\""),
+        "App protocol version must advance with the v14 resource"
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("function restartRecoveryOf(projection)"),
@@ -696,6 +738,63 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
         panic!("owner window state failed")
     };
     assert_eq!(owner_state["result"]["structuredContent"]["success"], true);
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_endpoints SET lease_expires_at_unix_ms = 0 WHERE endpoint_id = ?1",
+            [&endpoint],
+        )
+        .unwrap();
+    let recovered = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5155)),
+            mcp_2026_window_params(
+                json!({
+                    "name": "agent_continuation_recover_endpoint",
+                    "arguments": {
+                        "agent_id": agent,
+                        "endpoint_id": endpoint,
+                        "expected_controller_generation": generation,
+                        "binding_id": binding_id
+                    }
+                }),
+                raw_session,
+            ),
+        ),
+        Some(&owner),
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(recovered) = recovered else {
+        panic!("same-window expired Endpoint recovery failed")
+    };
+    assert_eq!(recovered["result"]["structuredContent"]["success"], true);
+    let recovery_output = &recovered["result"]["structuredContent"]["output"];
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["kind"],
+        "endpoint_replaced"
+    );
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["replacement"]["from_endpoint_id"],
+        endpoint
+    );
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["replacement"]["from_controller_generation"],
+        generation
+    );
+    assert_eq!(
+        recovery_output["endpoint_recovery"]["replacement"]["controller_generation"],
+        generation + 1
+    );
+    let replacement_endpoint = recovery_output["endpoint_recovery"]["replacement"]["endpoint_id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        endpoint_client_window_key(&db, replacement_endpoint).as_deref(),
+        Some(expected_window.key())
+    );
 }
 
 #[test]

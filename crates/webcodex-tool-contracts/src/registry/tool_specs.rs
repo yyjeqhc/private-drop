@@ -36,6 +36,11 @@ pub fn agent_continuation_app_tool_specs() -> Vec<ToolSpec> {
             super::input_schemas::agent_continuation_bind_input_schema(),
         ),
         tool_spec(
+            "agent_continuation_recover_endpoint",
+            "App-only idempotent probe+replacement for one exact expired Durable Agent Endpoint. The stale Agent/Endpoint/generation and iframe binding_id are explicit, while same-Window authority comes only from the canonical Host ClientWindow sideband and cannot be self-asserted in tool input. A still-live controller is a no-op. Only natural expiry with matching durable Window continuity may atomically create generation+1; replay returns that same replacement and a different Window or already-successor controller fails closed.",
+            super::input_schemas::agent_continuation_recover_endpoint_input_schema(),
+        ),
+        tool_spec(
             "agent_continuation_state",
             "App-only exact Host heartbeat and sparse authoritative continuation-state refresh. Renews only the current exact Endpoint/View binding; stale Views fail closed.",
             super::input_schemas::agent_continuation_state_input_schema(),

@@ -44,6 +44,7 @@ const MAX_MESSAGES_PER_CONVERSATION: i64 = 100_000;
 
 const OP_CREATE_AGENT: &str = "create_agent_identity";
 const OP_ATTACH_ENDPOINT: &str = "attach_agent_endpoint";
+const OP_RECOVER_MCP_APP_ENDPOINT: &str = "recover_mcp_app_endpoint";
 const OP_CREATE_CONVERSATION: &str = "create_conversation";
 const OP_POST_MESSAGE: &str = "post_conversation_message";
 const OP_POST_WAKE_REPLY: &str = "post_agent_wake_reply";
@@ -322,6 +323,20 @@ pub struct AgentEndpointMutation {
     pub created: bool,
     pub replayed: bool,
     pub state_changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpAppEndpointRecovery {
+    Live {
+        endpoint: AgentEndpointRecord,
+    },
+    Replaced {
+        from_endpoint_id: String,
+        from_controller_generation: i64,
+        endpoint: AgentEndpointRecord,
+        replayed: bool,
+        state_changed: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1020,6 +1035,19 @@ impl Database {
                 params![input.agent_id, now],
             )
             .map_err(store_error)?;
+        // Ordinary Endpoint replacement is an explicit controller transition,
+        // not same-card recovery. Retire every older MCP App recovery proof for
+        // this Agent, including Window continuity retained on endpoints that
+        // already reached natural expiry before this attach.
+        transaction
+            .execute(
+                "UPDATE wc_agent_endpoints
+                 SET mcp_app_recovery_fingerprint = NULL,
+                     mcp_app_client_window_key = NULL
+                 WHERE agent_id = ?1",
+                params![input.agent_id],
+            )
+            .map_err(store_error)?;
         transaction
             .execute(
                 "UPDATE wc_agent_identities
@@ -1073,6 +1101,241 @@ impl Database {
         Ok(AgentEndpointMutation {
             endpoint,
             created: true,
+            replayed: false,
+            state_changed: true,
+        })
+    }
+
+    /// Atomically replace one naturally expired MCP App Endpoint while preserving
+    /// exact principal, Agent, stale generation, and canonical Host-window
+    /// continuity. The old Endpoint id is the durable idempotency selector: a
+    /// response-loss retry from the same Window returns the same replacement,
+    /// while a different Window conflicts on the request hash and cannot take over.
+    pub fn recover_expired_mcp_app_endpoint(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        client_window_key: &str,
+    ) -> Result<McpAppEndpointRecovery, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(agent_id, DURABLE_AGENT_ID_PREFIX, "invalid_agent_id")?;
+        validate_id(endpoint_id, AGENT_ENDPOINT_ID_PREFIX, "invalid_endpoint_id")?;
+        if expected_controller_generation < 1 {
+            return Err(CommunicationStoreError::new(
+                "invalid_controller_generation",
+                "expected_controller_generation must be at least 1",
+            ));
+        }
+        validate_mcp_app_client_window_key(client_window_key)?;
+        let request_hash = digest_json(&json!({
+            "agent_id": agent_id,
+            "endpoint_id": endpoint_id,
+            "expected_controller_generation": expected_controller_generation,
+            "client_window_key": client_window_key,
+        }));
+        let now = now_unix_ms();
+        let lease_expires_at_unix_ms = now.saturating_add(DEFAULT_ENDPOINT_LEASE_MS);
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+
+        if let Some(replacement_endpoint_id) = lookup_idempotent_resource(
+            &transaction,
+            principal,
+            OP_RECOVER_MCP_APP_ENDPOINT,
+            endpoint_id,
+            &request_hash,
+        )? {
+            let replacement =
+                load_endpoint_for_principal(&transaction, principal, &replacement_endpoint_id)?
+                    .ok_or_else(|| {
+                        CommunicationStoreError::new(
+                            "endpoint_not_found",
+                            "Recovered Agent Endpoint no longer exists",
+                        )
+                    })?;
+            let expected_replacement_generation = expected_controller_generation
+                .checked_add(1)
+                .ok_or_else(|| {
+                    CommunicationStoreError::new(
+                        "controller_generation_exhausted",
+                        "Agent controller generation is exhausted",
+                    )
+                })?;
+            let current_controller_generation: i64 = transaction
+                .query_row(
+                    "SELECT current_controller_generation FROM wc_agent_identities WHERE agent_id = ?1",
+                    params![agent_id],
+                    |row| row.get(0),
+                )
+                .map_err(store_error)?;
+            if replacement.agent_id != agent_id
+                || replacement.controller_generation != expected_replacement_generation
+                || current_controller_generation != replacement.controller_generation
+                || replacement.lifecycle == AgentEndpointLifecycle::Detached
+            {
+                return Err(CommunicationStoreError::new(
+                    "endpoint_generation_stale",
+                    "Recovered Agent Endpoint is no longer the authoritative successor",
+                ));
+            }
+            return Ok(McpAppEndpointRecovery::Replaced {
+                from_endpoint_id: endpoint_id.to_string(),
+                from_controller_generation: expected_controller_generation,
+                endpoint: replacement,
+                replayed: true,
+                state_changed: false,
+            });
+        }
+
+        require_agent_owner(&transaction, principal, agent_id)?;
+        let stale = load_endpoint_for_principal(&transaction, principal, endpoint_id)?.ok_or_else(
+            || CommunicationStoreError::new("endpoint_not_found", "Agent Endpoint does not exist"),
+        )?;
+        if stale.agent_id != agent_id {
+            return Err(CommunicationStoreError::new(
+                "endpoint_agent_mismatch",
+                "Agent Endpoint is attached to a different Agent",
+            ));
+        }
+        if stale.controller_generation != expected_controller_generation {
+            return Err(CommunicationStoreError::new(
+                "endpoint_generation_stale",
+                "Agent Endpoint controller generation is stale",
+            ));
+        }
+        let persisted_window: Option<String> = transaction
+            .query_row(
+                "SELECT mcp_app_client_window_key FROM wc_agent_endpoints WHERE endpoint_id = ?1",
+                params![endpoint_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        if persisted_window.as_deref() != Some(client_window_key) {
+            return Err(CommunicationStoreError::new(
+                "host_binding_stale",
+                "MCP App replacement requires the same canonical Host ClientWindow",
+            ));
+        }
+        let current_controller_generation: i64 = transaction
+            .query_row(
+                "SELECT current_controller_generation FROM wc_agent_identities WHERE agent_id = ?1",
+                params![agent_id],
+                |row| row.get(0),
+            )
+            .map_err(store_error)?;
+        if current_controller_generation != expected_controller_generation {
+            return Err(CommunicationStoreError::new(
+                "endpoint_generation_stale",
+                "Another Endpoint generation already owns this Agent",
+            ));
+        }
+        match stale.lifecycle {
+            AgentEndpointLifecycle::Detached => {
+                return Err(CommunicationStoreError::new(
+                    "endpoint_detached",
+                    "Explicitly detached Agent Endpoints are not eligible for automatic replacement",
+                ));
+            }
+            AgentEndpointLifecycle::Attached if stale.lease_expires_at_unix_ms > now => {
+                return Ok(McpAppEndpointRecovery::Live { endpoint: stale });
+            }
+            AgentEndpointLifecycle::Attached | AgentEndpointLifecycle::Expired => {}
+        }
+
+        reconcile_wakes_for_endpoint_loss(
+            &transaction,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            now,
+        )?;
+        transaction
+            .execute(
+                "UPDATE wc_agent_endpoints
+                 SET lifecycle = 'expired',
+                     wake_capable = 0,
+                     expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2),
+                     last_seen_at_unix_ms = MAX(last_seen_at_unix_ms, ?2),
+                     lease_expires_at_unix_ms = MIN(lease_expires_at_unix_ms, ?2),
+                     mcp_app_recovery_fingerprint = NULL
+                 WHERE endpoint_id = ?1 AND agent_id = ?3
+                   AND controller_generation = ?4 AND lifecycle != 'detached'",
+                params![endpoint_id, now, agent_id, expected_controller_generation],
+            )
+            .map_err(store_error)?;
+        let controller_generation =
+            expected_controller_generation
+                .checked_add(1)
+                .ok_or_else(|| {
+                    CommunicationStoreError::new(
+                        "controller_generation_exhausted",
+                        "Agent controller generation is exhausted",
+                    )
+                })?;
+        let updated = transaction
+            .execute(
+                "UPDATE wc_agent_identities
+                 SET current_controller_generation = ?2
+                 WHERE agent_id = ?1 AND current_controller_generation = ?3",
+                params![
+                    agent_id,
+                    controller_generation,
+                    expected_controller_generation
+                ],
+            )
+            .map_err(store_error)?;
+        if updated != 1 {
+            return Err(CommunicationStoreError::new(
+                "endpoint_generation_stale",
+                "Another Endpoint generation already owns this Agent",
+            ));
+        }
+        let replacement_endpoint_id = new_id(AGENT_ENDPOINT_ID_PREFIX);
+        transaction
+            .execute(
+                "INSERT INTO wc_agent_endpoints (
+                    endpoint_id, agent_id, attachment_principal_kind,
+                    attachment_principal_digest, host, client_attachment_id,
+                    wake_capable, mcp_app_recovery_fingerprint, mcp_app_client_window_key,
+                    controller_generation, lifecycle, attached_at_unix_ms,
+                    last_seen_at_unix_ms, lease_expires_at_unix_ms,
+                    expired_at_unix_ms, detached_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7, ?8, 'attached',
+                           ?9, ?9, ?10, NULL, NULL)",
+                params![
+                    replacement_endpoint_id,
+                    agent_id,
+                    principal.kind,
+                    principal.digest,
+                    stale.host,
+                    stale.client_attachment_id,
+                    client_window_key,
+                    controller_generation,
+                    now,
+                    lease_expires_at_unix_ms,
+                ],
+            )
+            .map_err(store_error)?;
+        record_idempotent_resource(
+            &transaction,
+            principal,
+            OP_RECOVER_MCP_APP_ENDPOINT,
+            endpoint_id,
+            &request_hash,
+            &replacement_endpoint_id,
+            now,
+        )?;
+        let endpoint = load_endpoint(&transaction, &replacement_endpoint_id)?
+            .expect("replacement Endpoint must be readable in the same transaction");
+        transaction.commit().map_err(store_error)?;
+        Ok(McpAppEndpointRecovery::Replaced {
+            from_endpoint_id: endpoint_id.to_string(),
+            from_controller_generation: expected_controller_generation,
+            endpoint,
             replayed: false,
             state_changed: true,
         })

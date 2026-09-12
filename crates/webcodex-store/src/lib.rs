@@ -48,9 +48,10 @@ pub use self::communication::{
     CommunicationStoreError, ConversationAccess, ConversationDetailRecord, ConversationLifecycle,
     ConversationMessageMutation, ConversationMessageRecord, ConversationMutation, ConversationPage,
     ConversationParticipantRecord, ConversationSummaryRecord, DeliveryConsumeResult,
-    DurableAgentIdentity, MessageAuthorRecord, MessageDeliveryRecord, MessageDeliveryState,
-    NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
-    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_COMMUNICATION_LIST_LIMIT, MAX_DURABLE_AGENTS,
+    DurableAgentIdentity, McpAppEndpointRecovery, MessageAuthorRecord, MessageDeliveryRecord,
+    MessageDeliveryState, NewAgentEndpoint, NewAgentIdentity, NewConversation,
+    NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_COMMUNICATION_LIST_LIMIT,
+    MAX_DURABLE_AGENTS,
 };
 pub use self::execution_model::{
     ConnectorExecution, ConnectorExecutionFailure, ConnectorExecutionKind,

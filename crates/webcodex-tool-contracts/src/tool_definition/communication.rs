@@ -248,6 +248,42 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
+                "agent_continuation_recover_endpoint",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("agent_id", "/agent_continuation/agent_id"),
+                    super::ToolAuditResultField::pointer("endpoint_id", "/agent_continuation/endpoint_id"),
+                    super::ToolAuditResultField::pointer("controller_generation", "/agent_continuation/controller_generation"),
+                    super::ToolAuditResultField::pointer("recovery_kind", "/endpoint_recovery/kind"),
+                    super::ToolAuditResultField::pointer("from_endpoint_id", "/endpoint_recovery/replacement/from_endpoint_id"),
+                    super::ToolAuditResultField::pointer("from_controller_generation", "/endpoint_recovery/replacement/from_controller_generation"),
+                    super::ToolAuditResultField::value("replayed"),
+                    super::ToolAuditResultField::value("state_changed"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelHidden,
+                TOOL_CATEGORY_COMMUNICATION,
+                None,
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Mutate,
+                    risk: CommunicationManage,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::FencedReplay,
+                },
+                Some(COMMUNICATION_MANAGE),
+                false,
+                NoPath,
+                true,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            PERMISSION_RISK_WRITE,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        permission_risk(
+            def(
                 "agent_continuation_state",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("agent_id", "/agent_continuation/agent_id"),

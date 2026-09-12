@@ -137,6 +137,38 @@ fn agent_continuation_projection_schema() -> Value {
     })
 }
 
+fn agent_continuation_endpoint_recovery_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "kind": {"type": "string", "enum": ["controller_live", "endpoint_replaced"]},
+            "replacement": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "agent_id": schema_type("string", "Durable Agent identity, unchanged by replacement."),
+                            "from_endpoint_id": schema_type("string", "Exact stale Endpoint authorized for replacement."),
+                            "from_controller_generation": schema_type("integer", "Exact stale controller generation authorized for replacement."),
+                            "endpoint_id": schema_type("string", "Server-created replacement Endpoint identity."),
+                            "controller_generation": schema_type("integer", "Monotonically increased replacement generation."),
+                            "reason": {"type": "string", "const": "endpoint_expired"}
+                        },
+                        "required": [
+                            "agent_id", "from_endpoint_id", "from_controller_generation",
+                            "endpoint_id", "controller_generation", "reason"
+                        ]
+                    },
+                    {"type": "null"}
+                ]
+            }
+        },
+        "required": ["kind", "replacement"]
+    })
+}
+
 fn participant_schema() -> Value {
     json!({
         "type": "object",
@@ -300,6 +332,12 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             "agent_continuation",
             agent_continuation_projection_schema(),
         )]),
+        "agent_continuation_recover_endpoint" => wrapped_output_schema(vec![
+            ("agent_continuation", agent_continuation_projection_schema()),
+            ("endpoint_recovery", agent_continuation_endpoint_recovery_schema()),
+            ("replayed", schema_type("boolean", "True when the exact expired-endpoint replacement was replayed.")),
+            ("state_changed", schema_type("boolean", "True only when this call created the replacement Endpoint.")),
+        ]),
         "attach_agent_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
             ("endpoint", endpoint_schema()),
             (

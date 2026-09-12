@@ -1537,8 +1537,8 @@ fn expire_stale_endpoints(
             .execute(
                 "UPDATE wc_agent_endpoints
                  SET lifecycle = 'expired', expired_at_unix_ms = COALESCE(expired_at_unix_ms, ?2),
-                     mcp_app_recovery_fingerprint = NULL,
-                     mcp_app_client_window_key = NULL
+                     wake_capable = 0,
+                     mcp_app_recovery_fingerprint = NULL
                  WHERE endpoint_id = ?1 AND lifecycle = 'attached'",
                 params![endpoint_id, now],
             )

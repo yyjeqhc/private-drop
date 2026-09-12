@@ -3794,6 +3794,12 @@ impl ToolCall {
                 expected_controller_generation,
                 ..
             }
+            | Self::AgentContinuationRecoverEndpoint {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                ..
+            }
             | Self::AgentContinuationState {
                 agent_id,
                 endpoint_id,

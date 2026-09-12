@@ -1218,6 +1218,458 @@ fn mcp_app_restart_refresh_recovers_only_same_client_window_without_attachment_s
 }
 
 #[test]
+fn mcp_app_expired_endpoint_replacement_recovers_same_window_card_and_pending_wake() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&temp.path().join("expired-endpoint-recovery.db")).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let sender = create_agent(
+        &runtime,
+        "expired-recovery-sender",
+        "Expired Recovery Sender",
+        "sender description",
+        "sender-label",
+        "expired-recovery-sender-create",
+    );
+    let receiver = create_agent(
+        &runtime,
+        "expired-recovery-receiver",
+        "Expired Recovery Receiver",
+        "receiver description",
+        "receiver-label",
+        "expired-recovery-receiver-create",
+    );
+    let (sender_endpoint, sender_generation) =
+        attach(&runtime, &sender, "expired-recovery-sender-endpoint");
+    let (endpoint, generation) = attach(&runtime, &receiver, "expired-recovery-endpoint");
+    let conversation = create_conversation(
+        &runtime,
+        &sender,
+        &receiver,
+        "expired-recovery-conversation",
+    );
+    let window_a = crate::client_window::ClientWindow::for_test("expired-recovery-window-a");
+    let window_b = crate::client_window::ClientWindow::for_test("expired-recovery-window-b");
+    let old_binding = format!("wc_host_binding_{}", "1".repeat(32));
+    let bound = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(bound.success, "{:?}", bound.output);
+    assert_eq!(
+        endpoint_client_window_key(&db, &endpoint).as_deref(),
+        Some(window_a.key())
+    );
+
+    let live_probe = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding.clone(),
+    );
+    assert!(live_probe.success, "{:?}", live_probe.output);
+    assert_eq!(
+        live_probe.output["endpoint_recovery"]["kind"],
+        "controller_live"
+    );
+    assert!(live_probe.output["endpoint_recovery"]["replacement"].is_null());
+    assert_eq!(live_probe.output["state_changed"], false);
+    assert_eq!(
+        live_probe.output["agent_continuation"]["controller_generation"],
+        generation
+    );
+
+    // Model a full Host View close: exact unbind removes only the process-local
+    // iframe fence while the durable same-Window continuity hash survives.
+    let closed = runtime.agent_continuation_unbind_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        endpoint.clone(),
+        generation,
+        old_binding,
+    );
+    assert!(closed.success, "{:?}", closed.output);
+    assert!(endpoint_recovery_fingerprint(&db, &endpoint).is_none());
+    assert_eq!(
+        endpoint_client_window_key(&db, &endpoint).as_deref(),
+        Some(window_a.key())
+    );
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_endpoints SET lease_expires_at_unix_ms = 0 WHERE endpoint_id = ?1",
+            [&endpoint],
+        )
+        .unwrap();
+
+    // Work arrives while the View is closed and the old Endpoint lease is gone.
+    post_as_agent(
+        &runtime,
+        &conversation,
+        "queued while original ChatGPT View is closed past the Endpoint lease",
+        &sender,
+        &sender_endpoint,
+        sender_generation,
+        &receiver,
+        Some("expired-recovery-message"),
+        None,
+        None,
+    );
+    let wake_id = wake_id_for(&db, &receiver);
+    assert_eq!(
+        db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Pending
+    );
+    let durable_counts = (
+        count(&db, "wc_conversation_messages"),
+        count(&db, "wc_agent_deliveries"),
+        count(&db, "wc_agent_wakes"),
+    );
+    assert_eq!(durable_counts, (1, 1, 1));
+
+    let foreign_window = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window_b),
+        receiver.clone(),
+        endpoint.clone(),
+        generation,
+        format!("wc_host_binding_{}", "2".repeat(32)),
+    );
+    assert!(!foreign_window.success);
+    assert_eq!(foreign_window.output["error_kind"], "host_binding_stale");
+
+    // Reopening/refreshing the original Conversation creates a new iframe fence,
+    // but the Host sideband still proves the same canonical Window.
+    let refreshed_binding = format!("wc_host_binding_{}", "3".repeat(32));
+    let recovered = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        endpoint.clone(),
+        generation,
+        refreshed_binding.clone(),
+    );
+    assert!(recovered.success, "{:?}", recovered.output);
+    assert_eq!(
+        recovered.output["endpoint_recovery"]["kind"],
+        "endpoint_replaced"
+    );
+    assert_eq!(recovered.output["state_changed"], true);
+    assert_eq!(recovered.output["replayed"], false);
+    let replacement_endpoint = recovered.output["endpoint_recovery"]["replacement"]["endpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let replacement_generation = recovered.output["endpoint_recovery"]["replacement"]
+        ["controller_generation"]
+        .as_i64()
+        .unwrap();
+    assert_ne!(replacement_endpoint, endpoint);
+    assert_eq!(replacement_generation, generation + 1);
+    assert_eq!(
+        recovered.output["endpoint_recovery"]["replacement"]["from_endpoint_id"],
+        endpoint
+    );
+    assert_eq!(
+        recovered.output["endpoint_recovery"]["replacement"]["from_controller_generation"],
+        generation
+    );
+    assert_eq!(
+        recovered.output["endpoint_recovery"]["replacement"]["reason"],
+        "endpoint_expired"
+    );
+    assert_eq!(
+        endpoint_client_window_key(&db, &replacement_endpoint).as_deref(),
+        Some(window_a.key())
+    );
+    assert_eq!(
+        db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Pending
+    );
+    assert_eq!(
+        (
+            count(&db, "wc_conversation_messages"),
+            count(&db, "wc_agent_deliveries"),
+            count(&db, "wc_agent_wakes"),
+        ),
+        durable_counts,
+        "replacement must not duplicate Message, Delivery, or logical Wake"
+    );
+
+    // A lost successful replacement response replays the same E2/g2. The
+    // iframe binding id is deliberately not the durable idempotency selector.
+    let replay = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        endpoint.clone(),
+        generation,
+        refreshed_binding,
+    );
+    assert!(replay.success, "{:?}", replay.output);
+    assert_eq!(replay.output["replayed"], true);
+    assert_eq!(replay.output["state_changed"], false);
+    assert_eq!(
+        replay.output["endpoint_recovery"]["replacement"]["endpoint_id"],
+        replacement_endpoint
+    );
+    assert_eq!(
+        replay.output["endpoint_recovery"]["replacement"]["controller_generation"],
+        replacement_generation
+    );
+
+    let replay_from_other_window = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window_b),
+        receiver.clone(),
+        endpoint.clone(),
+        generation,
+        format!("wc_host_binding_{}", "4".repeat(32)),
+    );
+    assert!(!replay_from_other_window.success);
+    assert_eq!(
+        replay_from_other_window.output["error_kind"],
+        "communication_idempotency_conflict"
+    );
+
+    let new_binding = format!("wc_host_binding_{}", "5".repeat(32));
+    let rebound = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        replacement_endpoint.clone(),
+        replacement_generation,
+        new_binding.clone(),
+    );
+    assert!(rebound.success, "{:?}", rebound.output);
+    assert_eq!(
+        rebound.output["agent_continuation"]["host_binding"]["bound"],
+        true
+    );
+
+    let acquired = runtime.agent_continuation_wake_acquire_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        replacement_endpoint.clone(),
+        replacement_generation,
+        new_binding.clone(),
+    );
+    assert!(acquired.success, "{:?}", acquired.output);
+    assert_eq!(acquired.output["wake"]["wake_id"], wake_id);
+    let attempt_id = acquired.output["wake"]["attempt_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let prepared = runtime.agent_continuation_wake_prepare_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        replacement_endpoint.clone(),
+        replacement_generation,
+        new_binding.clone(),
+        wake_id.clone(),
+        attempt_id.clone(),
+    );
+    assert!(prepared.success, "{:?}", prepared.output);
+    let automatic_message = prepared.output["app_protocol"]["automatic_message"]
+        .as_str()
+        .unwrap();
+    let consume_token = resume_field(automatic_message, "consume_token");
+    assert_eq!(
+        resume_field(automatic_message, "endpoint_id"),
+        replacement_endpoint
+    );
+    assert_eq!(
+        resume_field(automatic_message, "controller_generation"),
+        replacement_generation.to_string()
+    );
+    let acknowledged = runtime.agent_continuation_wake_finish_for_window(
+        None,
+        Some(&window_a),
+        receiver.clone(),
+        replacement_endpoint.clone(),
+        replacement_generation,
+        new_binding,
+        wake_id.clone(),
+        attempt_id,
+        "dispatch_accepted".to_string(),
+    );
+    assert!(acknowledged.success, "{:?}", acknowledged.output);
+    let consumed = runtime.consume_agent_wake(
+        None,
+        receiver.clone(),
+        replacement_endpoint,
+        replacement_generation,
+        wake_id.clone(),
+        consume_token,
+    );
+    assert!(consumed.success, "{:?}", consumed.output);
+    assert_eq!(
+        db.agent_wake(&wake_id).unwrap().unwrap().state,
+        AgentWakeState::Consumed
+    );
+    assert_eq!(
+        (
+            count(&db, "wc_conversation_messages"),
+            count(&db, "wc_agent_deliveries"),
+            count(&db, "wc_agent_wakes"),
+        ),
+        durable_counts,
+        "continuation consume remains distinct from Delivery consumption"
+    );
+}
+
+#[test]
+fn mcp_app_expired_endpoint_replacement_replays_across_server_restart_without_extra_generation() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("expired-endpoint-restart-recovery.db");
+    let db = Arc::new(Database::open(&path).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let agent = create_agent(
+        &runtime,
+        "expired-restart-agent",
+        "Expired Restart Agent",
+        "restart recovery description",
+        "restart-recovery-label",
+        "expired-restart-agent-create",
+    );
+    let (endpoint, generation) = attach(&runtime, &agent, "expired-restart-endpoint");
+    let window = crate::client_window::ClientWindow::for_test("expired-restart-window");
+    let first_binding = format!("wc_host_binding_{}", "6".repeat(32));
+    let bound = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        first_binding.clone(),
+    );
+    assert!(bound.success, "{:?}", bound.output);
+    let unbound = runtime.agent_continuation_unbind_for_window(
+        None,
+        Some(&window),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        first_binding,
+    );
+    assert!(unbound.success, "{:?}", unbound.output);
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_endpoints SET lease_expires_at_unix_ms = 0 WHERE endpoint_id = ?1",
+            [&endpoint],
+        )
+        .unwrap();
+    drop(runtime);
+    drop(db);
+
+    // Restart before replacement: durable Window continuity remains sufficient for
+    // the dedicated recovery operation, but it grants no ordinary Host binding.
+    let reopened = Arc::new(Database::open(&path).unwrap());
+    {
+        let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+        reopened
+            .recover_agent_wakes_for_server_takeover(
+                &ownership,
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .unwrap();
+    }
+    let runtime = runtime_with_db(reopened.clone());
+    let recovery_binding = format!("wc_host_binding_{}", "7".repeat(32));
+    let recovered = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window),
+        agent.clone(),
+        endpoint.clone(),
+        generation,
+        recovery_binding,
+    );
+    assert!(recovered.success, "{:?}", recovered.output);
+    let replacement_endpoint = recovered.output["endpoint_recovery"]["replacement"]["endpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let replacement_generation = recovered.output["endpoint_recovery"]["replacement"]
+        ["controller_generation"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(replacement_generation, generation + 1);
+    assert_eq!(recovered.output["state_changed"], true);
+    drop(runtime);
+    drop(reopened);
+
+    // Restart after replacement: replay of the old exact selector returns the
+    // same E2/g2, never E3/g3, and the same Window may then bind E2 normally.
+    let reopened = Arc::new(Database::open(&path).unwrap());
+    {
+        let ownership = crate::server_instance::ServerInstanceGuard::acquire(&reopened).unwrap();
+        reopened
+            .recover_agent_wakes_for_server_takeover(
+                &ownership,
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .unwrap();
+    }
+    let runtime = runtime_with_db(reopened.clone());
+    let replay = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window),
+        agent.clone(),
+        endpoint,
+        generation,
+        format!("wc_host_binding_{}", "8".repeat(32)),
+    );
+    assert!(replay.success, "{:?}", replay.output);
+    assert_eq!(replay.output["replayed"], true);
+    assert_eq!(replay.output["state_changed"], false);
+    assert_eq!(
+        replay.output["endpoint_recovery"]["replacement"]["endpoint_id"],
+        replacement_endpoint
+    );
+    assert_eq!(
+        replay.output["endpoint_recovery"]["replacement"]["controller_generation"],
+        replacement_generation
+    );
+    let binding = format!("wc_host_binding_{}", "9".repeat(32));
+    let rebound = runtime.agent_continuation_bind_for_window(
+        None,
+        Some(&window),
+        agent.clone(),
+        replacement_endpoint.clone(),
+        replacement_generation,
+        binding.clone(),
+    );
+    assert!(rebound.success, "{:?}", rebound.output);
+    let live = runtime.agent_continuation_recover_endpoint_for_window(
+        None,
+        Some(&window),
+        agent.clone(),
+        replacement_endpoint,
+        replacement_generation,
+        binding,
+    );
+    assert!(live.success, "{:?}", live.output);
+    assert_eq!(live.output["endpoint_recovery"]["kind"], "controller_live");
+    assert_eq!(live.output["state_changed"], false);
+    let current_generation: i64 = reopened
+        .conn_for_tests()
+        .query_row(
+            "SELECT current_controller_generation FROM wc_agent_identities WHERE agent_id = ?1",
+            [&agent],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(current_generation, replacement_generation);
+}
+
+#[test]
 fn push_replacement_clears_mcp_app_restart_recovery_provenance() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("restart-push-replacement.db");

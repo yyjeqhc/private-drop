@@ -2038,6 +2038,20 @@ impl ToolRuntime {
                 binding_id,
             ),
 
+            ToolCall::AgentContinuationRecoverEndpoint {
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            } => self.agent_continuation_recover_endpoint_for_window(
+                auth,
+                window,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+                binding_id,
+            ),
+
             ToolCall::AgentContinuationState {
                 agent_id,
                 endpoint_id,

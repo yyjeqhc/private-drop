@@ -211,6 +211,10 @@ pub fn agent_continuation_bind_input_schema() -> Value {
     agent_continuation_state_input_schema()
 }
 
+pub fn agent_continuation_recover_endpoint_input_schema() -> Value {
+    agent_continuation_state_input_schema()
+}
+
 pub fn agent_continuation_state_input_schema() -> Value {
     let mut properties = exact_agent_endpoint_properties();
     properties["binding_id"] = host_binding_id();

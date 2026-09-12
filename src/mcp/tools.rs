@@ -587,6 +587,7 @@ fn is_agent_continuation_app_tool_name(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "agent_continuation_bind"
+            | "agent_continuation_recover_endpoint"
             | "agent_continuation_state"
             | "agent_continuation_wake_acquire"
             | "agent_continuation_wake_prepare"

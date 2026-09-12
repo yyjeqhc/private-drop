@@ -52,6 +52,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const CALL_TIMEOUT_MS = 10000;
   const MAX_BIND_ATTEMPTS = 3;
   const MAX_RECOVERY_REBINDS = 1;
+  const MAX_ENDPOINT_RECOVERY_ATTEMPTS = 2;
   const RESTART_RECOVERY_KIND = "host_binding_missing_in_process";
   const MAX_AUTOMATIC_MESSAGE_CHARS = 4096;
   const VISIBLE_POLL_MS = 3000;
@@ -62,6 +63,8 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   let appCallPrefix = null;
   const resultAppCallIds = new WeakMap();
   let identity = null;
+  let identityEpoch = 0;
+  let endpointRecoveryProbeEpoch = -1;
   let bindingId = null;
   let timer = null;
   let coordinationInFlight = false;
@@ -267,15 +270,39 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       && Number.isSafeInteger(value.controller_generation) && value.controller_generation >= 1);
   }
 
+  function sameIdentity(left, right) {
+    return !!(left && right
+      && left.agent_id === right.agent_id
+      && left.endpoint_id === right.endpoint_id
+      && left.controller_generation === right.controller_generation);
+  }
+
+  function identitySnapshot() {
+    return identity && {
+      agent_id: identity.agent_id,
+      endpoint_id: identity.endpoint_id,
+      controller_generation: identity.controller_generation,
+      epoch: identityEpoch,
+    };
+  }
+
+  function snapshotIsCurrent(snapshot) {
+    return !!(snapshot && snapshot.epoch === identityEpoch && sameIdentity(snapshot, identity));
+  }
+
   function acceptIdentity(candidate) {
     if (tornDown) return false;
-    if (!validIdentity(candidate) || (identity && (
-      identity.agent_id !== candidate.agent_id
-      || identity.endpoint_id !== candidate.endpoint_id
-      || identity.controller_generation !== candidate.controller_generation
-    ))) {
-      // Keep the first exact selector. Teardown can only unbind that same carrier;
-      // pending responses must never restart coordination or retarget this card.
+    if (identity && validIdentity(candidate)
+      && identity.agent_id === candidate.agent_id
+      && candidate.controller_generation < identity.controller_generation) {
+      // A response issued before an authorized replacement may arrive late.
+      // Strictly older generations are inert: they can neither retarget nor
+      // tear down the newer controller selected by the replacement envelope.
+      return false;
+    }
+    if (!validIdentity(candidate) || (identity && !sameIdentity(identity, candidate))) {
+      // Keep the first exact selector. Only acceptReplacementIdentity() below
+      // may perform E1/g1 -> E2/g2; ordinary projections still fail closed.
       teardown();
       el("binding").textContent = "Unavailable";
       el("status").textContent = "Invalid or conflicting continuation identity";
@@ -287,8 +314,58 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         endpoint_id: candidate.endpoint_id,
         controller_generation: candidate.controller_generation,
       };
+      identityEpoch++;
       el("generation").textContent = String(identity.controller_generation);
     }
+    return true;
+  }
+
+  function replacementOf(result) {
+    const output = outputOf(result);
+    const recovery = output && output.endpoint_recovery;
+    const replacement = recovery && recovery.kind === "endpoint_replaced" && recovery.replacement;
+    const projection = validProjection(output && output.agent_continuation);
+    return replacement && typeof replacement === "object" && !Array.isArray(replacement) && projection
+      ? { replacement, projection }
+      : null;
+  }
+
+  function acceptReplacementIdentity(result, stale) {
+    if (tornDown || !snapshotIsCurrent(stale)) return false;
+    const transition = replacementOf(result);
+    if (!transition) return false;
+    const { replacement, projection } = transition;
+    if (replacement.agent_id !== stale.agent_id
+      || replacement.from_endpoint_id !== stale.endpoint_id
+      || replacement.from_controller_generation !== stale.controller_generation
+      || replacement.reason !== "endpoint_expired"
+      || typeof replacement.endpoint_id !== "string" || !ENDPOINT_ID.test(replacement.endpoint_id)
+      || !Number.isSafeInteger(replacement.controller_generation)
+      || replacement.controller_generation !== stale.controller_generation + 1
+      || projection.agent_id !== stale.agent_id
+      || projection.endpoint_id !== replacement.endpoint_id
+      || projection.controller_generation !== replacement.controller_generation) {
+      return false;
+    }
+    identity = {
+      agent_id: replacement.agent_id,
+      endpoint_id: replacement.endpoint_id,
+      controller_generation: replacement.controller_generation,
+    };
+    identityEpoch++;
+    endpointRecoveryProbeEpoch = -1;
+    bindingId = null;
+    bindingStarted = false;
+    bindAttempts = 0;
+    recoveryRebinds = 0;
+    pendingFinish = null;
+    dispatchStarted = null;
+    prepareUncertain = null;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    el("generation").textContent = String(identity.controller_generation);
+    el("binding").textContent = "Reconnecting…";
+    el("status").textContent = "Expired controller replaced · restoring Host binding";
     return true;
   }
 
@@ -327,12 +404,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return validProjection(output && output.agent_continuation);
   }
 
-  function exactArgs(extra = {}) {
+  function exactArgsFor(selector, extra = {}) {
     return Object.assign({
-      agent_id: identity.agent_id,
-      endpoint_id: identity.endpoint_id,
-      expected_controller_generation: identity.controller_generation,
+      agent_id: selector.agent_id,
+      endpoint_id: selector.endpoint_id,
+      expected_controller_generation: selector.controller_generation,
     }, extra);
+  }
+
+  function exactArgs(extra = {}) {
+    return exactArgsFor(identity, extra);
   }
 
   async function callTool(name, args) {
@@ -385,17 +466,21 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   function scheduleNext() {
     if (tornDown) return;
     if (timer !== null) clearTimeout(timer);
+    const scheduledEpoch = identityEpoch;
     timer = setTimeout(() => {
       timer = null;
+      if (scheduledEpoch !== identityEpoch) return scheduleNext();
       if (bindingId) void reconcile(); else void maybeStartBinding();
     }, document.hidden ? HIDDEN_HEARTBEAT_MS : VISIBLE_POLL_MS);
   }
 
   async function bind() {
     if (!viewBindingId) throw definitiveFailure();
+    const selector = identitySnapshot();
+    if (!selector) throw definitiveFailure();
     bindAttempts++;
-    const response = await callTool("agent_continuation_bind", exactArgs({ binding_id: viewBindingId }));
-    if (tornDown) return;
+    const response = await callTool("agent_continuation_bind", exactArgsFor(selector, { binding_id: viewBindingId }));
+    if (tornDown || !snapshotIsCurrent(selector)) return false;
     const callResult = callToolResultOf(response);
     const structured = structuredOf(callResult);
     if (callResult && (callResult.isError === true || (structured && structured.success === false))) throw definitiveFailure();
@@ -403,13 +488,17 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!toolCallSucceeded(callResult) || !projection || !projection.host_binding || projection.host_binding.bound !== true) {
       throw malformedResult(response);
     }
-    if (!acceptIdentity(projection)) return;
+    if (!acceptIdentity(projection)) return false;
     bindingId = viewBindingId;
     render(projection);
+    return true;
   }
 
   async function heartbeat() {
-    const response = await callTool("agent_continuation_state", exactArgs({ binding_id: bindingId }));
+    const selector = identitySnapshot();
+    if (!selector) return null;
+    const response = await callTool("agent_continuation_state", exactArgsFor(selector, { binding_id: bindingId }));
+    if (tornDown || !snapshotIsCurrent(selector)) return null;
     const projection = projectionOf(response);
     if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) {
       const structured = structuredOf(response);
@@ -531,12 +620,53 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     prepareUncertain = null;
   }
 
+  async function recoverExpiredEndpoint() {
+    const stale = identitySnapshot();
+    if (!stale || !viewBindingId || endpointRecoveryProbeEpoch === stale.epoch) return false;
+    endpointRecoveryProbeEpoch = stale.epoch;
+    el("binding").textContent = "Reconnecting…";
+    el("status").textContent = "Checking expired controller recovery";
+    let lastError = null;
+    for (let attempt = 0; attempt < MAX_ENDPOINT_RECOVERY_ATTEMPTS; attempt++) {
+      try {
+        const response = await callTool("agent_continuation_recover_endpoint", exactArgsFor(stale, {
+          binding_id: viewBindingId,
+        }));
+        if (tornDown || !snapshotIsCurrent(stale)) return false;
+        if (!toolCallSucceeded(response)) throw definitiveFailure();
+        const output = outputOf(response);
+        const recovery = output && output.endpoint_recovery;
+        if (recovery && recovery.kind === "controller_live" && recovery.replacement === null) {
+          const projection = projectionOf(response);
+          if (!projection || !sameIdentity(projection, stale)) throw malformedResult(response);
+          el("binding").textContent = "Unavailable";
+          el("status").textContent = "Controller is still live; replacement was not authorized";
+          return false;
+        }
+        if (acceptReplacementIdentity(response, stale)) return true;
+        throw malformedResult(response);
+      } catch (error) {
+        lastError = error;
+        if (tornDown || !snapshotIsCurrent(stale) || (error && error.definitive)) break;
+      }
+    }
+    if (!tornDown && snapshotIsCurrent(stale)) {
+      const diagnostic = hostFailureDiagnostic(lastError);
+      el("binding").textContent = "Unavailable";
+      el("status").textContent = diagnostic
+        ? `Recovery ${diagnostic}; durable Agent state is unchanged`
+        : "Expired controller recovery unavailable; durable Agent state is unchanged";
+    }
+    return false;
+  }
+
   async function reconcile() {
     if (tornDown || !identity || !bindingId || coordinationInFlight) return scheduleNext();
     coordinationInFlight = true;
     try {
       await retryPendingFinish();
       const projection = await heartbeat();
+      if (!projection) return;
       // Acquiring a successor retires the old Server-side claim. Reconcile its
       // pending ACK first while still renewing the Endpoint on every poll.
       if (document.hidden || pendingFinish) return;
@@ -559,10 +689,15 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
         el("binding").textContent = "Rebinding";
         el("status").textContent = "Server restarted · restoring exact Host binding";
       } else if (!tornDown) {
-        const diagnostic = hostFailureDiagnostic(error);
-        el("status").textContent = diagnostic
-          ? `Host reconciliation ${diagnostic}; durable Wake remains authoritative`
-          : "Host reconciliation pending; durable Wake remains authoritative";
+        const recovered = await recoverExpiredEndpoint();
+        if (recovered) {
+          void maybeStartBinding();
+        } else if (!tornDown && endpointRecoveryProbeEpoch !== identityEpoch) {
+          const diagnostic = hostFailureDiagnostic(error);
+          el("status").textContent = diagnostic
+            ? `Host reconciliation ${diagnostic}; durable Wake remains authoritative`
+            : "Host reconciliation pending; durable Wake remains authoritative";
+        }
       }
     } finally {
       coordinationInFlight = false;
@@ -596,8 +731,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     el("binding").textContent = "Binding";
     el("status").textContent = "Exact identity received · binding Host carrier";
     try {
-      await bind();
-      void reconcile();
+      if (await bind()) void reconcile();
     } catch (error) {
       if (!tornDown) {
         const diagnostic = hostFailureDiagnostic(error);
@@ -608,10 +742,15 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
             : "Host binding response unavailable · reconciling";
           scheduleNext();
         } else {
-          el("binding").textContent = "Unavailable";
-          el("status").textContent = diagnostic
-            ? `Host binding ${diagnostic}; durable Agent state is unchanged`
-            : "Host binding unavailable; durable Agent state is unchanged";
+          const recovered = !error.definitive && await recoverExpiredEndpoint();
+          if (recovered) {
+            void maybeStartBinding();
+          } else if (!tornDown) {
+            el("binding").textContent = "Unavailable";
+            el("status").textContent = diagnostic
+              ? `Host binding ${diagnostic}; durable Agent state is unchanged`
+              : "Host binding unavailable; durable Agent state is unchanged";
+          }
         }
       }
     }
@@ -690,7 +829,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "13.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "14.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

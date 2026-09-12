@@ -1,6 +1,6 @@
 use crate::db::{
     AgentEndpointRecord, AgentWakeClaim, AgentWakeEnvelope, AgentWakeRecord, AgentWakeState,
-    CommunicationPrincipal, CommunicationStoreError, Database,
+    CommunicationPrincipal, CommunicationStoreError, Database, McpAppEndpointRecovery,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -491,6 +491,96 @@ impl AgentContinuationController {
             }
         };
         Ok(endpoint)
+    }
+
+    /// Probe and, only when the exact durable Endpoint has naturally expired,
+    /// atomically replace it for the same canonical Host ClientWindow. The
+    /// ClientWindow arrives out-of-band from the Host adapter; binding_id remains
+    /// a process-local iframe fence and is deliberately excluded from durable
+    /// replacement idempotency so same-Window refresh can replay response loss.
+    pub(crate) fn recover_expired_mcp_app_endpoint(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        controller_generation: i64,
+        binding_id: &str,
+        client_window_key: Option<&str>,
+    ) -> Result<McpAppEndpointRecovery, CommunicationStoreError> {
+        let _transition = self
+            .state
+            .binding_transitions
+            .lock()
+            .expect("Agent continuation binding transition mutex poisoned");
+        validate_mcp_app_binding_id(binding_id)?;
+        let client_window_key = client_window_key.ok_or_else(stale_host_binding)?;
+
+        // A live process carrier from a different Window is an immediate fence.
+        // Same-Window refreshed iframes may carry a new binding_id; the durable
+        // Window key, not the iframe token, is the replacement authority.
+        {
+            let bindings = self
+                .state
+                .bindings
+                .lock()
+                .expect("Agent continuation registry mutex poisoned");
+            if let Some(binding) = bindings.get(agent_id) {
+                if binding.principal != *principal {
+                    return Err(stale_host_binding());
+                }
+                if let EndpointContinuationCarrier::McpApp {
+                    client_window_key: current_window_key,
+                    ..
+                } = &binding.carrier
+                {
+                    if current_window_key
+                        .as_deref()
+                        .is_some_and(|current| current != client_window_key)
+                    {
+                        return Err(stale_host_binding());
+                    }
+                } else {
+                    return Err(stale_host_binding());
+                }
+            }
+        }
+
+        let recovery = self.state.db.recover_expired_mcp_app_endpoint(
+            principal,
+            agent_id,
+            endpoint_id,
+            controller_generation,
+            client_window_key,
+        )?;
+        if let McpAppEndpointRecovery::Replaced { endpoint, .. } = &recovery {
+            self.state
+                .attached_endpoints
+                .lock()
+                .expect("Agent continuation attachment mutex poisoned")
+                .insert(
+                    agent_id.to_string(),
+                    (endpoint.endpoint_id.clone(), endpoint.controller_generation),
+                );
+            let mut bindings = self
+                .state
+                .bindings
+                .lock()
+                .expect("Agent continuation registry mutex poisoned");
+            if bindings.get(agent_id).is_some_and(|binding| {
+                binding.endpoint_id != endpoint.endpoint_id
+                    || binding.controller_generation != endpoint.controller_generation
+                    || match &binding.carrier {
+                        EndpointContinuationCarrier::McpApp {
+                            client_window_key: current_window_key,
+                            ..
+                        } => current_window_key.as_deref() != Some(client_window_key),
+                        EndpointContinuationCarrier::Push(_) => true,
+                    }
+            }) {
+                bindings.remove(agent_id);
+            }
+        }
+        Ok(recovery)
     }
 
     /// App heartbeat/state path. A live process-local binding remains the normal

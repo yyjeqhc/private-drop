@@ -1350,6 +1350,14 @@ pub enum ToolCall {
         binding_id: String,
     },
 
+    /// App-only same-Window recovery for one exact naturally expired Endpoint.
+    AgentContinuationRecoverEndpoint {
+        agent_id: String,
+        endpoint_id: String,
+        expected_controller_generation: i64,
+        binding_id: String,
+    },
+
     /// App-only exact Host heartbeat plus bounded authoritative state refresh.
     AgentContinuationState {
         agent_id: String,
@@ -2855,6 +2863,7 @@ impl ToolCall {
             Self::AttachAgentEndpoint { .. } => "attach_agent_endpoint",
             Self::PresentAgentContinuation { .. } => "present_agent_continuation",
             Self::AgentContinuationBind { .. } => "agent_continuation_bind",
+            Self::AgentContinuationRecoverEndpoint { .. } => "agent_continuation_recover_endpoint",
             Self::AgentContinuationState { .. } => "agent_continuation_state",
             Self::AgentContinuationWakeAcquire { .. } => "agent_continuation_wake_acquire",
             Self::AgentContinuationWakePrepare { .. } => "agent_continuation_wake_prepare",

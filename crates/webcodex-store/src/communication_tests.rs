@@ -1,5 +1,6 @@
 use super::communication::*;
 use super::Database;
+use std::sync::{Arc, Barrier};
 
 fn principal(kind: &str, hex: char) -> CommunicationPrincipal {
     CommunicationPrincipal {
@@ -919,6 +920,170 @@ fn message_deliveries_and_wake_commit_atomically() {
         .query_row("SELECT COUNT(*) FROM wc_agent_wakes", [], |row| row.get(0))
         .unwrap();
     assert_eq!(wake_count, 1);
+}
+
+#[test]
+fn expired_mcp_app_endpoint_recovery_is_concurrent_idempotent_and_window_fenced() {
+    let temp = tempfile::tempdir().unwrap();
+    let db =
+        Arc::new(Database::open(&temp.path().join("endpoint-recovery-concurrency.db")).unwrap());
+    let owner = principal("user", 'd');
+    let agent = db
+        .create_agent_identity(
+            &owner,
+            new_agent("recovery-agent", "Recovery Agent", "recovery-agent-create"),
+        )
+        .unwrap()
+        .agent;
+    let endpoint = db
+        .attach_agent_endpoint(
+            &owner,
+            endpoint(&agent.agent_id, "ChatGPT", "recovery-endpoint"),
+        )
+        .unwrap()
+        .endpoint;
+    let window_key = "a".repeat(64);
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_endpoints
+             SET mcp_app_client_window_key = ?2, lease_expires_at_unix_ms = 0
+             WHERE endpoint_id = ?1",
+            rusqlite::params![endpoint.endpoint_id, window_key],
+        )
+        .unwrap();
+
+    let barrier = Arc::new(Barrier::new(3));
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let db = db.clone();
+        let owner = owner.clone();
+        let agent_id = agent.agent_id.clone();
+        let endpoint_id = endpoint.endpoint_id.clone();
+        let window_key = window_key.clone();
+        let barrier = barrier.clone();
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            db.recover_expired_mcp_app_endpoint(
+                &owner,
+                &agent_id,
+                &endpoint_id,
+                endpoint.controller_generation,
+                &window_key,
+            )
+            .unwrap()
+        }));
+    }
+    barrier.wait();
+    let results: Vec<_> = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect();
+    let mut replacements = Vec::new();
+    let mut changed_count = 0;
+    let mut replay_count = 0;
+    for result in results {
+        match result {
+            McpAppEndpointRecovery::Replaced {
+                endpoint,
+                replayed,
+                state_changed,
+                ..
+            } => {
+                replacements.push((endpoint.endpoint_id, endpoint.controller_generation));
+                changed_count += usize::from(state_changed);
+                replay_count += usize::from(replayed);
+            }
+            McpAppEndpointRecovery::Live { .. } => panic!("expired Endpoint must be replaced"),
+        }
+    }
+    assert_eq!(replacements.len(), 2);
+    assert_eq!(replacements[0], replacements[1]);
+    assert_eq!(replacements[0].1, endpoint.controller_generation + 1);
+    assert_eq!(
+        changed_count, 1,
+        "exactly one transaction may create the successor"
+    );
+    assert_eq!(
+        replay_count, 1,
+        "the concurrent loser must replay the same successor"
+    );
+    let endpoint_count: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM wc_agent_endpoints WHERE agent_id = ?1",
+            [&agent.agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(endpoint_count, 2, "concurrency must not manufacture E3/g3");
+    let generation: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT current_controller_generation FROM wc_agent_identities WHERE agent_id = ?1",
+            [&agent.agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(generation, endpoint.controller_generation + 1);
+
+    let superseding = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: agent.agent_id.clone(),
+                host: "ChatGPT".to_string(),
+                client_attachment_id: Some("attachment-recovery-superseding-endpoint".to_string()),
+                wake_capable: false,
+                idempotency_key: "recovery-superseding-endpoint".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    assert_eq!(
+        superseding.controller_generation,
+        endpoint.controller_generation + 2
+    );
+    let retained_window_keys: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM wc_agent_endpoints
+             WHERE agent_id = ?1 AND mcp_app_client_window_key IS NOT NULL",
+            [&agent.agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        retained_window_keys, 0,
+        "ordinary Endpoint replacement must retire Window recovery provenance even from already-expired predecessors"
+    );
+    assert_eq!(
+        db.recover_expired_mcp_app_endpoint(
+            &owner,
+            &agent.agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &window_key,
+        )
+        .unwrap_err()
+        .code(),
+        "endpoint_generation_stale",
+        "an E1 replay must never retarget a card back to E2 after E3 becomes authoritative"
+    );
+
+    let other_window = "b".repeat(64);
+    assert_eq!(
+        db.recover_expired_mcp_app_endpoint(
+            &owner,
+            &agent.agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &other_window,
+        )
+        .unwrap_err()
+        .code(),
+        "communication_idempotency_conflict",
+        "a different Window cannot replay or retarget the old recovery selector"
+    );
 }
 
 #[test]
