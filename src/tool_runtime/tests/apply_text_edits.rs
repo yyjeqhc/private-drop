@@ -43,6 +43,13 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
             .unwrap()
             .contains(&serde_json::json!("occurrence")));
     }
+    for variant in &edit_variants[2..] {
+        assert!(variant["properties"]["new_text"].get("minLength").is_none());
+        assert!(variant["properties"]["new_text"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("no-op"));
+    }
     let output = &spec.output_schema["properties"]["output"]["properties"]["conflict_recovery"];
     assert_eq!(output["properties"]["schema_version"]["const"], 1);
     assert_eq!(output["properties"]["candidate_ranges"]["maxItems"], 8);
@@ -65,6 +72,7 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
         serde_json::json!(["not_started", "completed", "outcome_unknown"])
     );
     assert_eq!(output_properties["retry_guidance"]["type"], "string");
+    assert_eq!(output_properties["ignored_noop_count"]["type"], "integer");
     assert!(output["properties"]["conflict_kind"]["enum"]
         .as_array()
         .unwrap()
@@ -139,6 +147,8 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     assert!(spec.description.contains("occurrence"));
     assert!(spec.description.contains("line_scope"));
     assert!(spec.description.contains("global source order"));
+    assert!(spec.description.contains("direct_retry_safe"));
+    assert!(spec.description.contains("reread_required"));
     assert!(
         spec.description.chars().count() <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS
     );
@@ -193,6 +203,31 @@ fn apply_text_edits_multiple_edits_atomic() {
     assert_eq!(updated, "alpha\nBETA\ngamma\nDELTA\n");
     assert_eq!(out["applied_count"], 2);
     assert_eq!(out["edits"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn apply_text_edits_ignores_empty_insert_noop_without_blocking_other_edits() {
+    let original = "alpha\nbeta\n";
+    let edits = vec![
+        text_edit(
+            ApplyTextEditKind::InsertBefore,
+            None,
+            Some(""),
+            Some("anchor-that-does-not-exist"),
+        ),
+        text_edit(
+            ApplyTextEditKind::ReplaceExact,
+            Some("beta"),
+            Some("BETA"),
+            None,
+        ),
+    ];
+    let (updated, out) =
+        files::apply_text_edits_to_string(original, "src/x.rs", &edits, None, false).unwrap();
+    assert_eq!(updated, "alpha\nBETA\n");
+    assert_eq!(out["applied_count"], 2);
+    assert_eq!(out["ignored_noop_count"], 1);
+    assert_eq!(out["edits"].as_array().unwrap().len(), 1);
 }
 
 #[test]

@@ -64,7 +64,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
                 ),
-                "Canonical default guarded edit path after read_files for ordinary model-generated changes on the current worktree. Transactional and SHA-guarded: pass each existing file's current read SHA as expected_sha256; exact matches are unique by default, occurrence remains global source order, and optional line_scope fences matches. Supports transactional multi-file edits. Many changed lines alone are not a reason to choose apply_patch; use apply_patch only when contextual or large multi-hunk patch form is materially clearer. Use apply_unified_diff only for an external raw diff.",
+                "Canonical default guarded edit path after read_files for ordinary model-generated changes on the current worktree. Transactional and SHA-guarded: pass each existing file's current read SHA as expected_sha256; exact matches are unique by default, occurrence stays global source order, and line_scope optionally fences matches. Supports transactional multi-file edits; empty insert_before/insert_after text is a provable no-op that does not invalidate the batch. Many changed lines alone are not a reason to choose apply_patch. On conflict_recovery.direct_retry_safe=true, use the returned candidate occurrence/range without rereading; reread only when reread_required=true. Use apply_patch only when contextual or large multi-hunk form is materially clearer; external raw diffs use apply_unified_diff.",
                 apply_text_edits_input_schema,
             ),
             PERMISSION_RISK_WRITE,

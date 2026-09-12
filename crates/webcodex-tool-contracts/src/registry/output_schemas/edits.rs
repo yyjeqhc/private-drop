@@ -382,6 +382,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("integer", "Number of file changes applied in the batch."),
             ),
             (
+                "ignored_noop_count",
+                schema_type("integer", "Number of provable empty insert operations ignored without invalidating the transactional batch."),
+            ),
+            (
                 "changed",
                 schema_type("boolean", "Whether the worktree was changed."),
             ),

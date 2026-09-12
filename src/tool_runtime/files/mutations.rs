@@ -348,14 +348,9 @@ fn validate_apply_text_edit(
                     edit.kind.as_str()
                 ));
             }
-            if edit
-                .new_text
-                .as_deref()
-                .filter(|value| !value.is_empty())
-                .is_none()
-            {
+            if edit.new_text.is_none() {
                 return Err(format!(
-                    "change {change_index} edit {edit_index} ({}): new_text must be non-empty",
+                    "change {change_index} edit {edit_index} ({}): new_text is required",
                     edit.kind.as_str()
                 ));
             }
@@ -1681,6 +1676,15 @@ pub(crate) fn apply_text_edits_to_string(
     // Resolve each edit to a (start, end, replacement, index) op against the
     // original content. start/end are byte offsets; inserts are zero-width.
     let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(edits.len());
+    let ignored_noop_count = edits
+        .iter()
+        .filter(|edit| {
+            matches!(
+                edit.kind,
+                ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter
+            ) && edit.new_text.as_deref() == Some("")
+        })
+        .count();
     for (index, edit) in edits.iter().enumerate() {
         let kind = edit.kind;
         if edit.occurrence == Some(0) {
@@ -1724,8 +1728,10 @@ pub(crate) fn apply_text_edits_to_string(
                 let new = edit
                     .new_text
                     .as_deref()
-                    .filter(|v| !v.is_empty())
-                    .ok_or_else(|| edit_field_error(index, kind, "new_text must be non-empty"))?;
+                    .ok_or_else(|| edit_field_error(index, kind, "new_text is required"))?;
+                if new.is_empty() {
+                    continue;
+                }
                 (anchor, new.to_string())
             }
         };
@@ -1850,6 +1856,7 @@ pub(crate) fn apply_text_edits_to_string(
         "path": path,
         "dry_run": dry_run,
         "applied_count": edits.len(),
+        "ignored_noop_count": ignored_noop_count,
         "old_sha256": old_sha256,
         "new_sha256": new_sha256,
         "changed": changed,

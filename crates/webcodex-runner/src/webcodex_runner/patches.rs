@@ -551,19 +551,18 @@ fn edit_plan(
                     .ok_or_else(|| {
                         EditPlanError::plain(index, kind.as_str(), "anchor_text must be non-empty")
                     })?;
-                let new_text = edit
-                    .new_text
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| {
-                        EditPlanError::plain(index, kind.as_str(), "new_text must be non-empty")
-                    })?;
+                let new_text = edit.new_text.as_deref().ok_or_else(|| {
+                    EditPlanError::plain(index, kind.as_str(), "new_text is required")
+                })?;
                 if edit.old_text.is_some() {
                     return Err(EditPlanError::plain(
                         index,
                         kind.as_str(),
                         "old_text is not allowed",
                     ));
+                }
+                if new_text.is_empty() {
+                    continue;
                 }
                 (anchor, new_text.to_string())
             }
@@ -1128,6 +1127,7 @@ fn execute_planned_file_changes(
     plans: Vec<PlannedFileChange>,
     dry_run: bool,
     requested_matching_mode: Option<ApplyPatchMatchingMode>,
+    ignored_noop_count: usize,
     start: Instant,
 ) -> CommandResult {
     let mut changed_paths = Vec::new();
@@ -1205,6 +1205,7 @@ fn execute_planned_file_changes(
     let mut output = serde_json::json!({
         "dry_run": dry_run,
         "applied_count": plans.len(),
+        "ignored_noop_count": ignored_noop_count,
         "changed": !dry_run && would_change,
         "state_changed": !dry_run && would_change,
         "execution_state": "completed",
@@ -1635,7 +1636,7 @@ pub(crate) fn handle_apply_patch_file_request(
         plans.push(planned);
     }
 
-    execute_planned_file_changes(plans, dry_run, Some(matching_mode), start)
+    execute_planned_file_changes(plans, dry_run, Some(matching_mode), 0, start)
 }
 
 pub(crate) fn handle_apply_text_edits_file_request(
@@ -1668,6 +1669,17 @@ pub(crate) fn handle_apply_text_edits_file_request(
         );
     }
     let dry_run = payload.dry_run.unwrap_or(false);
+    let ignored_noop_count = payload
+        .changes
+        .iter()
+        .flat_map(|change| change.edits.iter())
+        .filter(|edit| {
+            matches!(
+                edit.kind,
+                ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter
+            ) && edit.new_text.as_deref() == Some("")
+        })
+        .count();
     let mut touched = HashSet::new();
     let mut plans = Vec::with_capacity(payload.changes.len());
     for (index, change) in payload.changes.iter().enumerate() {
@@ -2030,7 +2042,7 @@ pub(crate) fn handle_apply_text_edits_file_request(
         plans.push(planned);
     }
 
-    execute_planned_file_changes(plans, dry_run, None, start)
+    execute_planned_file_changes(plans, dry_run, None, ignored_noop_count, start)
 }
 
 #[cfg(test)]

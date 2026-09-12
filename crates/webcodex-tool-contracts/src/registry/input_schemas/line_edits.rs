@@ -72,8 +72,7 @@ fn apply_text_edit_schema() -> Value {
                     },
                     "new_text": {
                         "type": "string",
-                        "minLength": 1,
-                        "description": "Non-empty text inserted before anchor_text."
+                        "description": "Text inserted before anchor_text. Empty text is accepted as a provable no-op and ignored without invalidating other edits in the transaction."
                     },
                     "occurrence": {
                         "type": "integer",
@@ -96,8 +95,7 @@ fn apply_text_edit_schema() -> Value {
                     },
                     "new_text": {
                         "type": "string",
-                        "minLength": 1,
-                        "description": "Non-empty text inserted after anchor_text."
+                        "description": "Text inserted after anchor_text. Empty text is accepted as a provable no-op and ignored without invalidating other edits in the transaction."
                     },
                     "occurrence": {
                         "type": "integer",

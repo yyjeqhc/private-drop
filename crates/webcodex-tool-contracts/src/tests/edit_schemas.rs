@@ -71,7 +71,11 @@ fn apply_text_edits_input_schema_encodes_file_and_edit_kind_contracts() {
     assert!(remove["properties"].get("anchor_text").is_none());
     for insert in [insert_before, insert_after] {
         assert_eq!(insert["properties"]["anchor_text"]["minLength"], 1);
-        assert_eq!(insert["properties"]["new_text"]["minLength"], 1);
+        assert!(insert["properties"]["new_text"].get("minLength").is_none());
+        assert!(insert["properties"]["new_text"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("no-op"));
         assert!(insert["properties"].get("old_text").is_none());
     }
     assert!(replace["properties"]["new_text"].get("minLength").is_none());
@@ -94,6 +98,8 @@ fn apply_text_edits_input_schema_encodes_file_and_edit_kind_contracts() {
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"delete_exact","old_text":"old"}]}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"insert_before","anchor_text":"anchor","new_text":"new"}]}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"insert_after","anchor_text":"anchor","new_text":"new"}]}]}),
+        json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"insert_before","anchor_text":"anchor","new_text":""}]}]}),
+        json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"insert_after","anchor_text":"anchor","new_text":""}]}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"replace_exact","old_text":"old","line_scope":{"start_line":10,"end_line":20}}]}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"delete_exact","old_text":"old","line_scope":{"start_line":10,"end_line":20}}]}]}),
         json!({"project":"demo","changes":[{"kind":"edit","path":"a.rs","expected_sha256":hash,"edits":[{"kind":"insert_before","anchor_text":"anchor","new_text":"new","line_scope":{"start_line":10,"end_line":20}}]}]}),
