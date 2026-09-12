@@ -4,11 +4,10 @@ use super::common::{object_schema, with_optional_session_id};
 use webcodex_core::runner_protocol::{
     DETACHED_IDEMPOTENCY_KEY_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, PROCESS_ARG_MAX_BYTES,
     PROCESS_ARG_MAX_COUNT, PROCESS_CWD_MAX_BYTES, PROCESS_EXECUTABLE_MAX_BYTES,
-    PROCESS_STDIN_MAX_BYTES, PROCESS_TIMEOUT_MAX_SECS, RAW_SHELL_COMMAND_MAX_BYTES,
-    SCRIPT_ARGV_MAX_BYTES, SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES,
-    SCRIPT_MAX_BYTES, SCRIPT_STDIN_MAX_BYTES, SCRIPT_TIMEOUT_MAX_SECS,
+    PROCESS_STDIN_MAX_BYTES, RAW_SHELL_COMMAND_MAX_BYTES, SCRIPT_ARGV_MAX_BYTES,
+    SCRIPT_ARG_MAX_BYTES, SCRIPT_ARG_MAX_COUNT, SCRIPT_CWD_MAX_BYTES, SCRIPT_MAX_BYTES,
+    SCRIPT_STDIN_MAX_BYTES,
 };
-use webcodex_core::runtime_contract::STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS;
 use webcodex_core::workflow_session_contract::{
     MAX_MODEL_VALIDATION_ASSERTION_NAME_CHARS, TOOL_ACCEPTED_EXIT_CODES_FIELD,
     TOOL_ASSERTION_NAME_FIELD, TOOL_RESULT_EXPECTATION_FIELD,
@@ -72,13 +71,13 @@ pub fn run_process_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Total process runtime budget in seconds (1..=3600, default 60). Short work returns synchronously; longer work keeps the same execution and returns job_id when durable structured execution is available.",
+            "Total process runtime budget in seconds (minimum 1, default 60). Values above 3600 are accepted and clamped to 3600. Short work returns synchronously; longer work keeps the same execution and returns job_id when durable structured execution is available.",
             false,
         ),
         (
             "sync_wait_secs",
             "integer",
-            "Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the total timeout; explicit values are 1..=60 and must not exceed timeout_secs. It only controls how long the Server waits for the already-started execution before exposing that same execution as a Job; it does not extend the total runtime timeout or rerun work.",
+            "Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the total timeout. Explicit values must be positive; values above 60 or above the effective timeout are accepted and clamped to the smaller bound. It only controls how long the Server waits for the already-started execution before exposing that same execution as a Job; it does not extend the total runtime timeout or rerun work.",
             false,
         ),
         (
@@ -102,11 +101,8 @@ pub fn run_process_input_schema() -> Value {
     });
     schema["properties"]["cwd"]["maxLength"] = json!(PROCESS_CWD_MAX_BYTES);
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
-    schema["properties"]["timeout_secs"]["maximum"] = json!(PROCESS_TIMEOUT_MAX_SECS);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
     schema["properties"]["sync_wait_secs"]["minimum"] = json!(1);
-    schema["properties"]["sync_wait_secs"]["maximum"] =
-        json!(STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS);
     schema["properties"]["purpose"]["enum"] = json!([
         "validation",
         "test",
@@ -152,7 +148,7 @@ pub fn run_detached_process_input_schema() -> Value {
         "Project-relative working directory. Omit, empty string, or '.' for the project root. Named Session SSH resources are unsupported for run_detached_process."
     );
     schema["properties"]["timeout_secs"]["description"] = json!(
-        "Total detached process runtime budget in seconds (1..=3600, default 60). Admission returns the stable Job identity without waiting for terminal completion."
+        "Total detached process runtime budget in seconds (minimum 1, default 60). Values above 3600 are accepted and clamped to 3600. Admission returns the stable Job identity without waiting for terminal completion."
     );
     schema
 }
@@ -193,13 +189,13 @@ pub fn run_script_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Total script runtime budget in seconds (1..=3600, default 60). Short work returns synchronously; longer work keeps the same execution and returns job_id when durable structured execution is available.",
+            "Total script runtime budget in seconds (minimum 1, default 60). Values above 3600 are accepted and clamped to 3600. Short work returns synchronously; longer work keeps the same execution and returns job_id when durable structured execution is available.",
             false,
         ),
         (
             "sync_wait_secs",
             "integer",
-            "Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the total timeout; explicit values are 1..=60 and must not exceed timeout_secs. It only controls how long the Server waits for the already-started execution before exposing that same execution as a Job; it does not extend the total runtime timeout or rerun work.",
+            "Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the total timeout. Explicit values must be positive; values above 60 or above the effective timeout are accepted and clamped to the smaller bound. It only controls how long the Server waits for the already-started execution before exposing that same execution as a Job; it does not extend the total runtime timeout or rerun work.",
             false,
         ),
         (
@@ -228,11 +224,8 @@ pub fn run_script_input_schema() -> Value {
     });
     schema["properties"]["cwd"]["maxLength"] = json!(SCRIPT_CWD_MAX_BYTES);
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
-    schema["properties"]["timeout_secs"]["maximum"] = json!(SCRIPT_TIMEOUT_MAX_SECS);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
     schema["properties"]["sync_wait_secs"]["minimum"] = json!(1);
-    schema["properties"]["sync_wait_secs"]["maximum"] =
-        json!(STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS);
     schema["properties"]["purpose"]["enum"] = json!([
         "validation",
         "test",
@@ -253,7 +246,7 @@ pub fn run_shell_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Total command timeout in seconds (1..=120, default 60). Explicit values above 60 may hand off the same original execution as a durable Job when the Runner supports async shell Jobs; default 60-second calls remain synchronous.",
+            "Total command timeout in seconds (minimum 1, default 60). Values above 120 are accepted and clamped to 120. Explicit effective values above 60 may hand off the same original execution as a durable Job when the Runner supports async shell Jobs; default 60-second calls remain synchronous.",
             false,
         ),
         (
@@ -291,7 +284,6 @@ pub fn run_shell_input_schema() -> Value {
         "Shell command to run. At most {RAW_SHELL_COMMAND_MAX_BYTES} UTF-8 bytes; use run_script for larger program text and stdin/files/artifacts for large data."
     ));
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
-    schema["properties"]["timeout_secs"]["maximum"] = json!(120);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
     with_optional_result_expectation(with_optional_validation_assertion(schema), false)
 }
@@ -393,7 +385,7 @@ pub fn session_shell_exec_input_schema() -> Value {
         (
             "timeout_secs",
             "integer",
-            "Command timeout in seconds (1..=3600, default 60). Timeout recovery requires verified framing resynchronization; otherwise the shell is poisoned and terminated before reuse.",
+            "Command timeout in seconds (minimum 1, default 60). Values above 3600 are accepted and clamped to 3600. Timeout recovery requires verified framing resynchronization; otherwise the shell is poisoned and terminated before reuse.",
             false,
         ),
         (
@@ -404,7 +396,6 @@ pub fn session_shell_exec_input_schema() -> Value {
         ),
     ]);
     schema["properties"]["timeout_secs"]["minimum"] = json!(1);
-    schema["properties"]["timeout_secs"]["maximum"] = json!(3600);
     schema["properties"]["timeout_secs"]["default"] = json!(60);
     schema["properties"]["command"]["maxLength"] = json!(RAW_SHELL_COMMAND_MAX_BYTES);
     schema["properties"]["command"]["description"] = json!(format!(
@@ -495,15 +486,13 @@ pub fn observe_jobs_input_schema() -> Value {
             "tail_lines": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 200,
                 "default": 40,
-                "description": "Global per-stream bound. First observations return a current tail; cursor-aware follow-ups return at most this many new or reset-recovery lines."
+                "description": "Global per-stream bound. Values above 200 are accepted and clamped to 200. First observations return a current tail; cursor-aware follow-ups return at most this many new or reset-recovery lines."
             },
             "wait_secs": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 60,
-                "description": "Optional one shared bounded wait. It returns when any relevant Job changes and is never multiplied by item count."
+                "description": "Optional one shared bounded wait. Values above 60 seconds are accepted and clamped to 60. It returns when any relevant Job changes and is never multiplied by item count."
             }
         },
         "required": ["items"]
@@ -515,7 +504,7 @@ pub fn list_jobs_input_schema() -> Value {
         (
             "limit",
             "integer",
-            "Maximum number of job summaries to return after all filters.",
+            "Maximum number of job summaries to return after all filters. Values above 100 are accepted and clamped to 100.",
             false,
         ),
         (
@@ -538,7 +527,6 @@ pub fn list_jobs_input_schema() -> Value {
         ),
     ]);
     schema["properties"]["limit"]["minimum"] = json!(1);
-    schema["properties"]["limit"]["maximum"] = json!(100);
     schema["properties"]["project"]["minLength"] = json!(1);
     schema["properties"]["project"]["maxLength"] = json!(512);
     schema["properties"]["session_id"]["minLength"] = json!(1);

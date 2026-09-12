@@ -381,7 +381,7 @@ impl ToolRuntime {
         };
         let offset = offset.unwrap_or(0);
         let limit = limit.unwrap_or(DEFAULT_AGENT_TASK_LIST_LIMIT);
-        if limit == 0 || limit > MAX_AGENT_TASK_LIST_LIMIT {
+        if limit == 0 {
             return ToolResult::err_with_output(
                 format!("limit must be 1..={MAX_AGENT_TASK_LIST_LIMIT}"),
                 json!({
@@ -391,6 +391,7 @@ impl ToolRuntime {
             )
             .with_recovery(RecoveryKind::FixInput, None);
         }
+        let limit = limit.min(MAX_AGENT_TASK_LIST_LIMIT);
         match db.list_agent_tasks(&principal, assignee_agent_id.as_deref(), offset, limit) {
             Ok(result) => serialized_task_success(result),
             Err(error) => agent_task_error(error, RecoveryKind::Reobserve),

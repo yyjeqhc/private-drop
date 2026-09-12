@@ -661,7 +661,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
         "summary must not embed tool output: {summary}"
     );
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["schema_version"], 3);
+    assert_eq!(telemetry["schema_version"], 4);
     assert_eq!(telemetry["tool_name"], "list_tools");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);

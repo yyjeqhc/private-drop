@@ -343,9 +343,12 @@ mod tests {
             register.input_schema["properties"]["path"]["description"].as_str(),
             Some("Existing absolute directory path on the Runner. Git is not required.")
         );
-        assert!(find("work_on_project")
-            .description
-            .contains("Git not required"));
+        let work_on_project = &find("work_on_project").description;
+        assert!(work_on_project.contains("Project or Runner path"));
+        assert!(work_on_project.contains("does not require Git"));
+        assert!(work_on_project.contains("mode=worktree"));
+        assert!(work_on_project.contains("exact Git base"));
+        assert!(work_on_project.contains("Project authority"));
         for name in ["list_runners", "runtime_status"] {
             let description = &find(name).description;
             assert!(

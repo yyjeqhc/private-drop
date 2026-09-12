@@ -12,6 +12,7 @@ use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES
 
 pub(crate) const MAX_OBSERVE_JOBS_ITEMS: usize = 8;
 pub(crate) const MAX_OBSERVE_JOBS_TAIL_LINES: usize = 200;
+const MAX_OBSERVE_JOBS_WAIT_SECS: u64 = 60;
 /// Final serialized model-facing budget for packing multiple already-bounded
 /// Job observations. This does not change any single Job stream/tail retention.
 const MAX_OBSERVE_JOBS_AGGREGATE_RESULT_BYTES: usize = MODEL_INSPECTION_MAX_RESULT_BYTES;
@@ -518,6 +519,16 @@ pub(crate) fn sparsify_observe_jobs_model_result(result: &mut ToolResult) {
     }
 }
 
+fn normalize_observe_jobs_preferences(
+    tail_lines: usize,
+    wait_secs: Option<u64>,
+) -> (usize, Option<u64>) {
+    (
+        tail_lines.min(MAX_OBSERVE_JOBS_TAIL_LINES),
+        wait_secs.map(|wait_secs| wait_secs.min(MAX_OBSERVE_JOBS_WAIT_SECS)),
+    )
+}
+
 impl ToolRuntime {
     fn validate_observe_jobs_input(
         items: &[ObserveJobsItem],
@@ -540,11 +551,11 @@ impl ToolRuntime {
                 item.job_id
             ));
         }
-        if !(1..=MAX_OBSERVE_JOBS_TAIL_LINES).contains(&tail_lines) {
-            return Err("observe_jobs tail_lines must be between 1 and 200".into());
+        if tail_lines == 0 {
+            return Err("observe_jobs tail_lines must be at least 1".into());
         }
-        if wait_secs.is_some_and(|wait_secs| !(1..=60).contains(&wait_secs)) {
-            return Err("observe_jobs wait_secs must be between 1 and 60".into());
+        if wait_secs == Some(0) {
+            return Err("observe_jobs wait_secs must be at least 1".into());
         }
         let mut seen = HashSet::with_capacity(items.len());
         if let Some(duplicate) = items
@@ -681,6 +692,7 @@ impl ToolRuntime {
         wait_secs: Option<u64>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let (tail_lines, wait_secs) = normalize_observe_jobs_preferences(tail_lines, wait_secs);
         if let Err(error) = Self::validate_observe_jobs_input(&items, tail_lines, wait_secs) {
             return ToolResult::err(error);
         }
@@ -747,6 +759,21 @@ mod tests {
         let bounded = bounded_error(Some(&error));
         assert_eq!(bounded.chars().count(), MAX_OBSERVE_JOBS_ERROR_CHARS + 1);
         assert!(bounded.ends_with('…'));
+    }
+
+    #[test]
+    fn oversized_observation_preferences_are_clamped() {
+        assert_eq!(
+            normalize_observe_jobs_preferences(500, Some(120)),
+            (
+                MAX_OBSERVE_JOBS_TAIL_LINES,
+                Some(MAX_OBSERVE_JOBS_WAIT_SECS)
+            )
+        );
+        assert_eq!(
+            normalize_observe_jobs_preferences(40, Some(5)),
+            (40, Some(5))
+        );
     }
 
     #[test]

@@ -122,13 +122,13 @@ fn lsp_input_schemas_have_required_bounds() {
 
     let symbols = &by_name["document_symbols"].input_schema;
     assert_eq!(symbols["required"], json!(["project", "path"]));
-    assert_eq!(symbols["properties"]["limit"]["maximum"], 500);
+    assert!(symbols["properties"]["limit"].get("maximum").is_none());
     assert_eq!(symbols["additionalProperties"], false);
 
     let diagnostics = &by_name["document_diagnostics"].input_schema;
     assert_eq!(diagnostics["required"], json!(["project", "path"]));
     assert_eq!(diagnostics["properties"]["limit"]["minimum"], 1);
-    assert_eq!(diagnostics["properties"]["limit"]["maximum"], 200);
+    assert!(diagnostics["properties"]["limit"].get("maximum").is_none());
     assert_eq!(diagnostics["properties"]["limit"]["default"], 100);
     assert_eq!(diagnostics["additionalProperties"], false);
     let hierarchy = &by_name["call_hierarchy"].input_schema;
@@ -193,7 +193,7 @@ fn lsp_input_schemas_have_required_bounds() {
     assert_eq!(workspace["properties"]["query"]["minLength"], 1);
     assert_eq!(workspace["properties"]["query"]["maxLength"], 200);
     assert_eq!(workspace["properties"]["limit"]["default"], 50);
-    assert_eq!(workspace["properties"]["limit"]["maximum"], 200);
+    assert!(workspace["properties"]["limit"].get("maximum").is_none());
     assert_eq!(workspace["additionalProperties"], false);
     let workspace_item = &by_name["workspace_symbols"].output_schema["properties"]["output"]
         ["properties"]["symbols"]["items"];
@@ -208,7 +208,7 @@ fn lsp_input_schemas_have_required_bounds() {
     );
     assert_eq!(goto["properties"]["line"]["minimum"], 1);
     assert_eq!(goto["properties"]["column"]["minimum"], 1);
-    assert_eq!(goto["properties"]["limit"]["maximum"], 100);
+    assert!(goto["properties"]["limit"].get("maximum").is_none());
 
     let refs = &by_name["find_references"].input_schema;
     assert_eq!(
@@ -216,7 +216,7 @@ fn lsp_input_schemas_have_required_bounds() {
         json!(["project", "path", "line", "column"])
     );
     assert_eq!(refs["properties"]["include_declaration"]["default"], true);
-    assert_eq!(refs["properties"]["limit"]["maximum"], 200);
+    assert!(refs["properties"]["limit"].get("maximum").is_none());
     assert_eq!(refs["additionalProperties"], false);
 
     // Flattened Action fields must list path/line/column/include_declaration/limit.

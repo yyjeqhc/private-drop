@@ -265,7 +265,9 @@ pub struct ProjectPluginCatalogEntry {
 #[serde(deny_unknown_fields)]
 pub struct ProjectPluginCatalog {
     pub catalog_revision: String,
+    /// Complete count before transport truncation; revision also covers all entries.
     pub total_count: usize,
+    /// Deterministic sorted prefix that fits the Plugin gateway response bound.
     pub entries: Vec<ProjectPluginCatalogEntry>,
 }
 
@@ -1290,8 +1292,8 @@ pub fn validate_response_for_request(
 
 pub fn validate_project_plugin_catalog(catalog: &ProjectPluginCatalog) -> Result<(), String> {
     validate_project_plugin_catalog_revision(&catalog.catalog_revision)?;
-    if catalog.total_count != catalog.entries.len()
-        || catalog.entries.len() > PLUGIN_MAX_PROJECT_CATALOG_ENTRIES
+    if catalog.total_count < catalog.entries.len()
+        || catalog.total_count > PLUGIN_MAX_PROJECT_CATALOG_ENTRIES
     {
         return Err("project Plugin catalog count is invalid".to_string());
     }

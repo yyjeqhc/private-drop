@@ -35,18 +35,24 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "retired start_coding_task must stay out of MCP tools/list"
     );
     let description = tool("work_on_project")["description"].as_str().unwrap();
-    assert!(
-        description.contains("Canonical model entry"),
-        "{description}"
-    );
+    assert!(description.contains("Canonical bootstrap"), "{description}");
     assert!(
         description.contains("ordinary coding/review"),
         "{description}"
     );
-    assert!(description.contains("Git not required"), "{description}");
     assert!(description.contains("mode=worktree"), "{description}");
     assert!(description.contains("exact Git base"), "{description}");
-    assert!(description.contains("ordinary Project"), "{description}");
+    assert!(
+        description.contains("fresh Workflow Session"),
+        "{description}"
+    );
+    assert!(description.contains("exact resume"), "{description}");
+    assert!(
+        description.contains("current model context"),
+        "{description}"
+    );
+    assert!(description.contains("Skills"), "{description}");
+    assert!(description.contains("Plugin"), "{description}");
     assert!(
         description.contains("without bypassing Project authority"),
         "{description}"
@@ -73,12 +79,14 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "instruction",
         "include_project_instructions",
         "include_workflow_guidance",
+        "include_extension_catalog",
         "session_id",
     ] {
         assert!(work_props.contains_key(field), "MCP schema missing {field}");
     }
     assert_eq!(work_props["include_project_instructions"]["default"], true);
     assert_eq!(work_props["include_workflow_guidance"]["default"], true);
+    assert_eq!(work_props["include_extension_catalog"]["default"], true);
     assert_eq!(work_props["mode"]["enum"], json!(["checkout", "worktree"]));
     assert_eq!(work_props["mode"]["default"], "checkout");
     assert_eq!(work_schema["required"], json!(["instruction"]));

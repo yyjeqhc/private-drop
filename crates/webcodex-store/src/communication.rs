@@ -30,7 +30,7 @@ pub(crate) const MAX_CONVERSATION_TITLE_CHARS: usize = 200;
 pub(crate) const MAX_CONVERSATION_AGENT_PARTICIPANTS: usize = 16;
 pub(crate) const MAX_CONVERSATION_MESSAGE_BYTES: usize = 4_096;
 pub(crate) const MAX_COMMUNICATION_IDEMPOTENCY_KEY_CHARS: usize = 128;
-pub(crate) const MAX_COMMUNICATION_LIST_LIMIT: usize = 100;
+pub const MAX_COMMUNICATION_LIST_LIMIT: usize = 100;
 pub(crate) const MAX_DELIVERY_CONSUME_ITEMS: usize = 100;
 const MAX_COMMUNICATION_PRINCIPAL_KIND_CHARS: usize = 64;
 

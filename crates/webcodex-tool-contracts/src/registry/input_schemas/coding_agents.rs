@@ -2,8 +2,7 @@ use serde_json::{json, Value};
 
 use webcodex_core::coding_agent::{
     CODING_AGENT_MAX_CONFIG_OPTIONS, CODING_AGENT_MAX_INSTRUCTION_BYTES,
-    CODING_AGENT_OBSERVE_WAIT_MAX_SECS, CODING_AGENT_TIMEOUT_MAX_SECS,
-    CODING_AGENT_TIMEOUT_MIN_SECS,
+    CODING_AGENT_TIMEOUT_MAX_SECS, CODING_AGENT_TIMEOUT_MIN_SECS,
 };
 
 pub fn coding_agent_start_input_schema() -> Value {
@@ -75,9 +74,8 @@ pub fn coding_agent_observe_input_schema() -> Value {
             "wait_secs": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": CODING_AGENT_OBSERVE_WAIT_MAX_SECS,
                 "default": 0,
-                "description": "One bounded wait for retained Run changes; not a subscription or stream."
+                "description": "One bounded wait for retained Run changes; values above the supported wait ceiling are accepted and clamped. Not a subscription or stream."
             }
         },
         "required": ["run_id"],

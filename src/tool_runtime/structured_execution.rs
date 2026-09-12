@@ -29,29 +29,20 @@ impl StructuredExecutionBudget {
         timeout_secs: Option<u64>,
         sync_wait_secs: Option<u64>,
     ) -> Result<Self, String> {
-        let effective_timeout_secs =
+        let requested_timeout_secs =
             timeout_secs.unwrap_or(STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS);
-        if !(STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS..=STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS)
-            .contains(&effective_timeout_secs)
-        {
+        if requested_timeout_secs < STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS {
             return Err(format!(
-                "timeout_secs must be between {STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS} and {STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS}"
+                "timeout_secs must be at least {STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS}"
             ));
         }
+        let effective_timeout_secs =
+            requested_timeout_secs.min(STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS);
         let sync_wait_secs = match sync_wait_secs {
-            Some(sync_wait_secs) => {
-                if !(1..=STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS).contains(&sync_wait_secs) {
-                    return Err(format!(
-                        "sync_wait_secs must be between 1 and {STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS}"
-                    ));
-                }
-                if sync_wait_secs > effective_timeout_secs {
-                    return Err(format!(
-                        "sync_wait_secs ({sync_wait_secs}) must not exceed effective timeout_secs ({effective_timeout_secs})"
-                    ));
-                }
-                sync_wait_secs
-            }
+            Some(0) => return Err("sync_wait_secs must be at least 1".to_string()),
+            Some(sync_wait_secs) => sync_wait_secs
+                .min(STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS)
+                .min(effective_timeout_secs),
             None => STRUCTURED_EXECUTION_SYNC_WAIT_SECS.min(effective_timeout_secs),
         };
         Ok(Self {
@@ -283,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_execution_budget_preserves_default_and_validates_explicit_sync_wait() {
+    fn structured_execution_budget_clamps_oversized_preferences_and_rejects_zero() {
         let default = StructuredExecutionBudget::resolve_with_sync_wait(None, None).unwrap();
         assert_eq!(default.effective_timeout_secs, 60);
         assert_eq!(default.sync_wait_secs, 10);
@@ -299,10 +290,23 @@ mod tests {
             assert_eq!(budget.sync_wait_secs, wait);
         }
 
+        let oversized =
+            StructuredExecutionBudget::resolve_with_sync_wait(Some(4_000), Some(600)).unwrap();
+        assert_eq!(
+            oversized.effective_timeout_secs,
+            STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS
+        );
+        assert_eq!(
+            oversized.sync_wait_secs,
+            STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS
+        );
+
+        let over_total =
+            StructuredExecutionBudget::resolve_with_sync_wait(Some(5), Some(60)).unwrap();
+        assert_eq!(over_total.effective_timeout_secs, 5);
+        assert_eq!(over_total.sync_wait_secs, 5);
+
+        assert!(StructuredExecutionBudget::resolve_with_sync_wait(Some(0), None).is_err());
         assert!(StructuredExecutionBudget::resolve_with_sync_wait(Some(600), Some(0)).is_err());
-        assert!(StructuredExecutionBudget::resolve_with_sync_wait(Some(600), Some(61)).is_err());
-        let conflict = StructuredExecutionBudget::resolve_with_sync_wait(Some(5), Some(6))
-            .expect_err("explicit sync wait above total timeout must be rejected");
-        assert!(conflict.contains("must not exceed effective timeout_secs"));
     }
 }

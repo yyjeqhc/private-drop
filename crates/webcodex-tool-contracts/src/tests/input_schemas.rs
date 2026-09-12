@@ -199,7 +199,7 @@ fn list_project_files_paging_schema_keeps_cardinality_bounded() {
 }
 
 #[test]
-fn sync_validation_and_run_shell_timeout_schema_bounds() {
+fn sync_validation_and_run_shell_timeout_schema_defers_upper_bounds_to_runtime() {
     let specs = registered_tool_specs();
     for (name, default) in [
         ("cargo_check", 600),
@@ -210,7 +210,7 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
         let timeout = &spec.input_schema["properties"]["timeout_secs"];
         assert_eq!(timeout["type"], "integer", "{name}");
         assert_eq!(timeout["minimum"], 1, "{name}");
-        assert_eq!(timeout["maximum"], 3600, "{name}");
+        assert!(timeout.get("maximum").is_none(), "{name}");
         assert_eq!(timeout["default"], default, "{name}");
         let desc = timeout["description"].as_str().unwrap_or("");
         assert!(desc.contains("3600") && desc.to_ascii_lowercase().contains("job"));
@@ -218,7 +218,7 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
         let sync_wait = &spec.input_schema["properties"]["sync_wait_secs"];
         assert_eq!(sync_wait["type"], "integer", "{name}");
         assert_eq!(sync_wait["minimum"], 1, "{name}");
-        assert_eq!(sync_wait["maximum"], 60, "{name}");
+        assert!(sync_wait.get("maximum").is_none(), "{name}");
         assert!(sync_wait.get("default").is_none(), "{name}");
         let desc = sync_wait["description"].as_str().unwrap_or("");
         assert!(desc.contains("same execution"), "{name}: {desc}");
@@ -231,20 +231,22 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
     let timeout = &cargo_fmt.input_schema["properties"]["timeout_secs"];
     assert_eq!(timeout["type"], "integer");
     assert_eq!(timeout["minimum"], 1);
-    assert_eq!(timeout["maximum"], 3600);
+    assert!(timeout.get("maximum").is_none());
     assert_eq!(timeout["default"], 120);
     let sync_wait = &cargo_fmt.input_schema["properties"]["sync_wait_secs"];
     assert_eq!(sync_wait["type"], "integer");
     assert_eq!(sync_wait["minimum"], 1);
-    assert_eq!(sync_wait["maximum"], 60);
+    assert!(sync_wait.get("maximum").is_none());
     assert!(sync_wait.get("default").is_none());
-    assert_eq!(
-        cargo_fmt.input_schema["allOf"][0]["then"]["properties"]["timeout_secs"]["maximum"],
-        3600
+    assert!(
+        cargo_fmt.input_schema["allOf"][0]["then"]["properties"]["timeout_secs"]
+            .get("maximum")
+            .is_none()
     );
-    assert_eq!(
-        cargo_fmt.input_schema["allOf"][0]["else"]["properties"]["timeout_secs"]["maximum"],
-        120
+    assert!(
+        cargo_fmt.input_schema["allOf"][0]["else"]["properties"]["timeout_secs"]
+            .get("maximum")
+            .is_none()
     );
     assert_eq!(
         cargo_fmt.input_schema["allOf"][0]["else"]["properties"]["sync_wait_secs"]["type"],
@@ -255,7 +257,7 @@ fn sync_validation_and_run_shell_timeout_schema_bounds() {
     let timeout = &run_shell.input_schema["properties"]["timeout_secs"];
     assert_eq!(timeout["type"], "integer");
     assert_eq!(timeout["minimum"], 1);
-    assert_eq!(timeout["maximum"], 120);
+    assert!(timeout.get("maximum").is_none());
     assert_eq!(timeout["default"], 60);
 
     let search = spec_named(&specs, "search_project_texts");
@@ -340,7 +342,7 @@ fn run_process_schema_is_small_bounded_and_has_no_shell_or_environment_input() {
     );
     assert_eq!(properties["cwd"]["maxLength"], 1024);
     assert_eq!(properties["timeout_secs"]["minimum"], 1);
-    assert_eq!(properties["timeout_secs"]["maximum"], 3600);
+    assert!(properties["timeout_secs"].get("maximum").is_none());
     assert_eq!(properties["timeout_secs"]["default"], 60);
     assert_eq!(spec.input_schema["additionalProperties"], false);
 }
@@ -392,7 +394,7 @@ fn run_script_schema_is_typed_bounded_and_hides_execution_infrastructure() {
     );
     assert_eq!(properties["cwd"]["maxLength"], 1024);
     assert_eq!(properties["timeout_secs"]["minimum"], 1);
-    assert_eq!(properties["timeout_secs"]["maximum"], 3600);
+    assert!(properties["timeout_secs"].get("maximum").is_none());
     assert_eq!(properties["timeout_secs"]["default"], 60);
     assert_eq!(spec.input_schema["additionalProperties"], false);
 }
@@ -415,10 +417,10 @@ fn cargo_fmt_conditional_timeout_schema_matches_contract() {
     assert!(!validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 0})
     ));
-    assert!(!validates(
+    assert!(validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 61})
     ));
-    assert!(!validates(
+    assert!(validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3601})
     ));
     assert!(validates(
@@ -430,10 +432,10 @@ fn cargo_fmt_conditional_timeout_schema_matches_contract() {
     assert!(!validates(
         &json!({"project": "demo", "timeout_secs": 120, "sync_wait_secs": 1})
     ));
-    assert!(!validates(
+    assert!(validates(
         &json!({"project": "demo", "check": false, "timeout_secs": 121})
     ));
-    assert!(!validates(&json!({"project": "demo", "timeout_secs": 121})));
+    assert!(validates(&json!({"project": "demo", "timeout_secs": 121})));
     assert!(validates(
         &json!({"project": "demo", "check": true, "result_expectation": "failure"})
     ));
@@ -486,10 +488,9 @@ fn tool_specs_optional_fields_are_not_required() {
         run_shell.input_schema["properties"]["timeout_secs"]["minimum"],
         1
     );
-    assert_eq!(
-        run_shell.input_schema["properties"]["timeout_secs"]["maximum"],
-        120
-    );
+    assert!(run_shell.input_schema["properties"]["timeout_secs"]
+        .get("maximum")
+        .is_none());
     assert_eq!(
         run_shell.input_schema["properties"]["timeout_secs"]["default"],
         60

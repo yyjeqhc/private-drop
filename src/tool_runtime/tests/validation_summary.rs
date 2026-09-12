@@ -91,7 +91,12 @@ fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized(
         json!(["project", "session_id"])
     );
     assert_eq!(spec.input_schema["properties"]["limit"]["minimum"], 1);
-    assert_eq!(spec.input_schema["properties"]["limit"]["maximum"], 100);
+    assert!(spec.input_schema["properties"]["limit"]
+        .get("maximum")
+        .is_none());
+    assert!(spec.input_schema["properties"]["limit"]["description"]
+        .as_str()
+        .is_some_and(|description| description.contains("clamped to 100")));
     assert!(spec.description.to_lowercase().contains("does not run"));
 
     let output = output_schema_for_tool("validation_summary");

@@ -586,14 +586,15 @@ impl ToolRuntime {
         let _exec_guard = SessionShellExecGuard {
             busy: Arc::clone(&record.busy),
         };
-        let timeout_secs = timeout_secs.unwrap_or(60);
-        if !(1..=3_600).contains(&timeout_secs) {
+        let requested_timeout_secs = timeout_secs.unwrap_or(60);
+        if requested_timeout_secs == 0 {
             return shell_tool_error(
                 "persistent_shell_invalid_timeout",
-                "timeout_secs must be between 1 and 3600",
+                "timeout_secs must be at least 1",
                 Some(&shell_id),
             );
         }
+        let timeout_secs = requested_timeout_secs.min(3_600);
         let client_id = record.client_id.as_deref().unwrap_or_default();
         let request = PersistentShellRequest {
             action: "exec".to_string(),

@@ -45,7 +45,7 @@ async fn api_model_ergonomics_success_is_exact_and_queryable() {
     assert_eq!(body["success"], true);
 
     let telemetry = single_model_ergonomics(&db, "ergonomics-success", "tool_manifest");
-    assert_eq!(telemetry["schema_version"], 3);
+    assert_eq!(telemetry["schema_version"], 4);
     assert_eq!(telemetry["tool_name"], "tool_manifest");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);
@@ -177,6 +177,59 @@ async fn api_batch_call_records_one_generic_outer_invocation() {
     let telemetry = single_model_ergonomics(&db, "ergonomics-batch", "read_files");
     assert_eq!(telemetry["tool_name"], "read_files");
     assert_eq!(telemetry["success"], true);
+}
+
+#[tokio::test]
+async fn api_work_on_project_preferences_persist_as_privacy_bounded_action_audit_facts() {
+    let config = super::test_config(Some("secret"));
+    let (_db_tmp, db) = super::test_db();
+    let project_tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = super::register_import_agent(project_tmp.path()).await;
+    let executor = super::spawn_startup_agent_executor(registry);
+    let service = Service::new(super::build_projects_router(config, db.clone(), runtime));
+    let private_instruction = "PRIVATE_API_WORK_ON_PROJECT_INSTRUCTION";
+    let project = "agent:importer:demo";
+
+    let mut response = TestClient::post("http://localhost/api/tools/call")
+        .bearer_auth("secret")
+        .add_header("x-action-session-id", "ergonomics-work-on-project", true)
+        .json(&json!({
+            "tool": "work_on_project",
+            "project": project,
+            "instruction": private_instruction,
+            "include_project_instructions": false,
+            "include_workflow_guidance": false,
+            "include_extension_catalog": false
+        }))
+        .send(&service)
+        .await;
+    let status = super::effective_status(&response);
+    let body: Value = response.take_json().await.unwrap();
+    executor.abort();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true, "{body}");
+
+    let telemetry = single_model_ergonomics(&db, "ergonomics-work-on-project", "work_on_project");
+    assert_eq!(telemetry["schema_version"], 4);
+    let facts = &telemetry["work_on_project"];
+    assert_eq!(facts["resume_requested"], false);
+    assert_eq!(facts["source"], "project");
+    assert_eq!(facts["mode"], "checkout");
+    assert_eq!(facts["mode_explicit"], false);
+    assert_eq!(facts["base_ref_present"], false);
+    assert_eq!(facts["include_project_instructions"], false);
+    assert_eq!(facts["include_project_instructions_explicit"], true);
+    assert_eq!(facts["include_workflow_guidance"], false);
+    assert_eq!(facts["include_workflow_guidance_explicit"], true);
+    assert_eq!(facts["include_extension_catalog"], false);
+    assert_eq!(facts["include_extension_catalog_explicit"], true);
+    let serialized = serde_json::to_string(&telemetry).unwrap();
+    for forbidden in [private_instruction, project] {
+        assert!(
+            !serialized.contains(forbidden),
+            "persisted API model ergonomics leaked {forbidden}: {serialized}"
+        );
+    }
 }
 
 #[tokio::test]

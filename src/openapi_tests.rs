@@ -1315,7 +1315,12 @@ fn openapi_flattened_sync_wait_keeps_shared_bounded_contract() {
         .iter()
         .all(|schema| schema["type"] == "integer"));
     assert!(alternatives.iter().all(|schema| schema["minimum"] == 1));
-    assert!(alternatives.iter().all(|schema| schema["maximum"] == 60));
+    assert!(
+        alternatives
+            .iter()
+            .all(|schema| schema.get("maximum").is_none()),
+        "flattened sync_wait_secs must defer its upper bound to runtime clamping: {sync_wait}"
+    );
 }
 
 #[test]

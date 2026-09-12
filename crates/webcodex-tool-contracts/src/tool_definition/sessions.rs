@@ -62,7 +62,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Canonical model entry for ordinary coding/review via an existing Project or Runner path; Git not required for checkout mode. Omitted/checkout preserves the existing path flow. mode=worktree with client_id + path asks the Runner to resolve an exact Git base, bootstrap or re-observe an isolated managed worktree, register it as an ordinary Project, and then start or exactly resume the Workflow Session. This hides registration/worktree plumbing without bypassing Project authority and returns compact workflow plus project instructions.",
+            "Canonical bootstrap for ordinary coding/review. Use project or client_id+path. Omit session_id for a fresh Workflow Session; supply it for exact resume of an active accessible Session; never guesses prior Session. Defaults return bounded project instructions, workflow guidance, and Skills/Plugin selection metadata, which grants no authority. Skill bodies require skill_read_file; Plugin calls require plugin_tool describe. Set include_* false only when the current model context retains that material; Session/window/transport/credential/Server identity never proves retention. Fresh contexts keep defaults true on resume; include_extension_catalog=false skips discovery. Checkout accepts Project or Runner path and does not require Git; mode=worktree resolves an exact Git base and manages an isolated worktree without bypassing Project authority.",
             work_on_project_input_schema,
         )),
         10,

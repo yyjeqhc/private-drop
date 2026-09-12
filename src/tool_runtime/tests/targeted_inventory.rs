@@ -823,7 +823,10 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
         .unwrap();
     let project_props = project_spec.input_schema["properties"].as_object().unwrap();
     assert_eq!(project_props["query"]["maxLength"], 200);
-    assert_eq!(project_props["limit"]["maximum"], 100);
+    assert!(project_props["limit"].get("maximum").is_none());
+    assert!(project_props["limit"]["description"]
+        .as_str()
+        .is_some_and(|description| description.contains("clamped to 100")));
     assert!(project_spec.description.contains("exact client_id/project"));
 
     let agent_spec = specs
@@ -849,7 +852,10 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
     let job_props = jobs_spec.input_schema["properties"].as_object().unwrap();
     assert!(job_props.contains_key("project"));
     assert!(job_props.contains_key("session_id"));
-    assert_eq!(job_props["limit"]["maximum"], 100);
+    assert!(job_props["limit"].get("maximum").is_none());
+    assert!(job_props["limit"]["description"]
+        .as_str()
+        .is_some_and(|description| description.contains("clamped to 100")));
     assert!(jobs_spec.description.contains("project/session_id"));
 
     let projects = ToolCall::from_tool_name(

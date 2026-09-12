@@ -55,7 +55,7 @@ pub fn work_on_project_input_schema() -> Value {
             "session_id": {
                 "type": "string",
                 "pattern": "^wc_sess_[A-Za-z0-9_]+$",
-                "description": "Optional explicit Workflow Session to continue exactly. It must be active and accessible and remains bound to its exact final Project; in worktree mode the Runner re-observes that registered managed Project and its source provenance instead of creating a second worktree. Failure never guesses or creates a replacement Session. This business input is distinct from wrapper recording_session_id."
+                "description": "Optional explicit Workflow Session to continue exactly. It must be active and accessible and remains bound to its exact final Project; in worktree mode the Runner re-observes that registered managed Project and its source provenance instead of creating a second worktree. Failure never guesses or creates a replacement Session. Supplying session_id does not prove this model context still retains project instructions, workflow guidance, or extension metadata; a fresh model context should keep the include_* defaults true. This business input is distinct from wrapper recording_session_id."
             }
         },
         "required": ["instruction"],

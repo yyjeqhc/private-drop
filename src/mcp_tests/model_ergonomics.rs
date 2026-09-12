@@ -278,6 +278,91 @@ async fn http_mcp_direct_gateway_fallback_is_queryable_without_wrong_route_telem
 }
 
 #[tokio::test]
+async fn http_mcp_work_on_project_preferences_persist_without_private_request_values() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime_with_surface(ModelSurface::FullOperatorRuntime));
+    let service = Service::new(build_test_router(config, db.clone(), runtime));
+    let private_instruction = "PRIVATE_MCP_INSTRUCTION_SENTINEL";
+    let private_project = "PRIVATE_MCP_PROJECT_SENTINEL";
+    let private_client = "PRIVATE_MCP_CLIENT_SENTINEL";
+    let private_path = "/PRIVATE_MCP_PATH_SENTINEL";
+    let private_session = "wc_sess_PRIVATE_MCP_SESSION_SENTINEL";
+    let private_base_ref = "PRIVATE_MCP_BASE_REF_SENTINEL";
+
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth("secret")
+        .add_header(
+            "x-action-session-id",
+            "mcp-work-on-project-ergonomics",
+            true,
+        )
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 302,
+            "method": "tools/call",
+            "params": {
+                "name": "work_on_project",
+                "arguments": {
+                    "project": private_project,
+                    "client_id": private_client,
+                    "path": private_path,
+                    "mode": "worktree",
+                    "base_ref": private_base_ref,
+                    "instruction": private_instruction,
+                    "session_id": private_session,
+                    "include_project_instructions": false,
+                    "include_workflow_guidance": true,
+                    "include_extension_catalog": false
+                }
+            }
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&response), StatusCode::BAD_REQUEST);
+    let _body: Value = response.take_json().await.unwrap();
+
+    let events = db
+        .list_action_events("mcp-work-on-project-ergonomics", 10)
+        .unwrap();
+    assert_eq!(
+        events.len(),
+        1,
+        "one outer tool call must create one ActionAudit row"
+    );
+    assert_eq!(events[0].operation.as_deref(), Some("work_on_project"));
+    let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
+    let telemetry = &summary["model_ergonomics"];
+    assert_eq!(telemetry["schema_version"], 4);
+    let facts = &telemetry["work_on_project"];
+    assert_eq!(facts["resume_requested"], true);
+    assert_eq!(facts["source"], "invalid");
+    assert_eq!(facts["mode"], "worktree");
+    assert_eq!(facts["mode_explicit"], true);
+    assert_eq!(facts["base_ref_present"], true);
+    assert_eq!(facts["include_project_instructions"], false);
+    assert_eq!(facts["include_project_instructions_explicit"], true);
+    assert_eq!(facts["include_workflow_guidance"], true);
+    assert_eq!(facts["include_workflow_guidance_explicit"], true);
+    assert_eq!(facts["include_extension_catalog"], false);
+    assert_eq!(facts["include_extension_catalog_explicit"], true);
+    let persisted = serde_json::to_string(&summary).unwrap();
+    for forbidden in [
+        private_instruction,
+        private_project,
+        private_client,
+        private_path,
+        private_session,
+        private_base_ref,
+    ] {
+        assert!(
+            !persisted.contains(forbidden),
+            "persisted MCP model ergonomics leaked {forbidden}: {persisted}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn http_mcp_tools_list_audit_sink_failure_is_non_blocking() {
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();

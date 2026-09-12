@@ -48,9 +48,8 @@ fn optional_limit() -> Value {
     json!({
         "type": "integer",
         "minimum": 1,
-        "maximum": 100,
         "default": 50,
-        "description": "Maximum records to return."
+        "description": "Maximum records to return. Values above 100 are accepted and clamped to 100."
     })
 }
 

@@ -639,16 +639,9 @@ impl ToolRuntime {
         wait_secs: Option<u64>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let wait_secs = wait_secs.unwrap_or(0);
-        if wait_secs > CODING_AGENT_OBSERVE_WAIT_MAX_SECS {
-            return coding_agent_error(
-                "invalid_wait_secs",
-                "wait_secs exceeds CodingAgentRun bounded wait",
-                "not_started",
-                RecoveryKind::FixInput,
-                Some(&run_id),
-            );
-        }
+        let wait_secs = wait_secs
+            .unwrap_or(0)
+            .min(CODING_AGENT_OBSERVE_WAIT_MAX_SECS);
         let authority = match stable_principal(auth) {
             Ok(principal) => authority_fingerprint(&principal),
             Err(error) => {

@@ -606,18 +606,20 @@ impl ToolRuntime {
                 "wait_secs requires after_observation_token",
             );
         }
-        if wait_secs.is_some_and(|wait_secs| !(1..=60).contains(&wait_secs)) {
+        if wait_secs == Some(0) {
             return invalid_session_message_observation_request(
                 &session_id,
-                "wait_secs must be in 1..=60",
+                "wait_secs must be at least 1",
             );
         }
-        if limit.is_some_and(|limit| !(1..=sessions::MAX_MESSAGE_LIST_LIMIT).contains(&limit)) {
+        if limit == Some(0) {
             return invalid_session_message_observation_request(
                 &session_id,
-                "limit must be in 1..=100",
+                "limit must be at least 1",
             );
         }
+        let wait_secs = wait_secs.map(|wait_secs| wait_secs.min(60));
+        let limit = limit.map(|limit| limit.min(sessions::MAX_MESSAGE_LIST_LIMIT));
         match self
             .sessions
             .observe_messages(

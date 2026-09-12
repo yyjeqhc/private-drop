@@ -6,6 +6,35 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
 
+    let work_on_project_desc = desc("work_on_project");
+    for phrase in [
+        "canonical bootstrap",
+        "ordinary coding/review",
+        "omit session_id",
+        "fresh workflow session",
+        "exact resume",
+        "active accessible session",
+        "never guesses prior session",
+        "project instructions",
+        "workflow guidance",
+        "skills",
+        "plugin",
+        "selection metadata",
+        "current model context",
+        "does not require git",
+        "never proves retention",
+        "skill_read_file",
+        "plugin_tool describe",
+        "mode=worktree",
+        "exact git base",
+        "project authority",
+    ] {
+        assert!(
+            work_on_project_desc.contains(phrase),
+            "work_on_project description should mention {phrase}: {work_on_project_desc}"
+        );
+    }
+
     let read_files_desc = desc("read_files");
     for phrase in [
         "adaptive runtime preferred batch-capable inspect tool",
@@ -548,6 +577,66 @@ fn removed_legacy_edit_tools_are_not_known_tools() {
 }
 
 #[test]
+fn model_preference_upper_bounds_are_clamped_by_runtime_not_rejected_by_schema() {
+    let specs = registered_tool_specs();
+    let cases: &[(&str, &[&str])] = &[
+        ("run_process", &["timeout_secs", "sync_wait_secs"]),
+        ("run_detached_process", &["timeout_secs"]),
+        ("run_script", &["timeout_secs", "sync_wait_secs"]),
+        ("run_shell", &["timeout_secs"]),
+        ("session_shell_exec", &["timeout_secs"]),
+        ("observe_jobs", &["tail_lines", "wait_secs"]),
+        ("list_jobs", &["limit"]),
+        ("cargo_fmt", &["timeout_secs", "sync_wait_secs"]),
+        ("cargo_check", &["timeout_secs", "sync_wait_secs"]),
+        ("cargo_test", &["timeout_secs", "sync_wait_secs"]),
+        ("go_test", &["timeout_secs", "sync_wait_secs"]),
+        ("session_discussion_summary", &["limit"]),
+        ("workspace_hygiene_check", &["max_findings"]),
+        ("list_projects", &["limit"]),
+        ("list_session_messages", &["limit"]),
+        ("observe_session_messages", &["wait_secs", "limit"]),
+        ("validation_summary", &["limit"]),
+        ("session_handoff_summary", &["limit"]),
+        ("document_symbols", &["limit"]),
+        ("document_diagnostics", &["limit"]),
+        ("workspace_symbols", &["limit"]),
+        ("goto_definition", &["limit"]),
+        ("find_references", &["limit"]),
+        ("computer_list_windows", &["limit"]),
+        ("computer_list_displays", &["limit"]),
+        ("computer_list_applications", &["limit"]),
+        ("computer_accessibility_tree", &["max_depth", "max_nodes"]),
+        ("computer_find_elements", &["limit"]),
+        ("coding_agent_observe", &["wait_secs"]),
+        ("list_agent_tasks", &["limit"]),
+        ("list_agent_identities", &["limit"]),
+        ("list_conversations", &["limit"]),
+        ("read_conversation", &["limit"]),
+        ("list_agent_inbox", &["limit"]),
+    ];
+
+    for (tool_name, fields) in cases {
+        let spec = spec_named(&specs, tool_name);
+        for field in *fields {
+            let property = &spec.input_schema["properties"][*field];
+            assert!(
+                property.get("maximum").is_none(),
+                "{tool_name}.{field} must let the runtime clamp oversized preferences: {property}"
+            );
+            let description = property["description"]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            assert!(
+                description.contains("clamp"),
+                "{tool_name}.{field} should document runtime clamping: {description}"
+            );
+        }
+    }
+}
+
+#[test]
 fn edit_tool_surface_keeps_canonical_tools_visible_and_schemas_stable() {
     let specs = registered_tool_specs();
     let names: std::collections::BTreeSet<&str> =
@@ -753,6 +842,22 @@ fn session_tool_specs_describe_explicit_targeting() {
             .is_some(),
         "update_session_context must expose the named SSH resource field"
     );
+
+    let work = spec_named(&specs, "work_on_project");
+    let session_id_description = work.input_schema["properties"]["session_id"]["description"]
+        .as_str()
+        .expect("work_on_project session_id description")
+        .to_lowercase();
+    for phrase in [
+        "does not prove",
+        "fresh model context",
+        "include_* defaults true",
+    ] {
+        assert!(
+            session_id_description.contains(phrase),
+            "work_on_project session_id description should mention {phrase}: {session_id_description}"
+        );
+    }
     let update_desc = update.description.to_lowercase();
     for phrase in [
         "authorized project",
