@@ -31,6 +31,21 @@ impl ToolRuntime {
                     && include_workspace.unwrap_or(true)
                     && include_checkpoints.unwrap_or(true)
                     && include_validation.unwrap_or(true);
+                // Recovery should reconstruct the same bounded current state as
+                // the former automatic handoff. For a project-scoped Session,
+                // derive its already-authorized canonical Project when the caller
+                // omitted `project`; partial handoffs keep their existing lighter
+                // semantics and cannot establish a baseline.
+                let project = if can_recover
+                    && project
+                        .as_deref()
+                        .map(str::trim)
+                        .is_none_or(|project| project.is_empty())
+                {
+                    self.sessions.session_project(&session_id).flatten()
+                } else {
+                    project
+                };
                 let observed_revision = can_recover
                     .then(|| self.sessions.context_revision(&session_id))
                     .flatten();
