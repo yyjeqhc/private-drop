@@ -105,6 +105,53 @@ impl fmt::Display for EnqueueLspError {
 
 impl std::error::Error for EnqueueLspError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnqueueSkillStoreError {
+    InvalidRequest {
+        message: String,
+    },
+    ExactRunnerUnavailable {
+        client_id: String,
+    },
+    ExactRunnerOffline {
+        client_id: String,
+    },
+    RunnerChanged {
+        client_id: String,
+    },
+    UnsupportedCapability {
+        client_id: String,
+        capability: &'static str,
+    },
+    DispatchUnavailable {
+        message: String,
+    },
+}
+
+impl fmt::Display for EnqueueSkillStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRequest { message } | Self::DispatchUnavailable { message } => {
+                formatter.write_str(message)
+            }
+            Self::ExactRunnerUnavailable { .. } => {
+                formatter.write_str("exact Runner is unavailable")
+            }
+            Self::ExactRunnerOffline { .. } => formatter
+                .write_str("exact Runner is offline; Skill store request was not dispatched"),
+            Self::RunnerChanged { .. } => {
+                formatter.write_str("stale Runner identity; Skill store request was not dispatched")
+            }
+            Self::UnsupportedCapability { capability, .. } => write!(
+                formatter,
+                "skill_store_capability_unavailable: exact Runner does not support {capability}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EnqueueSkillStoreError {}
+
 impl From<PendingRequestEnqueueError> for EnqueueLspError {
     fn from(error: PendingRequestEnqueueError) -> Self {
         match error {
@@ -1290,11 +1337,38 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        self.enqueue_skill_store_typed(
+            client_id,
+            expected_runner_instance_id,
+            operation,
+            auth,
+            requested_by,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    /// Typed Skill-store admission used by in-workspace callers that need to
+    /// classify failure without parsing presentation text. The legacy public
+    /// string-returning entry point above remains behavior-compatible.
+    pub async fn enqueue_skill_store_typed(
+        &self,
+        client_id: &str,
+        expected_runner_instance_id: &str,
+        operation: SkillStoreRequest,
+        auth: Option<&crate::RunnerAccess>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), EnqueueSkillStoreError> {
         let management = operation.requires_management_capability();
-        let content = serde_json::to_string(&operation)
-            .map_err(|_| "invalid Skill store request".to_string())?;
+        let content = serde_json::to_string(&operation).map_err(|_| {
+            EnqueueSkillStoreError::InvalidRequest {
+                message: "invalid Skill store request".to_string(),
+            }
+        })?;
         if content.len() > 32 * 1024 {
-            return Err("invalid Skill store request".to_string());
+            return Err(EnqueueSkillStoreError::InvalidRequest {
+                message: "invalid Skill store request".to_string(),
+            });
         }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
@@ -1304,18 +1378,24 @@ impl RunnerRegistry {
             requested_by,
             RunnerOperation::SkillStore(operation),
         )
-        .map_err(|_| "invalid Skill store request".to_string())?;
+        .map_err(|_| EnqueueSkillStoreError::InvalidRequest {
+            message: "invalid Skill store request".to_string(),
+        })?;
         let mut inner = self.inner.lock().await;
-        let runner = inner
-            .runners
-            .get(client_id)
-            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
-        assert_runner_access(auth, runner)
-            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        let runner = inner.runners.get(client_id).ok_or_else(|| {
+            EnqueueSkillStoreError::ExactRunnerUnavailable {
+                client_id: client_id.to_string(),
+            }
+        })?;
+        assert_runner_access(auth, runner).map_err(|_| {
+            EnqueueSkillStoreError::ExactRunnerUnavailable {
+                client_id: client_id.to_string(),
+            }
+        })?;
         if runner.runner_instance_id != expected_runner_instance_id {
-            return Err(
-                "stale Runner identity; Skill store request was not dispatched".to_string(),
-            );
+            return Err(EnqueueSkillStoreError::RunnerChanged {
+                client_id: client_id.to_string(),
+            });
         }
         let required = if management {
             RunnerFeature::SkillStoreManage
@@ -1323,15 +1403,15 @@ impl RunnerRegistry {
             RunnerFeature::SkillStoreRead
         };
         if !runner.runner_features.supports(required) {
-            return Err(format!(
-                "skill_store_capability_unavailable: exact Runner does not support {}",
-                required.as_wire_name()
-            ));
+            return Err(EnqueueSkillStoreError::UnsupportedCapability {
+                client_id: client_id.to_string(),
+                capability: required.as_wire_name(),
+            });
         }
         if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
-            return Err(
-                "exact Runner is offline; Skill store request was not dispatched".to_string(),
-            );
+            return Err(EnqueueSkillStoreError::ExactRunnerOffline {
+                client_id: client_id.to_string(),
+            });
         }
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),
@@ -1341,7 +1421,10 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
-        )?;
+        )
+        .map_err(|error| EnqueueSkillStoreError::DispatchUnavailable {
+            message: error.to_string(),
+        })?;
         let pending = inner
             .pending_by_id
             .get_mut(&request_id)

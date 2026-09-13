@@ -4,7 +4,7 @@ use super::startup_brief::{
 };
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::runner_http::RunnerFeature;
+use crate::runner_http::{EnqueueSkillStoreError, RunnerFeature};
 use crate::runner_protocol::{ShellFileOpRequest, ShellRunResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -178,7 +178,7 @@ impl ToolRuntime {
         let mutation = operation.is_mutation();
         let (request_id, rx) = self
             .runner_registry
-            .enqueue_skill_store(
+            .enqueue_skill_store_typed(
                 &client_id,
                 &view.view.runner_instance_id,
                 operation,
@@ -186,15 +186,7 @@ impl ToolRuntime {
                 "skill_runtime".to_string(),
             )
             .await
-            .map_err(|error| {
-                if error.contains("capability_unavailable") {
-                    "skill_store_capability_unavailable".to_string()
-                } else if error.contains("stale Runner") || error.contains("exact Runner") {
-                    "skill_store_runner_changed".to_string()
-                } else {
-                    "skill_store_runner_unavailable".to_string()
-                }
-            })?;
+            .map_err(|error| skill_store_enqueue_error_kind(&error).to_string())?;
         let wait_secs = if management { 120 } else { 30 };
         match tokio::time::timeout(Duration::from_secs(wait_secs), rx).await {
             Ok(Ok(response)) => Ok(Some(response)),
@@ -1723,6 +1715,19 @@ fn skill_error_dynamic(
     ToolResult::err_with_output(kind.to_string(), output)
 }
 
+fn skill_store_enqueue_error_kind(error: &EnqueueSkillStoreError) -> &'static str {
+    match error {
+        EnqueueSkillStoreError::UnsupportedCapability { .. } => {
+            "skill_store_capability_unavailable"
+        }
+        EnqueueSkillStoreError::ExactRunnerUnavailable { .. }
+        | EnqueueSkillStoreError::ExactRunnerOffline { .. }
+        | EnqueueSkillStoreError::RunnerChanged { .. } => "skill_store_runner_changed",
+        EnqueueSkillStoreError::InvalidRequest { .. }
+        | EnqueueSkillStoreError::DispatchUnavailable { .. } => "skill_store_runner_unavailable",
+    }
+}
+
 fn stable_skill_store_error(error: Option<&str>) -> String {
     let base = error
         .unwrap_or("skill_store_unavailable")
@@ -2003,6 +2008,52 @@ mod tests {
         );
         assert!(serde_json::to_vec(&explicit).unwrap().len() <= MAX_SKILL_CATALOG_RESULT_BYTES);
         assert_eq!(explicit["offset"], next);
+    }
+
+    #[test]
+    fn skill_store_enqueue_errors_preserve_legacy_runtime_error_kinds() {
+        let cases = [
+            (
+                EnqueueSkillStoreError::UnsupportedCapability {
+                    client_id: "runner-a".to_string(),
+                    capability: "skill_store_read",
+                },
+                "skill_store_capability_unavailable",
+            ),
+            (
+                EnqueueSkillStoreError::ExactRunnerUnavailable {
+                    client_id: "runner-a".to_string(),
+                },
+                "skill_store_runner_changed",
+            ),
+            (
+                EnqueueSkillStoreError::ExactRunnerOffline {
+                    client_id: "runner-a".to_string(),
+                },
+                "skill_store_runner_changed",
+            ),
+            (
+                EnqueueSkillStoreError::RunnerChanged {
+                    client_id: "runner-a".to_string(),
+                },
+                "skill_store_runner_changed",
+            ),
+            (
+                EnqueueSkillStoreError::InvalidRequest {
+                    message: "invalid Skill store request".to_string(),
+                },
+                "skill_store_runner_unavailable",
+            ),
+            (
+                EnqueueSkillStoreError::DispatchUnavailable {
+                    message: "too many pending requests".to_string(),
+                },
+                "skill_store_runner_unavailable",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(skill_store_enqueue_error_kind(&error), expected);
+        }
     }
 
     #[test]
