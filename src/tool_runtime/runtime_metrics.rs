@@ -42,6 +42,7 @@ impl SkillSourceMetricSource {
 pub(crate) enum SkillSourceMetricOperation {
     CatalogList,
     CatalogDefinitionRead,
+    ExactResolve,
     ResourceRead,
     DefinitionRecheck,
 }
@@ -51,6 +52,7 @@ impl SkillSourceMetricOperation {
         match self {
             Self::CatalogList => "catalog_list",
             Self::CatalogDefinitionRead => "catalog_definition_read",
+            Self::ExactResolve => "exact_resolve",
             Self::ResourceRead => "resource_read",
             Self::DefinitionRecheck => "definition_recheck",
         }
@@ -322,6 +324,7 @@ mod tests {
         let operations = [
             SkillSourceMetricOperation::CatalogList.as_str(),
             SkillSourceMetricOperation::CatalogDefinitionRead.as_str(),
+            SkillSourceMetricOperation::ExactResolve.as_str(),
             SkillSourceMetricOperation::ResourceRead.as_str(),
             SkillSourceMetricOperation::DefinitionRecheck.as_str(),
         ];
@@ -330,6 +333,7 @@ mod tests {
             [
                 "catalog_list",
                 "catalog_definition_read",
+                "exact_resolve",
                 "resource_read",
                 "definition_recheck",
             ]
@@ -369,7 +373,7 @@ mod tests {
             &sink,
             SkillSourceMetricObservation {
                 source: SkillSourceMetricSource::Project,
-                operation: SkillSourceMetricOperation::ResourceRead,
+                operation: SkillSourceMetricOperation::ExactResolve,
                 outcome_class: SkillSourceMetricOutcomeClass::RunnerError,
                 elapsed_ms: 10,
                 runner_duration_ms: Some(8),
