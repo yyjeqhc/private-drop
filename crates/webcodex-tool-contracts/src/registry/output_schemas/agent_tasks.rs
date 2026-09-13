@@ -65,6 +65,13 @@ fn task_summary_properties() -> serde_json::Map<String, Value> {
             "terminal_at_unix_ms": nullable_integer("Task terminal time, or null while nonterminal."),
             "latest_attempt": nullable_attempt_schema()
             ,"execution_bound": schema_type("boolean", "True when the latest AgentTaskAttempt has a durable concrete execution backend binding (CodingAgentRun or Agent Endpoint continuation). This high-level projection grants no execution authority."),
+            "execution_kind": {
+                "anyOf": [
+                    {"type": "string", "enum": ["coding_agent_run", "agent_endpoint"]},
+                    {"type": "null"}
+                ],
+                "description": "Concrete durable execution backend selected for the latest AgentTaskAttempt, or null before backend selection. This is observation only and grants no authority."
+            },
             "execution_status": {
                 "anyOf": [
                     {"type": "string", "enum": ["not_started", "active", "waiting_permission", "outcome_unknown", "terminal"]},
@@ -94,7 +101,7 @@ fn task_summary_schema() -> Value {
             "task_id", "assignee_agent_id", "title", "source_conversation_id",
             "source_message_id", "referenced_project_id", "state", "created_at_unix_ms",
             "updated_at_unix_ms", "terminal_at_unix_ms", "latest_attempt",
-            "execution_bound", "execution_status", "recovery_kind"
+            "execution_bound", "execution_kind", "execution_status", "recovery_kind"
         ]
     })
 }

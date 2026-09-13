@@ -157,6 +157,13 @@ impl AgentTaskCodingRunDispatchState {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum AgentTaskExecutionKind {
+    CodingAgentRun,
+    AgentEndpoint,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentTaskExecutionStatus {
     NotStarted,
     Active,
@@ -361,6 +368,7 @@ pub struct AgentTaskSummary {
     pub terminal_at_unix_ms: Option<i64>,
     pub latest_attempt: Option<AgentTaskAttemptRecord>,
     pub execution_bound: bool,
+    pub execution_kind: Option<AgentTaskExecutionKind>,
     pub execution_status: Option<AgentTaskExecutionStatus>,
     pub recovery_kind: AgentTaskExecutionRecoveryKind,
 }
@@ -528,6 +536,13 @@ impl StoredTask {
                 .map(|attempt| attempt.record(now)),
             execution_bound: self.latest_coding_run.is_some()
                 || self.latest_endpoint_execution.is_some(),
+            execution_kind: if self.latest_coding_run.is_some() {
+                Some(AgentTaskExecutionKind::CodingAgentRun)
+            } else if self.latest_endpoint_execution.is_some() {
+                Some(AgentTaskExecutionKind::AgentEndpoint)
+            } else {
+                None
+            },
             execution_status: self
                 .latest_coding_run
                 .as_ref()

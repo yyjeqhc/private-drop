@@ -1021,6 +1021,7 @@ impl Database {
                 previous_endpoint_id,
                 *previous_generation,
                 now,
+                true,
             )?;
         }
         transaction
@@ -1276,6 +1277,7 @@ impl Database {
             endpoint_id,
             expected_controller_generation,
             now,
+            true,
         )?;
         transaction
             .execute(
@@ -1400,6 +1402,7 @@ impl Database {
             endpoint_id,
             current.controller_generation,
             now,
+            true,
         )?;
         transaction
             .execute(
@@ -1604,6 +1607,7 @@ impl Database {
                 endpoint_id,
                 expected_controller_generation,
                 now,
+                false,
             )?;
         }
         transaction

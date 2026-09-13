@@ -588,8 +588,13 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML
-            .contains("if (acceptReplacementIdentity(response, stale)) return true;"),
-        "identity replacement must be gated by the dedicated recovery ToolResult"
+            .contains("accepted = acceptReplacementIdentity(response, stale);"),
+        "every successor identity replacement must be gated by the dedicated recovery ToolResult"
+    );
+    assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML
+            .contains("for (let hop = 0; hop < MAX_ENDPOINT_SUCCESSOR_HOPS; hop++)"),
+        "v15 successor recovery must remain explicitly bounded"
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"15.0.0\""),
