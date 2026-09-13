@@ -1,6 +1,6 @@
 use super::RunnerCapabilityRequirement::{FileRead, SkillStoreManage};
 use super::ToolVisibility::ModelHidden;
-use super::{def, ToolDefinition, TOOL_CATEGORY_RUNTIME};
+use super::{def, ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_RUNTIME};
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{Read, SkillManage},
@@ -53,7 +53,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::SkillRuntime),
     def(
         "skill_read_file",
         super::ToolAuditPolicy::typed_fields(&[
@@ -103,7 +104,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::SkillRuntime),
     def(
         "skill_versions",
         super::ToolAuditPolicy::typed_fields(&[
@@ -134,7 +136,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
     def(
         "skill_install",
         super::ToolAuditPolicy::typed_fields(&[
@@ -171,7 +174,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
     def(
         "skill_activate",
         super::ToolAuditPolicy::typed_fields(&[
@@ -203,7 +207,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
     def(
         "skill_remove_revision",
         super::ToolAuditPolicy::typed_fields(&[
@@ -234,5 +239,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         true,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
 ];

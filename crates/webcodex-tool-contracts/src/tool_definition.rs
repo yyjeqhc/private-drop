@@ -59,9 +59,9 @@ pub use super::tool_policy::{
     runtime_tool_captures_validation_output, runtime_tool_category,
     runtime_tool_effect_annotations, runtime_tool_is_change_summary_like, runtime_tool_is_git_like,
     runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
-    runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
-    runtime_tool_runner_capability, runtime_tool_session_evidence_policy,
-    runtime_tool_session_risk_class,
+    runtime_tool_metadata, runtime_tool_operator_extension_family, runtime_tool_permission_risk,
+    runtime_tool_requires_permission, runtime_tool_runner_capability,
+    runtime_tool_session_evidence_policy, runtime_tool_session_risk_class,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_policy::{
@@ -695,12 +695,25 @@ impl ToolSessionEvidencePolicy {
     }
 }
 
+/// Static Stateless Operator protocol-extension classification. This declares only
+/// which protocol capability family admits a hidden runtime tool; authorization,
+/// permission, Project authority, and Runner capability remain independent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolOperatorExtensionFamily {
+    SkillRuntime,
+    SkillManagement,
+    MemoryRuntime,
+    MemoryManagement,
+    TraceDiagnostics,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ToolDefinition {
     pub name: &'static str,
     pub audit: ToolAuditPolicy,
     pub model_spec: Option<ToolModelSpecDeclaration>,
     pub model_surface: ToolModelSurfaceDeclaration,
+    pub operator_extension_family: Option<ToolOperatorExtensionFamily>,
     pub visibility: ToolVisibility,
     pub category: &'static str,
     pub metadata: ToolMetadata,
@@ -710,6 +723,16 @@ pub struct ToolDefinition {
     /// Project. `None` means the tool is not Runner-dispatched or enforces its
     /// ownership boundary inside a specialized handler.
     pub runner_capability: Option<RunnerCapabilityRequirement>,
+}
+
+impl ToolDefinition {
+    pub const fn with_operator_extension_family(
+        mut self,
+        family: ToolOperatorExtensionFamily,
+    ) -> Self {
+        self.operator_extension_family = Some(family);
+        self
+    }
 }
 
 pub const TOOL_CATEGORY_AGENT_TASK: &str = "agent_task";
@@ -852,6 +875,7 @@ const fn def(
         audit,
         model_spec: None,
         model_surface: ToolModelSurfaceDeclaration::DEFAULT,
+        operator_extension_family: None,
         visibility,
         category,
         metadata: make_tool_metadata(

@@ -7,15 +7,16 @@
 use super::kernel::ToolProtocolCapabilities;
 use super::metadata::ToolAuthorityPolicy;
 use super::registry::{
-    accepted_flattened_args_for_spec, operator_diagnostic_tool_specs, registered_tool_specs,
+    accepted_flattened_args_for_spec, registered_tool_specs,
     stateless_operator_extension_tool_specs,
 };
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
     available_tool_manifest_intent_names, is_model_visible_tool_name, resolve_tool_manifest_intent,
-    runtime_tool_category, runtime_tool_metadata, ToolManifestIntent, TOOL_CATEGORY_ARTIFACT,
-    TOOL_CATEGORY_EDIT, TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME,
-    TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION, TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
+    runtime_tool_category, runtime_tool_metadata, runtime_tool_operator_extension_family,
+    ToolManifestIntent, ToolOperatorExtensionFamily, TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT,
+    TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION,
+    TOOL_CATEGORY_VALIDATION, TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;
@@ -91,23 +92,19 @@ fn tool_manifest_extension_capability_allows(
     tool_name: &str,
     capabilities: ToolProtocolCapabilities,
 ) -> bool {
-    if super::skills::is_skill_runtime_tool_name(tool_name) {
-        capabilities.skill_runtime
-    } else if super::skills::is_skill_management_tool_name(tool_name) {
-        capabilities.skill_management
-    } else if super::memory::is_memory_runtime_tool_name(tool_name)
-        || super::memory::is_memory_management_tool_name(tool_name)
-    {
-        capabilities.memory_surface
-    } else if operator_diagnostic_tool_specs()
-        .iter()
-        .any(|spec| spec.name == tool_name)
-    {
-        capabilities.trace_diagnostics
-    } else {
-        // New extension families must declare an explicit server-owned protocol
-        // capability before discovery can expose them.
-        false
+    match runtime_tool_operator_extension_family(tool_name) {
+        Some(ToolOperatorExtensionFamily::SkillRuntime) => capabilities.skill_runtime,
+        Some(ToolOperatorExtensionFamily::SkillManagement) => capabilities.skill_management,
+        Some(
+            ToolOperatorExtensionFamily::MemoryRuntime
+            | ToolOperatorExtensionFamily::MemoryManagement,
+        ) => capabilities.memory_surface,
+        Some(ToolOperatorExtensionFamily::TraceDiagnostics) => capabilities.trace_diagnostics,
+        None => {
+            // New extension families must declare an explicit server-owned protocol
+            // capability before discovery can expose them.
+            false
+        }
     }
 }
 

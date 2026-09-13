@@ -4,6 +4,7 @@ use super::sessions::{
     ToolCallRecorderMetadata, ToolCallSessionMessageResolution,
 };
 use super::tool_audit::{session_log_arguments_for_tool_request, session_log_result_for_tool};
+use super::tool_definition::{runtime_tool_operator_extension_family, ToolOperatorExtensionFamily};
 use super::{session_context, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
@@ -348,7 +349,12 @@ impl ToolRuntime {
         // One trusted identity per real kernel request. The outer recorder and
         // inner business ledger pairs inherit it, but it never affects execution.
         recorder_metadata.assign_logical_invocation();
-        if request.tool_name == "read_tool_trace" && !capabilities.trace_diagnostics {
+        let operator_extension_family = runtime_tool_operator_extension_family(&request.tool_name);
+        if matches!(
+            operator_extension_family,
+            Some(ToolOperatorExtensionFamily::TraceDiagnostics)
+        ) && !capabilities.trace_diagnostics
+        {
             return ToolCallOutcome {
                 success: false,
                 result: None,
@@ -413,9 +419,13 @@ impl ToolRuntime {
         // Project Memory tools are kernel-known but globally model-hidden. One
         // explicit protocol-surface capability gates all six fixed tools; their
         // canonical ToolDefinition authority decides caller access below.
-        if (super::memory::is_memory_runtime_tool_name(&request.tool_name)
-            || super::memory::is_memory_management_tool_name(&request.tool_name))
-            && !capabilities.memory_surface
+        if matches!(
+            operator_extension_family,
+            Some(
+                ToolOperatorExtensionFamily::MemoryRuntime
+                    | ToolOperatorExtensionFamily::MemoryManagement
+            )
+        ) && !capabilities.memory_surface
         {
             return ToolCallOutcome {
                 success: false,
@@ -433,8 +443,10 @@ impl ToolRuntime {
         // typed, but execution is authoritative-surface-gated. A private tool
         // name from REST, legacy MCP, Local Coding, or Connector cannot enable
         // this runtime.
-        if super::skills::is_skill_runtime_tool_name(&request.tool_name)
-            && !capabilities.skill_runtime
+        if matches!(
+            operator_extension_family,
+            Some(ToolOperatorExtensionFamily::SkillRuntime)
+        ) && !capabilities.skill_runtime
         {
             return ToolCallOutcome {
                 success: false,
@@ -449,8 +461,10 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
-        if super::skills::is_skill_management_tool_name(&request.tool_name)
-            && !capabilities.skill_management
+        if matches!(
+            operator_extension_family,
+            Some(ToolOperatorExtensionFamily::SkillManagement)
+        ) && !capabilities.skill_management
         {
             return ToolCallOutcome {
                 success: false,
@@ -465,10 +479,12 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
-        if super::skills::is_skill_management_tool_name(&request.tool_name)
-            && !context
-                .auth
-                .is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN))
+        if matches!(
+            operator_extension_family,
+            Some(ToolOperatorExtensionFamily::SkillManagement)
+        ) && !context
+            .auth
+            .is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN))
         {
             return ToolCallOutcome {
                 success: false,

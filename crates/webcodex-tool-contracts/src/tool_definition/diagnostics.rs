@@ -1,5 +1,7 @@
 use super::ToolVisibility::ModelHidden;
-use super::{context_reobservable, def, ToolDefinition, TOOL_CATEGORY_RUNTIME};
+use super::{
+    context_reobservable, def, ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_RUNTIME,
+};
 use crate::metadata::{ToolPathHint::None as NoPath, ToolRisk::Read, ADMIN, TOOL_PROVIDER_CONTROL};
 
 /// Operator-only forensic diagnostics. The tool is kernel-known so the shared
@@ -38,4 +40,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[context_reobservable(def(
     false,
     false,
     super::ToolSessionEvidencePolicy::NONE,
-))];
+))
+.with_operator_extension_family(ToolOperatorExtensionFamily::TraceDiagnostics)];

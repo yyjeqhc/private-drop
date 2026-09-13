@@ -4,7 +4,8 @@ mod memory;
 mod skills;
 
 use super::super::tool_definition::{
-    lookup_tool_definition, model_visible_tool_definitions, ToolDefinition,
+    lookup_tool_definition, model_visible_tool_definitions, runtime_tool_operator_extension_family,
+    ToolDefinition, ToolOperatorExtensionFamily,
 };
 use super::super::tool_spec::ToolSpec;
 use super::{output_schema_for_tool, tool_annotations};
@@ -12,6 +13,16 @@ use std::collections::BTreeSet;
 
 pub fn registered_tool_specs() -> Vec<ToolSpec> {
     resolve_tool_specs(model_visible_tool_definitions())
+}
+
+fn operator_extension_specs(
+    specs: Vec<ToolSpec>,
+    family: ToolOperatorExtensionFamily,
+) -> Vec<ToolSpec> {
+    specs
+        .into_iter()
+        .filter(|spec| runtime_tool_operator_extension_family(&spec.name) == Some(family))
+        .collect()
 }
 
 /// Fixed read-only Goal Plan polling contract for MCP App Views. The canonical
@@ -82,21 +93,24 @@ pub fn agent_continuation_app_tool_specs() -> Vec<ToolSpec> {
 /// Fixed admin-only forensic trace reader. It remains globally ModelHidden and
 /// is projected only by capable Stateless MCP 2026 operator adapters.
 pub fn operator_diagnostic_tool_specs() -> Vec<ToolSpec> {
-    vec![tool_spec(
-        "read_tool_trace",
-        "Admin-only bounded reader for Server-hosted full tool-request traces. Omit payload_index to list safe payload metadata first; then read one bounded JSON payload by index. Available only when full trace mode is enabled. Trace payloads may contain sensitive tool data and never grant execution authority.",
-        super::input_schemas::read_tool_trace_input_schema(),
-    )]
+    operator_extension_specs(
+        vec![tool_spec(
+            "read_tool_trace",
+            "Admin-only bounded reader for Server-hosted full tool-request traces. Omit payload_index to list safe payload metadata first; then read one bounded JSON payload by index. Available only when full trace mode is enabled. Trace payloads may contain sensitive tool data and never grant execution authority.",
+            super::input_schemas::read_tool_trace_input_schema(),
+        )],
+        ToolOperatorExtensionFamily::TraceDiagnostics,
+    )
 }
 
 /// Fixed read-only project Memory runtime contract. Definitions remain hidden
 /// from generic/GPT Action registries and are projected only by capable
 /// Stateless MCP Full Operator adapters.
 pub fn memory_runtime_tool_specs() -> Vec<ToolSpec> {
-    memory::tool_specs()
-        .into_iter()
-        .filter(|spec| matches!(spec.name.as_str(), "memory_search" | "memory_read"))
-        .collect()
+    operator_extension_specs(
+        memory::tool_specs(),
+        ToolOperatorExtensionFamily::MemoryRuntime,
+    )
 }
 
 /// Fixed project Memory mutation plus global Memory lifecycle contract. Durable
@@ -104,40 +118,30 @@ pub fn memory_runtime_tool_specs() -> Vec<ToolSpec> {
 /// ToolDefinition authority distinguishes project-scoped memory:manage from
 /// admin-only lifecycle inspection/purge; permission evaluation remains independent.
 pub fn memory_management_tool_specs() -> Vec<ToolSpec> {
-    memory::tool_specs()
-        .into_iter()
-        .filter(|spec| {
-            matches!(
-                spec.name.as_str(),
-                "memory_set" | "memory_delete" | "memory_scope_list" | "memory_scope_purge"
-            )
-        })
-        .collect()
+    operator_extension_specs(
+        memory::tool_specs(),
+        ToolOperatorExtensionFamily::MemoryManagement,
+    )
 }
 
 /// Fixed read-only Skill runtime contract. These definitions are deliberately
 /// ModelHidden globally and are projected only by the capable Stateless MCP
 /// Full Operator adapter.
 pub fn skill_runtime_tool_specs() -> Vec<ToolSpec> {
-    skills::tool_specs()
-        .into_iter()
-        .filter(|spec| matches!(spec.name.as_str(), "skill_list" | "skill_read_file"))
-        .collect()
+    operator_extension_specs(
+        skills::tool_specs(),
+        ToolOperatorExtensionFamily::SkillRuntime,
+    )
 }
 
 /// Fixed Runner-global Skill-management contract. Package/version cardinality
 /// never changes this schema set; the MCP adapter additionally requires explicit
 /// operator authority before projecting these tools.
 pub fn skill_management_tool_specs() -> Vec<ToolSpec> {
-    skills::tool_specs()
-        .into_iter()
-        .filter(|spec| {
-            matches!(
-                spec.name.as_str(),
-                "skill_versions" | "skill_install" | "skill_activate" | "skill_remove_revision"
-            )
-        })
-        .collect()
+    operator_extension_specs(
+        skills::tool_specs(),
+        ToolOperatorExtensionFamily::SkillManagement,
+    )
 }
 
 /// Canonical fixed Stateless MCP 2026 operator-extension universe. These specs

@@ -47,17 +47,6 @@ const DEFAULT_SKILL_READ_LINES: usize = 200;
 const SKILL_PACKAGE_LIST_FORMAT: &str = "webcodex.skill_package_list.v1";
 const SKILL_FILE_READ_FORMAT: &str = "webcodex.skill_file_read.v1";
 
-pub(crate) fn is_skill_runtime_tool_name(name: &str) -> bool {
-    matches!(name, "skill_list" | "skill_read_file")
-}
-
-pub(crate) fn is_skill_management_tool_name(name: &str) -> bool {
-    matches!(
-        name,
-        "skill_install" | "skill_versions" | "skill_activate" | "skill_remove_revision"
-    )
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SkillDescriptor {
     pub(crate) skill_id: String,

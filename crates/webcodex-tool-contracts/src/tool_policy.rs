@@ -5,7 +5,7 @@ use super::metadata::{
 };
 use super::tool_definition::{
     tool_definitions, RunnerCapabilityRequirement, ToolAuditPolicy, ToolContextContinuityPolicy,
-    ToolDefinition, ToolEffectAnnotations, ToolSessionEvidencePolicy,
+    ToolDefinition, ToolEffectAnnotations, ToolOperatorExtensionFamily, ToolSessionEvidencePolicy,
     PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH,
     PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
 };
@@ -142,6 +142,13 @@ fn fallback_permission_risk(name: &str, metadata: ToolMetadata) -> &'static str 
 
 pub fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
     tool_definitions().find(|definition| definition.name == name)
+}
+
+/// Returns the canonical static Stateless Operator extension family for a runtime
+/// tool. Unknown and ordinary tools return `None`, so protocol admission fails
+/// closed unless a ToolDefinition explicitly declares a family.
+pub fn runtime_tool_operator_extension_family(name: &str) -> Option<ToolOperatorExtensionFamily> {
+    lookup_tool_definition(name).and_then(|definition| definition.operator_extension_family)
 }
 
 pub fn runtime_tool_session_evidence_policy(name: &str) -> ToolSessionEvidencePolicy {

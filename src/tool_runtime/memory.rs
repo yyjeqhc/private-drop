@@ -19,17 +19,6 @@ const DEFAULT_MEMORY_SEARCH_LIMIT: usize = 20;
 /// authority.
 const MAX_MEMORY_SCOPE_INVENTORY_CLIENTS: usize = 1_024;
 
-pub(crate) fn is_memory_runtime_tool_name(name: &str) -> bool {
-    matches!(name, "memory_search" | "memory_read")
-}
-
-pub(crate) fn is_memory_management_tool_name(name: &str) -> bool {
-    matches!(
-        name,
-        "memory_set" | "memory_delete" | "memory_scope_list" | "memory_scope_purge"
-    )
-}
-
 fn memory_hash_field(hasher: &mut Sha256, value: &[u8]) {
     hasher.update((value.len() as u64).to_be_bytes());
     hasher.update(value);
