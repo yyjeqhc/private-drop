@@ -104,6 +104,28 @@ Production state should distinguish at least:
 
 Only exact continuation consumption is proof that the model turn ran. Background-tab scheduling should be treated as eventually available/best effort, not as a real-time execution guarantee.
 
+## Host admission and background-carrier follow-up — 2026-09-13
+
+Two focused ChatGPT Host probes tightened the presentation and scheduling model further.
+
+First, result-time App admission was tested with one tool whose descriptor deliberately had no App binding and one already-registered UI resource. Three otherwise equivalent ToolResults were returned: a plain result, a result with `_meta.ui.resourceUri`, and a result with both `_meta.ui.resourceUri` and the historical `openai/outputTemplate` compatibility alias. None created a custom App card. The practical Host contract is therefore descriptor-time admission: ToolResult metadata can feed an App that the Host already decided to create, but it cannot promote an ordinary native tool result into a new App presentation after execution. A tool such as `show_changes` consequently cannot use `clean -> no card` / `dirty -> result-time card` on one descriptor. Semantic admission needs a separate explicitly App-bound presentation tool, while ordinary work tools remain unbound.
+
+Second, the background continuation boundary was retested with a dedicated mounted-card carrier that intentionally removed the View visibility gate while preserving exact wake acquire/prepare, nonce, consume, and fail-closed delivery semantics. The original ChatGPT tab remained hidden while another window rearmed the same run. For `background-carrier-a`, three consecutive cycles reached the authoritative terminal state with:
+
+- `status=completed`;
+- `wake.state=consumed`;
+- `wake.prepareVisibility=hidden`;
+- `wake.dispatchVisibility=hidden`.
+
+The run was inspected from the other window before foregrounding the carrier tab, so `consumed` cannot be explained by later foreground reconciliation. This is direct evidence that an already-mounted MCP App can remain a background carrier, dispatch `ui/message` while hidden, and have ChatGPT start and complete the resumed model turn without first foregrounding that tab. It supersedes the earlier `multiturn-bg-b` observation as a capability boundary, but not as a scheduling guarantee: Host/browser throttling, suspension, tab discard, or future policy can still delay or stop a carrier. Durable correctness must continue to rely on server-owned pending Wake state and exact consumption, never on timer liveness or a promise of real-time background execution.
+
+These results split the product surface into two intentional patterns:
+
+- result/report cards such as Work Result are sparse and explicitly admitted, render the authoritative `present_work_result` snapshot once, and stay static until the user presses Refresh; they do not need background timers merely because the Host can run them;
+- controller cards such as Durable Agent continuation may deliberately remain live carriers when automatic continuation is a product requirement, but removing a production visibility gate is a separate policy choice and must retain exact Endpoint/generation, lease/fence, `delivery_unknown`, and consume protections.
+
+The capability result therefore supports long-lived Agent carriers without turning every MCP App into a polling surface. Presentation density, refresh cost, and autonomous scheduling remain separate design decisions.
+
 ## Durable wake safety lessons
 
 The probe intentionally reused the same safety shape already explored by the durable Agent controller work:
