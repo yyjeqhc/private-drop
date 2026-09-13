@@ -675,6 +675,13 @@ mod tests {
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE]),
             ),
             (
+                "start_agent_task_endpoint_continuation",
+                OAuthToolScopePolicy::RequireAll(&[
+                    SCOPE_COMMUNICATION_READ,
+                    SCOPE_COMMUNICATION_MANAGE,
+                ]),
+            ),
+            (
                 "start_agent_task_coding_run",
                 OAuthToolScopePolicy::RequireAll(&[
                     SCOPE_COMMUNICATION_READ,

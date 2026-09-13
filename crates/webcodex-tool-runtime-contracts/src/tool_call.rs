@@ -1246,6 +1246,15 @@ pub enum ToolCall {
         idempotency_key: String,
     },
 
+    /// Select the concrete Agent Endpoint continuation backend for one exact live Attempt.
+    StartAgentTaskEndpointContinuation {
+        task_id: String,
+        attempt_id: String,
+        assignee_agent_id: String,
+        attempt_fence: String,
+        attempt_controller_generation: i64,
+    },
+
     /// Explicitly dispatch the exact latest fenced AgentTaskAttempt to one durable CodingAgentRun.
     StartAgentTaskCodingRun {
         project: String,
@@ -2863,6 +2872,9 @@ impl ToolCall {
             Self::ReadAgentTask { .. } => "read_agent_task",
             Self::AssignAgentTask { .. } => "assign_agent_task",
             Self::StartAgentTaskAttempt { .. } => "start_agent_task_attempt",
+            Self::StartAgentTaskEndpointContinuation { .. } => {
+                "start_agent_task_endpoint_continuation"
+            }
             Self::StartAgentTaskCodingRun { .. } => "start_agent_task_coding_run",
             Self::ReconcileAgentTaskCodingRun { .. } => "reconcile_agent_task_coding_run",
             Self::HeartbeatAgentTaskAttempt { .. } => "heartbeat_agent_task_attempt",

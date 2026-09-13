@@ -260,10 +260,25 @@ const replacementOutput = (from = projection) => {
         endpoint_id: successor.endpoint_id, controller_generation: successor.controller_generation,
         reason: "endpoint_expired",
       },
+      successor_needs_recovery: false,
     },
     replayed: false, state_changed: true,
   };
 };
+
+const intermediateReplacementOutput = (from = projection) => {
+  const output = replacementOutput(from);
+  output.agent_continuation = null;
+  output.endpoint_recovery.successor_needs_recovery = true;
+  return output;
+};
+
+const successorIdentity = (from, output) => ({
+  ...from,
+  endpoint_id: output.endpoint_recovery.replacement.endpoint_id,
+  controller_generation: output.endpoint_recovery.replacement.controller_generation,
+  host_binding: { bound: false },
+});
 
 test("reopened expired card probes replacement, binds the successor, and dispatches once", async () => {
   const view = app("mcp_agent_continuation_app.html");
@@ -315,6 +330,60 @@ test("reopened expired card probes replacement, binds the successor, and dispatc
   assert.equal(view.calls("agent_continuation_unbind")[0].params.arguments.endpoint_id, current.endpoint_id);
 });
 
+test("expired successor recovery advances exact one-hop selectors until a live successor", async () => {
+  const view = await boundView();
+  await view.reject(view.calls("agent_continuation_state")[0]);
+  let predecessor = projection;
+  for (let hop = 0; hop < 2; hop++) {
+    const recovery = view.calls("agent_continuation_recover_endpoint")[hop];
+    assert.deepEqual(businessArgs(recovery), {
+      agent_id: predecessor.agent_id,
+      endpoint_id: predecessor.endpoint_id,
+      expected_controller_generation: predecessor.controller_generation,
+      binding_id: bindingId(view),
+    });
+    const intermediate = intermediateReplacementOutput(predecessor);
+    await view.reply(recovery, toolResult(intermediate));
+    predecessor = successorIdentity(predecessor, intermediate);
+    assert.equal(view.calls("agent_continuation_bind").length, 1, "expired intermediate successors must not be bootstrapped or bound");
+  }
+  const finalRecovery = view.calls("agent_continuation_recover_endpoint")[2];
+  assert.deepEqual(businessArgs(finalRecovery), {
+    agent_id: predecessor.agent_id,
+    endpoint_id: predecessor.endpoint_id,
+    expected_controller_generation: predecessor.controller_generation,
+    binding_id: bindingId(view),
+  });
+  const final = replacementOutput(predecessor);
+  await view.reply(finalRecovery, toolResult(final));
+  const successorBind = view.calls("agent_continuation_bind")[1];
+  assert.deepEqual(businessArgs(successorBind), {
+    agent_id: final.agent_continuation.agent_id,
+    endpoint_id: final.agent_continuation.endpoint_id,
+    expected_controller_generation: final.agent_continuation.controller_generation,
+    binding_id: bindingId(view),
+  });
+});
+
+test("expired successor recovery stops after eight exact one-hop transitions", async () => {
+  const view = await boundView();
+  await view.reject(view.calls("agent_continuation_state")[0]);
+  let predecessor = projection;
+  for (let hop = 0; hop < 8; hop++) {
+    const recovery = view.calls("agent_continuation_recover_endpoint")[hop];
+    assert.ok(recovery, `missing bounded recovery hop ${hop + 1}`);
+    assert.equal(recovery.params.arguments.endpoint_id, predecessor.endpoint_id);
+    assert.equal(recovery.params.arguments.expected_controller_generation, predecessor.controller_generation);
+    const intermediate = intermediateReplacementOutput(predecessor);
+    await view.reply(recovery, toolResult(intermediate));
+    predecessor = successorIdentity(predecessor, intermediate);
+  }
+  assert.equal(view.calls("agent_continuation_recover_endpoint").length, 8);
+  assert.equal(view.calls("agent_continuation_bind").length, 1);
+  assert.equal(view.nodes.binding.textContent, "Unavailable");
+  assert.equal(view.nodes.status.textContent, "Connection unavailable. Queued work is preserved.");
+});
+
 test("expiry replacement retries a lost response with the same selector and accepts one successor", async () => {
   const view = await boundView();
   await view.reject(view.calls("agent_continuation_state")[0]);
@@ -361,7 +430,7 @@ test("healthy heartbeat permits a later expiry probe on the same long-lived card
   await view.reject(view.calls("agent_continuation_state")[0]);
   await view.reply(view.calls("agent_continuation_recover_endpoint")[0], toolResult({
     agent_continuation: projection,
-    endpoint_recovery: { kind: "controller_live", replacement: null },
+    endpoint_recovery: { kind: "controller_live", replacement: null, successor_needs_recovery: false },
   }));
   assert.equal(view.calls("agent_continuation_bind").length, 1, "a live probe cannot replace a controller");
   await view.fireTimers(3000);
@@ -892,7 +961,7 @@ test("bind response-loss retries are bounded even with repeated bootstrap notifi
   assert.equal(view.calls("agent_continuation_recover_endpoint").length, 1);
   await view.reply(recovery, toolResult({
     agent_continuation: projection,
-    endpoint_recovery: { kind: "controller_live", replacement: null },
+    endpoint_recovery: { kind: "controller_live", replacement: null, successor_needs_recovery: false },
     replayed: false,
     state_changed: false,
   }));

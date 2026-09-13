@@ -163,9 +163,13 @@ fn agent_continuation_endpoint_recovery_schema() -> Value {
                     },
                     {"type": "null"}
                 ]
-            }
+            },
+            "successor_needs_recovery": schema_type(
+                "boolean",
+                "True only when the exact one-hop successor is itself naturally expired and must be supplied as the predecessor of another recovery call."
+            )
         },
-        "required": ["kind", "replacement"]
+        "required": ["kind", "replacement", "successor_needs_recovery"]
     })
 }
 
@@ -333,7 +337,10 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             agent_continuation_projection_schema(),
         )]),
         "agent_continuation_recover_endpoint" => wrapped_output_schema(vec![
-            ("agent_continuation", agent_continuation_projection_schema()),
+            ("agent_continuation", json!({
+                "anyOf": [agent_continuation_projection_schema(), {"type": "null"}],
+                "description": "Live continuation projection for the returned selector, or null when the exact one-hop successor is itself expired and requires another bounded recovery step."
+            })),
             ("endpoint_recovery", agent_continuation_endpoint_recovery_schema()),
             ("replayed", schema_type("boolean", "True when the exact expired-endpoint replacement was replayed.")),
             ("state_changed", schema_type("boolean", "True only when this call created the replacement Endpoint.")),
@@ -389,14 +396,18 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                                 "wake_id": schema_type("string", "Exact unresolved durable Wake identity."),
                                 "state": {"type": "string", "enum": ["pending", "claimed", "prepared", "delivered", "delivery_unknown"]},
                                 "revision": schema_type("integer", "Current Wake revision."),
-                                "conversation_id": schema_type("string", "Latest Conversation represented by the Wake."),
-                                "latest_message_id": schema_type("string", "Latest Message id represented by the Wake; no Message body is included."),
-                                "queued_delivery_count": schema_type("integer", "Bounded queued count snapshot represented by the Wake."),
-                                "inbox_high_watermark": schema_type("integer", "Durable delivery high-watermark represented by the Wake.")
+                                "trigger_kind": {"type": "string", "enum": ["inbox_changed", "agent_task_attempt"]},
+                                "conversation_id": nullable_string("Latest Conversation represented by an inbox_changed Wake; null for an AgentTask-origin Wake."),
+                                "latest_message_id": nullable_string("Latest Message id represented by an inbox_changed Wake; null for an AgentTask-origin Wake and no Message body is included."),
+                                "queued_delivery_count": nullable_integer("Bounded queued count snapshot for an inbox_changed Wake; null for an AgentTask-origin Wake."),
+                                "inbox_high_watermark": nullable_integer("Durable delivery high-watermark for an inbox_changed Wake; null for an AgentTask-origin Wake."),
+                                "task_id": nullable_string("Exact durable AgentTask id for an agent_task_attempt Wake; null for an inbox_changed Wake."),
+                                "task_attempt_id": nullable_string("Exact durable AgentTaskAttempt id for an agent_task_attempt Wake; null for an inbox_changed Wake.")
                             },
                             "required": [
-                                "wake_id", "state", "revision", "conversation_id",
-                                "latest_message_id", "queued_delivery_count", "inbox_high_watermark"
+                                "wake_id", "state", "revision", "trigger_kind", "conversation_id",
+                                "latest_message_id", "queued_delivery_count", "inbox_high_watermark",
+                                "task_id", "task_attempt_id"
                             ]
                         },
                         {"type": "null"}

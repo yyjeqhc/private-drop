@@ -1617,8 +1617,8 @@ fn acquisition_from_claim(
         attempt_id: claim.attempt.attempt_id.clone(),
         wake_state: claim.wake.state,
         wake_revision: claim.wake.revision,
-        queued_delivery_count: claim.wake.queued_delivery_count_snapshot,
-        inbox_high_watermark: claim.wake.inbox_high_watermark,
+        queued_delivery_count: claim.wake.queued_delivery_count_snapshot.unwrap_or(0),
+        inbox_high_watermark: claim.wake.inbox_high_watermark.unwrap_or(0),
         dispatch_phase,
         replayed,
     }

@@ -15,7 +15,7 @@ use crate::registry::input_schemas::{
     create_agent_task_input_schema, heartbeat_agent_task_attempt_input_schema,
     list_agent_tasks_input_schema, read_agent_task_input_schema,
     reconcile_agent_task_coding_run_input_schema, start_agent_task_attempt_input_schema,
-    start_agent_task_coding_run_input_schema,
+    start_agent_task_coding_run_input_schema, start_agent_task_endpoint_continuation_input_schema,
 };
 use webcodex_core::authority::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_SCOPES};
 
@@ -197,6 +197,46 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             ),
             "Atomically claim execution ownership for the explicit current AgentTask assignee. Creates one leased fenced AgentTaskAttempt only; it does not dispatch CodingAgentRun, Job, shell, model, Wake, Endpoint, or Workflow Session work. Exact keyed retry returns the original Attempt and fence.",
             start_agent_task_attempt_input_schema,
+        ),
+        COMMUNICATION_MANAGE_SCOPES,
+    ),
+    require_all_scopes(
+        permission_risk(
+            model_spec(
+                def(
+                    "start_agent_task_endpoint_continuation",
+                    super::ToolAuditPolicy::typed_fields(&[
+                        super::ToolAuditResultField::pointer("task_id", "/execution/task_id"),
+                        super::ToolAuditResultField::pointer("attempt_id", "/execution/attempt_id"),
+                        super::ToolAuditResultField::pointer("wake_id", "/execution/wake_id"),
+                        super::ToolAuditResultField::pointer("wake_state", "/execution/wake_state"),
+                        super::ToolAuditResultField::pointer("endpoint_id", "/execution/endpoint_id"),
+                        super::ToolAuditResultField::pointer("endpoint_controller_generation", "/execution/endpoint_controller_generation"),
+                        super::ToolAuditResultField::value("replayed"),
+                        super::ToolAuditResultField::value("state_changed"),
+                        super::ToolAuditResultField::value("error_kind"),
+                    ]),
+                    ModelVisible,
+                    TOOL_CATEGORY_AGENT_TASK,
+                    None,
+                    TOOL_PROVIDER_CONTROL,
+                    super::ToolSemanticContract {
+                        effect: super::ToolEffect::Execute,
+                        risk: WorkflowManage,
+                        approval: super::ToolApprovalPolicy::Standard,
+                        idempotency: super::ToolIdempotency::FencedReplay,
+                    },
+                    Some(COMMUNICATION_MANAGE),
+                    false,
+                    NoPath,
+                    true,
+                    false,
+                    super::ToolSessionEvidencePolicy::NONE,
+                ),
+                "Select the Agent Endpoint continuation backend for the exact latest unexpired fenced AgentTaskAttempt. This call never chooses an Endpoint: it durably creates/replays one Task-origin Wake with a nullable carrier, then the existing event-driven continuation controller dispatches only when a current wake-capable Endpoint later claims it. TaskAttempt and Endpoint leases remain independent; no synthetic Conversation Message or Inbox Delivery is created.",
+                start_agent_task_endpoint_continuation_input_schema,
+            ),
+            PERMISSION_RISK_WRITE,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),

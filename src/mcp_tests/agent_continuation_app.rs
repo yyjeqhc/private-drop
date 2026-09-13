@@ -241,7 +241,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v14"
+        "ui://webcodex/agent-continuation/v15"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -445,6 +445,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v11"
                     | "ui://webcodex/agent-continuation/v12"
                     | "ui://webcodex/agent-continuation/v13"
+                    | "ui://webcodex/agent-continuation/v14"
             )
         )));
     for uri in [
@@ -462,6 +463,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v11",
         "ui://webcodex/agent-continuation/v12",
         "ui://webcodex/agent-continuation/v13",
+        "ui://webcodex/agent-continuation/v14",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -536,6 +538,10 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "expired-endpoint replacement retries must remain bounded and replay-safe"
     );
     assert!(
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("MAX_ENDPOINT_SUCCESSOR_HOPS = 8"),
+        "sequential expired-successor recovery must remain explicitly bounded"
+    );
+    assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("function markCurrentEndpointHealthy()"),
         "a healthy exact controller must reopen future expired-endpoint recovery eligibility"
     );
@@ -586,8 +592,8 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "identity replacement must be gated by the dedicated recovery ToolResult"
     );
     assert!(
-        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"14.0.0\""),
-        "App protocol version must advance with the v14 resource"
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"15.0.0\""),
+        "App protocol version must advance with the v15 resource"
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("const DEBUG_DIAGNOSTICS = false;"),
@@ -899,6 +905,164 @@ fn restart_recovery_survives_published_projection_output_schema() {
     assert_eq!(
         host_projection["recovery"]["kind"],
         "host_binding_missing_in_process"
+    );
+}
+
+#[test]
+fn expired_successor_replay_survives_published_recovery_output_schema() {
+    let (_temp, db, runtime) = continuation_runtime(ModelSurface::AdaptiveRuntime);
+    let owner = continuation_auth("continuation-schema-successor");
+    let agent = create_agent(
+        &runtime,
+        &owner,
+        "continuation-schema-successor-agent",
+        "Schema Successor Agent",
+        "continuation-schema-successor-create",
+    );
+    let (e1, g1) = attach(
+        &runtime,
+        &owner,
+        &agent,
+        "continuation-schema-successor-endpoint",
+    );
+    let window =
+        crate::client_window::ClientWindow::for_test("continuation-schema-successor-window");
+    let first_binding = format!("wc_host_binding_{}", "c".repeat(32));
+    let bound = runtime.agent_continuation_bind_for_window(
+        Some(&owner),
+        Some(&window),
+        agent.clone(),
+        e1.clone(),
+        g1,
+        first_binding.clone(),
+    );
+    assert!(bound.success, "{:?}", bound.output);
+    let unbound = runtime.agent_continuation_unbind_for_window(
+        Some(&owner),
+        Some(&window),
+        agent.clone(),
+        e1.clone(),
+        g1,
+        first_binding,
+    );
+    assert!(unbound.success, "{:?}", unbound.output);
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_endpoints SET lease_expires_at_unix_ms = 0 WHERE endpoint_id = ?1",
+            [&e1],
+        )
+        .unwrap();
+
+    let first = runtime.agent_continuation_recover_endpoint_for_window(
+        Some(&owner),
+        Some(&window),
+        agent.clone(),
+        e1.clone(),
+        g1,
+        format!("wc_host_binding_{}", "d".repeat(32)),
+    );
+    assert!(first.success, "{:?}", first.output);
+    let e2 = first.output["endpoint_recovery"]["replacement"]["endpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let g2 = first.output["endpoint_recovery"]["replacement"]["controller_generation"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(g2, g1 + 1);
+    assert_eq!(
+        first.output["endpoint_recovery"]["successor_needs_recovery"],
+        false
+    );
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_endpoints SET lease_expires_at_unix_ms = 0 WHERE endpoint_id = ?1",
+            [&e2],
+        )
+        .unwrap();
+    let second = runtime.agent_continuation_recover_endpoint_for_window(
+        Some(&owner),
+        Some(&window),
+        agent.clone(),
+        e2.clone(),
+        g2,
+        format!("wc_host_binding_{}", "e".repeat(32)),
+    );
+    assert!(second.success, "{:?}", second.output);
+    assert_eq!(
+        second.output["endpoint_recovery"]["replacement"]["controller_generation"],
+        g2 + 1
+    );
+
+    let old_selector_replay = runtime.agent_continuation_recover_endpoint_for_window(
+        Some(&owner),
+        Some(&window),
+        agent,
+        e1.clone(),
+        g1,
+        format!("wc_host_binding_{}", "f".repeat(32)),
+    );
+    assert!(
+        old_selector_replay.success,
+        "{:?}",
+        old_selector_replay.output
+    );
+    assert!(old_selector_replay.output["agent_continuation"].is_null());
+    assert_eq!(old_selector_replay.output["replayed"], true);
+    assert_eq!(old_selector_replay.output["state_changed"], false);
+    assert_eq!(
+        old_selector_replay.output["endpoint_recovery"]["successor_needs_recovery"],
+        true
+    );
+    assert_eq!(
+        old_selector_replay.output["endpoint_recovery"]["replacement"]["from_endpoint_id"],
+        e1
+    );
+    assert_eq!(
+        old_selector_replay.output["endpoint_recovery"]["replacement"]["endpoint_id"],
+        e2
+    );
+    assert_eq!(
+        old_selector_replay.output["endpoint_recovery"]["replacement"]["controller_generation"],
+        g2
+    );
+
+    let published =
+        webcodex_tool_contracts::output_schema_for_tool("agent_continuation_recover_endpoint");
+    let output_schema = &published["properties"]["output"];
+    let host_projection =
+        host_project_through_output_schema(&old_selector_replay.output, output_schema);
+    assert_eq!(
+        host_projection, old_selector_replay.output,
+        "published recovery outputSchema must preserve the intermediate one-hop successor proof"
+    );
+    assert_eq!(
+        host_projection["endpoint_recovery"]["successor_needs_recovery"],
+        true
+    );
+}
+
+#[test]
+fn task_origin_wake_survives_published_bootstrap_output_schema() {
+    let wake = json!({
+        "wake_id": format!("wc_wake_{}", "a".repeat(32)),
+        "state": "pending",
+        "revision": 1,
+        "trigger_kind": "agent_task_attempt",
+        "conversation_id": null,
+        "latest_message_id": null,
+        "queued_delivery_count": null,
+        "inbox_high_watermark": null,
+        "task_id": format!("wc_agent_task_{}", "b".repeat(32)),
+        "task_attempt_id": format!("wc_agent_task_attempt_{}", "c".repeat(32)),
+    });
+    let published = webcodex_tool_contracts::output_schema_for_tool("bootstrap_agent_conversation");
+    let wake_schema = &published["properties"]["output"]["properties"]["wake"];
+    let host_projection = host_project_through_output_schema(&wake, wake_schema);
+    assert_eq!(
+        host_projection, wake,
+        "published bootstrap outputSchema must preserve exact AgentTask-origin Wake identity and null Inbox fields"
     );
 }
 

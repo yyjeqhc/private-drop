@@ -163,9 +163,9 @@ agent_continuation_wake_finish    # dispatch_accepted | delivery_unknown
 later model turn exact-consumes Wake
 ```
 
-The only card-creating entry is the explicit read `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)`, bound to the current `ui://webcodex/agent-continuation/v14` resource. Bind/recover/state/acquire/prepare/finish/unbind are globally ModelHidden and are projected only as App-visible tools on eligible Stateless MCP 2026 operator surfaces. They do not bind the resource again, so polling/coordination does not create a stream of custom cards. Ordinary communication and coding tools keep native Host presentation.
+The only card-creating entry is the explicit read `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)`, bound to the current `ui://webcodex/agent-continuation/v15` resource. Bind/recover/state/acquire/prepare/finish/unbind are globally ModelHidden and are projected only as App-visible tools on eligible Stateless MCP 2026 operator surfaces. They do not bind the resource again, so polling/coordination does not create a stream of custom cards. Ordinary communication and coding tools keep native Host presentation.
 
-The View binding is process-local fencing, not durable authority. Every App-only operation re-authorizes the normal communication principal and exact Agent/Endpoint/controller generation. `binding_id` identifies only the current iframe/process instance. For MCP Apps, the Store retains both the v11 SHA-256 fingerprint of the exact current binding fence and, when the Host supplied valid request-scoped identity, the already-domain-separated SHA-256 `ClientWindow` key. Raw `_meta["openai/session"]` is never persisted. Server takeover clears process-local carriers and durable `wake_capable` but preserves both bounded restart-recovery values. The exact old binding fingerprint remains the fallback when no valid ClientWindow exists. With a canonical ClientWindow, the same authenticated principal + exact Endpoint/generation + same Window may restore or replace a lost iframe fence after restart; refresh unbind clears the iframe fingerprint but preserves that same-Window continuity while the Endpoint remains current. Natural lease expiry clears wake capability and the binding fingerprint but v14 preserves only the hashed Window key as a bounded input to the dedicated expired-Endpoint replacement operation; ordinary bind/state still reject the expired Endpoint. Explicit detach, ordinary Endpoint replacement, or transition to a push carrier clears the continuity value. Push adapters still require a fresh current-process attachment and never inherit Window recovery. On replacement/loss, existing Store reconciliation handles the durable state: pre-fence claim -> revoked Attempt + pending Wake; post-fence prepared/delivered -> `delivery_unknown`.
+The View binding is process-local fencing, not durable authority. Every App-only operation re-authorizes the normal communication principal and exact Agent/Endpoint/controller generation. `binding_id` identifies only the current iframe/process instance. For MCP Apps, the Store retains both the v11 SHA-256 fingerprint of the exact current binding fence and, when the Host supplied valid request-scoped identity, the already-domain-separated SHA-256 `ClientWindow` key. Raw `_meta["openai/session"]` is never persisted. Server takeover clears process-local carriers and durable `wake_capable` but preserves both bounded restart-recovery values. The exact old binding fingerprint remains the fallback when no valid ClientWindow exists. With a canonical ClientWindow, the same authenticated principal + exact Endpoint/generation + same Window may restore or replace a lost iframe fence after restart; refresh unbind clears the iframe fingerprint but preserves that same-Window continuity while the Endpoint remains current. Natural lease expiry clears wake capability and the binding fingerprint; v15 preserves only the hashed Window key as a bounded input to the dedicated expired-Endpoint replacement operation and its exact one-hop replay chain, while ordinary bind/state still reject the expired Endpoint. Explicit detach, ordinary Endpoint replacement, or transition to a push carrier clears the continuity value. Push adapters still require a fresh current-process attachment and never inherit Window recovery. On replacement/loss, existing Store reconciliation handles the durable state: pre-fence claim -> revoked Attempt + pending Wake; post-fence prepared/delivered -> `delivery_unknown`.
 
 The App keeps claim fences entirely Server-side. The bounded automatic message is returned only after prepare and contains exact `agent_id`, `endpoint_id`, `controller_generation`, `wake_id`, and `consume_token`; it contains no Conversation Message body, transcript, Agent private description/specialty labels, credential, principal digest, claim fence, Project authority, or Workflow Session authority. The View generates a stable secure random binding fence and sends it in bind input; same-current-View retries renew without replacing its claim or dispatch phase. The automatic message uses the app-only standard `structuredContent.output.app_protocol` result channel. Neither value enters ordinary model-visible projections, typed audit/session projections, or forensic tool-request payload capture. Continuation correctness does not depend on custom ToolResult `_meta`.
 
@@ -191,18 +191,18 @@ works, and a missing ToolResult does not block bind/heartbeat or Goal polling
 once Host initialization succeeds. Unknown Goal lifecycle permits the first
 authoritative read; terminal Goal state still stops polling.
 
-Each card still accepts only one ordinary projected identity. Matching notifications are idempotent; conflicting ordinary identities stop coordination, cancel pending View requests, and leave a bounded error. v14 adds one narrow exception: only a successful `agent_continuation_recover_endpoint` ToolResult carrying a strict Server-authored replacement envelope may transition the card from its exact current stale selector to exactly `generation+1` for the same Agent. The envelope must name the exact old Endpoint/generation and the returned normal projection must name the same new Endpoint/generation. The App then advances a local identity epoch so delayed old bind/state responses and old timer callbacks are inert. An already-bound Agent View attempts only its current exact unbind. Tool input is an exact selector, never authorization: every actual read/mutation still runs the Server's existing principal, scope, and resource checks.
+Each card still accepts only one ordinary projected identity. Matching notifications are idempotent; conflicting ordinary identities stop coordination, cancel pending View requests, and leave a bounded error. v15 keeps the v14 narrow exception: only a successful `agent_continuation_recover_endpoint` ToolResult carrying a strict Server-authored replacement envelope may transition the card from its exact current stale selector to exactly `generation+1` for the same Agent. A live successor must match the returned normal projection; an already-recorded successor that has itself naturally expired is instead returned as `agent_continuation=null` plus `successor_needs_recovery=true`, so the card adopts exactly that one selector and asks for the next edge. At most eight successor hops are accepted. The App advances a local identity epoch after every accepted edge so delayed old bind/state responses and old timer callbacks are inert. An already-bound Agent View attempts only its current exact unbind. Tool input is an exact selector, never authorization: every actual read/mutation still runs the Server's existing principal, scope, and resource checks.
 
 Visible status distinguishes script activity, Host initialization, exact identity
 selection, and live binding/polling, with separate initialization, binding, and
 identity errors. Diagnostics do not display binding ids, claim fences, or consume
 tokens. `tools/list` and `resources/list` advertise only the canonical
-`ui://webcodex/agent-continuation/v14` and `ui://webcodex/goal-plan/v2` resources.
-Agent continuation v1-v13 are hidden read aliases serving the same current template. Reading an alias does not revive an expired Endpoint or bypass exact generation/authorization fencing; the same current template must still complete the explicit Server-authorized replacement transition. The v11 fingerprint-proven restart fallback, v12 strict restart projection, and v13 canonical Host-window refresh fence remain intact; v14 adds expired-Endpoint replacement as a separate transition rather than broadening any of those paths.
+`ui://webcodex/agent-continuation/v15` and `ui://webcodex/goal-plan/v2` resources.
+Agent continuation v1-v14 are hidden read aliases serving the same current template. Reading an alias does not revive an expired Endpoint or bypass exact generation/authorization fencing; the same current template must still complete explicit Server-authorized one-hop replacement transitions. The v11 fingerprint-proven restart fallback, v12 strict restart projection, v13 canonical Host-window refresh fence, and v14 expired-Endpoint replacement remain intact; v15 adds bounded sequential successor replay rather than broadening any stale binding path.
 
 ## Remaining verification boundary
 
-Deterministic tests cover surface isolation, protocol fail-closed behavior, authorization/existence hiding, duplicate-View fencing, live-controller protection, same-Window expired-Endpoint replacement, different-Window rejection, concurrent replacement, response-loss replay, no rollback after a later generation, replacement before/after Server restart, delayed-old-response App guards, pending Wake preservation, pre-fence recovery, post-fence uncertainty, 50-Message burst coalescing, exact consume/token/generation checks, consume-before-ACK ordering, and secret redaction. The remaining environment-specific step is manual ChatGPT dogfood of v14 with a real full tab/window close past the 120-second lease and reopening the original Conversation/card. That dogfood must verify in-place `Reconnecting… -> Host bound`, the same pending Wake/Delivery continuing through E1/g1 -> E2/g2, and no duplicate Host `ui/message`. Host success remains dispatch acceptance only; background model-turn scheduling remains eventually available/best effort, not an immediate guarantee.
+Deterministic tests cover surface isolation, protocol fail-closed behavior, authorization/existence hiding, duplicate-View fencing, live-controller protection, same-Window expired-Endpoint replacement, different-Window rejection, concurrent replacement, response-loss replay, bounded E1 -> E2 -> E3 -> ... successor recovery, no rollback after a later generation, replacement before/after Server restart, delayed-old-response App guards, pending Wake preservation, pre-fence recovery, post-fence uncertainty, 50-Message burst coalescing, exact consume/token/generation checks, consume-before-ACK ordering, and secret redaction. The remaining environment-specific step is manual ChatGPT dogfood of v15 with repeated natural successor expiry and reopening the original Conversation/card. That dogfood must verify in-place `Reconnecting… -> Host bound`, the same pending Wake/Delivery continuing through E1/g1 -> E2/g2, and no duplicate Host `ui/message`. Host success remains dispatch acceptance only; background model-turn scheduling remains eventually available/best effort, not an immediate guarantee.
 
 ### Production result-channel compatibility follow-up
 
@@ -269,34 +269,27 @@ corrected with focused regressions:
   suppression list. Its binding fence now receives the same trace exclusion as
   the other App coordination tools.
 
-**A4b prerequisite: repeated successor recovery is still open.** The original card's
-persisted tool input still names E1/g1; its accepted E2/g2 selector lives only in the
-iframe. If E2's lease also elapses before that original card is reopened, Store replay
-correctly finds the same authoritative E2, but
-`agent_continuation_recover_endpoint_for_window` then calls the ordinary live
-`bootstrap_agent_conversation`. This fails `endpoint_expired` before returning the
-replacement envelope, so the card cannot learn E2 and request E2 -> E3. Response loss
-lasting past E2's lease has the same failure.
+**v15 closes the A4b repeated-successor prerequisite without changing one-hop authority.**
+A replay of the E1 recovery operation may return only its uniquely committed E2 successor,
+even if the Agent's current generation is already E3 or later. Replay still rechecks the
+same owner, Agent, exact predecessor generation, durable successor generation, retained
+ClientWindow lineage, detach state, and revocation provenance; it never recreates fresh
+push-registration authority.
 
-This was reproduced locally by setting only the successor's
-`lease_expires_at_unix_ms` to zero immediately before the replay in
-`mcp_app_expired_endpoint_replacement_replays_across_server_restart_without_extra_generation`:
-its expected successful replay instead returned `endpoint_expired`. The temporary
-fault injection was removed after verification; the regular test continues to cover
-replay while the successor is live.
+If that exact E2 successor is itself naturally expired, runtime no longer ordinary-
+bootstraps it. Instead the strict successful result carries `agent_continuation=null`, the
+exact E1 -> E2 replacement envelope, and `successor_needs_recovery=true`. The App validates
+same Agent, exact predecessor Endpoint/generation, canonical successor id,
+`new_generation = old_generation + 1`, and `reason=endpoint_expired`, adopts E2, then calls
+the same operation with E2. Every later edge is independently durable/idempotent. The App
+stops after eight accepted edges and reports ordinary connection-unavailable semantics;
+Server code never walks arbitrary Endpoint history. Generic JSON-RPC `-32000` remains
+non-evidence and cannot authorize recovery.
 
-The next Endpoint-backed AgentTask slice should close this as an explicit
-successor-chain protocol rather than by extending leases or weakening stale binding.
-An old selector may discover only the authoritative replacement chain that was already
-committed for the same principal/Agent/ClientWindow lineage; it must not become a
-credential, skip a foreign/revoked successor, recreate fresh push authority from replay,
-or retarget after an unrelated later generation. If the authoritative successor is
-itself naturally expired and still eligible under the same exact recovery contract,
-the operation may advance that current successor to exactly its next generation and
-return the selector the card must adopt. The intended durability shape is therefore
-E1 -> E2 -> E3 -> ... while every superseded Endpoint remains permanently stale.
-Until that protocol lands, explicitly rotate and present a new Endpoint/card; repeated
-long-close recovery is not yet claimed complete.
+A real Store/runtime regression constructs E1 -> E2 -> E3, expires E2, replays E1, and
+projects the returned intermediate result through the published strict output schema;
+the Host-visible projection must retain the entire exact one-hop proof. The App harness
+covers sequential expired successors through a live tail and the eight-hop cap.
 
 Focused validation passed: 113 App tests, 25 runtime/MCP continuation tests,
 11 Store communication tests, nine continuation contract/parser/privacy tests,

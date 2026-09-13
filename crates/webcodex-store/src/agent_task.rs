@@ -1,3 +1,4 @@
+use super::agent_wake::{AgentWakeState, AGENT_WAKE_ID_PREFIX, WAKE_TRIGGER_AGENT_TASK_ATTEMPT};
 use super::communication::{
     authorize_conversation_access, digest_text, lookup_idempotent_resource, new_id, now_unix_ms,
     record_idempotent_resource, store_error, validate_communication_principal, validate_id,
@@ -287,6 +288,40 @@ pub struct AgentTaskCodingRunDispatchClaim {
     pub may_dispatch: bool,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentTaskEndpointExecutionRecord {
+    pub task_id: String,
+    pub attempt_id: String,
+    pub wake_id: String,
+    pub wake_state: AgentWakeState,
+    pub endpoint_id: Option<String>,
+    pub endpoint_controller_generation: Option<i64>,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentTaskEndpointExecutionMutation {
+    pub execution: AgentTaskEndpointExecutionRecord,
+    pub replayed: bool,
+    pub state_changed: bool,
+}
+
+impl AgentTaskEndpointExecutionRecord {
+    fn execution_status(&self) -> AgentTaskExecutionStatus {
+        match self.wake_state {
+            AgentWakeState::Pending | AgentWakeState::Claimed => {
+                AgentTaskExecutionStatus::NotStarted
+            }
+            AgentWakeState::Prepared | AgentWakeState::Delivered | AgentWakeState::Consumed => {
+                AgentTaskExecutionStatus::Active
+            }
+            AgentWakeState::DeliveryUnknown => AgentTaskExecutionStatus::OutcomeUnknown,
+            AgentWakeState::Retired => AgentTaskExecutionStatus::Terminal,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentTaskCodingRunReconcileMutation {
     pub task: AgentTaskSummary,
@@ -440,6 +475,7 @@ struct StoredTask {
     terminal_at_unix_ms: Option<i64>,
     latest_attempt: Option<StoredAttempt>,
     latest_coding_run: Option<AgentTaskCodingRunBindingRecord>,
+    latest_endpoint_execution: Option<AgentTaskEndpointExecutionRecord>,
 }
 
 impl StoredTask {
@@ -460,6 +496,21 @@ impl StoredTask {
     }
 
     fn summary(&self, now: i64) -> AgentTaskSummary {
+        let endpoint_execution_status = self.latest_endpoint_execution.as_ref().map(|execution| {
+            let attempt_terminal = self.latest_attempt.as_ref().is_some_and(|attempt| {
+                matches!(
+                    attempt.effective_state(now),
+                    AgentTaskAttemptState::Succeeded
+                        | AgentTaskAttemptState::Failed
+                        | AgentTaskAttemptState::Expired
+                )
+            });
+            if attempt_terminal {
+                AgentTaskExecutionStatus::Terminal
+            } else {
+                execution.execution_status()
+            }
+        });
         AgentTaskSummary {
             task_id: self.task_id.clone(),
             assignee_agent_id: self.assignee_agent_id.clone(),
@@ -475,11 +526,13 @@ impl StoredTask {
                 .latest_attempt
                 .as_ref()
                 .map(|attempt| attempt.record(now)),
-            execution_bound: self.latest_coding_run.is_some(),
+            execution_bound: self.latest_coding_run.is_some()
+                || self.latest_endpoint_execution.is_some(),
             execution_status: self
                 .latest_coding_run
                 .as_ref()
-                .map(AgentTaskCodingRunBindingRecord::execution_status),
+                .map(AgentTaskCodingRunBindingRecord::execution_status)
+                .or(endpoint_execution_status),
             recovery_kind: self
                 .latest_coding_run
                 .as_ref()
@@ -577,6 +630,28 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_wc_agent_task_coding_runs_task
                 ON wc_agent_task_coding_runs(task_id, updated_at_unix_ms DESC);
+
+            CREATE TABLE IF NOT EXISTS wc_agent_task_endpoint_executions (
+                task_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL UNIQUE,
+                wake_id TEXT NOT NULL UNIQUE,
+                start_identity_fingerprint TEXT NOT NULL CHECK(length(start_identity_fingerprint) = 64),
+                endpoint_id TEXT,
+                endpoint_controller_generation INTEGER,
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL,
+                PRIMARY KEY(task_id, attempt_id),
+                CHECK(
+                    (endpoint_id IS NULL AND endpoint_controller_generation IS NULL)
+                    OR (endpoint_id IS NOT NULL AND endpoint_controller_generation >= 1)
+                ),
+                FOREIGN KEY(task_id) REFERENCES wc_agent_tasks(task_id),
+                FOREIGN KEY(attempt_id) REFERENCES wc_agent_task_attempts(attempt_id),
+                FOREIGN KEY(wake_id) REFERENCES wc_agent_wakes(wake_id),
+                FOREIGN KEY(endpoint_id) REFERENCES wc_agent_endpoints(endpoint_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wc_agent_task_endpoint_executions_task
+                ON wc_agent_task_endpoint_executions(task_id, updated_at_unix_ms DESC);
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_task_attempts_one_active
                 ON wc_agent_task_attempts(task_id) WHERE state = 'active';
@@ -1120,6 +1195,191 @@ impl Database {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn start_agent_task_endpoint_continuation(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+    ) -> Result<AgentTaskEndpointExecutionMutation, CommunicationStoreError> {
+        self.start_agent_task_endpoint_continuation_with_now(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now_unix_ms(),
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_agent_task_endpoint_continuation_at(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        now: i64,
+    ) -> Result<AgentTaskEndpointExecutionMutation, CommunicationStoreError> {
+        self.start_agent_task_endpoint_continuation_with_now(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_agent_task_endpoint_continuation_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        attempt_id: &str,
+        assignee_agent_id: &str,
+        attempt_fence: &str,
+        attempt_controller_generation: i64,
+        now: i64,
+    ) -> Result<AgentTaskEndpointExecutionMutation, CommunicationStoreError> {
+        validate_attempt_mutation_inputs(
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+        )?;
+        let start_identity_fingerprint = digest_text(
+            "webcodex.agent-task.endpoint-continuation.start.v1",
+            &json!({
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "assignee_agent_id": assignee_agent_id,
+                "attempt_fence": attempt_fence,
+                "attempt_controller_generation": attempt_controller_generation,
+            })
+            .to_string(),
+        );
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(store_error)?;
+        let task = load_owned_task(&transaction, principal, task_id, now)?;
+
+        if let Some(existing_fingerprint) = transaction
+            .query_row(
+                "SELECT start_identity_fingerprint
+                 FROM wc_agent_task_endpoint_executions
+                 WHERE task_id = ?1 AND attempt_id = ?2",
+                params![task_id, attempt_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(store_error)?
+        {
+            if existing_fingerprint != start_identity_fingerprint {
+                return Err(CommunicationStoreError::new(
+                    "agent_task_endpoint_execution_binding_conflict",
+                    "AgentTaskAttempt Endpoint execution already exists for a different exact start identity",
+                ));
+            }
+            let execution = load_endpoint_execution_for_attempt(&transaction, task_id, attempt_id)?
+                .ok_or_else(|| {
+                    CommunicationStoreError::new(
+                        "agent_task_storage_invariant",
+                        "AgentTask Endpoint execution disappeared during exact replay",
+                    )
+                })?;
+            transaction.commit().map_err(store_error)?;
+            return Ok(AgentTaskEndpointExecutionMutation {
+                execution,
+                replayed: true,
+                state_changed: false,
+            });
+        }
+
+        let _attempt = require_current_attempt(
+            &transaction,
+            &task,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            now,
+        )?;
+        if load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?.is_some() {
+            return Err(CommunicationStoreError::new(
+                "agent_task_execution_backend_conflict",
+                "AgentTaskAttempt is already bound to the CodingAgentRun execution backend",
+            ));
+        }
+
+        let wake_id = new_id(AGENT_WAKE_ID_PREFIX);
+        transaction
+            .execute(
+                "INSERT INTO wc_agent_wakes (
+                    wake_id, target_agent_id, trigger_kind,
+                    first_triggering_delivery_id, latest_triggering_delivery_id,
+                    latest_conversation_id, latest_message_id,
+                    inbox_high_watermark, queued_delivery_count_snapshot,
+                    source_task_id, source_task_attempt_id,
+                    state, revision, created_at_unix_ms, updated_at_unix_ms,
+                    claimed_attempt_id, claimed_endpoint_id,
+                    claimed_controller_generation, claim_lease_expires_at_unix_ms,
+                    consumed_at_unix_ms, consumed_by_endpoint_id,
+                    consumed_controller_generation
+                 ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, NULL, NULL, ?4, ?5,
+                           'pending', 1, ?6, ?6, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+                params![
+                    wake_id,
+                    assignee_agent_id,
+                    WAKE_TRIGGER_AGENT_TASK_ATTEMPT,
+                    task_id,
+                    attempt_id,
+                    now,
+                ],
+            )
+            .map_err(store_error)?;
+        transaction
+            .execute(
+                "INSERT INTO wc_agent_task_endpoint_executions (
+                    task_id, attempt_id, wake_id, start_identity_fingerprint,
+                    endpoint_id, endpoint_controller_generation,
+                    created_at_unix_ms, updated_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?5)",
+                params![
+                    task_id,
+                    attempt_id,
+                    wake_id,
+                    start_identity_fingerprint,
+                    now,
+                ],
+            )
+            .map_err(store_error)?;
+        let execution = load_endpoint_execution_for_attempt(&transaction, task_id, attempt_id)?
+            .ok_or_else(|| {
+                CommunicationStoreError::new(
+                    "agent_task_storage_invariant",
+                    "AgentTask Endpoint execution disappeared after creation",
+                )
+            })?;
+        transaction.commit().map_err(store_error)?;
+        Ok(AgentTaskEndpointExecutionMutation {
+            execution,
+            replayed: false,
+            state_changed: true,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn heartbeat_agent_task_attempt(
         &self,
         principal: &CommunicationPrincipal,
@@ -1259,40 +1519,16 @@ impl Database {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(store_error)?;
-        let task = load_owned_task(&transaction, principal, task_id, now)?;
-        let attempt = require_current_attempt(
+        let record = replace_agent_task_attempt_controller_in_transaction(
             &transaction,
-            &task,
+            principal,
+            task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             expected_controller_generation,
             now,
         )?;
-        let next_generation = attempt.attempt_controller_generation.saturating_add(1);
-        transaction
-            .execute(
-                "UPDATE wc_agent_task_attempts
-                 SET attempt_controller_generation = ?2
-                 WHERE attempt_id = ?1",
-                params![attempt_id, next_generation],
-            )
-            .map_err(store_error)?;
-        transaction
-            .execute(
-                "UPDATE wc_agent_tasks SET updated_at_unix_ms = MAX(updated_at_unix_ms, ?2)
-                 WHERE task_id = ?1",
-                params![task_id, now],
-            )
-            .map_err(store_error)?;
-        let attempt =
-            load_attempt_for_task(&transaction, task_id, attempt_id, now)?.ok_or_else(|| {
-                CommunicationStoreError::new(
-                    "agent_task_attempt_not_found",
-                    "AgentTaskAttempt disappeared after controller replacement",
-                )
-            })?;
-        let record = attempt.record(now);
         transaction.commit().map_err(store_error)?;
         Ok(record)
     }
@@ -1475,6 +1711,7 @@ impl Database {
                 params![task_id, outcome.as_str(), attempt_id, now],
             )
             .map_err(store_error)?;
+        retire_pre_dispatch_endpoint_execution_for_attempt(&transaction, attempt_id, now)?;
         record_idempotent_resource(
             &transaction,
             principal,
@@ -1592,6 +1829,12 @@ impl Database {
             attempt_controller_generation,
             now,
         )?;
+        if load_endpoint_execution_for_attempt(&conn, task_id, attempt_id)?.is_some() {
+            return Err(CommunicationStoreError::new(
+                "agent_task_execution_backend_conflict",
+                "AgentTaskAttempt is already bound to the Agent Endpoint continuation backend",
+            ));
+        }
         Ok(AgentTaskCodingRunStartContext {
             task: task.detail(now),
             attempt: attempt.record(now),
@@ -1698,6 +1941,12 @@ impl Database {
             attempt_controller_generation,
             now,
         )?;
+        if load_endpoint_execution_for_attempt(&transaction, task_id, attempt_id)?.is_some() {
+            return Err(CommunicationStoreError::new(
+                "agent_task_execution_backend_conflict",
+                "AgentTaskAttempt is already bound to the Agent Endpoint continuation backend",
+            ));
+        }
         if let Some(mut existing) =
             load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
         {
@@ -2633,11 +2882,14 @@ fn load_owned_task(
                 terminal_at_unix_ms: row.11,
                 latest_attempt: None,
                 latest_coding_run: None,
+                latest_endpoint_execution: None,
             })
         }
     };
     let latest_coding_run =
         load_coding_run_binding_for_attempt(conn, task_id, &latest_attempt.attempt_id)?;
+    let latest_endpoint_execution =
+        load_endpoint_execution_for_attempt(conn, task_id, &latest_attempt.attempt_id)?;
     Ok(StoredTask {
         task_id: row.0,
         assignee_agent_id: row.1,
@@ -2652,6 +2904,7 @@ fn load_owned_task(
         terminal_at_unix_ms: row.11,
         latest_attempt: Some(latest_attempt),
         latest_coding_run,
+        latest_endpoint_execution,
     })
 }
 
@@ -2689,6 +2942,37 @@ fn load_attempt_for_task(
                 terminal_at_unix_ms: row.get(10)?,
                 terminal_result: row.get(11)?,
                 terminal_reason: row.get(12)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(store_error)
+}
+
+fn load_endpoint_execution_for_attempt(
+    conn: &Connection,
+    task_id: &str,
+    attempt_id: &str,
+) -> Result<Option<AgentTaskEndpointExecutionRecord>, CommunicationStoreError> {
+    conn.query_row(
+        "SELECT e.task_id, e.attempt_id, e.wake_id, w.state,
+                e.endpoint_id, e.endpoint_controller_generation,
+                e.created_at_unix_ms, e.updated_at_unix_ms
+         FROM wc_agent_task_endpoint_executions e
+         JOIN wc_agent_wakes w ON w.wake_id = e.wake_id
+         WHERE e.task_id = ?1 AND e.attempt_id = ?2",
+        params![task_id, attempt_id],
+        |row| {
+            let wake_state: String = row.get(3)?;
+            Ok(AgentTaskEndpointExecutionRecord {
+                task_id: row.get(0)?,
+                attempt_id: row.get(1)?,
+                wake_id: row.get(2)?,
+                wake_state: AgentWakeState::from_db(&wake_state, 3)?,
+                endpoint_id: row.get(4)?,
+                endpoint_controller_generation: row.get(5)?,
+                created_at_unix_ms: row.get(6)?,
+                updated_at_unix_ms: row.get(7)?,
             })
         },
     )
@@ -2828,7 +3112,60 @@ fn materialize_expired_latest_attempt(
     }
     attempt.stored_state = AgentTaskAttemptState::Expired;
     attempt.terminal_at_unix_ms = Some(now);
+    retire_pre_dispatch_endpoint_execution_for_attempt(transaction, &attempt.attempt_id, now)?;
     task.updated_at_unix_ms = task.updated_at_unix_ms.max(now);
+    Ok(())
+}
+
+fn retire_pre_dispatch_endpoint_execution_for_attempt(
+    transaction: &Transaction<'_>,
+    attempt_id: &str,
+    now: i64,
+) -> Result<(), CommunicationStoreError> {
+    transaction
+        .execute(
+            "UPDATE wc_agent_wake_attempts
+             SET state = 'revoked', revoked_at_unix_ms = COALESCE(revoked_at_unix_ms, ?2)
+             WHERE state = 'claimed'
+               AND wake_id IN (
+                   SELECT w.wake_id
+                   FROM wc_agent_wakes w
+                   JOIN wc_agent_task_endpoint_executions e ON e.wake_id = w.wake_id
+                   WHERE e.attempt_id = ?1
+                     AND w.trigger_kind = 'agent_task_attempt'
+                     AND w.state = 'claimed'
+               )",
+            params![attempt_id, now],
+        )
+        .map_err(store_error)?;
+    transaction
+        .execute(
+            "UPDATE wc_agent_task_endpoint_executions
+             SET endpoint_id = NULL, endpoint_controller_generation = NULL,
+                 updated_at_unix_ms = MAX(updated_at_unix_ms, ?2)
+             WHERE attempt_id = ?1
+               AND wake_id IN (
+                   SELECT wake_id FROM wc_agent_wakes
+                   WHERE trigger_kind = 'agent_task_attempt'
+                     AND state IN ('pending', 'claimed')
+               )",
+            params![attempt_id, now],
+        )
+        .map_err(store_error)?;
+    transaction
+        .execute(
+            "UPDATE wc_agent_wakes
+             SET state = 'retired', revision = revision + 1,
+                 updated_at_unix_ms = MAX(updated_at_unix_ms, ?2),
+                 claimed_attempt_id = NULL, claimed_endpoint_id = NULL,
+                 claimed_controller_generation = NULL,
+                 claim_lease_expires_at_unix_ms = NULL
+             WHERE trigger_kind = 'agent_task_attempt'
+               AND source_task_attempt_id = ?1
+               AND state IN ('pending', 'claimed')",
+            params![attempt_id, now],
+        )
+        .map_err(store_error)?;
     Ok(())
 }
 
@@ -2921,6 +3258,53 @@ fn require_current_attempt(
         ));
     }
     Ok(attempt)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn replace_agent_task_attempt_controller_in_transaction(
+    transaction: &Transaction<'_>,
+    principal: &CommunicationPrincipal,
+    task_id: &str,
+    attempt_id: &str,
+    assignee_agent_id: &str,
+    attempt_fence: &str,
+    expected_controller_generation: i64,
+    now: i64,
+) -> Result<AgentTaskAttemptRecord, CommunicationStoreError> {
+    let task = load_owned_task(transaction, principal, task_id, now)?;
+    let attempt = require_current_attempt(
+        transaction,
+        &task,
+        attempt_id,
+        assignee_agent_id,
+        attempt_fence,
+        expected_controller_generation,
+        now,
+    )?;
+    let next_generation = attempt.attempt_controller_generation.saturating_add(1);
+    transaction
+        .execute(
+            "UPDATE wc_agent_task_attempts
+             SET attempt_controller_generation = ?2
+             WHERE attempt_id = ?1",
+            params![attempt_id, next_generation],
+        )
+        .map_err(store_error)?;
+    transaction
+        .execute(
+            "UPDATE wc_agent_tasks SET updated_at_unix_ms = MAX(updated_at_unix_ms, ?2)
+             WHERE task_id = ?1",
+            params![task_id, now],
+        )
+        .map_err(store_error)?;
+    let attempt =
+        load_attempt_for_task(transaction, task_id, attempt_id, now)?.ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_attempt_not_found",
+                "AgentTaskAttempt disappeared after controller replacement",
+            )
+        })?;
+    Ok(attempt.record(now))
 }
 
 fn task_terminal_error() -> CommunicationStoreError {

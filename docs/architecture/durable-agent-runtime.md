@@ -136,7 +136,7 @@ Important current invariants:
 - project-scoped Memory is unchanged; Agent-scoped Memory is only a future boundary.
 - durable Goals are independent high-level intent/control truth; Goal identity, ownership, lifecycle, revision, and correlations grant no Project, Runner, filesystem, Workflow Session, AgentTaskAttempt, CodingAgentRun, or Job authority.
 
-G3 adds an optional production ChatGPT MCP App Host carrier on top of this substrate. It is deliberately a pull bridge rather than a fake Server callback: one explicit `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)` card binds the current `ui://webcodex/agent-continuation/v14` resource, while ModelHidden app-only operations establish one exact process-local View binding, renew the exact Endpoint, acquire through the existing Wake claim state machine, cross the existing durable dispatch fence, and record Host dispatch acceptance or uncertainty. The View itself performs `ui/message` only after prepare succeeds. The process-local `binding_id` fences the current iframe instance but grants no authority and is not durable execution truth. The Store retains its identity-bound SHA-256 fingerprint as the no-Window restart fallback plus an optional canonical hashed ClientWindow key as Host-window continuity; raw Host session metadata is never persisted. Natural Endpoint expiry is a separate bounded path: only the same authenticated principal + durable ClientWindow may ask the App-only recovery operation to atomically replace the exact expired generation with its immediate successor before the card rebinds.
+G3 adds an optional production ChatGPT MCP App Host carrier on top of this substrate. It is deliberately a pull bridge rather than a fake Server callback: one explicit `present_agent_continuation(agent_id, endpoint_id, expected_controller_generation)` card binds the current `ui://webcodex/agent-continuation/v15` resource, while ModelHidden app-only operations establish one exact process-local View binding, renew the exact Endpoint, acquire through the existing Wake claim state machine, cross the existing durable dispatch fence, and record Host dispatch acceptance or uncertainty. The View itself performs `ui/message` only after prepare succeeds. The process-local `binding_id` fences the current iframe instance but grants no authority and is not durable execution truth. The Store retains its identity-bound SHA-256 fingerprint as the no-Window restart fallback plus an optional canonical hashed ClientWindow key as Host-window continuity; raw Host session metadata is never persisted. Natural Endpoint expiry is a separate bounded path: only the same authenticated principal + durable ClientWindow may ask the App-only recovery operation to atomically replace the exact expired generation with its immediate successor. v15 keeps every predecessor recovery edge independently idempotent and lets the card follow at most eight exact `generation+1` successor edges when an already-recorded successor has itself naturally expired; an old selector never skips directly to a later generation.
 
 Every bridge operation re-runs ordinary communication authorization and exact Agent/Endpoint/controller-generation validation. Ordinary push bindings still require an Endpoint freshly attached in the current Server process. For MCP Apps, successful bind persists the current identity-bound recovery fingerprint and the optional canonical ClientWindow key already derived by the protocol adapter. Server takeover clears process-local bindings and `wake_capable` but preserves both. With no local binding, the exact fingerprint remains sufficient; when a canonical Window is present, the same principal + exact current Endpoint/generation + same Window may also receive the normal `success=true` recovery projection and create a new iframe fence after refresh. Exact unbind clears the current fingerprint but preserves a matching Window key; natural expiry also preserves only that Window key for the dedicated expired-Endpoint replacement operation. Explicit detach (including after expiry), ordinary Endpoint replacement, and push transition clear both recovery values. Replacement replay re-checks the successor's retained Window key, so a historical replay record cannot undo that revocation. Only a newly committed replacement populates `attached_endpoints`; replay and restart recovery never recreate fresh push-attachment authority. Missing or malformed Window metadata grants nothing beyond the exact fingerprint fallback, and another Window, stale generation, expiry, detach, foreign principal, malformed result, or generic bridge failure remains fail-closed. The strict published continuation projection schema still requires `recovery` on every result (`null` normally, the sole fixed restart-loss object when recoverable), so Host schema projection cannot discard the observation. Replacing or withdrawing a View reuses existing Wake reconciliation: a pre-fence claim is revoked and the logical Wake returns to `pending`, while a prepared/delivered Attempt becomes `delivery_unknown`. The App never blindly resends after the dispatch fence. Host `ui/message` success means only `dispatch_accepted`; only later exact `consume_agent_wake` proves that a continuation model turn actually ran. A consume-before-ACK race is valid and late ACK is idempotent. Hidden/background Views heartbeat but do not initiate a new automatic Host dispatch, so Host scheduling remains best effort/non-immediate.
 
@@ -560,45 +560,49 @@ This first concrete backend proves that Agent Task execution is independent from
 ChatGPT browser windows and that TaskAttempt ownership can survive Server restart and
 backend-response uncertainty.
 
-### A4b — TaskAttempt -> Agent Endpoint continuation (next)
+### A4b — TaskAttempt -> Agent Endpoint continuation (implemented)
 
-The next concrete backend is a wake-capable durable Agent Endpoint. A4b should bind
-one exact live TaskAttempt to an explicit Agent Endpoint execution carrier, create a
-durable processing opportunity for that assigned Agent, resume through the existing
-Host continuation adapter, and require exact TaskAttempt completion after the resumed
-turn. The TaskAttempt remains the work/execution-ownership truth; the Endpoint remains
-a replaceable carrier; consuming a Wake proves only that one reasoning opportunity
-ran and never completes the TaskAttempt.
+A4b is implemented through `start_agent_task_endpoint_continuation`. The model supplies
+only the exact `task_id`, `attempt_id`, `assignee_agent_id`, `attempt_fence`, and
+`attempt_controller_generation`; startup never selects an Endpoint. The Store records
+one concrete `wc_agent_task_endpoint_executions` row plus one durable
+`agent_task_attempt` Wake. Its Endpoint id/generation are nullable until an existing
+wake-capable carrier later claims the Wake. Attempt controller generation remains
+authoritative only in `wc_agent_task_attempts`; the backend row does not duplicate it.
+A4a and A4b are mutually exclusive per Attempt rather than hidden behind a universal
+execution-provider abstraction.
 
-A4b must not fabricate a Conversation Message merely to reuse the existing
-`inbox_changed` Wake path. Wake should gain a second explicit source for TaskAttempt
-work (for example `agent_task_attempt`) with source-specific durable references. Inbox
-Message/Delivery high-watermarks remain owned by the Inbox-triggered source, while a
-Task-triggered Wake identifies the exact durable Task/Attempt that the resumed model
-must re-read and re-authorize. Wake remains "this Agent should receive another
-processing opportunity", not "this work is complete".
+Task-origin Wakes are a second explicit Wake source, not fabricated Inbox activity.
+They carry exact Task/Attempt references while Conversation Message/Delivery ids and
+Inbox high-watermarks stay null. The Host continuation envelope re-reads durable Task
+truth and carries the exact current Attempt fence/generation, so Wake consumption proves
+only that one reasoning opportunity ran; exact AgentTask completion remains separate.
 
-Endpoint replacement inside a live TaskAttempt reuses the existing Attempt-local
-controller-generation fence: the replacement carrier advances
-`attempt_controller_generation`, while the Attempt id/fence stay unchanged. Any turn
-or carrier holding the prior Attempt controller generation becomes permanently stale
-for heartbeat, further dispatch, and terminal completion. Endpoint lease expiry and
-TaskAttempt lease expiry remain independent correctness boundaries.
+Claiming a Task-origin Wake atomically installs the actual Endpoint carrier and advances
+`attempt_controller_generation`. Releasing or losing that carrier before the dispatch
+fence clears the backend carrier; a replacement carrier must claim again and therefore
+advances the Attempt generation again. Older carrier turns are permanently stale.
+Endpoint lease and TaskAttempt lease remain independent correctness boundaries.
 
-Before A4b depends on long-lived Host execution, the continuation carrier must also
-close the current repeated-successor gap: an original card that moved E1/g1 -> E2/g2
-must be able, after E2 naturally expires, to learn the authoritative successor chain
-and safely advance E2/g2 -> E3/g3 (and later generations) without reviving E1,
-retargeting across ClientWindow/principal boundaries, extending Endpoint leases, or
-turning an old replay into fresh push authority. This successor-chain recovery is a
-prerequisite of the same A4b delivery, not a reason to relax stale Endpoint binding.
+If no wake-capable Endpoint exists, startup still succeeds with a pending durable Wake
+and a null carrier. The existing event-driven continuation controller is scheduled once
+and later Endpoint registration schedules the Agent again; there is no busy wait, fake
+Message/Delivery, implicit Task failure, or lease extension. If the TaskAttempt expires
+before Host dispatch, claim/other authoritative mutation paths retire the pre-fence Task
+Wake, the old Attempt remains stale, and the existing Task retry/Ready semantics require
+an explicit new Attempt. A post-fence `delivery_unknown` observation is never blindly
+re-dispatched.
 
-If no wake-capable Endpoint is currently available, the TaskAttempt/work remains
-durable and pending; absence of a Host carrier is not Task failure. Server restart or
-carrier loss must not mint a second TaskAttempt or a second logical work item, and a
-post-dispatch `delivery_unknown` observation is never blindly re-dispatched.
+The same delivery closes repeated Endpoint-successor recovery in App protocol v15.
+Every durable recovery edge remains exactly one generation (`E1 -> E2`, `E2 -> E3`,
+...), and replay of E1 may reveal only its recorded E2 even when a later generation is
+current. If that exact E2 is naturally expired, the Server returns a successful strict
+intermediate proof without bootstrapping it; the App adopts E2 and requests the next
+one-hop recovery. The App validates every edge and stops after eight hops. Ordinary
+replacement, push takeover, detach, different ClientWindow/principal, stale binding,
+and generic JSON-RPC `-32000` still fail closed.
 
-Only after A4a and A4b reveal repeated common machinery should WebCodex extract a
+Only after A4a and A4b reveal repeated common machinery should WebCodex consider a
 minimal shared execution binding/adapter abstraction.
 
 ## Asynchronous events and scheduling are derived capabilities
@@ -669,8 +673,8 @@ current roadmap commitment.
 
 ## Agent Task execution acceptance baseline
 
-A3 and the implemented A4a establish the existing baseline; A4b must preserve it and
-close the additional Endpoint-backed cases below:
+A3, A4a, and the implemented A4b establish the current baseline, including the
+Endpoint-backed cases below:
 
 | Case | Required result |
 | --- | --- |
