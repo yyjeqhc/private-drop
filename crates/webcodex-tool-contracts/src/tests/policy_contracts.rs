@@ -527,6 +527,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         explicit_business_session_tools,
         vec![
             "finish_coding_task",
+            "present_work_result",
             "session_summary",
             "update_session_context",
             "close_session",
