@@ -1016,6 +1016,7 @@ async fn exact_skill_resolution_fails_closed_when_applicable_source_is_unavailab
         RunnerCapabilities {
             file_read: true,
             configured_skill_roots_read: true,
+            skill_store_read: true,
             ..Default::default()
         },
         vec![registered_project(

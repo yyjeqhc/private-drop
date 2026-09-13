@@ -167,6 +167,22 @@ enum ExactSkillProbeOutcome {
     SourceUnavailable,
 }
 
+fn merge_exact_skill_probe(
+    candidate: &mut Option<ExactSkillCandidate>,
+    outcome: ExactSkillProbeOutcome,
+) -> Result<(), &'static str> {
+    match outcome {
+        ExactSkillProbeOutcome::NotApplicable | ExactSkillProbeOutcome::Absent => Ok(()),
+        ExactSkillProbeOutcome::Candidate(next) if candidate.is_none() => {
+            *candidate = Some(next);
+            Ok(())
+        }
+        ExactSkillProbeOutcome::Candidate(_)
+        | ExactSkillProbeOutcome::Ambiguous
+        | ExactSkillProbeOutcome::SourceUnavailable => Err("skills_catalog_unavailable"),
+    }
+}
+
 fn observe_skill_source_request(
     metrics: &dyn RuntimeMetrics,
     source: SkillSourceMetricSource,
@@ -808,33 +824,22 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         skill_id: &str,
     ) -> Result<Option<ExactSkillCandidate>, &'static str> {
-        let outcomes = [
+        let mut candidate = None;
+        merge_exact_skill_probe(
+            &mut candidate,
             self.probe_project_skill_exact(project, skill_id).await,
+        )?;
+        merge_exact_skill_probe(
+            &mut candidate,
             self.probe_configured_skill_exact(project, auth, skill_id)
                 .await,
+        )?;
+        merge_exact_skill_probe(
+            &mut candidate,
             self.probe_managed_skill_exact(project, auth, skill_id)
                 .await,
-        ];
-        let mut candidate = None;
-        let mut uncertain = false;
-        for outcome in outcomes {
-            match outcome {
-                ExactSkillProbeOutcome::NotApplicable | ExactSkillProbeOutcome::Absent => {}
-                ExactSkillProbeOutcome::Candidate(next) => {
-                    if candidate.replace(next).is_some() {
-                        uncertain = true;
-                    }
-                }
-                ExactSkillProbeOutcome::Ambiguous | ExactSkillProbeOutcome::SourceUnavailable => {
-                    uncertain = true;
-                }
-            }
-        }
-        if uncertain {
-            Err("skills_catalog_unavailable")
-        } else {
-            Ok(candidate)
-        }
+        )?;
+        Ok(candidate)
     }
 
     async fn read_runner_skill(
