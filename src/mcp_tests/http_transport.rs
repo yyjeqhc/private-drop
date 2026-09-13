@@ -661,7 +661,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
         "summary must not embed tool output: {summary}"
     );
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["schema_version"], 4);
+    assert_eq!(telemetry["schema_version"], 5);
     assert_eq!(telemetry["tool_name"], "list_tools");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);
@@ -1036,15 +1036,8 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         .as_array()
         .unwrap()
         .is_empty());
-    assert_eq!(
-        acknowledged["session_continuity"]["status"], "unacknowledged",
-        "guidance ACK must remain independent when model-facing context ACK is omitted"
-    );
-    assert!(acknowledged["session_recovery"]["model_facing_events"]
-        .as_array()
-        .unwrap()
-        .is_empty());
-    assert!(acknowledged["session_recovery"]["current_handoff"].is_object());
+    assert!(acknowledged.get("session_continuity").is_none());
+    assert!(acknowledged.get("session_recovery").is_none());
     let retained = runtime
         .sessions
         .list_messages(
@@ -1406,14 +1399,13 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
     .await;
     assert_eq!(status, StatusCode::OK, "{cached_read_body}");
     let cached_read = stateless_tool_output(&cached_read_body);
-    assert_eq!(cached_read["session_context_revision"], 0);
-    assert_eq!(cached_read["session_continuity"]["status"], "invalid");
-    assert_eq!(cached_read["session_continuity"]["ack_revision"], 999);
-    assert!(cached_read["session_recovery"]["model_facing_events"]
-        .as_array()
-        .unwrap()
-        .is_empty());
-    assert!(cached_read["session_recovery"]["current_handoff"].is_object());
+    for field in [
+        "session_context_revision",
+        "session_continuity",
+        "session_recovery",
+    ] {
+        assert!(cached_read.get(field).is_none(), "{field}");
+    }
     assert_eq!(runtime.sessions.context_revision(&session_id), Some(0));
 
     let mut exact_args =
@@ -1482,14 +1474,10 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
         stateless_2026_tool_call(&service, "secret", 232, "start_session", future_args, None).await;
     assert_eq!(status, StatusCode::OK, "{future_body}");
     let future = stateless_tool_output(&future_body);
-    assert_eq!(future["session_context_revision"], 3);
+    assert!(future.get("session_context_revision").is_none());
     assert_eq!(future["session_continuity"]["status"], "invalid");
-    assert_eq!(future["session_continuity"]["ack_revision"], 999);
-    assert!(future["session_recovery"]["model_facing_events"]
-        .as_array()
-        .unwrap()
-        .is_empty());
-    assert!(future["session_recovery"]["current_handoff"].is_object());
+    assert_eq!(future["session_continuity"]["recovery_required"], true);
+    assert!(future.get("session_recovery").is_none());
 
     let missing_args =
         with_mcp_recording_session(json!({"title": "context checkpoint missing"}), &session_id);
@@ -1498,9 +1486,88 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
             .await;
     assert_eq!(status, StatusCode::OK, "{missing_body}");
     let missing = stateless_tool_output(&missing_body);
-    assert_eq!(missing["session_context_revision"], 4);
+    assert!(missing.get("session_context_revision").is_none());
     assert_eq!(missing["session_continuity"]["status"], "unacknowledged");
-    assert!(missing["session_recovery"]["current_handoff"].is_object());
+    assert!(missing.get("session_recovery").is_none());
+    assert_eq!(
+        missing["session_continuity"]["recovery_tool"],
+        "session_handoff_summary"
+    );
+    assert_eq!(
+        missing["session_continuity"]["suggested_call"],
+        json!({
+            "tool": "session_handoff_summary",
+            "arguments": {"session_id": session_id},
+        })
+    );
+    assert_eq!(runtime.sessions.context_revision(&session_id), Some(4));
+
+    // Explicit recovery returns one current-state handoff and a safe baseline.
+    let (status, recovered_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        2331,
+        "session_handoff_summary",
+        json!({"session_id": session_id}),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{recovered_body}");
+    let recovered = stateless_tool_output(&recovered_body);
+    assert_eq!(recovered["session_context_revision"], 4);
+    assert_eq!(recovered["session_continuity"]["status"], "recovered");
+    assert!(recovered["validation"].is_object());
+    assert!(recovered["jobs"].is_object());
+    assert!(recovered.get("session_recovery").is_none());
+    assert_eq!(runtime.sessions.context_revision(&session_id), Some(4));
+
+    for partial in [
+        json!({"limit": 1}),
+        json!({"summary_only": true}),
+        json!({"include_validation": false}),
+        json!({"include_workspace": false}),
+        json!({"include_checkpoints": false}),
+    ] {
+        let mut args = partial;
+        args["session_id"] = json!(session_id);
+        let (status, body) = stateless_2026_tool_call(
+            &service,
+            "secret",
+            2332,
+            "session_handoff_summary",
+            args,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let output = stateless_tool_output(&body);
+        assert!(output.get("session_context_revision").is_none());
+        assert_eq!(output["session_continuity"]["recovery_required"], true);
+        assert!(output.get("session_recovery").is_none());
+    }
+
+    // Reading C with explicit recorder W cannot establish W's baseline.
+    let other = runtime.sessions.start_session(None, None);
+    let (status, body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        2333,
+        "session_handoff_summary",
+        with_mcp_recording_session(json!({"session_id": session_id}), &other.session_id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let output = stateless_tool_output(&body);
+    assert!(output.get("session_context_revision").is_none());
+    assert_eq!(
+        output["session_continuity"]["recovery_session_id"],
+        other.session_id
+    );
+    assert_eq!(
+        output["session_continuity"]["suggested_call"]["arguments"]["session_id"],
+        other.session_id
+    );
 
     let mut after_missing_args = with_mcp_recording_session(
         json!({"title": "context checkpoint after missing"}),
@@ -1524,6 +1591,29 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
     assert_eq!(after_missing["session_context_revision"], 5);
     assert!(after_missing.get("session_continuity").is_none());
     assert!(after_missing.get("session_recovery").is_none());
+
+    let mut malformed_args =
+        with_mcp_recording_session(json!({"title": "malformed ACK effect"}), &session_id);
+    malformed_args["ack_session_context_revision"] = json!({"invalid": true});
+    let (status, malformed_body) = stateless_2026_tool_call(
+        &service,
+        "secret",
+        2341,
+        "start_session",
+        malformed_args,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{malformed_body}");
+    let malformed = stateless_tool_output(&malformed_body);
+    assert!(
+        malformed["session_id"].is_string(),
+        "business Session creation must execute"
+    );
+    assert_eq!(malformed["session_continuity"]["status"], "invalid");
+    assert!(malformed.get("session_context_revision").is_none());
+    assert!(malformed.get("session_recovery").is_none());
+    assert_eq!(runtime.sessions.context_revision(&session_id), Some(6));
 
     let audit = serde_json::to_string(
         &runtime

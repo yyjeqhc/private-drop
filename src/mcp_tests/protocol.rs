@@ -256,15 +256,9 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             assert!(request_description.contains("after this tool's main effect/observation"));
             assert!(request_description.contains("grants no authority"));
             assert!(!request_description.contains("memory_read"));
-            let context_ack =
-                &read_files["inputSchema"]["properties"]["ack_session_context_revision"];
-            assert_eq!(context_ack["type"], "integer");
-            assert_eq!(context_ack["minimum"], 0);
-            let context_description = context_ack["description"].as_str().unwrap();
-            assert!(context_description.contains("latest Session context revision"));
-            assert!(context_description.contains("known behind revision"));
-            assert!(context_description.contains("compact current Session handoff"));
-            assert!(context_description.contains("nonblocking"));
+            assert!(read_files["inputSchema"]["properties"]
+                .get("ack_session_context_revision")
+                .is_none());
         }
         other => panic!("expected Ok for stateless tools/list, got {:?}", other),
     }

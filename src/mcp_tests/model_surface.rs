@@ -796,7 +796,20 @@ async fn adaptive_runtime_gateway_uses_long_tail_target_checkpoint_policy_once()
         None,
     )
     .await;
-    assert!(matches!(gateway_read, McpOutcome::Ok(_)));
+    let McpOutcome::Ok(value) = gateway_read else {
+        panic!("gateway parsing failed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    for field in [
+        "session_context_revision",
+        "session_continuity",
+        "session_recovery",
+    ] {
+        assert!(
+            output.get(field).is_none(),
+            "target policy ignored: {field}"
+        );
+    }
     assert_eq!(
         runtime
             .sessions

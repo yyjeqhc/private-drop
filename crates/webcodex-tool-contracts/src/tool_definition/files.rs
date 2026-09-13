@@ -1,7 +1,7 @@
 use super::RunnerCapabilityRequirement::{FileRead, Shell};
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, context_recovery_only, def, model_spec, ToolDefinition,
+    adaptive_runtime_direct, context_reobservable, def, model_spec, ToolDefinition,
     TOOL_CATEGORY_FILE, TOOL_CATEGORY_PROJECT,
 };
 use crate::metadata::{
@@ -13,7 +13,7 @@ use crate::registry::input_schemas::{
 };
 
 pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
-    context_recovery_only(model_spec(
+    context_reobservable(model_spec(
         def(
             "project_overview",
             super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -37,7 +37,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         "Deterministic, bounded, metadata-only overview of an unfamiliar project: conventional project types, manifests, key files, roots, and direct children. Reads no file contents, uses no LLM, and is not semantic/LSP analysis; use read_files for contents.",
         project_overview_input_schema,
     )),
-    context_recovery_only(model_spec(
+    context_reobservable(model_spec(
         def(
             "list_project_files",
             super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -61,7 +61,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         "List one deterministic page of files in a Runner-registered project directory (bounded, read-only). Entries are sorted before offset/limit slicing; use next_offset until null. Successful paging is exposed only when the complete directory source reached the Server—retained-tail truncation fails closed instead of inventing total_entries or a safe continuation. Returns project-relative paths plus a file/dir kind. Routed to the owning registered Runner; the server never reads the Runner project path directly.",
         list_project_files_input_schema,
     )),
-    context_recovery_only(model_spec(
+    context_reobservable(model_spec(
         def(
             "list_project_tracked_files",
             super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -88,7 +88,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
         list_project_tracked_files_input_schema,
     )),
     adaptive_runtime_direct(
-        context_recovery_only(model_spec(
+        context_reobservable(model_spec(
             def(
                 "search_project_texts",
                 super::ToolAuditPolicy::TYPED_CANONICAL
@@ -119,7 +119,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
 
 pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
-        context_recovery_only(model_spec(
+        context_reobservable(model_spec(
             def(
                 "read_files",
                 super::ToolAuditPolicy::TYPED_CANONICAL,

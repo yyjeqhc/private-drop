@@ -2916,7 +2916,7 @@ fn raw_model_facing_events_do_not_consume_context_revisions() {
         assert!(!observed.checkpoint_advanced, "{tool}");
         assert_eq!(
             observed.ack_session_context_revision,
-            SessionContextRevisionAck::Revision(0),
+            SessionContextRevisionAck::Unsupported,
             "{tool}"
         );
         let mut projected = super::super::ToolResult::ok(json!({"observed": true}));
@@ -3049,7 +3049,7 @@ fn history_lost_counts_checkpoint_revisions_not_raw_events() {
     let recovered = record_model_facing_result(
         &store,
         &session.session_id,
-        "work_on_project",
+        "session_handoff_summary",
         SessionContextRevisionAck::Revision(0),
         true,
         json!({"session_id": session.session_id}),
@@ -3115,7 +3115,7 @@ fn history_lost_detects_evicted_checkpoint_after_raw_event_churn() {
     let recovered = record_model_facing_result(
         &store,
         &session.session_id,
-        "work_on_project",
+        "session_handoff_summary",
         SessionContextRevisionAck::Revision(0),
         true,
         json!({"session_id": session.session_id}),
@@ -3251,7 +3251,7 @@ fn simultaneous_model_facing_results_allocate_unique_ordered_revisions() {
     let next = record_model_facing_result(
         &store,
         &session.session_id,
-        "work_on_project",
+        "session_handoff_summary",
         SessionContextRevisionAck::Revision(3),
         true,
         json!({"session_id": session.session_id}),
@@ -3391,7 +3391,7 @@ fn batch_budget_preserves_recorder_overlay_for_no_ack_read_batch() {
         assert!(!recorded.checkpoint_advanced);
         assert_eq!(
             recorded.ack_session_context_revision,
-            SessionContextRevisionAck::Revision(1)
+            SessionContextRevisionAck::Unsupported
         );
         assert!(recorded.recovery_events.is_empty());
 
@@ -3424,229 +3424,287 @@ fn batch_budget_preserves_recorder_overlay_for_no_ack_read_batch() {
 }
 
 #[tokio::test]
-async fn unknown_session_context_recovery_uses_current_handoff_not_history_replay() {
+async fn session_context_noncapable_kernel_results_still_feed_later_delta() {
+    use super::super::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+        ToolProtocolCapabilities, ToolTransport,
+    };
     let runtime = super::super::ToolRuntime::new_for_tests();
-    let session = runtime
-        .sessions
-        .start_session(None, Some("unknown continuity recovery".to_string()));
-    let first = record_model_facing_result(
-        &runtime.sessions,
-        &session.session_id,
-        "apply_text_edits",
-        SessionContextRevisionAck::Unacknowledged,
-        true,
-        json!({"state_changed": true}),
-    );
-    assert_eq!(first.context_revision, 1);
-    let second = record_model_facing_result(
-        &runtime.sessions,
-        &session.session_id,
-        "run_process",
-        SessionContextRevisionAck::Revision(1),
-        true,
-        json!({"command_started": true, "command_completed": true, "exit_code": 0}),
-    );
-    assert_eq!(second.context_revision, 2);
-
-    let unknown = record_model_facing_result(
-        &runtime.sessions,
-        &session.session_id,
-        "work_on_project",
-        SessionContextRevisionAck::Unacknowledged,
-        true,
-        json!({"session_id": session.session_id}),
-    );
-    assert_eq!(unknown.pre_call_context_revision, 2);
-    assert_eq!(unknown.pre_response_context_revision, 2);
-    assert_eq!(unknown.context_revision, 2);
-    assert!(!unknown.checkpoint_advanced);
-    assert!(unknown.recovery_events.is_empty());
-    assert!(!unknown.history_lost);
-
-    let mut response = super::super::ToolResult::ok(json!({"session_id": session.session_id}));
-    assert!(
-        super::super::session_context::add_session_context_continuity(&mut response, &unknown,)
-    );
-    assert_eq!(
-        response.output["session_continuity"]["status"],
-        "unacknowledged"
-    );
-    assert!(response.output["session_continuity"]
-        .get("events_after_ack")
-        .is_none());
-    assert!(response.output["session_recovery"]["model_facing_events"]
-        .as_array()
-        .unwrap()
-        .is_empty());
-    assert!(response.output["session_recovery"]
-        .get("current_handoff")
-        .is_none());
-
-    runtime
-        .add_session_history_recovery(&mut response, &unknown, None)
+    let session = runtime.sessions.start_session(None, None);
+    for (capable, expected_revision) in [(false, 1), (true, 2)] {
+        let outcome = runtime
+            .call_tool_with_invocation_metadata(
+                ToolCallRequest {
+                    tool_name: "start_session".to_string(),
+                    arguments: json!({"title": "consequence"}),
+                },
+                ToolCallContext {
+                    transport: ToolTransport::Api,
+                    session_id: Some(&session.session_id),
+                    auth: None,
+                    window: None,
+                    record_oauth_scope_denials: false,
+                    host_file_import_trust: HostFileImportTrust::Untrusted,
+                },
+                ToolInvocationMetadata {
+                    ack_session_context_revision: SessionContextRevisionAck::Revision(0),
+                    ..Default::default()
+                },
+                ToolProtocolCapabilities {
+                    context_continuity: capable,
+                    ..Default::default()
+                },
+            )
+            .await;
+        let result = outcome.result.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            runtime.sessions.context_revision(&session.session_id),
+            Some(expected_revision)
+        );
+        if capable {
+            assert_eq!(result.output["session_context_revision"], 2);
+            assert_eq!(result.output["session_continuity"]["status"], "behind");
+            assert_eq!(
+                result.output["session_recovery"]["model_facing_events"][0]["context_revision"],
+                1
+            );
+        } else {
+            for field in [
+                "session_context_revision",
+                "session_continuity",
+                "session_recovery",
+            ] {
+                assert!(result.output.get(field).is_none(), "{field}");
+            }
+        }
+    }
+    let handoff = runtime
+        .dispatch(super::super::ToolCall::SessionHandoffSummary {
+            session_id: session.session_id.clone(),
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            summary_only: false,
+            limit: None,
+        })
         .await;
-    let current = &response.output["session_recovery"]["current_handoff"];
-    assert!(current.is_object());
-    assert!(current["work_performed"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|work| work["tool_name"] == "work_on_project"));
-    assert!(response.output["session_recovery"]["model_facing_events"]
-        .as_array()
-        .unwrap()
-        .is_empty(),
-        "the current ToolResult may inform current state but must not be replayed as missed history");
+    assert!(handoff.success);
+    for field in [
+        "session_context_revision",
+        "session_continuity",
+        "session_recovery",
+    ] {
+        assert!(
+            handoff.output.get(field).is_none(),
+            "non-capable handoff leaked {field}"
+        );
+    }
+    assert_eq!(
+        runtime.sessions.context_revision(&session.session_id),
+        Some(2)
+    );
 }
 
-#[tokio::test]
-async fn required_session_context_recovery_handoff_failure_does_not_expose_new_revision() {
-    let runtime = super::super::ToolRuntime::new_for_tests();
-    let session = runtime
-        .sessions
-        .start_session(None, Some("handoff failure continuity".to_string()));
-    let first = record_model_facing_result(
-        &runtime.sessions,
-        &session.session_id,
-        "apply_text_edits",
-        SessionContextRevisionAck::Unacknowledged,
-        true,
-        json!({"state_changed": true}),
-    );
-    assert_eq!(first.context_revision, 1);
-    let mut unknown = record_model_facing_result(
-        &runtime.sessions,
-        &session.session_id,
-        "work_on_project",
-        SessionContextRevisionAck::Unacknowledged,
-        true,
-        json!({"session_id": session.session_id}),
-    );
-    assert_eq!(unknown.context_revision, 1);
-    assert!(unknown.recovery_events.is_empty());
-
-    // The production path re-authorizes the exact recorded Session before
-    // reading current handoff state. Corrupt only this local projection id to
-    // force that read to fail and verify the revision fail-safe.
-    unknown.session_id = "wc_sess_missing_for_handoff_test".to_string();
-    let mut response = super::super::ToolResult::ok(json!({"session_id": session.session_id}));
-    assert!(
-        super::super::session_context::add_session_context_continuity(&mut response, &unknown,)
-    );
-    assert_eq!(response.output["session_context_revision"], 1);
-    assert_eq!(
-        response.output["session_continuity"]["status"],
-        "unacknowledged"
-    );
-
-    runtime
-        .add_session_history_recovery(&mut response, &unknown, None)
-        .await;
-    assert!(response.output.get("session_context_revision").is_none());
-    assert!(response.output["session_recovery"]
-        .get("current_handoff")
-        .is_none());
-}
-
-#[tokio::test]
-async fn bounded_session_context_recovery_adds_current_handoff_before_latest_ack() {
-    let runtime = super::super::ToolRuntime::new_for_tests();
-    let session = runtime
-        .sessions
-        .start_session(None, Some("bounded continuity recovery".to_string()));
-    let mut latest = 0;
-    for _ in 0..25 {
+#[test]
+fn session_context_unknown_ack_is_compact_and_never_certifies_latest() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(None, None);
+    for (ack, status) in [
+        (SessionContextRevisionAck::Unacknowledged, "unacknowledged"),
+        (SessionContextRevisionAck::Invalid, "invalid"),
+        (SessionContextRevisionAck::Revision(999), "invalid"),
+    ] {
         let recorded = record_model_facing_result(
-            &runtime.sessions,
+            &store,
             &session.session_id,
             "apply_text_edits",
-            SessionContextRevisionAck::Revision(latest),
+            ack,
             true,
             json!({"state_changed": true}),
         );
-        latest = recorded.context_revision;
+        assert!(recorded.checkpoint_advanced);
+        assert!(recorded.recovery_events.is_empty());
+        let mut response = super::super::ToolResult::ok(json!({"state_changed": true}));
+        assert!(
+            super::super::session_context::add_session_context_continuity(&mut response, &recorded)
+        );
+        assert_eq!(response.output["state_changed"], true);
+        assert!(response.output.get("session_context_revision").is_none());
+        assert!(response.output.get("session_recovery").is_none());
+        assert_eq!(
+            response.output["session_continuity"],
+            json!({
+                "status": status, "recovery_required": true,
+                "recovery_tool": "session_handoff_summary", "recovery_session_id": session.session_id,
+                "suggested_call": {
+                    "tool": "session_handoff_summary",
+                    "arguments": {"session_id": session.session_id},
+                },
+            })
+        );
+        assert!(
+            serde_json::to_vec(&response.output["session_continuity"])
+                .unwrap()
+                .len()
+                < 384
+        );
     }
-    assert_eq!(latest, 25);
-
-    let stale = record_model_facing_result(
-        &runtime.sessions,
-        &session.session_id,
-        "work_on_project",
-        SessionContextRevisionAck::Revision(0),
-        true,
-        json!({"session_id": session.session_id}),
-    );
-    assert_eq!(stale.pre_call_context_revision, 25);
-    assert_eq!(stale.pre_response_context_revision, 25);
-    assert_eq!(stale.context_revision, 25);
-    assert!(!stale.checkpoint_advanced);
-    assert_eq!(stale.recovery_events.len(), 25);
-    assert!(!stale.history_lost);
-
-    let mut response = super::super::ToolResult::ok(json!({"session_id": session.session_id}));
-    assert!(super::super::session_context::add_session_context_continuity(&mut response, &stale,));
-    assert_eq!(response.output["session_recovery"]["truncated"], true);
-    assert_eq!(response.output["session_recovery"]["omitted_count"], 5);
-    assert!(response.output["session_recovery"]
-        .get("current_handoff")
-        .is_none());
-
-    runtime
-        .add_session_history_recovery(&mut response, &stale, None)
-        .await;
-    assert!(
-        response.output["session_recovery"]["current_handoff"].is_object(),
-        "bounded event omission must add a compact current-state recovery before revision 25 is ACK-able"
-    );
+    assert_eq!(store.context_revision(&session.session_id), Some(3));
 }
 
-#[tokio::test]
-async fn history_lost_session_context_recovery_adds_current_handoff() {
-    let runtime = super::super::ToolRuntime::new_for_tests();
-    let session = runtime
-        .sessions
-        .start_session(None, Some("history lost continuity recovery".to_string()));
-    let first = record_model_facing_result(
-        &runtime.sessions,
+#[test]
+fn session_context_reobservable_ignores_every_ack_shape() {
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(None, None);
+    for tool in [
+        "read_files",
+        "search_project_texts",
+        "show_changes",
+        "tool_manifest",
+        "work_on_project",
+        "list_jobs",
+        "workspace_hygiene_check",
+        "hover",
+    ] {
+        for ack in [
+            SessionContextRevisionAck::Unacknowledged,
+            SessionContextRevisionAck::Invalid,
+            SessionContextRevisionAck::Revision(999),
+        ] {
+            let recorded = record_model_facing_result(
+                &store,
+                &session.session_id,
+                tool,
+                ack,
+                true,
+                json!({"observed": true}),
+            );
+            assert_eq!(
+                recorded.ack_session_context_revision,
+                SessionContextRevisionAck::Unsupported
+            );
+            assert!(!recorded.checkpoint_advanced);
+            let mut result = super::super::ToolResult::ok(json!({"observed": true}));
+            assert!(
+                !super::super::session_context::add_session_context_continuity(
+                    &mut result,
+                    &recorded
+                )
+            );
+            assert_eq!(result.output, json!({"observed": true}));
+        }
+    }
+}
+
+#[test]
+fn session_context_incomplete_delta_requires_explicit_recovery() {
+    for mode in ["event_limit", "byte_limit", "history_lost"] {
+        let store = SessionStore::new(10, 100);
+        let session = store.start_session(None, None);
+        for _ in 0..25 {
+            record_model_facing_result(
+                &store,
+                &session.session_id,
+                "apply_text_edits",
+                SessionContextRevisionAck::Unacknowledged,
+                true,
+                json!({"state_changed": true}),
+            );
+        }
+        let mut behind = record_model_facing_result(
+            &store,
+            &session.session_id,
+            "run_process",
+            SessionContextRevisionAck::Revision(0),
+            true,
+            json!({"exit_code": 0}),
+        );
+        if mode == "history_lost" {
+            behind.history_lost = true;
+            behind.recovery_events.drain(..24);
+        } else if mode == "byte_limit" {
+            behind.recovery_events.truncate(2);
+            for event in &mut behind.recovery_events {
+                event.context_result_summary = Some(json!({"large": "x".repeat(48 * 1024)}));
+            }
+        }
+        let mut result = super::super::ToolResult::ok(json!({"exit_code": 0}));
+        assert!(
+            super::super::session_context::add_session_context_continuity(&mut result, &behind)
+        );
+        assert_eq!(result.output["session_continuity"]["status"], "behind");
+        assert_eq!(result.output["session_continuity"]["events_after_ack"], 25);
+        assert_eq!(
+            result.output["session_continuity"]["recovery_required"],
+            true
+        );
+        assert_eq!(
+            result.output["session_continuity"]["recovery_tool"],
+            "session_handoff_summary"
+        );
+        let suggested = &result.output["session_continuity"]["suggested_call"];
+        assert_eq!(suggested["tool"], "session_handoff_summary");
+        assert_eq!(suggested["arguments"]["session_id"], session.session_id);
+        super::super::ToolCall::from_tool_name(
+            suggested["tool"].as_str().unwrap(),
+            suggested["arguments"].clone(),
+        )
+        .expect("context recovery suggested_call must parse");
+        assert!(result.output.get("session_context_revision").is_none());
+        assert!(result.output["session_recovery"]
+            .get("current_handoff")
+            .is_none());
+        if mode == "history_lost" {
+            assert_eq!(result.output["session_recovery"]["history_lost"], true);
+        } else {
+            assert_eq!(result.output["session_recovery"]["truncated"], true);
+        }
+        assert!(
+            serde_json::to_vec(&result.output["session_recovery"]["model_facing_events"])
+                .unwrap()
+                .len()
+                <= super::super::session_context::SESSION_CONTINUITY_RECOVERY_EVENT_BYTES
+        );
+    }
+}
+
+#[test]
+fn session_context_handoff_baseline_fences_concurrent_completions_and_recorder() {
+    use super::super::session_context::{
+        add_session_context_continuity, establish_handoff_context_baseline,
+    };
+    let store = SessionStore::new(10, 100);
+    let session = store.start_session(None, None);
+    let mut result = super::super::ToolResult::ok(json!({"session_id": session.session_id}));
+    establish_handoff_context_baseline(&mut result, &session.session_id, Some(0), Some(0));
+    assert_eq!(result.output["session_continuity"]["status"], "recovered");
+    record_model_facing_result(
+        &store,
         &session.session_id,
         "apply_text_edits",
         SessionContextRevisionAck::Unacknowledged,
         true,
         json!({"state_changed": true}),
     );
-    assert_eq!(first.context_revision, 1);
-    let mut behind = record_model_facing_result(
-        &runtime.sessions,
+    let recorded = record_model_facing_result(
+        &store,
         &session.session_id,
-        "work_on_project",
-        SessionContextRevisionAck::Revision(0),
+        "session_handoff_summary",
+        SessionContextRevisionAck::Unacknowledged,
         true,
-        json!({"session_id": session.session_id}),
+        json!({}),
     );
-    assert_eq!(
-        behind
-            .recovery_events
-            .iter()
-            .filter_map(|event| event.context_revision)
-            .collect::<Vec<_>>(),
-        vec![1]
-    );
-    // Store retention behavior is covered independently above. Force the same
-    // recorded projection flag here so this test isolates the response fallback.
-    behind.history_lost = true;
+    assert!(add_session_context_continuity(&mut result, &recorded));
+    assert!(result.output.get("session_context_revision").is_none());
 
-    let mut response = super::super::ToolResult::ok(json!({"session_id": session.session_id}));
-    assert!(super::super::session_context::add_session_context_continuity(&mut response, &behind,));
-    assert_eq!(response.output["session_continuity"]["status"], "behind");
-    assert_eq!(response.output["session_continuity"]["history_lost"], true);
-    assert!(response.output["session_recovery"]
-        .get("current_handoff")
-        .is_none());
-
-    runtime
-        .add_session_history_recovery(&mut response, &behind, None)
-        .await;
-    assert!(response.output["session_recovery"]["current_handoff"].is_object());
+    establish_handoff_context_baseline(&mut result, &session.session_id, Some(0), Some(1));
+    assert!(result.output.get("session_context_revision").is_none());
+    establish_handoff_context_baseline(&mut result, &session.session_id, Some(1), Some(1));
+    result.output["session_id"] = json!("wc_sess_different");
+    assert!(add_session_context_continuity(&mut result, &recorded));
+    assert!(result.output.get("session_context_revision").is_none());
 }
 
 #[test]
@@ -3720,7 +3778,7 @@ fn stale_session_recovery_preserves_consequential_git_workspace_evidence() {
     let resumed = record_model_facing_result(
         &store,
         &session.session_id,
-        "work_on_project",
+        "session_handoff_summary",
         SessionContextRevisionAck::Revision(1),
         true,
         json!({"session_id": session.session_id}),
@@ -3759,7 +3817,7 @@ fn stale_session_recovery_preserves_consequential_git_workspace_evidence() {
     let exact = record_model_facing_result(
         &store,
         &session.session_id,
-        "work_on_project",
+        "session_handoff_summary",
         SessionContextRevisionAck::Revision(4),
         true,
         json!({"session_id": session.session_id}),

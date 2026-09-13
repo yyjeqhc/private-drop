@@ -1,6 +1,6 @@
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, context_recovery_only, def, model_spec, ToolDefinition,
+    adaptive_runtime_direct, context_reobservable, def, model_spec, ToolDefinition,
     TOOL_CATEGORY_PROJECT, TOOL_CATEGORY_RUNTIME,
 };
 use crate::metadata::{
@@ -15,7 +15,7 @@ use crate::registry::input_schemas::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    context_recovery_only(model_spec(
+    context_reobservable(model_spec(
         def(
             "list_projects",
             super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
@@ -117,7 +117,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Create a directory on one Runner and register it as a Project. Use this for a new workspace; existing directories belong on the registration path.",
         create_project_input_schema,
     ),
-    context_recovery_only(model_spec(
+    context_reobservable(model_spec(
         def(
             "list_runners",
             super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
@@ -144,7 +144,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         list_runners_input_schema,
     )),
     adaptive_runtime_direct(
-        context_recovery_only(model_spec(
+        context_reobservable(model_spec(
             def(
                 "runtime_status",
                 super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
@@ -173,7 +173,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         20,
     ),
     adaptive_runtime_direct(
-        context_recovery_only(model_spec(
+        context_reobservable(model_spec(
             def(
                 "tool_manifest",
                 super::ToolAuditPolicy::TYPED_CANONICAL,

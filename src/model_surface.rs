@@ -338,6 +338,7 @@ mod tests {
     const EXPECTED_ADAPTIVE_RUNTIME_DIRECT_TOOL_NAMES: &[&str] = &[
         "work_on_project",
         "session_discussion_summary",
+        "session_handoff_summary",
         "present_goal_plan",
         "present_agent_continuation",
         "rotate_agent_continuation_endpoint",
@@ -386,6 +387,11 @@ mod tests {
                 "session_discussion_summary",
             ),
             ("observe_jobs", "recovery_tool", "list_jobs"),
+            (
+                "run_process",
+                "session_continuity.recovery_tool",
+                "session_handoff_summary",
+            ),
             ("show_changes", "diff_review_handoff.tool", "git_diff_hunks"),
             (
                 "finish_coding_task",

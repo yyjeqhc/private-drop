@@ -2368,6 +2368,35 @@ async fn session_handoff_summary_with_workspace_clean_project() {
 }
 
 #[tokio::test]
+async fn context_recovery_handoff_derives_session_project_for_complete_workspace_baseline() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project =
+        register_runner_project_at_path(&runtime, "handoff-context-recovery", "demo", tmp.path())
+            .await;
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("context recovery handoff".to_string()),
+    );
+
+    let result = dispatch_context_recovery_handoff_with_agent(
+        &runtime,
+        "handoff-context-recovery",
+        session.session_id,
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["project"], project);
+    assert_eq!(result.output["workspace"]["git_available"], true);
+    assert_eq!(result.output["workspace"]["clean"], true);
+    assert_eq!(result.output["session_context_revision"], 0);
+    assert_eq!(result.output["session_continuity"]["status"], "recovered");
+}
+
+#[tokio::test]
 async fn session_handoff_summary_only_verdict_allows_clean_workspace_without_failures() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
@@ -3891,6 +3920,36 @@ async fn dispatch_handoff_with_agent(
         complete_agent_request_by_running_locally(runtime, client_id, req).await;
     }
 
+    task.await.unwrap()
+}
+
+async fn dispatch_context_recovery_handoff_with_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    session_id: String,
+) -> ToolResult {
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .dispatch_handoff_tool(
+                ToolCall::SessionHandoffSummary {
+                    session_id,
+                    project: None,
+                    include_workspace: None,
+                    include_checkpoints: None,
+                    include_validation: None,
+                    summary_only: false,
+                    limit: None,
+                },
+                None,
+                true,
+                None,
+            )
+            .await
+    });
+
+    let req = wait_for_patch_agent_request(runtime, client_id).await;
+    complete_agent_request_by_running_locally(runtime, client_id, req).await;
     task.await.unwrap()
 }
 
