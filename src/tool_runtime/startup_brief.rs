@@ -136,8 +136,10 @@ pub(crate) struct StartupPluginEntry {
     pub(crate) annotations: webcodex_core::plugin::PluginSelectionAnnotations,
 }
 
+/// Shared startup metadata projection, not a resource store or authority.
+/// Entry types, discovery, and execution remain owned by their domains.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct StartupSkillsCatalog {
+pub(crate) struct StartupCatalog<Entry> {
     pub(crate) status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reason_code: Option<&'static str>,
@@ -146,13 +148,16 @@ pub(crate) struct StartupSkillsCatalog {
     pub(crate) total_count: usize,
     pub(crate) returned_count: usize,
     pub(crate) truncated: bool,
-    pub(crate) entries: Vec<StartupSkillEntry>,
+    pub(crate) entries: Vec<Entry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) discovery_hint: Option<&'static str>,
 }
 
-impl StartupSkillsCatalog {
-    pub(crate) fn unavailable(reason_code: &'static str) -> Self {
+pub(crate) type StartupSkillsCatalog = StartupCatalog<StartupSkillEntry>;
+pub(crate) type StartupPluginsCatalog = StartupCatalog<StartupPluginEntry>;
+
+impl<Entry: Serialize> StartupCatalog<Entry> {
+    fn unavailable_with_hint(reason_code: &'static str, discovery_hint: &'static str) -> Self {
         Self {
             status: "unavailable",
             reason_code: Some(reason_code),
@@ -161,10 +166,58 @@ impl StartupSkillsCatalog {
             returned_count: 0,
             truncated: false,
             entries: Vec::new(),
-            discovery_hint: Some(
-                "Use skills.catalog or skill_list for explicit discovery when available.",
-            ),
+            discovery_hint: Some(discovery_hint),
         }
+    }
+
+    fn update_completeness(&mut self, upstream_truncated: bool, discovery_hint: &'static str) {
+        self.returned_count = self.entries.len();
+        self.truncated = upstream_truncated || self.returned_count < self.total_count;
+        self.discovery_hint = self.truncated.then_some(discovery_hint);
+    }
+
+    fn available_bounded(
+        catalog_revision: String,
+        total_count: usize,
+        upstream_truncated: bool,
+        entries: Vec<Entry>,
+        max_bytes: usize,
+        discovery_hint: &'static str,
+    ) -> Self {
+        let mut projection = Self {
+            status: "available",
+            reason_code: None,
+            catalog_revision: Some(catalog_revision),
+            total_count,
+            returned_count: 0,
+            truncated: false,
+            entries: Vec::new(),
+            discovery_hint: None,
+        };
+        for entry in entries {
+            projection.entries.push(entry);
+            projection.update_completeness(upstream_truncated, discovery_hint);
+            // Measure the full wire envelope: optional hints and JSON escaping
+            // participate in the budget. Preserve the original greedy prefix.
+            if !serde_json::to_vec(&projection)
+                .map(|bytes| bytes.len() <= max_bytes)
+                .unwrap_or(false)
+            {
+                projection.entries.pop();
+                break;
+            }
+        }
+        projection.update_completeness(upstream_truncated, discovery_hint);
+        projection
+    }
+}
+
+impl StartupSkillsCatalog {
+    pub(crate) fn unavailable(reason_code: &'static str) -> Self {
+        Self::unavailable_with_hint(
+            reason_code,
+            "Use skills.catalog or skill_list for explicit discovery when available.",
+        )
     }
 
     pub(crate) fn available(
@@ -172,77 +225,23 @@ impl StartupSkillsCatalog {
         discovery_truncated: bool,
         entries: Vec<StartupSkillEntry>,
     ) -> Self {
-        let total_count = entries.len();
-        let mut returned = Vec::new();
-        for entry in entries {
-            let mut candidate = returned.clone();
-            candidate.push(entry);
-            let truncated = discovery_truncated || candidate.len() < total_count;
-            let projection = Self {
-                status: "available",
-                reason_code: None,
-                catalog_revision: Some(catalog_revision.clone()),
-                total_count,
-                returned_count: candidate.len(),
-                truncated,
-                entries: candidate.clone(),
-                discovery_hint: truncated.then_some(
-                    "Use skills.catalog or skill_list for broader or refreshed discovery.",
-                ),
-            };
-            if serde_json::to_vec(&projection)
-                .map(|bytes| bytes.len() <= STARTUP_SKILL_CATALOG_MAX_BYTES)
-                .unwrap_or(false)
-            {
-                returned = candidate;
-            } else {
-                break;
-            }
-        }
-        let truncated = discovery_truncated || returned.len() < total_count;
-        Self {
-            status: "available",
-            reason_code: None,
-            catalog_revision: Some(catalog_revision),
-            total_count,
-            returned_count: returned.len(),
-            truncated,
-            entries: returned,
-            discovery_hint: truncated
-                .then_some("Use skills.catalog or skill_list for broader or refreshed discovery."),
-        }
+        Self::available_bounded(
+            catalog_revision,
+            entries.len(),
+            discovery_truncated,
+            entries,
+            STARTUP_SKILL_CATALOG_MAX_BYTES,
+            "Use skills.catalog or skill_list for broader or refreshed discovery.",
+        )
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct StartupPluginsCatalog {
-    pub(crate) status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) reason_code: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) catalog_revision: Option<String>,
-    pub(crate) total_count: usize,
-    pub(crate) returned_count: usize,
-    pub(crate) truncated: bool,
-    pub(crate) entries: Vec<StartupPluginEntry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) discovery_hint: Option<&'static str>,
 }
 
 impl StartupPluginsCatalog {
     pub(crate) fn unavailable(reason_code: &'static str) -> Self {
-        Self {
-            status: "unavailable",
-            reason_code: Some(reason_code),
-            catalog_revision: None,
-            total_count: 0,
-            returned_count: 0,
-            truncated: false,
-            entries: Vec::new(),
-            discovery_hint: Some(
-                "Use explicit plugin_tool list and describe when Plugin discovery is available.",
-            ),
-        }
+        Self::unavailable_with_hint(
+            reason_code,
+            "Use explicit plugin_tool list and describe when Plugin discovery is available.",
+        )
     }
 
     pub(crate) fn available(
@@ -250,45 +249,14 @@ impl StartupPluginsCatalog {
         total_count: usize,
         entries: Vec<StartupPluginEntry>,
     ) -> Self {
-        let mut returned = Vec::new();
-        for entry in entries {
-            let mut candidate = returned.clone();
-            candidate.push(entry);
-            let truncated = candidate.len() < total_count;
-            let projection = Self {
-                status: "available",
-                reason_code: None,
-                catalog_revision: Some(catalog_revision.clone()),
-                total_count,
-                returned_count: candidate.len(),
-                truncated,
-                entries: candidate.clone(),
-                discovery_hint: truncated.then_some(
-                    "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
-                ),
-            };
-            if serde_json::to_vec(&projection)
-                .map(|bytes| bytes.len() <= STARTUP_PLUGIN_CATALOG_MAX_BYTES)
-                .unwrap_or(false)
-            {
-                returned = candidate;
-            } else {
-                break;
-            }
-        }
-        let truncated = returned.len() < total_count;
-        Self {
-            status: "available",
-            reason_code: None,
-            catalog_revision: Some(catalog_revision),
+        Self::available_bounded(
+            catalog_revision,
             total_count,
-            returned_count: returned.len(),
-            truncated,
-            entries: returned,
-            discovery_hint: truncated.then_some(
-                "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
-            ),
-        }
+            false,
+            entries,
+            STARTUP_PLUGIN_CATALOG_MAX_BYTES,
+            "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
+        )
     }
 }
 

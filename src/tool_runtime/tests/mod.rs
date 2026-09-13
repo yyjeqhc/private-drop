@@ -45,6 +45,7 @@ mod sessions_resolver;
 mod skills;
 mod specialized_dispatch;
 mod startup_brief;
+mod startup_catalog;
 mod sync_timeout;
 mod targeted_inventory;
 mod trusted_smoke;
