@@ -16,4 +16,5 @@ pub use tool_specs::{
     agent_continuation_app_tool_specs, goal_plan_app_tool_specs, memory_management_tool_specs,
     memory_runtime_tool_specs, operator_diagnostic_tool_specs, registered_tool_specs,
     skill_management_tool_specs, skill_runtime_tool_specs, stateless_operator_extension_tool_specs,
+    work_result_app_tool_specs,
 };

@@ -109,6 +109,9 @@ pub(crate) struct ToolProtocolCapabilities {
     /// Protocol-surface support for the ModelHidden Goal Plan App polling read.
     /// This never replaces canonical communication/Goal authorization.
     pub(crate) goal_plan_app: bool,
+    /// Protocol-surface support for the ModelHidden Work Result App explicit
+    /// refresh read. Exact Project + Session authority is still checked per call.
+    pub(crate) work_result_app: bool,
     /// Protocol-surface support for ModelHidden MCP App Host-continuation
     /// coordination. Canonical communication authorization and exact
     /// process-local Host binding validation remain mandatory in the runtime.
@@ -281,6 +284,7 @@ impl ToolRuntime {
                 memory_surface: false,
                 trace_diagnostics: false,
                 goal_plan_app: false,
+                work_result_app: false,
                 agent_continuation_app: false,
             },
         )
@@ -363,6 +367,19 @@ impl ToolRuntime {
                 result: None,
                 error_status: Some(ToolCallErrorStatus::InvalidArguments {
                     message: "Goal Plan App state is available only on Stateless MCP 2026 App-enabled operator surfaces"
+                        .to_string(),
+                }),
+                project: None,
+                model_ergonomics: None,
+                correlation: Default::default(),
+            };
+        }
+        if request.tool_name == "work_result_state" && !capabilities.work_result_app {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                    message: "Work Result App state is available only on Stateless MCP 2026 App-enabled operator surfaces"
                         .to_string(),
                 }),
                 project: None,

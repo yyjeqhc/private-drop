@@ -97,6 +97,7 @@ mod validation_events;
 pub(crate) mod validation_parser;
 pub(crate) mod validation_profile;
 mod window_activity;
+mod work_result;
 pub(crate) use window_activity::{ActiveWindowRequest, MAX_ACTIVE_REQUESTS_PER_WINDOW};
 
 #[cfg(test)]
@@ -157,6 +158,7 @@ pub(crate) use registry::accepted_flattened_args_for_spec;
 pub(crate) use registry::{
     agent_continuation_app_tool_specs, generic_tool_call_flattened_args_for_spec,
     goal_plan_app_tool_specs, registered_tool_specs, stateless_operator_extension_tool_specs,
+    work_result_app_tool_specs,
 };
 #[cfg(test)]
 pub(crate) use registry::{

@@ -1503,6 +1503,62 @@ impl RunnerRegistry {
             .collect()
     }
 
+    /// Complete caller-visible Job set after exact static identity filters.
+    /// Project/session selection happens before lifecycle refresh so focused
+    /// model-facing inventory queries do not refresh unrelated Jobs. Status is
+    /// intentionally not accepted here because it depends on the refreshed
+    /// lifecycle and must be applied by the caller afterwards.
+    pub async fn list_jobs_for_auth_filtered(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        project_id: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Vec<ShellJobInfo> {
+        let mut inner = self.inner.lock().await;
+        let candidate_ids = inner
+            .jobs_by_id
+            .values()
+            .filter(|job| job.visibility == ShellJobVisibility::Public)
+            .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
+            .filter(|job| {
+                project_id
+                    .map(|project_id| job.project_id.as_deref() == Some(project_id))
+                    .unwrap_or(true)
+            })
+            .filter(|job| {
+                session_id
+                    .map(|session_id| job.session_id.as_deref() == Some(session_id))
+                    .unwrap_or(true)
+            })
+            .map(|job| job.job_id.clone())
+            .collect::<Vec<_>>();
+        #[cfg(any(test, feature = "root-test-support"))]
+        self.filtered_job_refresh_count
+            .fetch_add(candidate_ids.len(), Ordering::Relaxed);
+        for job_id in candidate_ids {
+            refresh_job_status_locked(&mut inner, &job_id);
+        }
+        let mut jobs = inner
+            .jobs_by_id
+            .values()
+            .filter(|job| job.visibility == ShellJobVisibility::Public)
+            .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
+            .filter(|job| {
+                project_id
+                    .map(|project_id| job.project_id.as_deref() == Some(project_id))
+                    .unwrap_or(true)
+            })
+            .filter(|job| {
+                session_id
+                    .map(|session_id| job.session_id.as_deref() == Some(session_id))
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        jobs.sort_by_key(|job| std::cmp::Reverse(job.created_at));
+        jobs.into_iter().map(|job| job_view(&job)).collect()
+    }
+
     async fn visible_job_records_for_auth(
         &self,
         auth: Option<&crate::RunnerAccess>,

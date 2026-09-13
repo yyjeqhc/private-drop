@@ -16,7 +16,7 @@ use crate::registry::input_schemas::{
     post_session_message_input_schema, resolve_session_message_input_schema,
     session_discussion_summary_input_schema, session_handoff_summary_input_schema,
     session_summary_input_schema, update_session_context_input_schema,
-    validation_summary_input_schema, work_on_project_input_schema,
+    validation_summary_input_schema, work_on_project_input_schema, work_result_input_schema,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
@@ -93,6 +93,63 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             finish_coding_task_input_schema,
         )),
         150,
+    ),
+    adaptive_runtime_direct(
+        requires_explicit_business_session(model_spec(
+            def(
+                "present_work_result",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::pointer("project", "/work_result/project"),
+                    super::ToolAuditResultField::pointer("session_id", "/work_result/session_id"),
+                    super::ToolAuditResultField::pointer("state_version", "/work_result/state_version"),
+                    super::ToolAuditResultField::value("error_kind"),
+                ]),
+                ModelVisible,
+                "workflow",
+                Some(GitOrShell),
+                TOOL_PROVIDER_CONTROL,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(PROJECT_READ),
+                true,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Optionally present one exact coding Workflow Session as a persistent read-only Work Result MCP App card when a user-visible work summary is genuinely useful. Requires explicit project + session_id, creates no work, runs no validation/review, changes no Session lifecycle, and grants no authority. The returned Work Result is the card's initial authoritative snapshot; do not call merely to acknowledge a clean worktree and do not call repeatedly to refresh. Later refresh is user-driven inside the existing card through one exact app-only state read per click. Presentation is UX only, never a correctness requirement; repeated explicit presentation may create another Host card.",
+            work_result_input_schema,
+        )),
+        155,
+    ),
+    def(
+        "work_result_state",
+        super::ToolAuditPolicy::typed_fields(&[
+            super::ToolAuditResultField::pointer("project", "/work_result/project"),
+            super::ToolAuditResultField::pointer("session_id", "/work_result/session_id"),
+            super::ToolAuditResultField::pointer("state_version", "/work_result/state_version"),
+            super::ToolAuditResultField::value("error_kind"),
+        ]),
+        ModelHidden,
+        "workflow",
+        Some(GitOrShell),
+        TOOL_PROVIDER_CONTROL,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
+        Some(PROJECT_READ),
+        true,
+        NoPath,
+        false,
+        false,
+        super::ToolSessionEvidencePolicy::NONE,
     ),
     requires_explicit_business_session(context_reobservable(model_spec(
         def(
@@ -453,7 +510,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Use the default full view to recover unknown context; summary_only, limit below 20, or disabled include_* components cannot establish a new ACK baseline. No checkpoint allocation; grants no authority.",
+            "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Use the default full view to recover unknown context; summary_only, limit below 20, or disabled include_* components cannot establish a new ACK baseline. No checkpoint allocation; grants no authority.",
             session_handoff_summary_input_schema,
         ))),
         16,

@@ -509,6 +509,20 @@ pub enum ToolCall {
         include_validation_summary: Option<bool>,
     },
 
+    /// Explicitly present the current bounded Work Result for one exact coding Session.
+    PresentWorkResult {
+        project: String,
+        session_id: String,
+    },
+
+    /// App-only exact read of the same bounded Work Result projection. This
+    /// business session identity is deliberately excluded from generic Session
+    /// recording so an explicit App refresh cannot mutate the observed ledger.
+    WorkResultState {
+        project: String,
+        session_id: String,
+    },
+
     /// Return a bounded structured summary of recorded session ledger data for
     /// an explicit session id.
     SessionSummary {
@@ -2805,6 +2819,8 @@ impl ToolCall {
             Self::StartSession { .. } => "start_session",
             Self::WorkOnProject { .. } => "work_on_project",
             Self::FinishCodingTask { .. } => "finish_coding_task",
+            Self::PresentWorkResult { .. } => "present_work_result",
+            Self::WorkResultState { .. } => "work_result_state",
             Self::SessionSummary { .. } => "session_summary",
             Self::UpdateSessionContext { .. } => "update_session_context",
             Self::CloseSession { .. } => "close_session",
@@ -3037,6 +3053,11 @@ impl ToolCall {
             | Self::WorkspaceCheckpointRestore { session_id, .. }
             | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
             Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
+            Self::PresentWorkResult { session_id, .. } => Some(session_id.as_str()),
+            // work_result_state intentionally does not expose its business
+            // Session through this generic recorder projection: explicit App
+            // refresh authorizes and reads that exact target inside its runtime method.
+            Self::WorkResultState { .. } => None,
             Self::ImportConversationFilesToProject { session_id, .. } => session_id.as_deref(),
             Self::CallHierarchy { session_id, .. } => session_id.as_deref(),
             Self::WorkOnProject { session_id, .. } => session_id.as_deref(),
@@ -3172,7 +3193,9 @@ impl ToolCall {
             Self::WorkOnProject { project, .. } if !project.trim().is_empty() => {
                 Some(project.as_str())
             }
-            Self::FinishCodingTask { project, .. } => Some(project.as_str()),
+            Self::FinishCodingTask { project, .. }
+            | Self::PresentWorkResult { project, .. }
+            | Self::WorkResultState { project, .. } => Some(project.as_str()),
             Self::UpdateSessionContext { project, .. }
             | Self::ValidationSummary { project, .. } => Some(project.as_str()),
             Self::SessionHandoffSummary { project, .. } => project.as_deref(),

@@ -499,9 +499,17 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         .iter()
         .find(|tool| tool["name"] == "show_changes")
         .expect("missing show_changes");
+    assert!(
+        show_changes.pointer("/_meta/ui/resourceUri").is_none(),
+        "ordinary show_changes must not create a Work/Changes App card"
+    );
+    let present_work_result = compact_tools
+        .iter()
+        .find(|tool| tool["name"] == "present_work_result")
+        .expect("missing present_work_result");
     assert_eq!(
-        show_changes["_meta"]["ui"]["resourceUri"], MCP_RESULT_UI_RESOURCE_URI,
-        "compact projection lost sparse Changes App metadata for show_changes"
+        present_work_result["_meta"]["ui"]["resourceUri"], MCP_WORK_RESULT_UI_RESOURCE_URI,
+        "explicit Work presentation entry must retain its App binding"
     );
     let list_jobs = compact_tools
         .iter()
@@ -601,6 +609,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         "run_shell",
         "import_conversation_files_to_project",
         "export_project_artifact",
+        "present_work_result",
     ] {
         assert!(
             names.contains(&promoted),

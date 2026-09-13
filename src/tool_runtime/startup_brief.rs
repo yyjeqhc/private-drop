@@ -66,7 +66,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
             "Complete authorized work through validation and review; ask only for missing requirements or authority.",
             "Verify Project, branch, HEAD, and existing changes; read nested rules for changed paths and recover truncated instructions.",
             "Preserve unrelated work; make the smallest coherent change. Push/publish/deploy/restart need an explicit action and target.",
-            "Use structured tools and edit guards; apply model_protocol only where the exposed schema supports it.",
+            "Use structured tools and edit guards; after source edits or a rustfmt check diff, prefer cargo_fmt(check=false) to ensure formatting instead of reproducing rustfmt edits manually; apply model_protocol only where the exposed schema supports it.",
             "Long required validation + independent read-only inspection: use short sync_wait_secs for same-execution Job handoff, inspect then observe; do not fan out heavy validations. Covered-source mutation makes that result stale/cache-warmup; final source needs fresh validation.",
             "Observe existing Jobs; inspect state before retrying an unknown outcome. Timeout does not prove no effect.",
             "Review the diff; report evidence, limits, and Jobs. finish_coding_task is advisory evidence, not proof."
@@ -1094,6 +1094,10 @@ fn continuation_projection(
         ),
     });
 
+    if active_jobs.get("active_job").is_some_and(Value::is_object) {
+        projected["jobs"]["active_job"] = active_jobs["active_job"].clone();
+    }
+
     if minimal {
         // The first action remains concrete, while bulk evidence lists are
         // represented only by their total/returned/truncated metadata.
@@ -2004,6 +2008,29 @@ mod tests {
         assert_eq!(standard["exploration"]["navigation_count"], 4);
         assert_eq!(standard["exploration"]["latest_tool"], "read_files");
         assert_eq!(standard["exploration"]["complete"], true);
+    }
+
+    #[test]
+    fn continuation_projection_preserves_only_explicit_active_job_handle() {
+        let feedback = json!({"status": "available", "attempt": {}, "validation_delta": {}});
+        let mut jobs = empty_active_jobs();
+        assert!(
+            continuation_projection(&feedback, &jobs, true, "continued")["jobs"]
+                .get("active_job")
+                .is_none()
+        );
+
+        jobs["active_job"] = json!({
+            "job_id": "job-exact",
+            "status": "running",
+            "kind": "shell"
+        });
+        let projected = continuation_projection(&feedback, &jobs, true, "continued");
+        assert_eq!(
+            projected["jobs"]["active_job"],
+            json!({"job_id": "job-exact", "status": "running", "kind": "shell"})
+        );
+        assert_eq!(projected["jobs"]["active_count"], 0);
     }
 
     #[test]

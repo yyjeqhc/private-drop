@@ -5,15 +5,21 @@ pub(super) const MCP_PRESENTATION_META_KEY: &str = "webcodex/presentation";
 pub(super) const MCP_PRESENTATION_VERSION: u64 = 1;
 pub(super) const MAX_MCP_PRESENTATION_ITEMS: usize = 8;
 pub(super) const MAX_MCP_PRESENTATION_TEXT_CHARS: usize = 256;
-pub(super) const MAX_MCP_PRESENTATION_DIFF_HUNKS: usize = 4;
+pub(super) const MAX_MCP_PRESENTATION_DIFF_HUNKS: usize = MAX_MCP_PRESENTATION_ITEMS;
 pub(super) const MAX_MCP_PRESENTATION_DIFF_LINES: usize = 80;
 pub(super) const MAX_MCP_PRESENTATION_DIFF_CHARS: usize = 12 * 1024;
 
-/// Static MCP App descriptor eligibility only. One advertised App binding creates
-/// one extra Host presentation per tool result, so keep this deliberately sparse:
-/// routine execution/observation stays on the Host's native tool card.
-pub(super) fn tool_supports_result_app(tool_name: &str) -> bool {
-    tool_name == "show_changes"
+/// Legacy Result/Changes presentation projections remain readable for cached
+/// descriptors, but ordinary result tools no longer receive new descriptor-level
+/// App admission. ToolResult metadata alone cannot create a Host App post-hoc.
+pub(super) fn tool_supports_result_app(_tool_name: &str) -> bool {
+    false
+}
+
+/// Explicit persistent Work Result presentation entry. Ordinary coding,
+/// validation, review, observation, and closeout tools never create this App.
+pub(super) fn tool_supports_work_result_app(tool_name: &str) -> bool {
+    tool_name == "present_work_result"
 }
 
 /// Dedicated sparse Goal Plan App binding. Only the explicit presentation entry
@@ -787,7 +793,7 @@ fn bounded_diff_text(value: &Value) -> Option<(String, bool)> {
 fn show_changes_diff_hunks_for_path(
     output: &Value,
     raw_path: &str,
-    remaining_hunks: &mut usize,
+    max_hunks: usize,
 ) -> (Vec<Value>, bool) {
     let Some(files) = output.get("hunks").and_then(Value::as_array) else {
         return (Vec::new(), false);
@@ -805,7 +811,7 @@ fn show_changes_diff_hunks_for_path(
             continue;
         };
         for hunk in hunks {
-            if *remaining_hunks == 0 {
+            if result.len() == max_hunks {
                 truncated = true;
                 break;
             }
@@ -822,7 +828,6 @@ fn show_changes_diff_hunks_for_path(
             projected.insert("diff".to_string(), Value::String(diff));
             projected.insert("truncated".to_string(), Value::Bool(hunk_truncated));
             result.push(Value::Object(projected));
-            *remaining_hunks -= 1;
         }
         break;
     }
@@ -832,7 +837,7 @@ fn show_changes_diff_hunks_for_path(
 fn show_changes_file_presentation(
     file: &Value,
     output: &Value,
-    remaining_hunks: &mut usize,
+    max_diff_hunks: usize,
 ) -> Option<Value> {
     file.as_object()?;
     let path_value = file.get("path")?;
@@ -853,7 +858,7 @@ fn show_changes_file_presentation(
         item.insert("old_path".to_string(), Value::String(old_path));
     }
     let (diff_hunks, diff_truncated) =
-        show_changes_diff_hunks_for_path(output, raw_path, remaining_hunks);
+        show_changes_diff_hunks_for_path(output, raw_path, max_diff_hunks);
     if !diff_hunks.is_empty() {
         item.insert("diff_hunks".to_string(), Value::Array(diff_hunks));
     }
@@ -982,7 +987,8 @@ fn show_changes_presentation(output: &Value) -> Option<Value> {
                 );
             }
         }
-        let mut remaining_hunks = MAX_MCP_PRESENTATION_DIFF_HUNKS;
+        let presented_source_count = source_files.len().min(MAX_MCP_PRESENTATION_ITEMS).max(1);
+        let max_hunks_per_file = (MAX_MCP_PRESENTATION_DIFF_HUNKS / presented_source_count).max(1);
         let mut files = Vec::new();
         let mut items_truncated = false;
         for file in source_files {
@@ -990,7 +996,7 @@ fn show_changes_presentation(output: &Value) -> Option<Value> {
                 items_truncated = true;
                 break;
             }
-            if let Some(file) = show_changes_file_presentation(file, output, &mut remaining_hunks) {
+            if let Some(file) = show_changes_file_presentation(file, output, max_hunks_per_file) {
                 files.push(file);
             } else {
                 items_truncated = true;

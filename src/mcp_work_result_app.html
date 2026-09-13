@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>WebCodex Work</title>
+<style>
+:root { color-scheme: light dark; font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
+.card { display: grid; gap: 11px; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.actions { display: flex; align-items: center; gap: 7px; }
+h1 { margin: 0; font-size: 15px; font-weight: 650; }
+.badge { padding: 2px 7px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.refresh { appearance: none; border: 1px solid color-mix(in srgb, CanvasText 24%, transparent); border-radius: 7px; padding: 3px 8px; color: CanvasText; background: color-mix(in srgb, CanvasText 7%, Canvas); font: inherit; font-size: 11px; cursor: pointer; }
+.refresh:disabled { opacity: .52; cursor: default; }
+.section { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, CanvasText 13%, transparent); }
+.section:first-of-type { padding-top: 0; border-top: 0; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h2 { margin: 0; font-size: 12px; font-weight: 650; }
+.primary { font-weight: 600; overflow-wrap: anywhere; }
+.secondary, .status { font-size: 11px; color: color-mix(in srgb, CanvasText 62%, transparent); overflow-wrap: anywhere; }
+.files { margin: 1px 0 0; max-height: 13em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <div class="header"><h1>WebCodex Work</h1><div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div></div>
+  <section class="section">
+    <div class="section-head"><h2>Changes</h2><span id="changesStats" class="secondary"></span></div>
+    <div id="changesTitle" class="primary">Waiting for Work state…</div>
+    <pre id="files" class="files" hidden></pre>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Validation</h2><span id="validationMeta" class="secondary"></span></div>
+    <div id="validationStatus" class="primary">Unknown</div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Review</h2><span id="reviewMeta" class="secondary"></span></div>
+    <div id="reviewStatus" class="primary">No recorded review evidence</div>
+  </section>
+  <div id="status" class="status">App active · initializing Host</div>
+</main>
+<script>
+(() => {
+  "use strict";
+  const APP_PROTOCOL = "2026-01-26";
+  const SESSION_ID = /^wc_sess_[A-Za-z0-9_]+$/;
+  const STATE_VERSION = /^wr1_[0-9a-f]{64}$/;
+  const CALL_TIMEOUT_MS = 10000;
+  const MAX_PROJECT = 512;
+  const MAX_PATH = 512;
+  const MAX_FILES = 8;
+  const MAX_TOOLS = 12;
+  const VALIDATION = new Set(["not_run", "passed", "failed", "mixed", "expected", "inconclusive", "stale", "unknown"]);
+  let nextId = 1;
+  let identity = null;
+  let lastStateVersion = null;
+  let hostInitialized = false;
+  let refreshInFlight = false;
+  let tornDown = false;
+  const pending = new Map();
+  const el = id => document.getElementById(id);
+
+  function send(method, params) {
+    if (tornDown) return Promise.reject(new Error("App torn down"));
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error("Host request timed out"));
+      }, CALL_TIMEOUT_MS);
+      pending.set(id, { resolve, reject, timer });
+      parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+    });
+  }
+
+  function notify(method, params) {
+    if (!tornDown) parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+  }
+
+  function validProject(value) {
+    return typeof value === "string" && value.length > 0 && Array.from(value).length <= MAX_PROJECT && !/[\u0000-\u001f\u007f]/.test(value);
+  }
+
+  function validSession(value) {
+    return typeof value === "string" && SESSION_ID.test(value);
+  }
+
+  function pair(project, session_id) {
+    return validProject(project) && validSession(session_id) ? { project, session_id } : null;
+  }
+
+  function failClosed(message) {
+    teardown();
+    el("badge").textContent = "Unavailable";
+    el("status").textContent = message;
+  }
+
+  function acceptIdentity(candidate) {
+    if (tornDown) return false;
+    if (!candidate || (identity && (identity.project !== candidate.project || identity.session_id !== candidate.session_id))) {
+      failClosed("Invalid or conflicting Work identity");
+      return false;
+    }
+    identity = candidate;
+    updateRefreshControl();
+    if (hostInitialized && lastStateVersion === null) el("status").textContent = "Waiting for Work snapshot · Refresh available";
+    return true;
+  }
+
+  function safeCount(value) {
+    return Number.isSafeInteger(value) && value >= 0 && value <= 1000000000;
+  }
+
+  function validPath(value) {
+    if (typeof value !== "string" || value.length < 1 || Array.from(value).length > MAX_PATH || /[\u0000-\u001f\u007f]/.test(value)) return false;
+    if (value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:/.test(value)) return false;
+    return !value.split(/[\\/]/).includes("..");
+  }
+
+  function validFile(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || !validPath(value.path)) return false;
+    if (value.old_path !== undefined && !validPath(value.old_path)) return false;
+    for (const key of ["additions", "deletions"]) if (value[key] !== undefined && !safeCount(value[key])) return false;
+    for (const key of ["staged", "unstaged"]) if (value[key] !== undefined && typeof value[key] !== "boolean") return false;
+    for (const key of ["status", "kind"]) if (value[key] !== undefined && (typeof value[key] !== "string" || value[key].length > 32)) return false;
+    return true;
+  }
+
+  function validWorkspace(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.git_available !== "boolean") return false;
+    if (value.clean !== undefined && typeof value.clean !== "boolean") return false;
+    if (!safeCount(value.files_total) || !Array.isArray(value.files) || value.files.length > MAX_FILES || !value.files.every(validFile)) return false;
+    if (typeof value.truncated !== "boolean") return false;
+    if (!value.counts || typeof value.counts !== "object" || Array.isArray(value.counts)) return false;
+    for (const key of ["modified", "added", "deleted", "renamed", "copied", "untracked", "conflicted", "staged", "unstaged"]) if (!safeCount(value.counts[key])) return false;
+    for (const key of ["additions", "deletions"]) if (value[key] !== undefined && !safeCount(value[key])) return false;
+    if (value.line_stats_partial !== undefined && typeof value.line_stats_partial !== "boolean") return false;
+    return true;
+  }
+
+  function validValidation(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value)
+      && VALIDATION.has(value.status) && VALIDATION.has(value.latest_status) && VALIDATION.has(value.current_status)
+      && typeof value.history_partial === "boolean"
+      && (value.successes === undefined || safeCount(value.successes))
+      && (value.failures === undefined || safeCount(value.failures))
+      && safeCount(value.unresolved_failures) && safeCount(value.evidence_gaps);
+  }
+
+  function validReview(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.available !== "boolean" || typeof value.history_partial !== "boolean" || !Array.isArray(value.tools) || value.tools.length > MAX_TOOLS) return false;
+    for (const key of ["total", "read_only_inspection_count", "search_count", "diff_review_count", "workspace_review_count", "hygiene_review_count"]) if (!safeCount(value[key])) return false;
+    return value.tools.every(tool => typeof tool === "string" && tool.length > 0 && tool.length <= 64);
+  }
+
+  function validState(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 1) return null;
+    const candidate = pair(value.project, value.session_id);
+    if (!candidate || typeof value.state_version !== "string" || !STATE_VERSION.test(value.state_version)) return null;
+    if (!validWorkspace(value.workspace) || !validValidation(value.validation) || !validReview(value.review)) return null;
+    return value;
+  }
+
+  function toolSuccess(result) {
+    const structured = result && (result.structuredContent || result.structured_content || result);
+    return structured && typeof structured === "object" && !Array.isArray(structured) && typeof structured.success === "boolean"
+      ? structured.success
+      : null;
+  }
+
+  function extractState(result) {
+    const structured = result && (result.structuredContent || result.structured_content || result);
+    const output = structured && (structured.output || structured);
+    return validState(output && output.work_result);
+  }
+
+  function changeCode(file) {
+    const status = file.status;
+    if (status === "added") return "A";
+    if (status === "deleted") return "D";
+    if (status === "renamed") return "R";
+    if (status === "copied") return "C";
+    if (status === "untracked") return "?";
+    if (status === "conflicted") return "!";
+    if (status === "modified") return "M";
+    return "?";
+  }
+
+  function renderChanges(workspace) {
+    if (!workspace.git_available) {
+      el("badge").textContent = "Unavailable";
+      el("changesTitle").textContent = workspace.reason_code === "non_git_project" ? "Not a Git worktree" : "Git state unavailable";
+      el("changesStats").textContent = "";
+      el("files").textContent = "";
+      el("files").hidden = true;
+      return;
+    }
+    if (workspace.clean) {
+      el("badge").textContent = "Clean";
+      el("changesTitle").textContent = "Clean";
+      el("changesStats").textContent = "+0 −0";
+      el("files").textContent = "";
+      el("files").hidden = true;
+      return;
+    }
+    el("badge").textContent = "Changed";
+    el("changesTitle").textContent = `Changed ${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"}`;
+    if (safeCount(workspace.additions) && safeCount(workspace.deletions)) {
+      el("changesStats").textContent = `+${workspace.additions} −${workspace.deletions}${workspace.line_stats_partial ? " · partial" : ""}`;
+    } else {
+      el("changesStats").textContent = workspace.line_stats_partial ? "line stats partial" : "";
+    }
+    el("files").textContent = workspace.files.map(file => {
+      const stats = safeCount(file.additions) && safeCount(file.deletions) ? `  +${file.additions} −${file.deletions}` : "";
+      return `${changeCode(file)} ${file.path}${stats}`;
+    }).join("\n");
+    el("files").hidden = workspace.files.length === 0;
+  }
+
+  function validationLabel(status) {
+    if (status === "passed") return "Passed";
+    if (status === "failed") return "Failed";
+    if (status === "mixed") return "Mixed";
+    if (status === "stale") return "Stale";
+    if (status === "not_run") return "Not run";
+    if (status === "expected") return "Expected result recorded";
+    if (status === "inconclusive") return "Inconclusive";
+    return "Unknown";
+  }
+
+  function renderValidation(validation) {
+    el("validationStatus").textContent = validationLabel(validation.current_status);
+    const pieces = [];
+    if (safeCount(validation.successes)) pieces.push(`${validation.successes} validations`);
+    if (validation.unresolved_failures > 0) pieces.push(`${validation.unresolved_failures} unresolved`);
+    else if (safeCount(validation.failures) && validation.failures > 0) pieces.push(`${validation.failures} historical failures`);
+    if (validation.evidence_gaps > 0) pieces.push(`${validation.evidence_gaps} evidence gaps`);
+    if (validation.history_partial) pieces.push("history partial");
+    el("validationMeta").textContent = pieces.join(" · ");
+  }
+
+  function renderReview(review) {
+    if (review.total === 0) {
+      if (review.history_partial) {
+        el("reviewStatus").textContent = "Review history partial";
+        el("reviewMeta").textContent = "Earlier review evidence may be outside the bounded window";
+      } else {
+        el("reviewStatus").textContent = "No recorded review evidence";
+        el("reviewMeta").textContent = "";
+      }
+      return;
+    }
+    const labels = [];
+    if (review.workspace_review_count > 0) labels.push("Workspace reviewed");
+    if (review.diff_review_count > 0) labels.push("Diff inspected");
+    if (review.tools.includes("git_review_summary")) labels.push("Committed range mapped");
+    if (review.hygiene_review_count > 0) labels.push("Hygiene inspected");
+    if (labels.length === 0) labels.push("Review evidence recorded");
+    el("reviewStatus").textContent = labels.join(" · ");
+    el("reviewMeta").textContent = `${review.total} review ${review.total === 1 ? "event" : "events"}${review.history_partial ? " · history partial" : ""}`;
+  }
+
+  function render(state) {
+    if (tornDown) return;
+    renderChanges(state.workspace);
+    renderValidation(state.validation);
+    renderReview(state.review);
+  }
+
+  function updateRefreshControl() {
+    const button = el("refresh");
+    button.disabled = tornDown || !hostInitialized || !identity || refreshInFlight;
+    button.textContent = refreshInFlight ? "Refreshing…" : "Refresh";
+  }
+
+  async function refresh() {
+    if (tornDown || !hostInitialized || !identity || refreshInFlight) return;
+    const hadSnapshot = lastStateVersion !== null;
+    refreshInFlight = true;
+    updateRefreshControl();
+    el("status").textContent = "Refreshing…";
+    try {
+      const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project, session_id: identity.session_id } });
+      if (tornDown) return;
+      if (toolSuccess(response) === false) {
+        el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
+        return;
+      }
+      const state = extractState(response);
+      if (!state || !acceptIdentity(pair(state.project, state.session_id))) {
+        if (!tornDown) failClosed("Invalid authoritative Work state");
+        return;
+      }
+      if (state.state_version !== lastStateVersion) {
+        lastStateVersion = state.state_version;
+        render(state);
+        el("status").textContent = "Updated";
+      } else {
+        el("status").textContent = "Up to date";
+      }
+    } catch (_) {
+      if (!tornDown) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
+    } finally {
+      refreshInFlight = false;
+      updateRefreshControl();
+    }
+  }
+
+  function acceptToolInput(params) {
+    const args = params && params.arguments;
+    acceptIdentity(pair(args && !Array.isArray(args) && args.project, args && !Array.isArray(args) && args.session_id));
+  }
+
+  function acceptToolResult(result) {
+    if (tornDown) return;
+    const state = extractState(result);
+    if (!state || !acceptIdentity(pair(state.project, state.session_id))) {
+      if (!tornDown) failClosed("Invalid Work Result state");
+      return;
+    }
+    if (state.state_version !== lastStateVersion) {
+      lastStateVersion = state.state_version;
+      render(state);
+    }
+    el("status").textContent = "Snapshot ready";
+    updateRefreshControl();
+  }
+
+  function teardown() {
+    if (tornDown) return;
+    tornDown = true;
+    refreshInFlight = false;
+    updateRefreshControl();
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error("App torn down"));
+    }
+    pending.clear();
+  }
+
+  addEventListener("message", event => {
+    if (event.source !== parent) return;
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (Object.prototype.hasOwnProperty.call(msg, "id") && pending.has(msg.id)) {
+      const entry = pending.get(msg.id);
+      pending.delete(msg.id);
+      clearTimeout(entry.timer);
+      if (msg.error) entry.reject(new Error(String(msg.error.message || "Host error")));
+      else entry.resolve(msg.result);
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-input") {
+      acceptToolInput(msg.params);
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-result") {
+      acceptToolResult(msg.params);
+      return;
+    }
+    if (msg.method === "ui/resource-teardown") {
+      teardown();
+      if (Object.prototype.hasOwnProperty.call(msg, "id")) parent.postMessage({ jsonrpc: "2.0", id: msg.id, result: {} }, "*");
+    }
+  });
+
+  el("refresh").onclick = () => { void refresh(); };
+  updateRefreshControl();
+  addEventListener("pagehide", teardown, { once: true });
+  addEventListener("beforeunload", teardown, { once: true });
+
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex Work", version: "1.0.0" }, appCapabilities: {} })
+    .then(() => {
+      if (tornDown) return;
+      hostInitialized = true;
+      el("status").textContent = lastStateVersion !== null ? "Snapshot ready" : identity ? "Waiting for Work snapshot · Refresh available" : "Host initialized · waiting for exact tool identity";
+      notify("ui/notifications/initialized", {});
+      updateRefreshControl();
+    })
+    .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
+})();
+</script>
+</body>
+</html>

@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 
 use super::common::{
     array_schema, cargo_test_count_assertion_schema, job_activity_schema, nullable_schema,
-    permission_decision_schema, recovery_kind_schema, schema_type, session_hint_schema,
-    wrapped_output_schema,
+    observe_job_continuation_schema, permission_decision_schema, recovery_kind_schema, schema_type,
+    session_hint_schema, wrapped_output_schema,
 };
 
 fn validation_job_projection_schema() -> Value {
@@ -98,7 +98,7 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                 "properties": {"promoted_to_job": {"const": true}},
                 "required": ["promoted_to_job"]
             },
-            "then": {"required": ["activity"]}
+            "then": {"required": ["activity", "continuation"]}
         },
         {
             "if": {"required": ["async_handoff_available"]},
@@ -270,6 +270,7 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                 "properties": {
                     "job_id": {"type": "null"},
                     "job_status": {"type": "null"},
+                    "continuation": {"enum": []},
                     "execution_state": {
                         "enum": ["not_started", "outcome_unknown", "completed", "timed_out"]
                     }
@@ -335,6 +336,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
                 "Current Job observation token when a continuation was exposed.",
             ),
         ),
+        ("continuation", observe_job_continuation_schema()),
         ("activity", job_activity_schema()),
         (
             "effective_timeout_secs",
@@ -693,11 +695,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("effective_timeout_secs", schema_type("integer", "Total detached process runtime budget in seconds.")),
                 ("created_at", schema_type("integer", "Durable Job creation timestamp.")),
                 ("observation_token", nullable_schema("string", "Current Job observation token when available.")),
+                ("continuation", observe_job_continuation_schema()),
                 ("last_update_seq", nullable_schema("integer", "Latest agent update sequence when available.")),
                 ("redispatched", schema_type("boolean", "False when bounded replay recovery returns an existing Job.")),
             ]);
             schema["properties"]["output"]["properties"]["execution_source"]["const"] =
                 json!("run_detached_process");
+            require_success_output_field(&mut schema, "continuation");
             Some(schema)
         }
         "run_process" => {
@@ -1018,7 +1022,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         | "session_shell_exec"
         | "session_shell_status"
         | "close_session_shell" => Some(persistent_shell_output_schema()),
-        "run_job" => Some(wrapped_output_schema(vec![
+        "run_job" => {
+            let mut schema = wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
             ("kind", schema_type("string", "Job kind.")),
             ("status", schema_type("string", "Initial job status.")),
@@ -1066,11 +1071,15 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "observation_token",
                 schema_type("string", "Opaque Job-bound observation token. Return it unchanged as after_observation_token for one bounded wait."),
             ),
+            ("continuation", observe_job_continuation_schema()),
             (
                 "last_update_seq",
                 nullable_schema("integer", "Runner protocol diagnostic sequence; not a bounded-wait token."),
             ),
-        ])),
+        ]);
+            require_success_output_field(&mut schema, "continuation");
+            Some(schema)
+        }
         "list_jobs" => Some(wrapped_output_schema(vec![
             (
                 "jobs",

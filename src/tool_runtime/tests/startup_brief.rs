@@ -172,6 +172,8 @@ fn assert_builtin_workflow(output: &Value) {
         .collect::<Vec<_>>()
         .join("\n");
     for phrase in [
+        "cargo_fmt(check=false)",
+        "instead of reproducing rustfmt edits manually",
         "independent read-only inspection",
         "short sync_wait_secs",
         "same-execution Job handoff",

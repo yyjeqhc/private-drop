@@ -1256,7 +1256,7 @@ impl ToolRuntime {
             Err(error) => {
                 return ToolResult::err(command_rejected_message(
                     error,
-                    "query list_jobs and retry the validation if the job could not be handed off.",
+                    "use list_jobs only to recover Job identity/state when the handoff itself failed; do not retry the validation until the original execution is proven safe to retry.",
                 ));
             }
         };
@@ -1279,7 +1279,7 @@ impl ToolRuntime {
             Err(error) => {
                 return ToolResult::err(command_rejected_message(
                     error,
-                    "observe the returned Job from list_jobs before deciding whether any retry is safe.",
+                    "observe the exact returned Job directly when its job_id is retained; use list_jobs only if that identity is no longer available before deciding whether any retry is safe.",
                 ));
             }
         };
@@ -1312,6 +1312,10 @@ impl ToolRuntime {
             &observation.stderr_tail,
             observation.job.activity.as_ref(),
         );
+        let continuation = crate::tool_runtime::jobs::observe_job_continuation(
+            &handoff.job_id,
+            Some(&observation_token),
+        );
         let payload = json!({
             "execution_source": handoff.execution_source,
             "purpose": handoff.purpose,
@@ -1338,6 +1342,7 @@ impl ToolRuntime {
             "stderr_truncated": observation.stderr_truncated,
             "detected_summary": detected_summary,
             "terminal": false,
+            "continuation": continuation,
         });
         guard.disarm();
         ToolResult::ok(payload)

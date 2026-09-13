@@ -1559,6 +1559,16 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::PresentWorkResult {
+                project,
+                session_id,
+            } => self.present_work_result(project, session_id, auth).await,
+
+            ToolCall::WorkResultState {
+                project,
+                session_id,
+            } => self.work_result_state(project, session_id, auth).await,
+
             call @ ToolCall::SessionHandoffSummary { .. } => {
                 let context_continuity_capable = protocol_capabilities.context_continuity
                     && super::tool_definition::runtime_tool_accepts_context_ack(call.tool_name());

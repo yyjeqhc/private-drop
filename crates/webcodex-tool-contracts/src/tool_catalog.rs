@@ -153,6 +153,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         name: TOOL_DISCOVERY_GROUP_REVIEW,
         tools: &[
             "finish_coding_task",
+            "present_work_result",
             "show_changes",
             "git_review_summary",
             "git_diff_hunks",

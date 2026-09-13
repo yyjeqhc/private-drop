@@ -614,6 +614,16 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
         .as_str()
         .expect("go_test handoff observation token")
         .to_string();
+    assert_eq!(result.output["continuation"]["tool"], "observe_jobs");
+    assert_eq!(
+        result.output["continuation"]["arguments"]["items"][0]["job_id"],
+        job_id
+    );
+    assert_eq!(
+        result.output["continuation"]["arguments"]["items"][0]["after_observation_token"],
+        observation_token
+    );
+    assert_eq!(result.output["continuation"]["arguments"]["wait_secs"], 30);
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {
@@ -2776,6 +2786,16 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
                 "phase": "validation_test",
                 "source": "validation_plan"
             },
+            "continuation": {
+                "tool": "observe_jobs",
+                "arguments": {
+                    "items": [{
+                        "job_id": "job-123",
+                        "after_observation_token": "observation"
+                    }],
+                    "wait_secs": 30
+                }
+            },
             "promoted_to_job": true,
             "command_started": true,
             "command_completed": false,
@@ -2801,6 +2821,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
         ("timeout failure", 5),
         ("missing observation_token", 6),
         ("missing activity", 7),
+        ("missing continuation", 8),
     ] {
         let mut invalid = handoff.clone();
         let output = invalid["output"].as_object_mut().unwrap();
@@ -2828,6 +2849,9 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             }
             7 => {
                 output.remove("activity");
+            }
+            8 => {
+                output.remove("continuation");
             }
             _ => unreachable!(),
         }

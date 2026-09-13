@@ -57,6 +57,44 @@ pub fn job_activity_schema() -> Value {
     })
 }
 
+pub fn observe_job_continuation_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Bounded next-call hint for observing the exact already-started Job. Advisory only: it grants no authority, is not a retry token, and never starts background polling.",
+        "properties": {
+            "tool": {"type": "string", "const": "observe_jobs"},
+            "arguments": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 1,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "job_id": {"type": "string", "minLength": 1},
+                                "after_observation_token": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
+                                }
+                            },
+                            "required": ["job_id"]
+                        }
+                    },
+                    "wait_secs": {"type": "integer", "minimum": 1, "maximum": 60}
+                },
+                "required": ["items", "wait_secs"]
+            }
+        },
+        "required": ["tool", "arguments"]
+    })
+}
+
 pub fn exploration_tool_name_schema() -> Value {
     let names = exploration_tool_names().collect::<Vec<_>>();
     json!({

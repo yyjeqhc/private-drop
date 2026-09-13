@@ -242,6 +242,8 @@ mod runtime_tools;
 mod ssh_resource;
 #[path = "mcp_tests/tools.rs"]
 mod tools;
+#[path = "mcp_tests/work_result_app.rs"]
+mod work_result_app;
 
 // =========================================================================
 // HTTP integration tests — exercise the real Salvo router + AuthMiddleware.
