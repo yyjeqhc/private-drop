@@ -4,6 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     let repo_root = repository_root();
+    // target/ may be shared across linked worktrees, so make the worktree path
+    // an explicit build-script input instead of reusing another worktree's Git identity.
+    println!("cargo:rerun-if-env-changed=CARGO_MANIFEST_DIR");
     println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_COMMIT");
     println!("cargo:rerun-if-env-changed=WEBCODEX_GIT_DIRTY");
     println!("cargo:rerun-if-env-changed=WEBCODEX_BUILT_AT");
@@ -72,10 +75,16 @@ fn env_value(name: &str) -> Option<String> {
 }
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    // Cargo can reuse the compiled build script from a shared target directory.
+    // Resolve the manifest directory at execution time so a rerun observes the
+    // current worktree rather than the worktree that compiled this binary.
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    manifest_dir
         .join("../..")
         .canonicalize()
-        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+        .unwrap_or_else(|_| manifest_dir.join("../.."))
 }
 
 fn git_commit_from_git(repo_root: &Path) -> String {
