@@ -134,11 +134,11 @@ Memory provider    Skill providers    Plugin provider
 
 适合提炼的是启动专用的泛型目录投影，不是引入所有资源共用的存储、动态 provider trait 或统一执行方法。这是一个有两个真实消费者、可用差分测试约束的抽象。
 
-### G. 字符串错误分类应停留在边界（后续 Skill-store 小切片已落地）
+### G. 字符串错误分类应停留在边界（后续 Runner Skill provider 小切片已落地）
 
-最初探索时，[runner_skill_store_request](../../src/tool_runtime/skills.rs) 通过 `error.contains(...)` 区分 capability、exact Runner 变化与一般不可用，内部文本变化可能改变模型侧 error kind。后续小切片已经为 Runner Registry 的 Skill-store enqueue 增加 `EnqueueSkillStoreError`，Tool Runtime 通过 typed variants 映射回既有稳定 error kind，不再解析 presentation text。
+最初探索时，[runner_skill_store_request](../../src/tool_runtime/skills.rs) 通过 `error.contains(...)` 区分 capability、exact Runner 变化与一般不可用，内部文本变化可能改变模型侧 error kind。后续小切片已经为 Runner Registry 的 managed Skill-store 与 configured Skill roots enqueue 分别增加 `EnqueueSkillStoreError` / `EnqueueConfiguredSkillRootsError`，Tool Runtime 通过 typed variants 映射回各自既有稳定 error kind，不再解析这两个 provider 的 presentation text。
 
-原有 `enqueue_skill_store -> Result<_, String>` public entry point 仍作为文本兼容边界保留，内部需要分类的调用走 typed entry point；因此这不是全仓错误框架重写，也没有借机修正或重新命名既有 wire/model-facing 错误语义。
+原有 `enqueue_skill_store -> Result<_, String>` 与 `enqueue_configured_skill_roots -> Result<_, String>` public entry points 仍作为文本兼容边界保留，内部需要分类的调用走对应 typed entry point；因此这不是全仓错误框架重写，也没有借机修正或重新命名既有 wire/model-facing 错误语义。
 
 同理，内容 revision、catalog revision、状态 CAS、Job observation token、Session context ACK 虽然都长得像字符串，不应共用“版本号”的业务语义。只在误传风险高、已有具体消费者的接口引入 typed boundary 或 newtype，不要求每个字符串都包装。
 
@@ -194,7 +194,7 @@ Plugin 已有 `NotStarted / OutcomeUnknown / Completed`，见 [plugin.rs](../../
 | 阶段 | 交付 | 保持不变的边界 | 验收方式 |
 |---|---|---|---|
 | 0，本轮 | 启动目录投影的小型复用、基线表征测试、本文 | JSON 形状、顺序、hint、预算、来源发现和权限均不改 | 新旧 JSON oracle 对照，空/不可用/上游截断、Unicode/转义、超大条目；既有 startup 测试 |
-| 1，后续已完成 | 扩展家族 admission 声明归 ToolDefinition；Skill-store enqueue typed error 小切片 | 外部错误、scope、surface、direct/gateway 语义不改 | family/registry invariant、ModelHidden invariant、surface/principal focused tests、typed-to-legacy error-kind 对照 |
+| 1，后续已完成 | 扩展家族 admission 声明归 ToolDefinition；Runner Skill provider enqueue typed error 小切片 | 外部错误、scope、surface、direct/gateway 语义不改 | family/registry invariant、ModelHidden invariant、surface/principal focused tests、typed-to-legacy error-kind 对照 |
 | 2 | Skill observer/resolver 分离；增加来源级诊断与测量 | opaque identity 和请求时授权不改 | 读取触发扫描次数、cold/warm latency、删除/重配/断线/换实例测试 |
 | 3 | 实测需要的缓存、有界并发、DB worker 隔离 | 未知结果/事务/重放语义不改 | 与基线比较 p50/p95、锁等待、内存/字节上限、故障注入 |
 | 4，独立功能设计 | 用户私有命名空间、显式仓库知识复用、统一资源浏览界面 | 不隐式继承权限，不改变执行 cwd | principal 隔离、分享撤销、worktree 来源、冲突展示与迁移方案 |
