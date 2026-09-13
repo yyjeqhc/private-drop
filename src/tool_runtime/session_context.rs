@@ -1,6 +1,6 @@
 use super::sessions;
 use super::tool_definition::runtime_tool_is_shell_like;
-use super::{RecoveryKind, ToolResult, ToolRuntime};
+use super::{RecoveryKind, ToolResult};
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -10,9 +10,6 @@ const SESSION_ATTENTION_MAX_MESSAGES: usize = 3;
 const SESSION_ATTENTION_MAX_BODY_BYTES: usize = 3072;
 const SESSION_CONTINUITY_RECOVERY_EVENT_LIMIT: usize = 20;
 pub(crate) const SESSION_CONTINUITY_RECOVERY_EVENT_BYTES: usize = 48 * 1024;
-const SESSION_RECOVERY_HANDOFF_CHANGED_PATH_LIMIT: usize = 40;
-const SESSION_RECOVERY_HANDOFF_CHANGED_PATH_BYTES: usize = 512;
-const SESSION_RECOVERY_VALIDATION_FAILURE_LIMIT: usize = 3;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionProjectMismatch {
@@ -380,14 +377,34 @@ fn bounded_model_facing_recovery_events(
     events
 }
 
-fn caller_context_state_unknown(recorded: &sessions::RecordedModelFacingToolCall) -> bool {
-    match recorded.ack_session_context_revision {
-        sessions::SessionContextRevisionAck::Unacknowledged
-        | sessions::SessionContextRevisionAck::Invalid => true,
-        sessions::SessionContextRevisionAck::Revision(revision) => {
-            revision > recorded.pre_call_context_revision
-        }
-        sessions::SessionContextRevisionAck::Unsupported => false,
+/// A hint is sufficient to request recovery, never to certify model knowledge.
+fn require_context_recovery(output: &mut Value, status: &str, session_id: &str) {
+    output
+        .as_object_mut()
+        .unwrap()
+        .remove("session_context_revision");
+    output["session_continuity"] = json!({
+        "status": status,
+        "recovery_required": true,
+        "recovery_tool": "session_handoff_summary",
+        "recovery_session_id": session_id,
+    });
+}
+
+/// Only the canonical handoff dispatcher calls this, after authorized execution.
+/// The revision is captured before reading any state; all requested components
+/// must be present and no checkpoint may complete across that observation.
+pub(crate) fn establish_handoff_context_baseline(
+    result: &mut ToolResult,
+    session_id: &str,
+    observed_revision: Option<u64>,
+    current_revision: Option<u64>,
+) {
+    if result.success && observed_revision.is_some() && observed_revision == current_revision {
+        result.output["session_context_revision"] = json!(observed_revision.unwrap());
+        result.output["session_continuity"] = json!({"status": "recovered"});
+    } else {
+        require_context_recovery(&mut result.output, "unacknowledged", session_id);
     }
 }
 
@@ -405,6 +422,30 @@ pub(crate) fn add_session_context_continuity(
         sessions::SessionContextRevisionAck::Unsupported
     ) {
         return false;
+    }
+    // Only a supported non-checkpoint carrier can supply this trusted business
+    // projection. Fence the exact recorder and the completion watermark again:
+    // a different Session's handoff or a concurrent completion proves no baseline.
+    if !recorded.checkpoint_advanced
+        && result
+            .output
+            .pointer("/session_continuity/status")
+            .and_then(Value::as_str)
+            == Some("recovered")
+    {
+        if result.success
+            && result.output.get("session_id").and_then(Value::as_str)
+                == Some(recorded.session_id.as_str())
+            && result
+                .output
+                .get("session_context_revision")
+                .and_then(Value::as_u64)
+                == Some(recorded.context_revision)
+        {
+            return false;
+        }
+        require_context_recovery(&mut result.output, "unacknowledged", &recorded.session_id);
+        return true;
     }
     let pre_response_context_revision = recorded.pre_response_context_revision;
     let (status, ack_revision, needs_recovery, events_after_ack) = match recorded
@@ -455,6 +496,12 @@ pub(crate) fn add_session_context_continuity(
         return false;
     }
 
+    if status != "behind" {
+        result.output = Value::Object(output);
+        require_context_recovery(&mut result.output, status, &recorded.session_id);
+        return true;
+    }
+
     let total_retained = recorded.recovery_events.len();
     let events = bounded_model_facing_recovery_events(recorded);
     let omitted_count = total_retained.saturating_sub(events.len());
@@ -477,177 +524,15 @@ pub(crate) fn add_session_context_continuity(
             "history_lost": recorded.history_lost,
         }),
     );
+    if recorded.history_lost || omitted_count > 0 {
+        output.remove("session_context_revision");
+        let continuity = output.get_mut("session_continuity").unwrap();
+        continuity["recovery_required"] = json!(true);
+        continuity["recovery_tool"] = json!("session_handoff_summary");
+        continuity["recovery_session_id"] = json!(recorded.session_id);
+    }
     result.output = Value::Object(output);
     true
-}
-
-fn bounded_recovery_handoff_changed_paths(value: Option<&Value>) -> Value {
-    let Some(paths) = value.and_then(Value::as_array) else {
-        return value.cloned().unwrap_or(Value::Null);
-    };
-    Value::Array(
-        paths
-            .iter()
-            .filter_map(Value::as_str)
-            .filter(|path| path.len() <= SESSION_RECOVERY_HANDOFF_CHANGED_PATH_BYTES)
-            .take(SESSION_RECOVERY_HANDOFF_CHANGED_PATH_LIMIT)
-            .map(|path| Value::String(path.to_string()))
-            .collect(),
-    )
-}
-
-fn recovery_validation_failure_event(event: &Value) -> Value {
-    json!({
-        "tool_name": event.get("tool_name"),
-        "execution_source": event.get("execution_source"),
-        "identity": event.get("identity"),
-        "assertion_name": event.get("assertion_name"),
-        "purpose": event.get("purpose"),
-        "validation_kind": event.get("validation_kind"),
-        "failure_kind": event.get("failure_kind"),
-        "failure_category": event.get("failure_category"),
-        "exit_code": event.get("exit_code"),
-        "summary": event.get("summary"),
-        "command_summary": event.get("command_summary"),
-        "cwd": event.get("cwd"),
-        "tests_run_count": event.get("tests_run_count"),
-        "tests_passed": event.get("tests_passed"),
-        "tests_failed": event.get("tests_failed"),
-        "zero_tests_run": event.get("zero_tests_run"),
-        "test_count_assertion": event.get("test_count_assertion"),
-    })
-}
-
-fn recovery_validation_failure_set(value: Option<&Value>) -> Value {
-    let count = value
-        .and_then(|value| value.get("count"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let mut events = Vec::new();
-    if let Some(source) = value
-        .and_then(|value| value.get("events"))
-        .and_then(Value::as_array)
-    {
-        for event in source
-            .iter()
-            .rev()
-            .take(SESSION_RECOVERY_VALIDATION_FAILURE_LIMIT)
-        {
-            events.insert(0, recovery_validation_failure_event(event));
-        }
-    }
-    let omitted_count = count.saturating_sub(events.len() as u64);
-    json!({
-        "count": count,
-        "events": events,
-        "omitted_count": omitted_count,
-        "truncated": omitted_count > 0,
-    })
-}
-
-fn recovery_validation_summary(value: Option<&Value>) -> Value {
-    let Some(validation) = value.filter(|value| value.is_object()) else {
-        return value.cloned().unwrap_or(Value::Null);
-    };
-    json!({
-        "available": validation.get("available"),
-        "status": validation.get("status"),
-        "reason": validation.get("reason"),
-        "latest_status": validation.get("latest_status"),
-        "current_evidence": validation.get("current_evidence"),
-        "historical_failures": validation.get("historical_failures"),
-        "resolved_failures": {
-            "count": validation
-                .pointer("/resolved_failures/count")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-        },
-        "unresolved_failures": recovery_validation_failure_set(
-            validation.get("unresolved_failures")
-        ),
-        "source": validation.get("source"),
-        "events_total": validation.get("events_total"),
-        "successes": validation.get("successes"),
-        "failures": validation.get("failures"),
-        "cargo_test_zero_tests_run": validation.get("cargo_test_zero_tests_run"),
-    })
-}
-
-impl ToolRuntime {
-    pub(crate) async fn add_session_history_recovery(
-        &self,
-        result: &mut ToolResult,
-        recorded: &sessions::RecordedModelFacingToolCall,
-        auth: Option<&AuthContext>,
-    ) {
-        let response_recovery_truncated = result
-            .output
-            .pointer("/session_recovery/truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let caller_state_unknown = caller_context_state_unknown(recorded);
-        let recovery_projected = result.output.get("session_recovery").is_some();
-        if !recovery_projected
-            || (!caller_state_unknown && !recorded.history_lost && !response_recovery_truncated)
-        {
-            return;
-        }
-        // Unknown caller state has no proven delta base, so recover the current
-        // Session state rather than replaying retained history from revision zero.
-        // A compact current handoff is also required when a known-behind ACK
-        // cannot receive a complete continuous delta because retention or the
-        // model-facing event/byte cap omitted consequences. In either case the
-        // newest revision is only safe to ACK together with current-state recovery.
-        let project = self
-            .sessions
-            .session_project(&recorded.session_id)
-            .flatten();
-        let handoff = self
-            .session_handoff_summary(
-                recorded.session_id.clone(),
-                project,
-                Some(true),
-                Some(true),
-                Some(true),
-                false,
-                Some(20),
-                auth,
-            )
-            .await;
-        if !handoff.success {
-            // Recovery was required before the newest prefix could be safely
-            // acknowledged. If current-state recovery itself cannot be
-            // produced, do not advertise a revision the caller did not fully
-            // recover; the caller keeps its previous ACK and can retry later.
-            if let Some(output) = result.output.as_object_mut() {
-                output.remove("session_context_revision");
-            }
-            return;
-        }
-        let current = json!({
-            "workspace": handoff.output.get("workspace"),
-            "checkpoints": handoff.output.get("checkpoints"),
-            "validation": recovery_validation_summary(handoff.output.get("validation")),
-            "jobs": handoff.output.get("jobs"),
-            "open_todos": handoff.output.get("open_todos"),
-            "open_risks": handoff.output.get("open_risks"),
-            "open_questions": handoff.output.get("open_questions"),
-            "open_guidance": handoff.output.get("open_guidance"),
-            "recent_decisions": handoff.output.get("recent_decisions"),
-            "work_performed": handoff.output.get("work_performed"),
-            "changed_paths": bounded_recovery_handoff_changed_paths(
-                handoff.output.get("changed_paths")
-            ),
-            "suggested_next_actions": handoff.output.get("suggested_next_actions"),
-        });
-        if let Some(recovery) = result
-            .output
-            .get_mut("session_recovery")
-            .and_then(Value::as_object_mut)
-        {
-            recovery.insert("current_handoff".to_string(), current);
-        }
-    }
 }
 
 pub(crate) fn observe_session_attention_acks(

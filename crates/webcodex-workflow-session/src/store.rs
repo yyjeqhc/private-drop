@@ -1392,8 +1392,8 @@ impl SessionStore {
                     revision
                 }
                 // Missing, malformed, and future ACKs prove no caller-held
-                // prefix. They recover from a compact current-state handoff at
-                // response projection time instead of replaying retained history
+                // prefix. Response projection requests explicit current-state
+                // recovery instead of replaying retained history
                 // as though revision zero had been explicitly acknowledged.
                 _ => pre_response_context_revision,
             };

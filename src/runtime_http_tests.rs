@@ -1481,7 +1481,7 @@ async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
         .iter()
         .find(|event| event["kind"] == "tool_call_finished")
         .expect("recorded REST model-facing result");
-    assert_eq!(finished["context_revision"], 1);
+    assert!(finished.get("context_revision").is_none());
 }
 
 #[tokio::test]

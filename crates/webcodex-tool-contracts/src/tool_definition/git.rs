@@ -1,7 +1,7 @@
 use super::RunnerCapabilityRequirement::GitOrShell;
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, change_summary_like, context_recovery_only, def, git_like, model_spec,
+    adaptive_runtime_direct, change_summary_like, context_reobservable, def, git_like, model_spec,
     require_all_scopes, ToolDefinition, TOOL_CATEGORY_GIT,
 };
 use crate::metadata::{
@@ -16,7 +16,7 @@ use crate::registry::input_schemas::{
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
-        context_recovery_only(change_summary_like(git_like(model_spec(
+        context_reobservable(change_summary_like(git_like(model_spec(
             def(
                 "git_review_summary",
                 super::ToolAuditPolicy::typed_fields(&[
@@ -56,7 +56,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         120,
     ),
     adaptive_runtime_direct(
-        context_recovery_only(change_summary_like(git_like(model_spec(
+        context_reobservable(change_summary_like(git_like(model_spec(
             def(
                 "show_changes",
                 super::ToolAuditPolicy::TYPED_CANONICAL.context(
@@ -120,7 +120,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         "Commit exactly requested changed file paths with an atomic expected_head fence and isolated temporary index; normal Git clean filters may run under job:run authority, ordinary commit hooks are bypassed so they cannot add unrelated paths, and the tool never pushes.",
         git_commit_paths_input_schema,
     )), &[PROJECT_WRITE, JOB_RUN]),
-    context_recovery_only(git_like(model_spec(
+    context_reobservable(git_like(model_spec(
         def(
             "git_status",
             super::ToolAuditPolicy::TYPED_CANONICAL
@@ -146,7 +146,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         git_status_input_schema,
     ))),
     adaptive_runtime_direct(
-        context_recovery_only(change_summary_like(git_like(model_spec(
+        context_reobservable(change_summary_like(git_like(model_spec(
             def(
                 "git_diff_hunks",
                 super::ToolAuditPolicy::typed_fields(&[
@@ -187,7 +187,7 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         )))),
         125,
     ),
-    context_recovery_only(git_like(model_spec(
+    context_reobservable(git_like(model_spec(
         def(
             "git_log",
             super::ToolAuditPolicy::TYPED_CANONICAL.context(

@@ -765,6 +765,12 @@ impl ToolContextContinuityPolicy {
         checkpoint: ContextCheckpointPolicy::OnModelFacingResult,
     };
 
+    /// Ordinary observations can be repeated without checkpoint recovery.
+    pub const REOBSERVABLE: Self = Self {
+        accepts_context_ack: false,
+        checkpoint: ContextCheckpointPolicy::Never,
+    };
+
     pub const RECOVERY_ONLY: Self = Self {
         accepts_context_ack: true,
         checkpoint: ContextCheckpointPolicy::Never,
@@ -946,6 +952,10 @@ const fn context_continuity(
     }
 }
 
+const fn context_reobservable(definition: ToolDefinition) -> ToolDefinition {
+    context_continuity(definition, ToolContextContinuityPolicy::REOBSERVABLE)
+}
+
 const fn context_recovery_only(definition: ToolDefinition) -> ToolDefinition {
     context_continuity(definition, ToolContextContinuityPolicy::RECOVERY_ONLY)
 }
@@ -1017,7 +1027,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     edits::DEFINITIONS,
 ];
 
-const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[context_recovery_only(model_spec(
+const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[context_reobservable(model_spec(
     def(
         "list_tools",
         ToolAuditPolicy::TYPED_CANONICAL,

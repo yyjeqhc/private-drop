@@ -117,14 +117,12 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .expect("Session context ACK guidance");
     assert!(ack_guidance.contains("ack_session_context_revision"));
-    assert!(ack_guidance.contains("session_context_revision exactly"));
-    assert!(ack_guidance.contains("never derive it"));
-    assert!(ack_guidance.contains("No revision"));
-    assert!(ack_guidance.contains("if unknown, omit"));
-    assert!(ack_guidance.contains("Missing/invalid"));
-    assert!(ack_guidance.contains("compact handoff"));
-    assert!(ack_guidance.contains("stale may recover"));
-    assert!(ack_guidance.contains("Nonblocking"));
+    assert!(ack_guidance.contains("Checkpoint/recovery tools"));
+    assert!(ack_guidance.contains("only where exposed"));
+    assert!(ack_guidance.contains("never invent it"));
+    assert!(ack_guidance.contains("If unknown, omit"));
+    assert!(ack_guidance.contains("Session handoff recovery path"));
+    assert!(ack_guidance.contains("nonblocking"));
     let recording_guidance = workflow["model_protocol"]["session_recording"]
         .as_str()
         .expect("Session recording guidance");

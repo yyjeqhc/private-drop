@@ -25,6 +25,15 @@ enum ContextAckShape {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum ContextRecoveryKind {
+    None,
+    Delta,
+    CompactHint,
+    CurrentState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 enum WorkOnProjectSource {
     Project,
     Path,
@@ -87,6 +96,8 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) recovery_kind: Option<String>,
     pub(crate) execution_state: Option<String>,
     pub(crate) context_continuity_eligible: bool,
+    pub(crate) context_recovery_kind: ContextRecoveryKind,
+    pub(crate) context_recovery_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) context_ack_present: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -139,6 +150,11 @@ impl ModelErgonomicsTimer {
     ) -> Option<Self> {
         let definition =
             model_visible_tool_definitions().find(|definition| definition.name == tool_name)?;
+        let context_ack = if definition.context_continuity_policy().accepts_context_ack {
+            context_ack
+        } else {
+            SessionContextRevisionAck::Unsupported
+        };
         let context_ack_shape = match context_ack {
             SessionContextRevisionAck::Unsupported => ContextAckShape::Unsupported,
             SessionContextRevisionAck::Unacknowledged => ContextAckShape::Missing,
@@ -255,7 +271,7 @@ impl ModelErgonomicsCompletion {
         let continuity = continuity_facts(self.context_ack_shape, output);
         let edit = edit_facts(self.tool_name, success, output);
         ModelErgonomicsRecord {
-            schema_version: 4,
+            schema_version: 5,
             tool_name: self.tool_name,
             tool_category: self.tool_category,
             success,
@@ -267,6 +283,8 @@ impl ModelErgonomicsCompletion {
             recovery_kind,
             execution_state: execution_state(output),
             context_continuity_eligible: continuity.eligible,
+            context_recovery_kind: continuity.recovery_kind,
+            context_recovery_bytes: continuity.recovery_bytes,
             context_ack_present: continuity.ack_present,
             context_continuity_status: continuity.status,
             session_recovery_event_count: continuity.recovery_event_count,
@@ -433,6 +451,8 @@ fn edit_conflict_kind(output: &Value) -> Option<String> {
 
 #[derive(Debug)]
 struct ContinuityFacts {
+    recovery_kind: ContextRecoveryKind,
+    recovery_bytes: u64,
     eligible: bool,
     ack_present: Option<bool>,
     status: Option<String>,
@@ -445,6 +465,8 @@ fn continuity_facts(ack_shape: ContextAckShape, output: &Value) -> ContinuityFac
     let eligible = !matches!(ack_shape, ContextAckShape::Unsupported);
     if !eligible {
         return ContinuityFacts {
+            recovery_kind: ContextRecoveryKind::None,
+            recovery_bytes: 0,
             eligible: false,
             ack_present: None,
             status: None,
@@ -458,8 +480,11 @@ fn continuity_facts(ack_shape: ContextAckShape, output: &Value) -> ContinuityFac
         .get("session_context_revision")
         .and_then(Value::as_u64)
         .is_none()
+        && output.get("session_continuity").is_none()
     {
         return ContinuityFacts {
+            recovery_kind: ContextRecoveryKind::None,
+            recovery_bytes: 0,
             eligible: true,
             ack_present,
             status: None,
@@ -471,7 +496,12 @@ fn continuity_facts(ack_shape: ContextAckShape, output: &Value) -> ContinuityFac
     let detailed_status = output
         .pointer("/session_continuity/status")
         .and_then(Value::as_str)
-        .filter(|status| matches!(*status, "exact" | "unacknowledged" | "behind" | "invalid"));
+        .filter(|status| {
+            matches!(
+                *status,
+                "exact" | "unacknowledged" | "behind" | "invalid" | "recovered"
+            )
+        });
     let status = detailed_status.map(str::to_string).or_else(|| {
         let status = match ack_shape {
             ContextAckShape::Missing => "unacknowledged",
@@ -500,7 +530,43 @@ fn continuity_facts(ack_shape: ContextAckShape, output: &Value) -> ContinuityFac
                 .and_then(Value::as_bool)
         })
         .or_else(|| status.as_ref().map(|_| false));
+    let recovery_kind = if status.as_deref() == Some("recovered") {
+        ContextRecoveryKind::CurrentState
+    } else if output
+        .pointer("/session_continuity/recovery_required")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        ContextRecoveryKind::CompactHint
+    } else if recovery_event_count.is_some_and(|count| count > 0) {
+        ContextRecoveryKind::Delta
+    } else {
+        ContextRecoveryKind::None
+    };
+    // Count only the final continuity overlay, including its safe watermark.
+    // Explicit handoff business content is already in serialized_result_bytes.
+    let projection: serde_json::Map<String, Value> = [
+        "session_context_revision",
+        "session_continuity",
+        "session_recovery",
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        output
+            .get(key)
+            .map(|value| (key.to_string(), value.clone()))
+    })
+    .collect();
+    let recovery_bytes = if projection.is_empty() {
+        0
+    } else {
+        serde_json::to_vec(&projection)
+            .map(|bytes| bytes.len() as u64)
+            .unwrap_or(0)
+    };
     ContinuityFacts {
+        recovery_kind,
+        recovery_bytes,
         eligible: true,
         ack_present,
         status,
@@ -596,7 +662,7 @@ mod tests {
         let record = completion("tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
-        assert_eq!(record.schema_version, 4);
+        assert_eq!(record.schema_version, 5);
         assert_eq!(record.work_on_project, None);
         assert!(!serde_json::to_string(&record)
             .unwrap()
@@ -876,7 +942,7 @@ mod tests {
             let record = completion("apply_text_edits", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 4);
+            assert_eq!(record.schema_version, 5);
             assert_eq!(record.edit_surface.as_deref(), Some("canonical"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -991,13 +1057,13 @@ mod tests {
         assert_eq!(unsupported.context_continuity_status, None);
 
         let missing = ModelErgonomicsTimer::start_with_protocol(
-            "read_files",
+            "apply_text_edits",
             &json!({}),
             SessionContextRevisionAck::Unacknowledged,
         )
         .unwrap()
         .finish_after(Duration::ZERO)
-        .record_for_tool_result(&ToolResult::ok(json!({"session_context_revision": 1})))
+        .record_for_tool_result(&ToolResult::ok(json!({"session_continuity": {"status": "unacknowledged", "recovery_required": true, "recovery_tool": "session_handoff_summary"}})))
         .unwrap();
         assert!(missing.context_continuity_eligible);
         assert_eq!(missing.context_ack_present, Some(false));
@@ -1006,9 +1072,14 @@ mod tests {
             Some("unacknowledged")
         );
         assert_eq!(missing.session_recovery_event_count, Some(0));
+        assert_eq!(
+            missing.context_recovery_kind,
+            ContextRecoveryKind::CompactHint
+        );
+        assert!(missing.context_recovery_bytes > 0);
 
         let exact = ModelErgonomicsTimer::start_with_protocol(
-            "read_files",
+            "apply_text_edits",
             &json!({}),
             SessionContextRevisionAck::Revision(1),
         )
@@ -1020,7 +1091,7 @@ mod tests {
         assert_eq!(exact.context_continuity_status.as_deref(), Some("exact"));
 
         let behind = ModelErgonomicsTimer::start_with_protocol(
-            "read_files",
+            "apply_text_edits",
             &json!({}),
             SessionContextRevisionAck::Revision(1),
         )
@@ -1029,30 +1100,24 @@ mod tests {
         .record_for_tool_result(&ToolResult::ok(json!({
             "session_context_revision": 3,
             "session_continuity": {"status": "behind", "history_lost": false},
-            "session_recovery": {"model_facing_events": [{"tool_name": "read_files"}], "truncated": false, "history_lost": false}
+            "session_recovery": {"model_facing_events": [{"tool_name": "apply_text_edits"}], "truncated": false, "history_lost": false}
         })))
         .unwrap();
         assert_eq!(behind.context_ack_present, Some(true));
         assert_eq!(behind.context_continuity_status.as_deref(), Some("behind"));
         assert_eq!(behind.session_recovery_event_count, Some(1));
         assert_eq!(behind.session_history_lost, Some(false));
+        assert_eq!(behind.context_recovery_kind, ContextRecoveryKind::Delta);
 
         let invalid = ModelErgonomicsTimer::start_with_protocol(
-            "read_files",
+            "apply_text_edits",
             &json!({}),
             SessionContextRevisionAck::Invalid,
         )
         .unwrap()
         .finish_after(Duration::ZERO)
         .record_for_tool_result(&ToolResult::ok(json!({
-            "session_context_revision": 4,
-            "session_continuity": {"status": "invalid", "history_lost": false},
-            "session_recovery": {
-                "model_facing_events": [],
-                "truncated": false,
-                "history_lost": false,
-                "current_handoff": {"work_performed": []}
-            }
+            "session_continuity": {"status": "invalid", "recovery_required": true}
         })))
         .unwrap();
         assert_eq!(invalid.context_ack_present, Some(true));
@@ -1062,6 +1127,76 @@ mod tests {
         );
         assert_eq!(invalid.session_recovery_event_count, Some(0));
         assert_eq!(invalid.session_history_lost, Some(false));
+    }
+
+    #[test]
+    fn context_recovery_v5_measures_only_final_projection_without_body_leakage() {
+        let private = "PRIVATE_SESSION_PATH_COMMAND_PROMPT";
+        for (tool, status, expected_kind) in [
+            (
+                "session_handoff_summary",
+                "recovered",
+                ContextRecoveryKind::CurrentState,
+            ),
+            (
+                "apply_text_edits",
+                "unacknowledged",
+                ContextRecoveryKind::CompactHint,
+            ),
+            ("run_process", "behind", ContextRecoveryKind::Delta),
+        ] {
+            let mut projection = json!({"session_continuity": {"status": status}});
+            match expected_kind {
+                ContextRecoveryKind::CurrentState => {
+                    projection["session_context_revision"] = json!(123456789)
+                }
+                ContextRecoveryKind::CompactHint => {
+                    projection["session_continuity"]["recovery_required"] = json!(true);
+                    projection["session_continuity"]["recovery_session_id"] = json!(private);
+                }
+                ContextRecoveryKind::Delta => {
+                    projection["session_recovery"] = json!({
+                        "model_facing_events": [{"body": private}], "truncated": false, "history_lost": false
+                    })
+                }
+                ContextRecoveryKind::None => unreachable!(),
+            }
+            let expected_bytes = serde_json::to_vec(&projection).unwrap().len() as u64;
+            let mut output = projection;
+            output["business_payload"] = json!(private.repeat(100));
+            let record = ModelErgonomicsTimer::start_with_protocol(
+                tool,
+                &json!({}),
+                SessionContextRevisionAck::Unacknowledged,
+            )
+            .unwrap()
+            .finish_after(Duration::ZERO)
+            .record_for_tool_result(&ToolResult::ok(output))
+            .unwrap();
+            assert_eq!(record.schema_version, 5);
+            assert_eq!(record.context_recovery_kind, expected_kind);
+            assert_eq!(record.context_recovery_bytes, expected_bytes);
+            let serialized = serde_json::to_string(&record).unwrap();
+            assert!(!serialized.contains(private));
+            assert!(!serialized.contains("123456789"));
+            assert!(!serialized.contains("session_id"));
+            assert!(!serialized.contains("business_payload"));
+        }
+        for ack in [
+            SessionContextRevisionAck::Unacknowledged,
+            SessionContextRevisionAck::Invalid,
+            SessionContextRevisionAck::Revision(123456789),
+        ] {
+            let record = ModelErgonomicsTimer::start_with_protocol("read_files", &json!({}), ack)
+                .unwrap()
+                .finish_after(Duration::ZERO)
+                .record_for_tool_result(&ToolResult::ok(json!({})))
+                .unwrap();
+            assert!(!record.context_continuity_eligible);
+            assert_eq!(record.context_continuity_status, None);
+            assert_eq!(record.context_recovery_kind, ContextRecoveryKind::None);
+            assert_eq!(record.context_recovery_bytes, 0);
+        }
     }
 
     #[test]
@@ -1076,7 +1211,7 @@ mod tests {
             .finish_after(Duration::ZERO)
             .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
             .unwrap();
-            assert_eq!(record.schema_version, 4);
+            assert_eq!(record.schema_version, 5);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();

@@ -1,8 +1,8 @@
 use super::RunnerCapabilityRequirement::{GitOrShell, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, context_recovery_only, def, model_spec, permission_risk,
-    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
+    adaptive_runtime_direct, context_recovery_only, context_reobservable, def, model_spec,
+    permission_risk, requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
     TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
 use crate::metadata::{
@@ -41,7 +41,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolSessionEvidencePolicy::NONE,
     ),
     adaptive_runtime_direct(
-        context_recovery_only(model_spec(
+        context_reobservable(model_spec(
             def(
                 "work_on_project",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -94,7 +94,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )),
         150,
     ),
-    requires_explicit_business_session(model_spec(
+    requires_explicit_business_session(context_reobservable(model_spec(
         def(
             "session_summary",
             super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -117,7 +117,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, guards, and lifecycle. Uses durable ledger data where session persistence is configured.",
         session_summary_input_schema,
-    )),
+    ))),
     requires_explicit_business_session(permission_risk(
         model_spec(
             def(
@@ -172,7 +172,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         PERMISSION_RISK_WRITE,
     )),
-    requires_explicit_business_session(model_spec(
+    requires_explicit_business_session(context_reobservable(model_spec(
         def(
             "validation_summary",
             super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -195,7 +195,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ),
         "Read bounded structured validation evidence already recorded in an explicit project-scoped session ledger. Does not run Cargo or shell commands, enqueue a Runner request, read project files, mutate the workspace, or replace finish_coding_task.",
         validation_summary_input_schema,
-    )),
+    ))),
     requires_explicit_business_session(model_spec(
         def(
             "post_session_message",
@@ -421,7 +421,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )),
         15,
     ),
-    requires_explicit_business_session(model_spec(
+    requires_explicit_business_session(context_recovery_only(model_spec(
         def(
             "session_handoff_summary",
             super::ToolAuditPolicy::typed_fields(&[
@@ -452,7 +452,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Worker/coordinator read.",
+        "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Use the default full view to recover unknown context; summary_only, limit below 20, or disabled include_* components cannot establish a new ACK baseline. No checkpoint allocation; grants no authority.",
         session_handoff_summary_input_schema,
-    )),
+    ))),
 ];

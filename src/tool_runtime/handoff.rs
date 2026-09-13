@@ -33,7 +33,7 @@ use webcodex_tool_contracts::{
 
 pub(crate) use webcodex_workflow_session::closeout_work_projection;
 
-const DEFAULT_HANDOFF_LIMIT: usize = 20;
+pub(super) const DEFAULT_HANDOFF_LIMIT: usize = 20;
 const MAX_HANDOFF_LIMIT: usize = 100;
 const HANDOFF_CLOSEOUT_SESSION_EVENT_LIMIT: usize = 200;
 const MAX_RECENT_FAILED_TOOLS: usize = 10;

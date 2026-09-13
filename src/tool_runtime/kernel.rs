@@ -642,10 +642,7 @@ impl ToolRuntime {
             );
             super::add_session_hint(&mut result, &self.sessions, session_id);
             if let Some(recorded) = recording.as_ref() {
-                if session_context::add_session_context_continuity(&mut result, recorded) {
-                    self.add_session_history_recovery(&mut result, recorded, context.auth)
-                        .await;
-                }
+                session_context::add_session_context_continuity(&mut result, recorded);
             }
             session_context::add_session_attention_projection(
                 &mut result,
@@ -773,10 +770,7 @@ impl ToolRuntime {
                 );
                 super::add_session_hint(&mut result, &self.sessions, session_id);
                 if let Some(recorded) = recording.as_ref() {
-                    if session_context::add_session_context_continuity(&mut result, recorded) {
-                        self.add_session_history_recovery(&mut result, recorded, context.auth)
-                            .await;
-                    }
+                    session_context::add_session_context_continuity(&mut result, recorded);
                 }
                 session_context::add_session_attention_projection(
                     &mut result,
@@ -872,10 +866,7 @@ impl ToolRuntime {
         if let Some(session_id) = context.session_id {
             super::add_session_hint(&mut result, &self.sessions, session_id);
             if let Some(recorded) = outer_recording.as_ref() {
-                if session_context::add_session_context_continuity(&mut result, recorded) {
-                    self.add_session_history_recovery(&mut result, recorded, context.auth)
-                        .await;
-                }
+                session_context::add_session_context_continuity(&mut result, recorded);
             }
             session_context::add_session_attention_projection(
                 &mut result,

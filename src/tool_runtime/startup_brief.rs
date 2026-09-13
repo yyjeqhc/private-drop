@@ -72,7 +72,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
             "Review the diff; report evidence, limits, and Jobs. finish_coding_task is advisory evidence, not proof."
         ],
         "model_protocol": {
-            "session_context_ack": "Echo session_context_revision exactly in ack_session_context_revision; never derive it. No revision: keep prior ACK; if unknown, omit. Missing/invalid recovers compact handoff; stale may recover delta. Nonblocking.",
+            "session_context_ack": "Checkpoint/recovery tools may expose session_context_revision. Echo the latest retained revision in ack_session_context_revision only where exposed; never invent it. If unknown, omit; use the advertised Session handoff recovery path. ACK is nonblocking.",
             "session_recording": "When work_on_project creates or resumes, pass recording_session_id for recorder provenance only. business session_id may target another Session; it grants no authority.",
             "session_message_ack": "For retained session_attention requires_ack guidance, echo ack_session_message_ids. This request-scoped model-context proof neither resolves messages, grants authority, nor gates execution.",
             "session_message_resolution": "For a handled non-todo, send session_message_resolution on the next ordinary call with recording_session_id; ACK guidance also needs ack_session_message_ids. It cannot predict the main call. Todos use complete_session_message.",

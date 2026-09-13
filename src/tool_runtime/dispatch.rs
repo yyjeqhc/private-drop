@@ -976,7 +976,6 @@ impl ToolRuntime {
         start: Option<sessions::ToolCallStart>,
         tool_name: &str,
         error_kind: Option<&str>,
-        auth: Option<&AuthContext>,
         model_facing: bool,
         ack_observation: Option<&sessions::SessionAckObservation>,
         ack_requested: bool,
@@ -995,10 +994,7 @@ impl ToolRuntime {
             );
             add_session_hint(result, &self.sessions, session_id);
             if let Some(recorded) = recorded.as_ref() {
-                if session_context::add_session_context_continuity(result, recorded) {
-                    self.add_session_history_recovery(result, recorded, auth)
-                        .await;
-                }
+                session_context::add_session_context_continuity(result, recorded);
             }
             if let Some(ack) = ack_observation {
                 session_context::add_session_attention_projection(
@@ -1210,7 +1206,6 @@ impl ToolRuntime {
                 session_start,
                 call.tool_name(),
                 Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
-                auth,
                 inner_model_facing_recording,
                 inner_ack_observation.as_ref(),
                 inner_ack_requested,
@@ -1282,7 +1277,6 @@ impl ToolRuntime {
                     session_start,
                     call.tool_name(),
                     Some(error_kind.as_str()),
-                    auth,
                     inner_model_facing_recording,
                     inner_ack_observation.as_ref(),
                     inner_ack_requested,
@@ -1312,7 +1306,6 @@ impl ToolRuntime {
                     session_start,
                     call.tool_name(),
                     Some("session_guard_denied"),
-                    auth,
                     inner_model_facing_recording,
                     inner_ack_observation.as_ref(),
                     inner_ack_requested,
@@ -1355,7 +1348,6 @@ impl ToolRuntime {
                     session_start,
                     call.tool_name(),
                     None,
-                    auth,
                     inner_model_facing_recording,
                     inner_ack_observation.as_ref(),
                     inner_ack_requested,
@@ -1393,7 +1385,6 @@ impl ToolRuntime {
                         session_start,
                         call.tool_name(),
                         None,
-                        auth,
                         inner_model_facing_recording,
                         inner_ack_observation.as_ref(),
                         inner_ack_requested,
@@ -1447,7 +1438,6 @@ impl ToolRuntime {
                 session_start,
                 tool_name,
                 None,
-                auth,
                 inner_model_facing_recording,
                 inner_ack_observation.as_ref(),
                 inner_ack_requested,
@@ -1570,7 +1560,15 @@ impl ToolRuntime {
             }
 
             call @ ToolCall::SessionHandoffSummary { .. } => {
-                self.dispatch_handoff_tool(call, auth).await
+                let context_continuity_capable = protocol_capabilities.context_continuity
+                    && super::tool_definition::runtime_tool_accepts_context_ack(call.tool_name());
+                self.dispatch_handoff_tool(
+                    call,
+                    auth,
+                    context_continuity_capable,
+                    trusted_recording_session_id,
+                )
+                .await
             }
 
             #[cfg(feature = "workspace-checkpoints")]

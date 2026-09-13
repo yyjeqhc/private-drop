@@ -1,7 +1,7 @@
 use super::RunnerCapabilityRequirement::{GitOrShell, Shell, StructuredProcess};
 use super::ToolVisibility::ModelVisible;
 use super::{
-    adaptive_runtime_direct, context_recovery_only, def, git_like, model_spec, ToolDefinition,
+    adaptive_runtime_direct, context_reobservable, def, git_like, model_spec, ToolDefinition,
     TOOL_CATEGORY_CLEANUP,
 };
 use crate::metadata::{
@@ -15,7 +15,7 @@ use crate::registry::input_schemas::{
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
-    context_recovery_only(model_spec(
+    context_reobservable(model_spec(
         def(
             "workspace_hygiene_check",
             super::ToolAuditPolicy::TYPED_CANONICAL,

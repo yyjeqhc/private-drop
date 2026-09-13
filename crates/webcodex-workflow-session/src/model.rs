@@ -722,7 +722,7 @@ pub struct RecordedModelFacingToolCall {
     pub ack_session_context_revision: SessionContextRevisionAck,
     /// Retained model-facing results strictly after a caller's explicitly proven
     /// revision and before the current ToolResult. Unknown caller state keeps this
-    /// empty and recovers through a compact current handoff instead of revision-zero
+    /// empty and requests explicit current-state recovery instead of revision-zero
     /// replay. The current ToolResult is always excluded from this history delta.
     pub recovery_events: Vec<SessionEvent>,
     pub history_lost: bool,

@@ -333,7 +333,7 @@ async fn http_mcp_work_on_project_preferences_persist_without_private_request_va
     assert_eq!(events[0].operation.as_deref(), Some("work_on_project"));
     let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["schema_version"], 4);
+    assert_eq!(telemetry["schema_version"], 5);
     let facts = &telemetry["work_on_project"];
     assert_eq!(facts["resume_requested"], true);
     assert_eq!(facts["source"], "invalid");

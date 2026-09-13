@@ -418,28 +418,53 @@ fn mcp_context_projection_output_schema() -> Value {
     })
 }
 
-fn add_context_projection_to_output_shape(schema: &mut Value, projection_schema: &Value) {
+fn add_context_projection_to_output_shape(
+    schema: &mut Value,
+    projection_schema: &Value,
+    accepts_context_ack: bool,
+) {
     if schema.get("type").and_then(Value::as_str) == Some("object") {
         if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
             properties.insert("context_projection".to_string(), projection_schema.clone());
+            if accepts_context_ack {
+                properties.insert("session_context_revision".to_string(), json!({
+                    "type": "integer", "minimum": 0,
+                    "description": "Safely recovered Session checkpoint watermark; retain for later ACK."
+                }));
+                properties.insert("session_continuity".to_string(), json!({
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["exact", "behind", "unacknowledged", "invalid", "recovered"]},
+                        "recovery_required": {"type": "boolean"},
+                        "recovery_tool": {"const": "session_handoff_summary"},
+                        "recovery_session_id": {"type": "string"}
+                    },
+                    "required": ["status"]
+                }));
+                properties.insert("session_recovery".to_string(), json!({"type": "object"}));
+            }
         }
     }
     for keyword in ["anyOf", "oneOf", "allOf"] {
         if let Some(branches) = schema.get_mut(keyword).and_then(Value::as_array_mut) {
             for branch in branches {
-                add_context_projection_to_output_shape(branch, projection_schema);
+                add_context_projection_to_output_shape(
+                    branch,
+                    projection_schema,
+                    accepts_context_ack,
+                );
             }
         }
     }
 }
 
-fn add_stateless_context_projection_output_schema(tool: &mut Value) {
+fn add_stateless_context_projection_output_schema(tool: &mut Value, accepts_context_ack: bool) {
     let Some(output_schema) = tool.get_mut("outputSchema") else {
         return;
     };
     let projection_schema = mcp_context_projection_output_schema();
     if let Some(output) = output_schema.pointer_mut("/properties/output") {
-        add_context_projection_to_output_shape(output, &projection_schema);
+        add_context_projection_to_output_shape(output, &projection_schema, accepts_context_ack);
     }
     if let Some(conditions) = output_schema.get_mut("allOf").and_then(Value::as_array_mut) {
         for condition in conditions {
@@ -447,7 +472,11 @@ fn add_stateless_context_projection_output_schema(tool: &mut Value) {
                 if let Some(output) =
                     condition.pointer_mut(&format!("/{branch_name}/properties/output"))
                 {
-                    add_context_projection_to_output_shape(output, &projection_schema);
+                    add_context_projection_to_output_shape(
+                        output,
+                        &projection_schema,
+                        accepts_context_ack,
+                    );
                 }
             }
         }
@@ -541,11 +570,11 @@ pub(super) fn add_stateless_workflow_recorder_metadata(
                     json!({
                         "type": "integer",
                         "minimum": 0,
-                        "description": "Echo the latest Session context revision retained by the model; omit it when unknown. A known behind revision may receive bounded delta recovery; missing, invalid, future, lost-history, or truncated recovery gets a compact current Session handoff. Recovery is nonblocking."
+                        "description": "Echo the latest retained session_context_revision; omit when unknown."
                     }),
                 );
             }
-            add_stateless_context_projection_output_schema(tool);
+            add_stateless_context_projection_output_schema(tool, accepts_context_ack);
         }
     }
 }

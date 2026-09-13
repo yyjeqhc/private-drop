@@ -3,8 +3,9 @@ use super::RunnerCapabilityRequirement::{
 };
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes,
-    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB, TOOL_CATEGORY_JOB,
+    adaptive_runtime_direct, context_reobservable, def, model_spec, permission_risk,
+    require_all_scopes, requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB,
+    TOOL_CATEGORY_JOB,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -208,7 +209,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             "Execute one framed command in an existing Session persistent shell. Primary route is repeated commands on the same named SSH resource while retaining remote cwd/env/exports/functions/umask. Local persistent execution remains supported only when the same local shell process must retain state; ordinary one-shot work should use run_process, run_shell for shell semantics or short tightly related chains, and run_script for program-like shell content. Several commands alone are not a reason to open persistent shell. Commands are serialized in the same shell process.",
             session_shell_exec_input_schema,
     )),
-    requires_explicit_business_session(model_spec(
+    requires_explicit_business_session(context_reobservable(model_spec(
         def(
             "session_shell_status",
             super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -231,7 +232,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         ),
         "Read Runner-authoritative state for an explicit Session persistent shell. This never sends input to the process.",
         session_shell_identity_input_schema,
-    )),
+    ))),
     requires_explicit_business_session(permission_risk(
         model_spec(
             def(
@@ -350,7 +351,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
 
 pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
-        model_spec(
+        context_reobservable(model_spec(
             def(
                 "list_jobs",
                 super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
@@ -375,7 +376,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
             ),
             "List bounded lifecycle metadata for caller-visible Jobs. Inside a coding Session, prefer exact project/session_id filters; status combines with them using AND semantics. stdout/stderr bodies are never included.",
             list_jobs_input_schema,
-        ),
+        )),
         85,
     ),
     def(

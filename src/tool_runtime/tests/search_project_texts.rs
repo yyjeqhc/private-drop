@@ -2390,19 +2390,15 @@ async fn search_project_texts_outer_recording_session_keeps_final_response_under
     assert!(outcome.success);
     let result = outcome.result.expect("model-facing result");
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["session_continuity"]["status"], "behind");
+    assert!(result.output.get("session_continuity").is_none());
+    assert!(result.output.get("session_recovery").is_none());
+    assert!(result.output.get("session_context_revision").is_none());
     assert_eq!(result.output["context_projection"]["timing"], "post_tool");
     assert_eq!(
         result.output["context_projection"]["materials"][0]["key"],
         "webcodex.workflow"
     );
-    assert_eq!(
-        result.output["session_recovery"]["model_facing_events"]
-            .as_array()
-            .unwrap()
-            .len(),
-        20
-    );
+
     assert!(result.output.get("output_truncated").is_none());
     assert!(result.output.get("next_index").is_none());
     assert!(result.output.get("returned_count").is_none());
