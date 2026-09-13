@@ -185,12 +185,16 @@ Missing, malformed or future ACKs no longer replay history or attach automatic `
     "status": "unacknowledged",
     "recovery_required": true,
     "recovery_tool": "session_handoff_summary",
-    "recovery_session_id": "wc_sess_example"
+    "recovery_session_id": "wc_sess_example",
+    "suggested_call": {
+      "tool": "session_handoff_summary",
+      "arguments": {"session_id": "wc_sess_example"}
+    }
   }
 }
 ```
 
-No newest `session_context_revision` accompanies that hint: the current command/edit result alone does not prove knowledge of earlier consequences. Invalid input uses `status=invalid`. Known-behind retention loss or event/byte truncation preserves `status=behind`, `events_after_ack`, bounded retained events and the loss/truncation flags, adds the same recovery guidance, and withholds the newest revision. A partial delta never certifies a complete prefix.
+No newest `session_context_revision` accompanies that hint: the current command/edit result alone does not prove knowledge of earlier consequences. `suggested_call` is the parser-ready minimum recovery invocation, so a caller does not need the complete `session_handoff_summary` schema already loaded; an Adaptive host may invoke the direct callable when available or use the admitted `call_runtime_tool` fallback with the same arguments. Invalid input uses `status=invalid`. Known-behind retention loss or event/byte truncation preserves `status=behind`, `events_after_ack`, bounded retained events and the loss/truncation flags, adds the same recovery guidance, and withholds the newest revision. A partial delta never certifies a complete prefix.
 
 Explicitly call `session_handoff_summary(session_id=...)` with its default complete view (`summary_only=false`, all `include_*` components enabled). Its bounded current Session state establishes a baseline with `session_continuity.status=recovered` and `session_context_revision`; there is no nested second handoff. `recovered` denotes current-state rebaselining, not exact ACK or complete historical replay. The watermark is captured before reading state and checked again after observation and recording. A concurrent checkpoint completion withholds the baseline and requests another handoff. A partial/summary-only view, a display limit below the default 20, or a failed handoff cannot establish a new baseline. A handoff of business Session C cannot certify recorder Session W: omit the outer recorder or use the same Session when recovering. Project/bootstrap identity never selects a recovery Session.
 

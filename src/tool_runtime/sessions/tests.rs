@@ -3538,13 +3538,17 @@ fn session_context_unknown_ack_is_compact_and_never_certifies_latest() {
             json!({
                 "status": status, "recovery_required": true,
                 "recovery_tool": "session_handoff_summary", "recovery_session_id": session.session_id,
+                "suggested_call": {
+                    "tool": "session_handoff_summary",
+                    "arguments": {"session_id": session.session_id},
+                },
             })
         );
         assert!(
             serde_json::to_vec(&response.output["session_continuity"])
                 .unwrap()
                 .len()
-                < 256
+                < 384
         );
     }
     assert_eq!(store.context_revision(&session.session_id), Some(3));
@@ -3640,6 +3644,14 @@ fn session_context_incomplete_delta_requires_explicit_recovery() {
             result.output["session_continuity"]["recovery_tool"],
             "session_handoff_summary"
         );
+        let suggested = &result.output["session_continuity"]["suggested_call"];
+        assert_eq!(suggested["tool"], "session_handoff_summary");
+        assert_eq!(suggested["arguments"]["session_id"], session.session_id);
+        super::super::ToolCall::from_tool_name(
+            suggested["tool"].as_str().unwrap(),
+            suggested["arguments"].clone(),
+        )
+        .expect("context recovery suggested_call must parse");
         assert!(result.output.get("session_context_revision").is_none());
         assert!(result.output["session_recovery"]
             .get("current_handoff")

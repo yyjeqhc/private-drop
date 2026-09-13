@@ -1493,6 +1493,13 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
         missing["session_continuity"]["recovery_tool"],
         "session_handoff_summary"
     );
+    assert_eq!(
+        missing["session_continuity"]["suggested_call"],
+        json!({
+            "tool": "session_handoff_summary",
+            "arguments": {"session_id": session_id},
+        })
+    );
     assert_eq!(runtime.sessions.context_revision(&session_id), Some(4));
 
     // Explicit recovery returns one current-state handoff and a safe baseline.
@@ -1555,6 +1562,10 @@ async fn http_mcp_2026_session_context_revision_recovers_missing_stale_and_inval
     assert!(output.get("session_context_revision").is_none());
     assert_eq!(
         output["session_continuity"]["recovery_session_id"],
+        other.session_id
+    );
+    assert_eq!(
+        output["session_continuity"]["suggested_call"]["arguments"]["session_id"],
         other.session_id
     );
 

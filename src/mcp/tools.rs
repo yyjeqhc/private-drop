@@ -437,7 +437,23 @@ fn add_context_projection_to_output_shape(
                         "status": {"type": "string", "enum": ["exact", "behind", "unacknowledged", "invalid", "recovered"]},
                         "recovery_required": {"type": "boolean"},
                         "recovery_tool": {"const": "session_handoff_summary"},
-                        "recovery_session_id": {"type": "string"}
+                        "recovery_session_id": {"type": "string"},
+                        "suggested_call": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"const": "session_handoff_summary"},
+                                "arguments": {
+                                    "type": "object",
+                                    "properties": {
+                                        "session_id": {"type": "string", "pattern": "^wc_sess_[A-Za-z0-9_]+$"}
+                                    },
+                                    "required": ["session_id"],
+                                    "additionalProperties": false
+                                }
+                            },
+                            "required": ["tool", "arguments"],
+                            "additionalProperties": false
+                        }
                     },
                     "required": ["status"]
                 }));

@@ -377,6 +377,15 @@ fn bounded_model_facing_recovery_events(
     events
 }
 
+fn context_recovery_suggested_call(session_id: &str) -> Value {
+    json!({
+        "tool": "session_handoff_summary",
+        "arguments": {
+            "session_id": session_id,
+        },
+    })
+}
+
 /// A hint is sufficient to request recovery, never to certify model knowledge.
 fn require_context_recovery(output: &mut Value, status: &str, session_id: &str) {
     output
@@ -388,6 +397,7 @@ fn require_context_recovery(output: &mut Value, status: &str, session_id: &str) 
         "recovery_required": true,
         "recovery_tool": "session_handoff_summary",
         "recovery_session_id": session_id,
+        "suggested_call": context_recovery_suggested_call(session_id),
     });
 }
 
@@ -530,6 +540,7 @@ pub(crate) fn add_session_context_continuity(
         continuity["recovery_required"] = json!(true);
         continuity["recovery_tool"] = json!("session_handoff_summary");
         continuity["recovery_session_id"] = json!(recorded.session_id);
+        continuity["suggested_call"] = context_recovery_suggested_call(&recorded.session_id);
     }
     result.output = Value::Object(output);
     true
