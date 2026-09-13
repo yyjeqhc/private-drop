@@ -40,7 +40,7 @@ async fn configured_skill_roots_enqueue_requires_exact_instance_and_explicit_cap
         .unwrap();
     let auth = alice();
 
-    let capability_error = registry
+    let legacy_capability_error = registry
         .enqueue_configured_skill_roots(
             "configured-skills-runner",
             "instance-a",
@@ -50,15 +50,35 @@ async fn configured_skill_roots_enqueue_requires_exact_instance_and_explicit_cap
         )
         .await
         .unwrap_err();
-    assert!(capability_error.contains("configured_skill_roots_capability_unavailable"));
-    assert!(capability_error.contains("configured_skill_roots_read"));
+    assert_eq!(
+        legacy_capability_error,
+        "configured_skill_roots_capability_unavailable: exact Runner does not support configured_skill_roots_read"
+    );
+
+    let capability_error = registry
+        .enqueue_configured_skill_roots_typed(
+            "configured-skills-runner",
+            "instance-a",
+            ConfiguredSkillRootsRequest::List,
+            Some(&auth),
+            "test".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        capability_error,
+        EnqueueConfiguredSkillRootsError::UnsupportedCapability {
+            capability: "configured_skill_roots_read",
+            ..
+        }
+    ));
 
     registry
         .register(configured_skills_registration("instance-a", true))
         .await
         .unwrap();
     let stale_error = registry
-        .enqueue_configured_skill_roots(
+        .enqueue_configured_skill_roots_typed(
             "configured-skills-runner",
             "replacement-instance",
             ConfiguredSkillRootsRequest::List,
@@ -67,7 +87,10 @@ async fn configured_skill_roots_enqueue_requires_exact_instance_and_explicit_cap
         )
         .await
         .unwrap_err();
-    assert!(stale_error.contains("stale Runner"));
+    assert!(matches!(
+        stale_error,
+        EnqueueConfiguredSkillRootsError::RunnerChanged { .. }
+    ));
 
     let inner = registry.inner.lock().await;
     assert!(inner.pending_by_id.is_empty());
@@ -82,7 +105,7 @@ async fn configured_skill_roots_dequeue_rejects_replacement_runner_before_dispat
         .unwrap();
     let auth = alice();
     let (_request_id, receiver) = registry
-        .enqueue_configured_skill_roots(
+        .enqueue_configured_skill_roots_typed(
             "configured-skills-runner",
             "instance-a",
             ConfiguredSkillRootsRequest::List,

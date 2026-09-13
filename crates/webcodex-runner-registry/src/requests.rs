@@ -106,6 +106,54 @@ impl fmt::Display for EnqueueLspError {
 impl std::error::Error for EnqueueLspError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnqueueConfiguredSkillRootsError {
+    InvalidRequest {
+        message: String,
+    },
+    ExactRunnerUnavailable {
+        client_id: String,
+    },
+    ExactRunnerOffline {
+        client_id: String,
+    },
+    RunnerChanged {
+        client_id: String,
+    },
+    UnsupportedCapability {
+        client_id: String,
+        capability: &'static str,
+    },
+    DispatchUnavailable {
+        message: String,
+    },
+}
+
+impl fmt::Display for EnqueueConfiguredSkillRootsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRequest { message } | Self::DispatchUnavailable { message } => {
+                formatter.write_str(message)
+            }
+            Self::ExactRunnerUnavailable { .. } => {
+                formatter.write_str("exact Runner is unavailable")
+            }
+            Self::ExactRunnerOffline { .. } => formatter.write_str(
+                "exact Runner is offline; configured Skill roots request was not dispatched",
+            ),
+            Self::RunnerChanged { .. } => formatter.write_str(
+                "stale Runner identity; configured Skill roots request was not dispatched",
+            ),
+            Self::UnsupportedCapability { capability, .. } => write!(
+                formatter,
+                "configured_skill_roots_capability_unavailable: exact Runner does not support {capability}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EnqueueConfiguredSkillRootsError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnqueueSkillStoreError {
     InvalidRequest {
         message: String,
@@ -1264,9 +1312,33 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         requested_by: String,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        self.enqueue_configured_skill_roots_typed(
+            client_id,
+            expected_runner_instance_id,
+            operation,
+            auth,
+            requested_by,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    /// Typed configured-Skill admission used by in-workspace callers that need
+    /// stable failure classification without parsing presentation text.
+    pub async fn enqueue_configured_skill_roots_typed(
+        &self,
+        client_id: &str,
+        expected_runner_instance_id: &str,
+        operation: ConfiguredSkillRootsRequest,
+        auth: Option<&crate::RunnerAccess>,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), EnqueueConfiguredSkillRootsError>
+    {
         operation
             .validate()
-            .map_err(|_| "invalid configured Skill roots request".to_string())?;
+            .map_err(|_| EnqueueConfiguredSkillRootsError::InvalidRequest {
+                message: "invalid configured Skill roots request".to_string(),
+            })?;
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -1275,34 +1347,36 @@ impl RunnerRegistry {
             requested_by,
             RunnerOperation::ConfiguredSkillRoots(operation),
         )
-        .map_err(|_| "invalid configured Skill roots request".to_string())?;
+        .map_err(|_| EnqueueConfiguredSkillRootsError::InvalidRequest {
+            message: "invalid configured Skill roots request".to_string(),
+        })?;
         let mut inner = self.inner.lock().await;
-        let runner = inner
-            .runners
-            .get(client_id)
-            .ok_or_else(|| "exact Runner is unavailable".to_string())?;
-        assert_runner_access(auth, runner)
-            .map_err(|_| "exact Runner is unavailable".to_string())?;
+        let runner = inner.runners.get(client_id).ok_or_else(|| {
+            EnqueueConfiguredSkillRootsError::ExactRunnerUnavailable {
+                client_id: client_id.to_string(),
+            }
+        })?;
+        assert_runner_access(auth, runner).map_err(|_| {
+            EnqueueConfiguredSkillRootsError::ExactRunnerUnavailable {
+                client_id: client_id.to_string(),
+            }
+        })?;
         if runner.runner_instance_id != expected_runner_instance_id {
-            return Err(
-                "stale Runner identity; configured Skill roots request was not dispatched"
-                    .to_string(),
-            );
+            return Err(EnqueueConfiguredSkillRootsError::RunnerChanged {
+                client_id: client_id.to_string(),
+            });
         }
-        if !runner
-            .runner_features
-            .supports(RunnerFeature::ConfiguredSkillRootsRead)
-        {
-            return Err(
-                "configured_skill_roots_capability_unavailable: exact Runner does not support configured_skill_roots_read"
-                    .to_string(),
-            );
+        let required = RunnerFeature::ConfiguredSkillRootsRead;
+        if !runner.runner_features.supports(required) {
+            return Err(EnqueueConfiguredSkillRootsError::UnsupportedCapability {
+                client_id: client_id.to_string(),
+                capability: required.as_wire_name(),
+            });
         }
         if now_ts().saturating_sub(runner.last_seen) > RUNNER_ONLINE_WINDOW_SECS {
-            return Err(
-                "exact Runner is offline; configured Skill roots request was not dispatched"
-                    .to_string(),
-            );
+            return Err(EnqueueConfiguredSkillRootsError::ExactRunnerOffline {
+                client_id: client_id.to_string(),
+            });
         }
         enqueue_pending_request_locked(
             self.telemetry.as_ref(),
@@ -1312,6 +1386,11 @@ impl RunnerRegistry {
             request,
             Some(tx),
             None,
+        )
+        .map_err(
+            |error| EnqueueConfiguredSkillRootsError::DispatchUnavailable {
+                message: error.to_string(),
+            },
         )?;
         let pending = inner
             .pending_by_id

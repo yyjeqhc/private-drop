@@ -4,7 +4,7 @@ use super::startup_brief::{
 };
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
-use crate::runner_http::{EnqueueSkillStoreError, RunnerFeature};
+use crate::runner_http::{EnqueueConfiguredSkillRootsError, EnqueueSkillStoreError, RunnerFeature};
 use crate::runner_protocol::{ShellFileOpRequest, ShellRunResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -235,7 +235,7 @@ impl ToolRuntime {
         }
         let (request_id, rx) = self
             .runner_registry
-            .enqueue_configured_skill_roots(
+            .enqueue_configured_skill_roots_typed(
                 &client_id,
                 &view.view.runner_instance_id,
                 operation,
@@ -243,15 +243,7 @@ impl ToolRuntime {
                 "skill_runtime".to_string(),
             )
             .await
-            .map_err(|error| {
-                if error.contains("capability_unavailable") {
-                    "configured_skill_roots_capability_unavailable".to_string()
-                } else if error.contains("stale Runner") || error.contains("exact Runner") {
-                    "configured_skill_roots_runner_changed".to_string()
-                } else {
-                    "configured_skill_roots_runner_unavailable".to_string()
-                }
-            })?;
+            .map_err(|error| configured_skill_roots_enqueue_error_kind(&error).to_string())?;
         match tokio::time::timeout(Duration::from_secs(30), rx).await {
             Ok(Ok(response)) => Ok(Some(response)),
             Ok(Err(_)) => Err("configured_skill_roots_runner_unavailable".to_string()),
@@ -1715,6 +1707,25 @@ fn skill_error_dynamic(
     ToolResult::err_with_output(kind.to_string(), output)
 }
 
+fn configured_skill_roots_enqueue_error_kind(
+    error: &EnqueueConfiguredSkillRootsError,
+) -> &'static str {
+    match error {
+        EnqueueConfiguredSkillRootsError::UnsupportedCapability { .. } => {
+            "configured_skill_roots_capability_unavailable"
+        }
+        EnqueueConfiguredSkillRootsError::ExactRunnerUnavailable { .. }
+        | EnqueueConfiguredSkillRootsError::ExactRunnerOffline { .. }
+        | EnqueueConfiguredSkillRootsError::RunnerChanged { .. } => {
+            "configured_skill_roots_runner_changed"
+        }
+        EnqueueConfiguredSkillRootsError::InvalidRequest { .. }
+        | EnqueueConfiguredSkillRootsError::DispatchUnavailable { .. } => {
+            "configured_skill_roots_runner_unavailable"
+        }
+    }
+}
+
 fn skill_store_enqueue_error_kind(error: &EnqueueSkillStoreError) -> &'static str {
     match error {
         EnqueueSkillStoreError::UnsupportedCapability { .. } => {
@@ -2008,6 +2019,52 @@ mod tests {
         );
         assert!(serde_json::to_vec(&explicit).unwrap().len() <= MAX_SKILL_CATALOG_RESULT_BYTES);
         assert_eq!(explicit["offset"], next);
+    }
+
+    #[test]
+    fn configured_skill_roots_enqueue_errors_preserve_legacy_runtime_error_kinds() {
+        let cases = [
+            (
+                EnqueueConfiguredSkillRootsError::UnsupportedCapability {
+                    client_id: "runner-a".to_string(),
+                    capability: "configured_skill_roots_read",
+                },
+                "configured_skill_roots_capability_unavailable",
+            ),
+            (
+                EnqueueConfiguredSkillRootsError::ExactRunnerUnavailable {
+                    client_id: "runner-a".to_string(),
+                },
+                "configured_skill_roots_runner_changed",
+            ),
+            (
+                EnqueueConfiguredSkillRootsError::ExactRunnerOffline {
+                    client_id: "runner-a".to_string(),
+                },
+                "configured_skill_roots_runner_changed",
+            ),
+            (
+                EnqueueConfiguredSkillRootsError::RunnerChanged {
+                    client_id: "runner-a".to_string(),
+                },
+                "configured_skill_roots_runner_changed",
+            ),
+            (
+                EnqueueConfiguredSkillRootsError::InvalidRequest {
+                    message: "invalid configured Skill roots request".to_string(),
+                },
+                "configured_skill_roots_runner_unavailable",
+            ),
+            (
+                EnqueueConfiguredSkillRootsError::DispatchUnavailable {
+                    message: "too many pending requests".to_string(),
+                },
+                "configured_skill_roots_runner_unavailable",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(configured_skill_roots_enqueue_error_kind(&error), expected);
+        }
     }
 
     #[test]
