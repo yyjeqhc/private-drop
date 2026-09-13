@@ -1756,7 +1756,7 @@ async fn api_show_changes_with_session_id() {
             tokio::task::yield_now().await;
         };
         let stdout = format!(
-            "{}{}{}",
+            "{}{}{}{}",
             crate::tool_runtime::framed_show_changes_test_block(
                 'S',
                 "## main\n?? README.md\n",
@@ -1771,6 +1771,11 @@ async fn api_show_changes_with_session_id() {
                 'T',
                 "",
                 "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n"
+            ),
+            crate::tool_runtime::framed_show_changes_test_block(
+                'N',
+                "",
+                "numstat_exit=0\nnumstat_truncated=0\nnumstat_bytes=0\n"
             )
         );
         registry

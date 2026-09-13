@@ -1208,7 +1208,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     let req = wait_for_patch_agent_request(&runtime, "coding-finish").await;
     assert_internal_posix_script_contains(&req, "git status --porcelain=v1 -b");
     let show_changes_stdout = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         crate::tool_runtime::framed_show_changes_test_block(
             'S',
             "## main\n M README.md\n",
@@ -1222,7 +1222,12 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
         crate::tool_runtime::framed_show_changes_test_block(
             'T',
             " README.md | 1 +\n 1 file changed, 1 insertion(+)\n",
-            "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=52\n"
+            "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=48\n"
+        ),
+        crate::tool_runtime::framed_show_changes_test_block(
+            'N',
+            "",
+            "numstat_exit=0\nnumstat_truncated=0\nnumstat_bytes=0\n"
         )
     );
     complete_patch_agent_request(
