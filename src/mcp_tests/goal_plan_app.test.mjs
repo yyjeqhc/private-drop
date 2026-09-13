@@ -135,6 +135,28 @@ test("an input-only Goal retries an unavailable first read without another notif
   assert.equal(view.nodes.status.textContent, "Tracking authoritative Goal state");
 });
 
+
+test("Goal accepts a nested CallToolResult returned by the Host bridge", async () => {
+  const view = app("mcp_goal_plan_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  await view.reply(view.calls("goal_plan_state")[0], { result: toolResult({ goal_plan: plan }) });
+  assert.equal(view.nodes.title.textContent, plan.title);
+  assert.equal(view.nodes.lifecycle.textContent, "Active");
+  assert.equal(view.nodes.status.textContent, "Tracking authoritative Goal state");
+});
+
+test("a conflicting nested CallToolResult still stops Goal polling", async () => {
+  const view = app("mcp_goal_plan_app.html");
+  await view.initialize();
+  view.toolInput(input);
+  await view.reply(view.calls("goal_plan_state")[0], { result: toolResult({ goal_plan: {
+    ...plan, goal_id: `wc_goal_${"2".repeat(32)}`,
+  } }) });
+  assert.equal(view.nodes.status.textContent, "Invalid or conflicting Goal identity");
+  assert.equal(view.timers.size, 0);
+});
+
 test("a conflicting authoritative Goal response stops polling", async () => {
   const view = app("mcp_goal_plan_app.html");
   await view.initialize();
