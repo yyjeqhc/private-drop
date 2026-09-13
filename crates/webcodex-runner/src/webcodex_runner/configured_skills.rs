@@ -34,6 +34,21 @@ struct LiveDiscovery {
     discovery_truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfiguredSkillScanTrigger {
+    CatalogList,
+    ExactReadResolution,
+}
+
+impl ConfiguredSkillScanTrigger {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CatalogList => "catalog_list",
+            Self::ExactReadResolution => "exact_read_resolution",
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct ConfiguredSkillScanStats {
     roots_examined: usize,
@@ -47,12 +62,14 @@ fn observe_configured_skill_scan(
     stats: &ConfiguredSkillScanStats,
     discovery: &LiveDiscovery,
     started: Instant,
+    trigger: ConfiguredSkillScanTrigger,
     outcome_class: &'static str,
 ) {
     tracing::info!(
         event = "configured_skill_source_scan",
         source = "runner_configured",
         operation = "catalog_scan",
+        trigger = trigger.as_str(),
         outcome_class,
         roots_examined = stats.roots_examined as u64,
         directory_entries_scanned = stats.directory_entries_scanned as u64,
@@ -122,6 +139,13 @@ pub(crate) fn handle_configured_skill_roots_request(
 }
 
 fn discover(config: &SkillsConfig) -> Result<LiveDiscovery, String> {
+    discover_with_trigger(config, ConfiguredSkillScanTrigger::CatalogList)
+}
+
+fn discover_with_trigger(
+    config: &SkillsConfig,
+    trigger: ConfiguredSkillScanTrigger,
+) -> Result<LiveDiscovery, String> {
     let mut discovery = LiveDiscovery::default();
     let started = Instant::now();
     let mut stats = ConfiguredSkillScanStats::default();
@@ -191,7 +215,9 @@ fn discover(config: &SkillsConfig) -> Result<LiveDiscovery, String> {
             match load_live_skill(configured_root, &root, &package_name, &mut stats) {
                 Ok(skill) => {
                     if !seen_ids.insert(skill.descriptor.skill_id.clone()) {
-                        observe_configured_skill_scan(&stats, &discovery, started, "error");
+                        observe_configured_skill_scan(
+                            &stats, &discovery, started, trigger, "error",
+                        );
                         return Err("configured_skill_identity_collision".to_string());
                     }
                     discovery.skills.push(skill);
@@ -206,7 +232,7 @@ fn discover(config: &SkillsConfig) -> Result<LiveDiscovery, String> {
     discovery
         .skills
         .sort_by(|left, right| left.descriptor.skill_id.cmp(&right.descriptor.skill_id));
-    observe_configured_skill_scan(&stats, &discovery, started, "success");
+    observe_configured_skill_scan(&stats, &discovery, started, trigger, "success");
     Ok(discovery)
 }
 
@@ -307,7 +333,7 @@ fn read_resource(
     if webcodex_core::sensitive_paths::is_secret_path(&path) {
         return Err("skill_sensitive_path".to_string());
     }
-    let discovery = discover(config)?;
+    let discovery = discover_with_trigger(config, ConfiguredSkillScanTrigger::ExactReadResolution)?;
     let skill = discovery
         .skills
         .into_iter()
