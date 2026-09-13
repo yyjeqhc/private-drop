@@ -98,9 +98,9 @@ Memory provider    Skill providers    Plugin provider
 
 这个收敛没有把 authorization 混入 family：Skill Management 的 admin 要求、Memory conjunctive scopes、Project/Runner authority、permission 与 Session evidence 仍由原 canonical policy 所有；Goal Plan、Work Result、Agent Continuation 的 MCP App/Host capability 也保持独立。Definition invariant 还要求 operator-extension family 必须保持 `ModelHidden`，避免普通 model-visible 工具因误标 family 同时进入通用 registry 与 extension projection。
 
-### B. Skill 发现与精确读取耦合过紧（P1 设计风险；延迟尚未量化）
+### B. Skill 目录观察与精确读取（P1 风险已进入 observer/resolver split）
 
-`discover_project_skills` 逐个读取包定义；`discover_skills` 依次观察项目、configured、managed 来源；`skill_read_file` 也先重建全部目录再按 id 定位。某可选来源观察失败会让整体目录不可用。证据：[skills.rs](../../src/tool_runtime/skills.rs)，562–575、788–803、1376–1416。
+#420 建立 baseline 时，`discover_project_skills` 会逐个读取包定义，`discover_skills` 依次观察 Project、configured、managed 来源，而 `skill_read_file` 也先重建完整目录再按 id 定位。Stage 2 后续实现已把 known-id read 从这个完整 catalog observer 中分离；`skill_list`、startup/context catalog 仍保留完整 `discover_skills` 语义。证据：[skills.rs](../../src/tool_runtime/skills.rs)、[configured_skills.rs](../../crates/webcodex-runner/src/webcodex_runner/configured_skills.rs)。
 
 注意：启动层的 Skill 和 Plugin 已经并行等待，见 [coding_task.rs](../../src/tool_runtime/coding_task.rs)，1232–1269；不能把它描述为整个启动串行。
 
@@ -114,16 +114,23 @@ Memory provider    Skill providers    Plugin provider
 
 Runner configured / managed 的 Server 协议请求虽然携带精确 `skill_id`，`skill_read_file` 目前仍先观察完整跨来源 catalog。仅启用 configured capability 且 Project 为空时，实测 sequence 是 `Project package list -> Configured List -> Configured Read`；仅启用 managed capability 时是 `Project package list -> Managed ListActive -> Managed Read`。mixed project + configured + managed、且 Project 有 1 个 Skill 时，读取 configured target 的 sequence 是 `Project list -> Project definition -> Configured List -> Managed ListActive -> Configured Read`，读取 managed target 只把最后一步换成 `Managed Read`。这明确证明 known-id read 仍观察非目标来源。
 
-Server 侧现已增加 fail-open、低基数的 Skill source observation。固定 `source` 只有 `project / runner_configured / runner_managed`；固定 `operation` 只有 `catalog_list / catalog_definition_read / resource_read / definition_recheck`。Project 层能可靠区分四种操作；configured/managed 在 Server 只声称 `catalog_list` 或 `resource_read`，不伪造 Runner 内部扫描细节。每个已发出的 source request 可观察 request count=1、Server elapsed、Runner response 中已有的 `duration_ms`、stdout response bytes、catalog item count（仅当前层有 authoritative count 时）以及 bounded outcome class。metric sink 仍由 `runtime_metrics` 的 panic guard fail-open；没有 Project/Skill/package/root/resource/query/error body/content/绝对路径/principal 作为 label，也没有修改 ToolResult、Skill JSON、MCP tools/list、Session、Memory、数据库或 Runner wire schema。
+Server 侧的 fail-open、低基数 Skill source observation 继续保留。固定 `source` 只有 `project / runner_configured / runner_managed`；固定 `operation` 现在是 `catalog_list / catalog_definition_read / exact_resolve / resource_read / definition_recheck`。`exact_resolve` 专门标记 known-id membership probe，不把 resolver 流量伪装成 catalog observation 或用户 resource read。每个已发出的 source request 仍可观察 request count=1、Server elapsed、Runner response 中已有的 `duration_ms`、stdout response bytes、catalog item count（仅当前层有 authoritative count 时）以及 bounded outcome class。metric sink 仍由 `runtime_metrics` 的 panic guard fail-open；没有 Project/Skill/package/root/resource/query/error body/content/绝对路径/principal 作为 label，也没有修改 ToolResult、Skill JSON、MCP tools/list、Session、Memory、数据库或 Runner wire schema。
 
-Runner-local blind spot 也用纯 structured tracing 补齐，不新增跨进程 telemetry protocol。configured `discover` 现在记录 `roots_examined`、`directory_entries_scanned`、`definitions_attempted`、`definitions_read`、`definition_bytes_read`、valid/invalid count、truncated、elapsed，并用封闭 `trigger = catalog_list / exact_read_resolution` 区分 catalog observation 与 exact Read 内部重新执行的完整 `discover(config)`；因此两次扫描即使连续发生也不会在 Runner 日志里混成同一种事件。managed exact read 记录 `skill_keys_listed`、为了 opaque-id 匹配实际比较的 `skill_keys_examined`、hit 与 elapsed；其中 `list_skill_keys()` 仍先枚举完整 installed-key 集合，而后续 id 比较在命中时可以提前结束。Server 仍只看到一次 typed Read 的 duration/bytes/outcome，Runner-local scan counters 不会回传或写入业务结果，因此跨进程集中关联这些内部计数仍是明确 blind spot。
+Runner-local tracing 同样继续使用原有事件。configured source 仍记录 `roots_examined`、`directory_entries_scanned`、`definitions_attempted`、`definitions_read`、`definition_bytes_read`、valid/invalid count、truncated、elapsed，并用封闭 `trigger = catalog_list / exact_read_resolution` 区分 use case；区别是 exact Read 已不再内部执行完整 `discover(config)`，而是枚举 bounded package identities、计算既有 opaque id，只对 target-id match 调用 definition loader。managed exact read 仍记录 `skill_keys_listed`、`skill_keys_examined`、hit 与 elapsed；`list_skill_keys()` 的 O(number of keys) 解析仍存在，本阶段没有 reverse index。Runner-local scan counters 仍不回传业务结果，因此跨进程集中关联内部扫描量依旧是 observability blind spot，而不是新 authority。
 
-下一轮 observer/resolver split 必须保持以下前提：
+#### B.2 Stage 2：catalog observer 与 known-id exact resolver 已分离
 
-- **Project**：opaque `skill_id` 不能反推出 package name。可以评估“有界枚举 package names -> 本地计算 candidate opaque ids -> 只读取命中的 package definition/resource”，但删除、重命名、definition revision race、resource 后置 recheck 与 sensitive-path boundary 都必须继续 fail closed。
-- **Configured**：当前 exact `Read` 内部仍完整 `discover(config)`。真正的优化应提供与 configured-root lifecycle 一致的 exact identity resolution/index，而不是让 Server 按错误码盲试来源。
-- **Managed**：协议是 exact `skill_id` Read，但实现仍通过 `list_skill_keys()` 解析 opaque id。可以评估 stable reverse mapping/index，但必须与 Skill store lock、active state、revision install/remove lifecycle 一致；删除后旧 id 绝不能因缓存或索引残留复活。
-- **Cross-source**：不能从 opaque id 前缀猜 source；完整 catalog 当前承担 duplicate `skill_id` fail-closed、name conflict、catalog revision 和 optional-provider failure 语义。optional source unavailable 时是否允许其它 source exact resolution 继续属于外部语义变更，本阶段不改。减少扫描与 partial catalog 必须保持为两个独立改动。
+Stage 2 的 use-case 边界现在是：`skill_list`、startup Skill catalog 与需要完整 descriptor/conflict/revision/diagnostics 的 context catalog 继续调用完整 `discover_skills`；`skill_read_file` 改为内部 typed exact resolver，不再构造完整 `SkillCatalog`。resolver 对 Project、configured、managed 三类 source 分别得到 `Absent / Candidate / NotApplicable / SourceUnavailable` 等封闭状态；opaque id 不携带 source routing 语义，不能按 `wc_skill_...` 前缀猜来源。
+
+Exact resolution 必须证明**requested target id 在所有 applicable sources 中唯一**。Project source 始终适用；Runner 不支持 configured/managed read capability 时该 source 为 `NotApplicable` 并跳过。若 capability 表明 source 适用，但 transport、provider/store 或 response validation 无法可靠回答 membership，则整个 exact resolution fail closed 为既有 `skill_catalog_unavailable`。0 个 valid candidate 是 `skill_not_found`；2 个及以上 valid candidates 同样以 `skill_catalog_unavailable` fail closed。这样只放弃了与当前 target 无关的全局 catalog 完整性检查，没有把 source failure 变成 partial success；`skill_list` 的全局 duplicate-id、name conflict、catalog revision、diagnostics/truncation 语义完全不变。
+
+Project exact resolution 先复用 bounded package-name enumeration，再以 `skill_id(project.resolved_id, package_name)` 本地比较 opaque id，只读取匹配 package 的 `SKILL.md`。7 个 Project Skills 的 characterization 中，`skill_list` 仍是 `1 package list + 7 definition reads = 8 requests`；同一目录的 exact `SKILL.md` read 从旧 `1 + N + 1 = 9` 降为固定的 `package list + target definition probe + actual definition = 3`，普通 resource read 从旧 `1 + N + 1 + 1 = 10` 降为 `package list + target definition probe + resource + definition recheck = 4`。因此 unrelated definition I/O 从 6 次降为 0；post-resource definition recheck、sensitive-path boundary、byte/range bounds 和 revision race 检测均保留。若 Runner-configured/managed capability 不支持，不会额外发 probe 请求。
+
+Configured / managed 的 Server membership probe 直接复用现有 wire-compatible `Read(skill_id, SKILL.md, ...)`，probe 不携带用户 revision expectation。configured-only exact resource read 现在是 `Project package list -> Configured Read probe -> Configured Read actual`，不再需要 `Configured List`；managed-only 对应 `Project package list -> Managed Read probe -> Managed Read actual`，不再需要 `ListActive`。mixed source 下读取 configured 或 managed target 时仍会 probe 另一个 applicable source 来证明唯一性，但不再完整观察其 catalog：当前 sequence 为 `Project package list -> Configured Read probe -> Managed Read probe -> target Read actual`，且 unrelated Project definition 不被读取。
+
+新的 configured Runner identity-first helper 在 24 个 package 的 focused test 中仍扫描 24 个 directory identities，但 valid target resolve 的 `definitions_attempted=1 / definitions_read=1`；两个 unrelated malformed/oversized definitions完全未读取。若 target 自身 malformed，则只 attempt/read target definition 后不产生 valid candidate；target oversized 则只 attempt target，bounded read 在计入 `definitions_read` 前失败。configured resolver继续扫描其它 roots/package identities以检测 target-id ambiguity；没有为性能引入新 request variant、capability bit 或 Server/Runner lockstep requirement。旧兼容 Runner 仍可处理相同 `ConfiguredSkillRootsRequest::Read`，只是其内部实现可能继续较慢。
+
+Revision semantics 保持 source-specific：Project probe revision是该次 snapshot identity，普通 resource 后继续 definition recheck；Configured probe revision会作为实际 resource Read 的 `expected_definition_revision`，因此 probe→read 间变化返回 `skill_definition_changed`；Managed probe只证明 source membership，**不会**把 probe 观察到的 package/definition revision升级为隐式 CAS，最终 managed Read仍只传用户显式 expected revisions。Project/Configured 的 `expected_package_revision` 仍在 target uniqueness 建立后返回 `skill_package_revision_not_supported`。本阶段没有 cache、persistent reverse index、数据库表、background refresh、source priority/shadowing或 partial-success semantics。
 
 ### C. 区分仓库知识身份与执行 worktree 身份（P1 产品设计）
 
@@ -212,13 +219,13 @@ Plugin 已有 `NotStarted / OutcomeUnknown / Completed`，见 [plugin.rs](../../
 |---|---|---|---|
 | 0，本轮 | 启动目录投影的小型复用、基线表征测试、本文 | JSON 形状、顺序、hint、预算、来源发现和权限均不改 | 新旧 JSON oracle 对照，空/不可用/上游截断、Unicode/转义、超大条目；既有 startup 测试 |
 | 1，后续已完成 | 扩展家族 admission 声明归 ToolDefinition；Runner Skill provider enqueue typed error 小切片 | 外部错误、scope、surface、direct/gateway 语义不改 | family/registry invariant、ModelHidden invariant、surface/principal focused tests、typed-to-legacy error-kind 对照 |
-| 2 | Skill observer/resolver 分离；增加来源级诊断与测量 | opaque identity 和请求时授权不改 | 读取触发扫描次数、cold/warm latency、删除/重配/断线/换实例测试 |
+| 2，后续已完成 | Skill catalog observer / known-id exact resolver 分离；来源级诊断与测量 | opaque identity、请求时授权、catalog 完整语义、revision/race 语义不改 | before/after request fanout、duplicate target、source unavailable、revision race、configured identity-first scan tests |
 | 3 | 实测需要的缓存、有界并发、DB worker 隔离 | 未知结果/事务/重放语义不改 | 与基线比较 p50/p95、锁等待、内存/字节上限、故障注入 |
 | 4，独立功能设计 | 用户私有命名空间、显式仓库知识复用、统一资源浏览界面 | 不隐式继承权限，不改变执行 cwd | principal 隔离、分享撤销、worktree 来源、冲突展示与迁移方案 |
 
 区分纯重构和新增功能很重要：共同描述结构可以先不改变任何用户功能；跨 worktree 共享或 user namespace 一定要另行定义产品行为。阶段 4 不应成为阶段 1/2 的前提。
 
-后续复查也进一步收紧了阶段 2 的前置条件：managed Skill 的 wire request 已是 opaque `skill_id` 精确 Read，但 Runner 内部仍扫描 `list_skill_keys()` 来解析该 id；configured Skill 的 Runner read 当前仍会在来源内部执行完整 `discover(config)`；Project Skill 的 opaque id 又不能反推出 package name，只能从有界包名集合计算匹配；完整 catalog 还承担跨来源 duplicate-id fail-closed 检查。因此不要简单把 `skill_read_file` 的 `discover_skills` 删除后按来源盲试。当前已完成来源级 fanout characterization、Server metrics 与不改 wire 的 Runner-local scan tracing；下一步应在这些事实基础上先定义 exact resolution 的失败、重复身份和 lifecycle 一致性语义，再做 observer/resolver 分离。
+阶段 2 已按这些前置条件落地：`skill_read_file` 不再调用完整 `discover_skills`，而是对 bounded Project identities和现有 configured/managed exact Read primitives 做 target-only resolution；所有 applicable source 都参与 target uniqueness 证明，unsupported capability跳过，source uncertainty与 target ambiguity fail closed。configured Runner Read 已改为 identity-first，因此不再为 unrelated packages读取定义；managed Runner 仍通过 `list_skill_keys()` 扫描 opaque id，尚未声称 O(1)。完整 catalog observer继续独立承担全局 duplicate-id、name conflict、catalog revision、diagnostics/truncation。后续若实测需要优化 managed key scan，应另行设计与 store lifecycle一致的 reverse mapping，而不是在本阶段偷加 cache/index。
 
 建议持续关注的指标不是抽象数量，而是：新增一个工具需要改多少个独立分类点；精确 Skill 读取触发多少次 Runner 请求；为了做一个简单选择要给模型多少 schema 字节；失败是否直接给出可执行的下一步；核心改动需要编译和运行哪些无关测试。
 

@@ -24,6 +24,62 @@ fn configured_skill_scan_triggers_are_closed_and_identity_free() {
 }
 
 #[test]
+fn exact_resolution_scans_identities_but_reads_only_target_definition() {
+    let temp = tempfile::tempdir().unwrap();
+    for index in 0..24 {
+        write_skill(
+            temp.path(),
+            &format!("skill-{index:02}"),
+            &format!("skill-{index:02}"),
+            "body",
+        );
+    }
+    fs::write(temp.path().join("skill-03/SKILL.md"), "not frontmatter").unwrap();
+    fs::write(
+        temp.path().join("skill-04/SKILL.md"),
+        vec![b'x'; MAX_SKILL_DEFINITION_BYTES + 1],
+    )
+    .unwrap();
+    let config = SkillsConfig {
+        roots: vec![temp.path().to_path_buf()],
+    };
+    let target_id = configured_skill_id(temp.path(), "skill-23");
+
+    let (resolved, stats) = resolve_live_skill_by_id(&config, &target_id).unwrap();
+    let resolved = resolved.expect("target configured Skill should resolve");
+    assert_eq!(resolved.descriptor.skill_id, target_id);
+    assert_eq!(resolved.descriptor.name, "skill-23");
+    assert_eq!(stats.roots_examined, 1);
+    assert_eq!(stats.directory_entries_scanned, 24);
+    assert_eq!(stats.definitions_attempted, 1);
+    assert_eq!(stats.definitions_read, 1);
+    assert!(stats.definition_bytes_read > 0);
+
+    let resource = read_resource(
+        &config,
+        &target_id,
+        "references/guide.md",
+        1,
+        20,
+        Some(&resolved.descriptor.definition_revision),
+    )
+    .unwrap();
+    assert_eq!(resource.text, "line one\nline two");
+
+    let malformed_id = configured_skill_id(temp.path(), "skill-03");
+    let (malformed, malformed_stats) = resolve_live_skill_by_id(&config, &malformed_id).unwrap();
+    assert!(malformed.is_none());
+    assert_eq!(malformed_stats.definitions_attempted, 1);
+    assert_eq!(malformed_stats.definitions_read, 1);
+
+    let oversized_id = configured_skill_id(temp.path(), "skill-04");
+    let (oversized, oversized_stats) = resolve_live_skill_by_id(&config, &oversized_id).unwrap();
+    assert!(oversized.is_none());
+    assert_eq!(oversized_stats.definitions_attempted, 1);
+    assert_eq!(oversized_stats.definitions_read, 0);
+}
+
+#[test]
 fn empty_roots_preserve_empty_source() {
     let result = handle_configured_skill_roots_request(
         &SkillsConfig::default(),

@@ -236,6 +236,109 @@ fn discover_with_trigger(
     Ok(discovery)
 }
 
+fn resolve_live_skill_by_id(
+    config: &SkillsConfig,
+    target_skill_id: &str,
+) -> Result<(Option<LiveSkill>, ConfiguredSkillScanStats), String> {
+    let mut discovery = LiveDiscovery::default();
+    let started = Instant::now();
+    let mut stats = ConfiguredSkillScanStats::default();
+    for configured_root in &config.roots {
+        stats.roots_examined = stats.roots_examined.saturating_add(1);
+        let root_metadata = match fs::symlink_metadata(configured_root) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                push_diagnostic(
+                    &mut discovery.diagnostics,
+                    "configured_skill_root_not_found",
+                );
+                continue;
+            }
+            Err(_) => {
+                push_diagnostic(
+                    &mut discovery.diagnostics,
+                    "configured_skill_root_unavailable",
+                );
+                continue;
+            }
+        };
+        if metadata_is_link_like(&root_metadata) {
+            push_diagnostic(
+                &mut discovery.diagnostics,
+                "configured_skill_root_link_not_allowed",
+            );
+            continue;
+        }
+        if !root_metadata.is_dir() {
+            push_diagnostic(
+                &mut discovery.diagnostics,
+                "configured_skill_root_not_directory",
+            );
+            continue;
+        }
+        let root = match configured_root.canonicalize() {
+            Ok(root) if root.is_dir() => root,
+            _ => {
+                push_diagnostic(
+                    &mut discovery.diagnostics,
+                    "configured_skill_root_unavailable",
+                );
+                continue;
+            }
+        };
+        let entries = match bounded_root_entries(&root, &mut stats) {
+            Ok(entries) => entries,
+            Err(code) => {
+                if code == "configured_skill_root_scan_limit_exceeded" {
+                    discovery.discovery_truncated = true;
+                }
+                push_diagnostic(&mut discovery.diagnostics, code);
+                continue;
+            }
+        };
+        for package_name in entries {
+            if !valid_package_name(&package_name) {
+                discovery.invalid_count = discovery.invalid_count.saturating_add(1);
+                continue;
+            }
+            if webcodex_core::sensitive_paths::is_secret_path(&package_name) {
+                discovery.invalid_count = discovery.invalid_count.saturating_add(1);
+                continue;
+            }
+            if configured_skill_id(configured_root, &package_name) != target_skill_id {
+                continue;
+            }
+            match load_live_skill(configured_root, &root, &package_name, &mut stats) {
+                Ok(skill) => {
+                    if !discovery.skills.is_empty() {
+                        observe_configured_skill_scan(
+                            &stats,
+                            &discovery,
+                            started,
+                            ConfiguredSkillScanTrigger::ExactReadResolution,
+                            "error",
+                        );
+                        return Err("configured_skill_identity_collision".to_string());
+                    }
+                    discovery.skills.push(skill);
+                }
+                Err(code) => {
+                    discovery.invalid_count = discovery.invalid_count.saturating_add(1);
+                    push_diagnostic(&mut discovery.diagnostics, code);
+                }
+            }
+        }
+    }
+    observe_configured_skill_scan(
+        &stats,
+        &discovery,
+        started,
+        ConfiguredSkillScanTrigger::ExactReadResolution,
+        "success",
+    );
+    Ok((discovery.skills.pop(), stats))
+}
+
 fn bounded_root_entries(
     root: &Path,
     stats: &mut ConfiguredSkillScanStats,
@@ -333,12 +436,8 @@ fn read_resource(
     if webcodex_core::sensitive_paths::is_secret_path(&path) {
         return Err("skill_sensitive_path".to_string());
     }
-    let discovery = discover_with_trigger(config, ConfiguredSkillScanTrigger::ExactReadResolution)?;
-    let skill = discovery
-        .skills
-        .into_iter()
-        .find(|skill| skill.descriptor.skill_id == skill_id)
-        .ok_or_else(|| "skill_not_found".to_string())?;
+    let (skill, _scan_stats) = resolve_live_skill_by_id(config, skill_id)?;
+    let skill = skill.ok_or_else(|| "skill_not_found".to_string())?;
     if expected_definition_revision
         .is_some_and(|expected| expected != skill.descriptor.definition_revision)
     {

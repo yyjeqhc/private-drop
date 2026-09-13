@@ -161,6 +161,8 @@ struct FakeConfiguredSkillState {
     definition_revision: String,
     definition_text: String,
     resource_text: String,
+    read_error: Option<String>,
+    next_definition_revision_after_probe: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -215,7 +217,6 @@ async fn call_kernel_with_fake_operator_store(
             "operator Skill fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
-            kinds.push(request.kind.clone());
             if request.kind == "configured_skill_roots" {
                 let operation: ConfiguredSkillRootsRequest = serde_json::from_str(
                     request
@@ -224,6 +225,13 @@ async fn call_kernel_with_fake_operator_store(
                         .expect("typed configured Skill roots request"),
                 )
                 .unwrap();
+                kinds.push(
+                    match &operation {
+                        ConfiguredSkillRootsRequest::List => "configured_skill_roots:list",
+                        ConfiguredSkillRootsRequest::Read { .. } => "configured_skill_roots:read",
+                    }
+                    .to_string(),
+                );
                 let state = operator
                     .lock()
                     .unwrap()
@@ -257,17 +265,24 @@ async fn call_kernel_with_fake_operator_store(
                         limit,
                         expected_definition_revision,
                     } => {
-                        let error = if skill_id != state.skill_id {
-                            Some("skill_not_found".to_string())
-                        } else if expected_definition_revision
-                            .as_deref()
-                            .is_some_and(|expected| expected != state.definition_revision)
-                        {
-                            Some("skill_definition_changed".to_string())
-                        } else {
-                            None
-                        };
-                        if let Some(error) = error {
+                        let is_identity_probe =
+                            path == "SKILL.md" && expected_definition_revision.is_none();
+                        let next_definition_revision = is_identity_probe
+                            .then(|| state.next_definition_revision_after_probe.clone())
+                            .flatten();
+                        let error = state.read_error.clone().or_else(|| {
+                            if skill_id != state.skill_id {
+                                Some("skill_not_found".to_string())
+                            } else if expected_definition_revision
+                                .as_deref()
+                                .is_some_and(|expected| expected != state.definition_revision)
+                            {
+                                Some("skill_definition_changed".to_string())
+                            } else {
+                                None
+                            }
+                        });
+                        let result = if let Some(error) = error {
                             (None, None, Some(error))
                         } else {
                             let text = if path == "SKILL.md" {
@@ -305,7 +320,17 @@ async fn call_kernel_with_fake_operator_store(
                                 ),
                                 None,
                             )
+                        };
+                        if result.2.is_none() {
+                            if let Some(next_revision) = next_definition_revision {
+                                if let Some(configured) =
+                                    operator.lock().unwrap().configured.as_mut()
+                                {
+                                    configured.definition_revision = next_revision;
+                                }
+                            }
                         }
+                        result
                     }
                 };
                 runtime
@@ -331,6 +356,14 @@ async fn call_kernel_with_fake_operator_store(
                 )
                 .unwrap();
                 let state = operator.lock().unwrap().clone();
+                kinds.push(
+                    match &operation {
+                        SkillStoreRequest::ListActive => "skill_store:list_active",
+                        SkillStoreRequest::Read { .. } => "skill_store:read",
+                        _ => "skill_store:other",
+                    }
+                    .to_string(),
+                );
                 let (exit_code, stdout, error) = match operation {
                     SkillStoreRequest::ListActive => (
                         Some(0),
@@ -377,7 +410,21 @@ async fn call_kernel_with_fake_operator_store(
                         if let Some(error) = error {
                             (None, None, Some(error))
                         } else {
-                            let text = state.resource_text;
+                            let definition_read = path == "SKILL.md";
+                            let text = if definition_read {
+                                format!(
+                                    "---\nname: {}\ndescription: {}\n---\nmanaged definition\n",
+                                    state.name, state.description
+                                )
+                            } else {
+                                state.resource_text
+                            };
+                            let sha256 = if definition_read {
+                                state.definition_revision.clone()
+                            } else {
+                                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                                    .to_string()
+                            };
                             (
                                 Some(0),
                                 Some(
@@ -390,8 +437,7 @@ async fn call_kernel_with_fake_operator_store(
                                         package_revision: state.package_revision,
                                         definition_revision: state.definition_revision,
                                         path,
-                                        sha256: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-                                            .to_string(),
+                                        sha256,
                                         text,
                                         start_line,
                                         end_line: Some(start_line),
@@ -422,6 +468,7 @@ async fn call_kernel_with_fake_operator_store(
                     .await
                     .unwrap();
             } else {
+                kinds.push(request.kind.clone());
                 let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
                 complete_patch_agent_request(
                     runtime,
@@ -632,6 +679,8 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
             definition_revision: configured_revision.to_string(),
             definition_text: "configured definition".to_string(),
             resource_text: "configured resource".to_string(),
+            read_error: None,
+            next_definition_revision_after_probe: None,
         }),
         resource_text: "managed resource".to_string(),
     }));
@@ -691,10 +740,9 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
         configured_read_kinds,
         vec![
             "file_skill_list_packages",
-            "file_skill_read_file",
-            "configured_skill_roots",
-            "skill_store",
-            "configured_skill_roots",
+            "configured_skill_roots:read",
+            "skill_store:read",
+            "configured_skill_roots:read",
         ]
     );
 
@@ -719,16 +767,15 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
         managed_read_kinds,
         vec![
             "file_skill_list_packages",
-            "file_skill_read_file",
-            "configured_skill_roots",
-            "skill_store",
-            "skill_store",
+            "configured_skill_roots:read",
+            "skill_store:read",
+            "skill_store:read",
         ]
     );
 }
 
 #[tokio::test]
-async fn configured_skill_exact_read_observes_project_and_configured_catalog_first() {
+async fn configured_skill_exact_read_uses_read_probe_without_catalog_list() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "configured-skill-read-fanout";
@@ -765,6 +812,8 @@ async fn configured_skill_exact_read_observes_project_and_configured_catalog_fir
             definition_revision: configured_revision.to_string(),
             definition_text: "configured definition".to_string(),
             resource_text: "configured resource".to_string(),
+            read_error: None,
+            next_definition_revision_after_probe: None,
         }),
         resource_text: "unused managed resource".to_string(),
     }));
@@ -779,7 +828,7 @@ async fn configured_skill_exact_read_observes_project_and_configured_catalog_fir
             "path": "references/guide.md",
             "expected_definition_revision": configured_revision,
         }),
-        sources,
+        sources.clone(),
     )
     .await;
     assert!(read.success, "{:?}", read.error);
@@ -788,14 +837,36 @@ async fn configured_skill_exact_read_observes_project_and_configured_catalog_fir
         kinds,
         vec![
             "file_skill_list_packages",
-            "configured_skill_roots",
-            "configured_skill_roots",
+            "configured_skill_roots:read",
+            "configured_skill_roots:read",
         ]
+    );
+
+    let (unsupported_package, unsupported_kinds) = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": configured_id,
+            "expected_package_revision": format!("wc_skillpkg_{}", "f".repeat(64)),
+        }),
+        sources,
+    )
+    .await;
+    assert!(!unsupported_package.success);
+    assert_eq!(
+        unsupported_package.output["error_kind"],
+        "skill_package_revision_not_supported"
+    );
+    assert_eq!(
+        unsupported_kinds,
+        vec!["file_skill_list_packages", "configured_skill_roots:read"]
     );
 }
 
 #[tokio::test]
-async fn managed_skill_exact_read_observes_project_and_managed_catalog_first() {
+async fn managed_skill_exact_read_uses_read_probe_without_list_active() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();
     let client_id = "managed-skill-read-fanout";
@@ -847,7 +918,235 @@ async fn managed_skill_exact_read_observes_project_and_managed_catalog_first() {
     assert_eq!(read.output["text"], "managed resource");
     assert_eq!(
         kinds,
-        vec!["file_skill_list_packages", "skill_store", "skill_store"]
+        vec![
+            "file_skill_list_packages",
+            "skill_store:read",
+            "skill_store:read",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn exact_skill_resolution_fails_closed_on_duplicate_target_across_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "skill-exact-duplicate";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            file_read: true,
+            configured_skill_roots_read: true,
+            skill_store_read: true,
+            ..Default::default()
+        },
+        vec![registered_project(
+            "project",
+            root.path().to_string_lossy().as_ref(),
+        )],
+    )
+    .await;
+    let project = crate::tool_runtime::runner_project_runtime_id(client_id, "project");
+    let duplicate_id = format!("wc_skill_{}", "7".repeat(32));
+    let configured_revision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let managed_revision = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    let managed_package = format!("wc_skillpkg_{}", "a".repeat(64));
+    let sources = Arc::new(Mutex::new(FakeOperatorSkillState {
+        skill_id: duplicate_id.clone(),
+        skill_key: "managed-duplicate-id".to_string(),
+        name: "managed".to_string(),
+        description: "Managed guidance".to_string(),
+        package_revision: managed_package.clone(),
+        definition_revision: managed_revision.to_string(),
+        configured: Some(FakeConfiguredSkillState {
+            skill_id: duplicate_id.clone(),
+            name: "configured".to_string(),
+            description: "Configured guidance".to_string(),
+            definition_revision: configured_revision.to_string(),
+            definition_text: "configured definition".to_string(),
+            resource_text: "configured resource".to_string(),
+            read_error: None,
+            next_definition_revision_after_probe: None,
+        }),
+        resource_text: "managed resource".to_string(),
+    }));
+
+    let (read, kinds) = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": duplicate_id,
+            "path": "references/guide.md",
+            "expected_package_revision": managed_package,
+        }),
+        sources,
+    )
+    .await;
+    assert!(!read.success);
+    assert_eq!(read.output["error_kind"], "skill_catalog_unavailable");
+    assert_eq!(
+        kinds,
+        vec![
+            "file_skill_list_packages",
+            "configured_skill_roots:read",
+            "skill_store:read",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn exact_skill_resolution_fails_closed_when_applicable_source_is_unavailable() {
+    let root = tempfile::tempdir().unwrap();
+    write_skill(
+        root.path(),
+        "alpha",
+        "project-target",
+        "Project target guidance",
+        "project body\n",
+    );
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "skill-exact-source-unavailable";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            file_read: true,
+            configured_skill_roots_read: true,
+            skill_store_read: true,
+            ..Default::default()
+        },
+        vec![registered_project(
+            "project",
+            root.path().to_string_lossy().as_ref(),
+        )],
+    )
+    .await;
+    let project = crate::tool_runtime::runner_project_runtime_id(client_id, "project");
+    let configured_revision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let sources = Arc::new(Mutex::new(FakeOperatorSkillState {
+        skill_id: format!("wc_skill_{}", "8".repeat(32)),
+        skill_key: "unused-managed".to_string(),
+        name: "unused-managed".to_string(),
+        description: "Unused managed guidance".to_string(),
+        package_revision: format!("wc_skillpkg_{}", "b".repeat(64)),
+        definition_revision: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            .to_string(),
+        configured: Some(FakeConfiguredSkillState {
+            skill_id: format!("wc_skill_{}", "9".repeat(32)),
+            name: "configured-unavailable".to_string(),
+            description: "Configured unavailable".to_string(),
+            definition_revision: configured_revision.to_string(),
+            definition_text: "configured definition".to_string(),
+            resource_text: "configured resource".to_string(),
+            read_error: Some("configured_skill_roots_unavailable".to_string()),
+            next_definition_revision_after_probe: None,
+        }),
+        resource_text: "unused managed resource".to_string(),
+    }));
+    let (listed, _) = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_list",
+        json!({"project": project}),
+        sources.clone(),
+    )
+    .await;
+    assert!(listed.success, "{:?}", listed.error);
+    let project_skill_id = skill_by_name(&listed, "project-target")["skill_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (read, kinds) = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({"project": project, "skill_id": project_skill_id}),
+        sources,
+    )
+    .await;
+    assert!(!read.success);
+    assert_eq!(read.output["error_kind"], "skill_catalog_unavailable");
+    assert_eq!(
+        kinds,
+        vec![
+            "file_skill_list_packages",
+            "file_skill_read_file",
+            "configured_skill_roots:read",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn configured_exact_read_pins_probe_revision_across_resource_read() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "configured-skill-exact-race";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            file_read: true,
+            configured_skill_roots_read: true,
+            ..Default::default()
+        },
+        vec![registered_project(
+            "project",
+            root.path().to_string_lossy().as_ref(),
+        )],
+    )
+    .await;
+    let project = crate::tool_runtime::runner_project_runtime_id(client_id, "project");
+    let configured_id = format!("wc_skill_{}", "2".repeat(32));
+    let revision_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let revision_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let sources = Arc::new(Mutex::new(FakeOperatorSkillState {
+        skill_id: format!("wc_skill_{}", "3".repeat(32)),
+        skill_key: "unused-managed".to_string(),
+        name: "unused-managed".to_string(),
+        description: "Unused managed guidance".to_string(),
+        package_revision: format!("wc_skillpkg_{}", "c".repeat(64)),
+        definition_revision: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            .to_string(),
+        configured: Some(FakeConfiguredSkillState {
+            skill_id: configured_id.clone(),
+            name: "configured".to_string(),
+            description: "Configured guidance".to_string(),
+            definition_revision: revision_a.to_string(),
+            definition_text: "configured definition".to_string(),
+            resource_text: "configured resource".to_string(),
+            read_error: None,
+            next_definition_revision_after_probe: Some(revision_b.to_string()),
+        }),
+        resource_text: "unused managed resource".to_string(),
+    }));
+
+    let (read, kinds) = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": configured_id,
+            "path": "references/guide.md",
+        }),
+        sources,
+    )
+    .await;
+    assert!(!read.success);
+    assert_eq!(read.output["error_kind"], "skill_definition_changed");
+    assert_eq!(
+        kinds,
+        vec![
+            "file_skill_list_packages",
+            "configured_skill_roots:read",
+            "configured_skill_roots:read",
+        ]
     );
 }
 
@@ -1023,7 +1322,15 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
         "Alpha guidance",
         "alpha body\n",
     );
-    write_skill(root.path(), "beta", "beta", "Beta guidance", "beta body\n");
+    for index in 0..6 {
+        write_skill(
+            root.path(),
+            &format!("other-{index}"),
+            &format!("other-{index}"),
+            "Unrelated guidance",
+            "unrelated body\n",
+        );
+    }
     let refs = root.path().join(".agents/skills/alpha/references");
     fs::create_dir_all(&refs).unwrap();
     fs::write(refs.join("guide.md"), "resource body\n").unwrap();
@@ -1032,7 +1339,7 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
     let project =
         register_runner_project_at_path(&runtime, "project-skill-read-fanout", "demo", root.path())
             .await;
-    let (listed, _) = call_kernel_with_local_agent(
+    let (listed, listed_kinds) = call_kernel_with_local_agent(
         &runtime,
         "project-skill-read-fanout",
         "skill_list",
@@ -1041,10 +1348,37 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
     )
     .await;
     assert!(listed.success, "{:?}", listed.error);
-    assert_eq!(listed.output["total_count"], 2);
+    assert_eq!(listed.output["total_count"], 7);
+    assert_eq!(listed_kinds.len(), 8);
+    assert_eq!(listed_kinds[0], "file_skill_list_packages");
+    assert!(listed_kinds[1..]
+        .iter()
+        .all(|kind| kind == "file_skill_read_file"));
     let alpha = skill_by_name(&listed, "alpha");
     let skill_id = alpha["skill_id"].as_str().unwrap().to_string();
     let definition_revision = alpha["definition_revision"].as_str().unwrap().to_string();
+
+    let (unsupported_package, unsupported_kinds) = call_kernel_with_local_agent(
+        &runtime,
+        "project-skill-read-fanout",
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": skill_id,
+            "expected_package_revision": format!("wc_skillpkg_{}", "f".repeat(64)),
+        }),
+        true,
+    )
+    .await;
+    assert!(!unsupported_package.success);
+    assert_eq!(
+        unsupported_package.output["error_kind"],
+        "skill_package_revision_not_supported"
+    );
+    assert_eq!(
+        unsupported_kinds,
+        vec!["file_skill_list_packages", "file_skill_read_file"]
+    );
 
     let (definition, definition_kinds) = call_kernel_with_local_agent(
         &runtime,
@@ -1060,7 +1394,6 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
         definition_kinds,
         vec![
             "file_skill_list_packages",
-            "file_skill_read_file",
             "file_skill_read_file",
             "file_skill_read_file",
         ]
@@ -1085,7 +1418,6 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
         resource_kinds,
         vec![
             "file_skill_list_packages",
-            "file_skill_read_file",
             "file_skill_read_file",
             "file_skill_read_file",
             "file_skill_read_file",
