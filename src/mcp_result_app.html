@@ -1,9 +1,9 @@
 <div id="app" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;border:1px solid var(--color-border-primary,rgba(127,127,127,.35));border-radius:12px;max-width:760px;color:var(--color-text-primary,inherit);background:var(--color-background-primary,transparent)">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-    <strong id="title" style="font-size:17px">WebCodex Result</strong>
+    <strong id="title" style="font-size:17px">WebCodex Changes</strong>
     <span id="state" style="font-size:12px">HTML loaded</span>
   </div>
-  <div id="summary" style="margin-top:8px;font-size:13px">Minimal MCP Apps handshake · waiting for a supported result</div>
+  <div id="summary" style="margin-top:8px;font-size:13px">Waiting for a bounded Changes presentation</div>
   <div id="cards" style="display:grid;gap:10px;margin-top:12px"></div>
 </div>
 <script>
@@ -12,6 +12,10 @@
   const PRESENTATION_KEY = "webcodex/presentation";
   const MAX_ITEMS = 8;
   const MAX_TEXT = 256;
+  const DEFAULT_VISIBLE_FILES = 3;
+  const MAX_DIFF_HUNKS = 4;
+  const MAX_DIFF_LINES = 80;
+  const MAX_DIFF_TEXT = 12 * 1024;
   const stateEl = document.getElementById("state");
   const titleEl = document.getElementById("title");
   const summaryEl = document.getElementById("summary");
@@ -24,6 +28,14 @@
     if (typeof value !== "string") return null;
     const chars = Array.from(value);
     return chars.length <= MAX_TEXT ? value : chars.slice(0, MAX_TEXT - 1).join("") + "…";
+  }
+
+  function boundedDiffString(value) {
+    if (typeof value !== "string" || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) return null;
+    const lines = value.split(/\r?\n/).slice(0, MAX_DIFF_LINES);
+    const lineBounded = lines.join("\n");
+    const chars = Array.from(lineBounded);
+    return chars.length <= MAX_DIFF_TEXT ? lineBounded : chars.slice(0, MAX_DIFF_TEXT).join("");
   }
 
   function request(method, params, timeoutMs = 10000) {
@@ -279,50 +291,144 @@
     body.appendChild(line);
   }
 
-  function renderGitChanges(presentation) {
-    const state = presentation.git_available === false
-      ? (presentation.non_git_project === true ? "Non-Git" : "Git unavailable")
-      : presentation.clean === true
-        ? "Clean"
-        : presentation.clean === false ? "Changes" : "Status unavailable";
-    titleEl.textContent = "Git changes";
-    stateEl.textContent = state;
-    const parts = [];
-    const branch = boundedString(presentation.branch);
-    if (branch) parts.push(branch);
-    if (Number.isInteger(presentation.files_total)) parts.push(String(presentation.files_total) + " changed files");
-    const upstream = boundedString(presentation.upstream_status);
-    if (upstream) parts.push("upstream: " + upstream);
-    if (Number.isInteger(presentation.ahead) && presentation.ahead > 0) parts.push(String(presentation.ahead) + " ahead");
-    if (Number.isInteger(presentation.behind) && presentation.behind > 0) parts.push(String(presentation.behind) + " behind");
-    if (presentation.files_truncated === true || presentation.output_truncated === true || presentation.items_truncated === true) parts.push("bounded view");
-    summaryEl.textContent = parts.length ? parts.join(" · ") : state;
+  function changeKindLabel(item) {
+    const status = boundedString(item && item.status);
+    if (status === "added") return "A";
+    if (status === "deleted") return "D";
+    if (status === "renamed") return "R";
+    if (status === "copied") return "C";
+    if (status === "untracked") return "?";
+    if (status === "conflicted") return "!";
+    if (status === "modified") return "M";
+    return "?";
+  }
 
-    appendDetailsCard((body) => {
-      addRow(body, "Git available", typeof presentation.git_available === "boolean" ? (presentation.git_available ? "yes" : "no") : null);
-      addRow(body, "Non-Git project", typeof presentation.non_git_project === "boolean" ? (presentation.non_git_project ? "yes" : "no") : null);
-      addRow(body, "Branch", branch);
-      addRow(body, "Head", presentation.head && typeof presentation.head === "object" ? boundedString(presentation.head.short) : null);
-      addRow(body, "Upstream", upstream);
-      addRow(body, "Upstream reason", boundedString(presentation.upstream_reason_code));
-      addRow(body, "Ahead", Number.isInteger(presentation.ahead) ? presentation.ahead : null);
-      addRow(body, "Behind", Number.isInteger(presentation.behind) ? presentation.behind : null);
-      const observation = presentation.status_observation && typeof presentation.status_observation === "object" ? presentation.status_observation : null;
-      if (observation) {
-        addRow(body, "Status observation", boundedString(observation.status));
-        addRow(body, "Status reason", boundedString(observation.reason_code));
-      }
-      const counts = presentation.counts && typeof presentation.counts === "object" ? presentation.counts : null;
-      if (counts) {
-        for (const [key, label] of [["modified", "Modified"], ["added", "Added"], ["deleted", "Deleted"], ["renamed", "Renamed"], ["copied", "Copied"], ["untracked", "Untracked"], ["conflicted", "Conflicted"], ["staged", "Staged"], ["unstaged", "Unstaged"]]) {
-          addRow(body, label, Number.isInteger(counts[key]) ? counts[key] : null);
-        }
-      }
-      const files = Array.isArray(presentation.files) ? presentation.files.slice(0, MAX_ITEMS) : [];
-      files.forEach((item) => addGitFile(body, item, false));
-      if (presentation.files_truncated === true || presentation.items_truncated === true) addRow(body, "Changed files", "bounded/truncated");
-      if (presentation.output_truncated === true) addRow(body, "Canonical output", "truncated");
+  function appendChangeDiff(card, item) {
+    const hunks = Array.isArray(item.diff_hunks) ? item.diff_hunks.slice(0, MAX_DIFF_HUNKS) : [];
+    if (!hunks.length) return;
+    const details = document.createElement("details");
+    details.style.marginTop = "9px";
+    details.style.borderTop = "1px solid var(--color-border-secondary,rgba(127,127,127,.18))";
+    details.style.paddingTop = "8px";
+    const summary = document.createElement("summary");
+    summary.style.cursor = "pointer";
+    summary.style.fontSize = "12px";
+    summary.style.fontWeight = "600";
+    summary.textContent = "View diff";
+    details.appendChild(summary);
+    hunks.forEach((hunk) => {
+      if (!hunk || typeof hunk !== "object") return;
+      const diff = boundedDiffString(hunk.diff);
+      if (diff === null) return;
+      const pre = document.createElement("pre");
+      pre.style.margin = "8px 0 0";
+      pre.style.padding = "9px 10px";
+      pre.style.borderRadius = "8px";
+      pre.style.overflowX = "auto";
+      pre.style.fontSize = "11px";
+      pre.style.lineHeight = "1.45";
+      pre.style.background = "var(--color-background-secondary,rgba(127,127,127,.08))";
+      pre.textContent = diff;
+      details.appendChild(pre);
     });
+    if (details.childNodes.length > 1) card.appendChild(details);
+  }
+
+  function changeFileCard(item) {
+    if (!item || typeof item !== "object") return null;
+    const path = boundedString(item.path);
+    if (!path) return null;
+    const card = document.createElement("div");
+    card.style.border = "1px solid var(--color-border-secondary,rgba(127,127,127,.22))";
+    card.style.borderRadius = "10px";
+    card.style.padding = "10px 12px";
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "22px minmax(0,1fr) auto";
+    row.style.alignItems = "baseline";
+    row.style.gap = "8px";
+    const kind = document.createElement("strong");
+    kind.style.fontSize = "12px";
+    kind.style.opacity = ".72";
+    kind.textContent = changeKindLabel(item);
+    const name = document.createElement("span");
+    name.style.fontSize = "13px";
+    name.style.fontWeight = "600";
+    name.style.overflowWrap = "anywhere";
+    const oldPath = boundedString(item.old_path);
+    name.textContent = path + (oldPath && oldPath !== path ? " ← " + oldPath : "");
+    const stats = document.createElement("span");
+    stats.style.fontSize = "12px";
+    stats.style.fontVariantNumeric = "tabular-nums";
+    const facts = [];
+    if (Number.isInteger(item.additions) && item.additions >= 0) facts.push("+" + String(item.additions));
+    if (Number.isInteger(item.deletions) && item.deletions >= 0) facts.push("−" + String(item.deletions));
+    stats.textContent = facts.join(" ");
+    row.appendChild(kind);
+    row.appendChild(name);
+    row.appendChild(stats);
+    card.appendChild(row);
+    appendChangeDiff(card, item);
+    return card;
+  }
+
+  function renderGitChanges(presentation) {
+    const branch = boundedString(presentation.branch);
+    const files = Array.isArray(presentation.files) ? presentation.files.slice(0, MAX_ITEMS) : [];
+    const total = Number.isInteger(presentation.files_total) && presentation.files_total >= 0
+      ? presentation.files_total
+      : files.length;
+    if (presentation.git_available === false) {
+      titleEl.textContent = "Changes unavailable";
+      stateEl.textContent = presentation.non_git_project === true ? "Non-Git" : "Git unavailable";
+      summaryEl.textContent = branch || "No reliable Git worktree presentation is available.";
+      return;
+    }
+    if (presentation.clean === true) {
+      titleEl.textContent = "No changes";
+      stateEl.textContent = "Clean";
+      summaryEl.textContent = branch || "Working tree is clean";
+      return;
+    }
+
+    titleEl.textContent = "Changed " + String(total) + (total === 1 ? " file" : " files");
+    const hasLineStats = Number.isInteger(presentation.additions) && presentation.additions >= 0
+      && Number.isInteger(presentation.deletions) && presentation.deletions >= 0;
+    stateEl.textContent = hasLineStats
+      ? "+" + String(presentation.additions) + " −" + String(presentation.deletions)
+        + (presentation.line_stats_partial === true ? " · partial" : "")
+      : "Changes";
+    const parts = [];
+    if (branch) parts.push(branch);
+    const counts = presentation.counts && typeof presentation.counts === "object" ? presentation.counts : null;
+    if (counts && Number.isInteger(counts.conflicted) && counts.conflicted > 0) {
+      parts.push(String(counts.conflicted) + " conflicts");
+    }
+    if (presentation.files_truncated === true || presentation.output_truncated === true || presentation.items_truncated === true || presentation.diff_truncated === true) {
+      parts.push("bounded view");
+    }
+    summaryEl.textContent = parts.length ? parts.join(" · ") : "Review the changed files below";
+
+    const safeCards = files.map(changeFileCard).filter(Boolean);
+    const initiallyVisible = Math.min(DEFAULT_VISIBLE_FILES, safeCards.length);
+    safeCards.slice(0, initiallyVisible).forEach((card) => cardsEl.appendChild(card));
+    if (safeCards.length > initiallyVisible) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.style.justifySelf = "start";
+      button.style.padding = "6px 10px";
+      button.style.borderRadius = "8px";
+      button.style.border = "1px solid var(--color-border-secondary,rgba(127,127,127,.28))";
+      button.style.background = "transparent";
+      button.style.color = "inherit";
+      button.style.cursor = "pointer";
+      button.textContent = "Show " + String(safeCards.length - initiallyVisible) + " more files";
+      button.addEventListener("click", () => {
+        safeCards.slice(initiallyVisible).forEach((card) => cardsEl.insertBefore(card, button));
+        button.remove();
+      }, { once: true });
+      cardsEl.appendChild(button);
+    }
   }
 
   function renderGitReview(presentation) {
@@ -542,8 +648,8 @@
 
   function renderPresentation(presentation) {
     if (!presentation || typeof presentation !== "object" || presentation.version !== 1) {
-      stateEl.textContent = "result unavailable";
-      summaryEl.textContent = "No bounded WebCodex result presentation metadata was attached.";
+      stateEl.textContent = "changes unavailable";
+      summaryEl.textContent = "No bounded WebCodex presentation metadata was attached.";
       clearCards();
       return;
     }
@@ -640,14 +746,14 @@
     try {
       const result = await request("ui/initialize", {
         protocolVersion: APP_PROTOCOL,
-        appInfo: { name: "webcodex-result-app", title: "WebCodex Result", version: "1.1.0" },
+        appInfo: { name: "webcodex-changes-app", title: "WebCodex Changes", version: "2.0.0" },
         appCapabilities: {}
       });
       const protocol = result && typeof result === "object" ? boundedString(result.protocolVersion) : null;
       notify("ui/notifications/initialized", {});
       if (!receivedToolResult) {
         stateEl.textContent = "initialized";
-        summaryEl.textContent = "MCP Apps initialized" + (protocol ? " · " + protocol : "") + " · waiting for a supported result";
+        summaryEl.textContent = "MCP Apps initialized" + (protocol ? " · " + protocol : "") + " · waiting for bounded Changes";
       }
     } catch (error) {
       if (!receivedToolResult) {

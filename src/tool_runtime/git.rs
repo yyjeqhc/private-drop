@@ -2,6 +2,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 #[cfg(test)]
 use std::path::Path;
 use std::time::Duration;
@@ -64,7 +65,7 @@ pub(crate) const SHOW_CHANGES_MAX_STATUS_FILES: usize = 200;
 /// of 256 KiB, with room for protocol framing and error text. That retention
 /// bound is not the polling/WebSocket/QUIC wire ceiling. Bounding happens in the
 /// command itself, never by relying on retained-tail truncation.
-pub(crate) const SHOW_CHANGES_OUTPUT_BUDGET_BYTES: usize = 192 * 1024;
+pub(crate) const SHOW_CHANGES_OUTPUT_BUDGET_BYTES: usize = 224 * 1024;
 /// Reserved protocol space inside the output budget. The observation/result
 /// metadata frames and the diff metadata frame must always remain complete even
 /// when an individual segment overflows its own budget, so the script carves
@@ -81,6 +82,10 @@ const SHOW_CHANGES_PROTOCOL_RESERVE_BYTES: usize = 8 * 1024;
 pub(crate) const SHOW_CHANGES_STATUS_BYTES: usize = 96 * 1024;
 /// Byte budget for the `git diff --stat` segment.
 pub(crate) const SHOW_CHANGES_DIFF_STAT_BYTES: usize = 24 * 1024;
+/// Byte budget for the per-file `git diff --numstat` segment used only to
+/// enrich already-bounded changed-file records with additions/deletions. The
+/// segment is parsed server-side and is never exposed as raw presentation text.
+pub(crate) const SHOW_CHANGES_NUMSTAT_BYTES: usize = 24 * 1024;
 /// Byte budget for the HEAD metadata segment (`git log -1`).
 pub(crate) const SHOW_CHANGES_HEAD_BYTES: usize = 8 * 1024;
 /// Byte budget for the emitted diff hunks segment (hunk bodies, file headers,
@@ -108,6 +113,7 @@ const _: () = assert!(
     SHOW_CHANGES_STATUS_BYTES
         + SHOW_CHANGES_HEAD_BYTES
         + SHOW_CHANGES_DIFF_STAT_BYTES
+        + SHOW_CHANGES_NUMSTAT_BYTES
         + SHOW_CHANGES_DIFF_BYTES
         + SHOW_CHANGES_PROTOCOL_RESERVE_BYTES
         <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES
@@ -628,6 +634,21 @@ pub(crate) fn show_changes_command(
              stat_wire_bytes=$sb; if [ "$sb" -gt 0 ]; then sb=$((sb-1)); fi;
              tm=$(printf 'diff_stat_exit=%s\ndiff_stat_truncated=%s\ndiff_stat_bytes=%s' "$stat_exit_raw" "$se" "$sb");
              printf '%s\n' "$tm"; printf 'WCSF1:T:%010d:%010d\n' "$stat_wire_bytes" "$(( ${#tm}+1 ))";
+           };
+           nb_base=HEAD;
+           if ! git rev-parse --verify HEAD >/dev/null 2>&1; then nb_base=$(printf '' | git hash-object -t tree --stdin 2>/dev/null); fi;
+           { git -c core.quotePath=false diff --no-ext-diff --no-textconv --numstat --no-renames "$nb_base" -- 2>/dev/null; printf '__WEBCODEX_NUMSTAT_EXIT__=%s\n' "$?"; } | {
+             nb=0; ne=0; numstat_exit_raw=; have=0; pending=;
+             while IFS= read -r nline; do
+               next=$nline; nline=$pending; pending=$next;
+               if [ "$have" = 0 ]; then have=1; continue; fi;
+               ll=$((${#nline}+1));
+               if [ "$((nb + ll))" -gt __NUMSTAT_BYTE_BUDGET__ ]; then ne=1; else printf '%s\n' "$nline"; nb=$((nb+ll)); fi;
+             done;
+             case "$pending" in __WEBCODEX_NUMSTAT_EXIT__=*) numstat_exit_raw=${pending#__WEBCODEX_NUMSTAT_EXIT__=} ;; *) numstat_exit_raw= ;; esac;
+             numstat_wire_bytes=$nb; if [ "$nb" -gt 0 ]; then nb=$((nb-1)); fi;
+             nm=$(printf 'numstat_exit=%s\nnumstat_truncated=%s\nnumstat_bytes=%s' "$numstat_exit_raw" "$ne" "$nb");
+             printf '%s\n' "$nm"; printf 'WCSF1:N:%010d:%010d\n' "$numstat_wire_bytes" "$(( ${#nm}+1 ))";
            }__DIFF_PART__;
            final_exit=$?;
            if [ "$exit_raw" -ne 0 ] && [ "$exit_raw" -ge 0 ] 2>/dev/null; then exit "$exit_raw"; else exit "$final_exit"; fi;
@@ -643,6 +664,10 @@ pub(crate) fn show_changes_command(
         .replace(
             "__DIFF_STAT_BUDGET__",
             &SHOW_CHANGES_DIFF_STAT_BYTES.to_string(),
+        )
+        .replace(
+            "__NUMSTAT_BYTE_BUDGET__",
+            &SHOW_CHANGES_NUMSTAT_BYTES.to_string(),
         )
         .replace("__HEAD_BYTE_BUDGET__", &SHOW_CHANGES_HEAD_BYTES.to_string())
         .replace("__DIFF_PART__", &diff_part);
@@ -665,6 +690,7 @@ pub(crate) struct ShowChangesStdout {
     pub(crate) status_result: String,
     pub(crate) head: String,
     pub(crate) stat: String,
+    pub(crate) numstat: String,
     pub(crate) diff: String,
     /// Authoritative status metadata parsed from the current bounded frame.
     /// `None` means the frame was absent or invalid.
@@ -701,6 +727,10 @@ pub(crate) struct ShowChangesStdout {
     pub(crate) diff_stat_truncated: Option<bool>,
     /// Exact bytes in the parsed diff-stat frame.
     pub(crate) diff_stat_bytes: Option<usize>,
+    /// Bounded per-file numstat frame used to enrich status file records.
+    pub(crate) numstat_exit: Option<i32>,
+    pub(crate) numstat_truncated: Option<bool>,
+    pub(crate) numstat_bytes: Option<usize>,
     /// Number of diff hunks the production-side loop returned, parsed from the
     /// trailing diff metadata frame. `None` when `include_diff` is false or the
     /// frame is absent.
@@ -788,7 +818,7 @@ pub(crate) fn framed_clean_show_changes_test_stdout(subject: &str, include_diff:
     let head = format!("commit=abc123\nshort=abc123\nsummary={subject}\n");
     let head_bytes = head.strip_suffix('\n').unwrap_or(&head).len();
     let mut stdout = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         framed_show_changes_test_block(
             'S',
             "## main\n",
@@ -803,6 +833,11 @@ pub(crate) fn framed_clean_show_changes_test_stdout(subject: &str, include_diff:
             'T',
             "",
             "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=0\n"
+        ),
+        framed_show_changes_test_block(
+            'N',
+            "",
+            "numstat_exit=0\nnumstat_truncated=0\nnumstat_bytes=0\n"
         )
     );
     if include_diff {
@@ -824,6 +859,8 @@ fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<
     } else {
         (String::new(), String::new())
     };
+    let (numstat, numstat_meta, start) = parse_show_changes_wire_block(stdout, cursor, b'N')?;
+    cursor = start;
     let (stat, stat_meta, start) = parse_show_changes_wire_block(stdout, cursor, b'T')?;
     cursor = start;
     let (head, head_meta, start) = parse_show_changes_wire_block(stdout, cursor, b'H')?;
@@ -836,6 +873,8 @@ fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<
     let status_result = strip_wire_lf(status_result)?;
     let stat = strip_wire_lf(stat)?;
     let stat_meta = strip_wire_lf(stat_meta)?;
+    let numstat = strip_wire_lf(numstat)?;
+    let numstat_meta = strip_wire_lf(numstat_meta)?;
     let head_meta = strip_wire_lf(head_meta)?;
 
     Some(ShowChangesStdout {
@@ -865,6 +904,10 @@ fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<
             .and_then(|value| value.parse().ok()),
         diff_stat_truncated: parse_optional_bool(&stat_meta, "diff_stat_truncated"),
         diff_stat_bytes: parse_optional_usize(&stat_meta, "diff_stat_bytes"),
+        numstat_exit: parse_status_result_field(&numstat_meta, "numstat_exit")
+            .and_then(|value| value.parse().ok()),
+        numstat_truncated: parse_optional_bool(&numstat_meta, "numstat_truncated"),
+        numstat_bytes: parse_optional_usize(&numstat_meta, "numstat_bytes"),
         diff_hunks_returned: parse_optional_usize(&diff_meta, "diff_hunks_returned"),
         diff_hunks_truncated: parse_optional_bool(&diff_meta, "diff_hunks_truncated"),
         diff_trunc_hunk_count: parse_optional_bool(&diff_meta, "diff_trunc_hunk_count"),
@@ -878,6 +921,7 @@ fn parse_framed_show_changes_stdout(stdout: &str, include_diff: bool) -> Option<
         status_result,
         head: head.to_string(),
         stat,
+        numstat,
         diff,
     })
 }
@@ -1113,6 +1157,14 @@ fn show_changes_transport_safe(
             SHOW_CHANGES_DIFF_STAT_BYTES,
         );
 
+    let numstat_valid = frames.numstat_exit.is_some()
+        && frames.numstat_truncated.is_some()
+        && frame_bytes_match(
+            &frames.numstat,
+            frames.numstat_bytes,
+            SHOW_CHANGES_NUMSTAT_BYTES,
+        );
+
     let diff_valid = if include_diff {
         let (
             Some(_),
@@ -1148,7 +1200,7 @@ fn show_changes_transport_safe(
         true
     };
 
-    status_valid && head_valid && stat_valid && diff_valid
+    status_valid && head_valid && stat_valid && numstat_valid && diff_valid
 }
 
 fn porcelain_path(path_part: &str) -> (String, Option<String>) {
@@ -1293,6 +1345,75 @@ fn diff_stat_status_json(diff_stat_exit: Option<i32>) -> serde_json::Value {
             "status": "output_unavailable", "exit_code": null,
             "reason_code": "git_diff_stat_result_unavailable",
         }),
+    }
+}
+
+fn show_changes_numstat_by_path(numstat: &str) -> BTreeMap<String, (u64, u64)> {
+    let mut stats = BTreeMap::new();
+    for line in numstat.lines() {
+        let mut fields = line.strip_suffix('\r').unwrap_or(line).splitn(3, '\t');
+        let (Some(additions), Some(deletions), Some(raw_path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let (Ok(additions), Ok(deletions)) = (additions.parse::<u64>(), deletions.parse::<u64>())
+        else {
+            continue;
+        };
+        let Some(path) = decode_git_quoted_path(raw_path) else {
+            continue;
+        };
+        stats
+            .entry(path)
+            .and_modify(|entry: &mut (u64, u64)| {
+                entry.0 = entry.0.saturating_add(additions);
+                entry.1 = entry.1.saturating_add(deletions);
+            })
+            .or_insert((additions, deletions));
+    }
+    stats
+}
+
+fn enrich_show_changes_files_with_numstat(files: &mut [Value], frames: &ShowChangesStdout) {
+    if frames.numstat_exit != Some(0) {
+        return;
+    }
+    let stats = show_changes_numstat_by_path(&frames.numstat);
+    for file in files {
+        let Some(file) = file.as_object_mut() else {
+            continue;
+        };
+        // The producer intentionally uses `--no-renames` to keep the bounded
+        // numstat framing path-stable and simple. In that mode Git represents a
+        // rename/copy as full old-path deletion plus full new-path addition, so
+        // summing both paths would manufacture misleading line churn. Leave
+        // those stats unknown until a rename-aware producer is available.
+        if matches!(
+            file.get("status").and_then(Value::as_str),
+            Some("renamed" | "copied")
+        ) {
+            continue;
+        }
+        let path = file.get("path").and_then(Value::as_str);
+        let old_path = file.get("old_path").and_then(Value::as_str);
+        let mut additions = 0u64;
+        let mut deletions = 0u64;
+        let mut observed = false;
+        for candidate in [old_path, path].into_iter().flatten() {
+            if old_path == path && Some(candidate) == path && observed {
+                continue;
+            }
+            if let Some((file_additions, file_deletions)) = stats.get(candidate) {
+                additions = additions.saturating_add(*file_additions);
+                deletions = deletions.saturating_add(*file_deletions);
+                observed = true;
+            }
+        }
+        if observed {
+            file.insert("additions".to_string(), Value::from(additions));
+            file.insert("deletions".to_string(), Value::from(deletions));
+        }
     }
 }
 
@@ -1442,6 +1563,8 @@ pub(crate) fn parse_show_changes_output_with_observation(
         }
     }
 
+    enrich_show_changes_files_with_numstat(&mut files, frames);
+
     let clean = status_observed.then_some(files_total.map_or(files.is_empty(), |total| total == 0));
     let mut warnings = Vec::new();
     if !status_observed {
@@ -1534,6 +1657,9 @@ pub(crate) fn parse_show_changes_output_with_observation(
     }
     if frames.diff_stat_truncated == Some(true) {
         truncation_reasons.push("diff_stat_byte_budget");
+    }
+    if frames.numstat_truncated == Some(true) {
+        truncation_reasons.push("numstat_byte_budget");
     }
     if frames.diff_trunc_hunk_count == Some(true) {
         truncation_reasons.push("diff_hunk_count_limit");

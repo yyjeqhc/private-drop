@@ -495,13 +495,24 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
         import["_meta"]["openai/fileParams"],
         json!(["openaiFileIdRefs"])
     );
+    let show_changes = compact_tools
+        .iter()
+        .find(|tool| tool["name"] == "show_changes")
+        .expect("missing show_changes");
+    assert_eq!(
+        show_changes["_meta"]["ui"]["resourceUri"], MCP_RESULT_UI_RESOURCE_URI,
+        "compact projection lost sparse Changes App metadata for show_changes"
+    );
     let list_jobs = compact_tools
         .iter()
         .find(|tool| tool["name"] == "list_jobs")
         .expect("missing list_jobs");
-    assert_eq!(
-        list_jobs["_meta"]["ui"]["resourceUri"], MCP_RESULT_UI_RESOURCE_URI,
-        "compact projection lost MCP App metadata for list_jobs"
+    assert_ne!(
+        list_jobs
+            .pointer("/_meta/ui/resourceUri")
+            .and_then(Value::as_str),
+        Some(MCP_RESULT_UI_RESOURCE_URI),
+        "routine list_jobs discovery must not create a Changes App card"
     );
     let observe_jobs = compact_tools
         .iter()
@@ -512,7 +523,7 @@ async fn adaptive_runtime_tools_list_is_small_core_plus_gateway() {
             .pointer("/_meta/ui/resourceUri")
             .and_then(Value::as_str),
         Some(MCP_RESULT_UI_RESOURCE_URI),
-        "routine observe_jobs must remain unbound from the Result App"
+        "routine observe_jobs must remain unbound from the Changes App"
     );
     let tools = compact_tools;
     let names: Vec<&str> = tools
