@@ -86,6 +86,132 @@ fn start(
         .unwrap()
 }
 
+struct EndpointTakeoverFixture {
+    assignee: String,
+    task_id: String,
+    task_attempt_id: String,
+    task_attempt_fence: String,
+    task_attempt_controller_generation: i64,
+    initial_lease_expires_at_unix_ms: i64,
+    endpoint_id: String,
+    endpoint_controller_generation: i64,
+    wake_id: String,
+    consume_token: String,
+}
+
+fn attempt_lease_expires_at(db: &Database, attempt_id: &str) -> i64 {
+    db.conn_for_tests()
+        .query_row(
+            "SELECT lease_expires_at_unix_ms FROM wc_agent_task_attempts WHERE attempt_id = ?1",
+            [attempt_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn dispatched_endpoint_takeover_fixture(
+    db: &Database,
+    owner: &CommunicationPrincipal,
+    label: &str,
+    started_at: i64,
+) -> EndpointTakeoverFixture {
+    let assignee = agent(db, owner, &format!("{label}-agent"));
+    let task_id = create_assigned_task(db, owner, &assignee, &format!("{label}-task"));
+    let started = start(
+        db,
+        owner,
+        &task_id,
+        &assignee,
+        &format!("{label}-attempt"),
+        started_at,
+    );
+    assert_eq!(
+        started.attempt.lease_expires_at_unix_ms,
+        started_at + DEFAULT_AGENT_TASK_ATTEMPT_LEASE_MS,
+        "A4b starts with the ordinary short pre-takeover Attempt lease"
+    );
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            started.attempt.attempt_controller_generation,
+            started_at + 1,
+        )
+        .unwrap();
+    let endpoint = db
+        .attach_agent_endpoint(
+            owner,
+            NewAgentEndpoint {
+                agent_id: assignee.clone(),
+                host: "ChatGPT".to_string(),
+                client_attachment_id: Some(format!("{label}-view")),
+                wake_capable: true,
+                idempotency_key: format!("{label}-endpoint"),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    let claim = db
+        .claim_next_agent_wake(
+            owner,
+            &assignee,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.wake.wake_id, execution.execution.wake_id);
+    db.prepare_agent_wake_dispatch(
+        owner,
+        &assignee,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+        &claim.consume_token,
+    )
+    .unwrap();
+    db.complete_agent_wake_delivery(
+        owner,
+        &assignee,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+    )
+    .unwrap();
+    assert_eq!(
+        attempt_lease_expires_at(db, &started.attempt.attempt_id),
+        started.attempt.lease_expires_at_unix_ms,
+        "claim, prepare, and Host dispatch must retain the short pre-takeover lease"
+    );
+    let task_attempt_controller_generation = db
+        .read_agent_task(owner, &task_id)
+        .unwrap()
+        .summary
+        .latest_attempt
+        .unwrap()
+        .attempt_controller_generation;
+    EndpointTakeoverFixture {
+        assignee,
+        task_id,
+        task_attempt_id: started.attempt.attempt_id,
+        task_attempt_fence: started.attempt_fence,
+        task_attempt_controller_generation,
+        initial_lease_expires_at_unix_ms: started.attempt.lease_expires_at_unix_ms,
+        endpoint_id: endpoint.endpoint_id,
+        endpoint_controller_generation: endpoint.controller_generation,
+        wake_id: claim.wake.wake_id,
+        consume_token: claim.consume_token,
+    }
+}
+
 fn coding_binding_intent(label: &str) -> AgentTaskCodingRunBindingIntent {
     AgentTaskCodingRunBindingIntent {
         run_id: format!("wc_agent_run_{label}"),
@@ -2702,11 +2828,245 @@ fn endpoint_continuation_start_is_endpoint_independent_replay_safe_and_payload_f
         .find("bootstrap_agent_conversation")
         .expect("Task continuation must still bootstrap the exact Wake");
     assert!(heartbeat_pos < bootstrap_pos);
+    for required_semantic in [
+        "stale/fence preflight",
+        "OMIT activation_idempotency_key",
+        "already dispatched by the Endpoint continuation carrier",
+        "do not call start_agent_task_endpoint_continuation again",
+        "first successful exact consume establishes the bounded online-turn TaskAttempt execution lease",
+        "does not require a periodic 60-second heartbeat",
+        "heartbeat_agent_task_attempt remains the explicit extension mechanism",
+        "Complete only through complete_agent_task_attempt",
+    ] {
+        assert!(prepared.envelope.resume_hint.contains(required_semantic));
+    }
+    assert!(prepared.envelope.resume_hint.len() < 4_096);
     assert!(!prepared.envelope.resume_hint.contains("Durable work"));
     assert!(!prepared
         .envelope
         .resume_hint
         .contains("Perform bounded durable work without assuming a window or Endpoint."));
+}
+
+#[test]
+fn endpoint_exact_consume_promotes_takeover_lease_once_and_survives_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("agent-task-endpoint-takeover.db");
+    let db = Database::open(&path).unwrap();
+    let owner = principal('0');
+    let started_at = wall_now_ms();
+    let fixture = dispatched_endpoint_takeover_fixture(&db, &owner, "takeover", started_at);
+    assert_eq!(
+        fixture.initial_lease_expires_at_unix_ms,
+        started_at + DEFAULT_AGENT_TASK_ATTEMPT_LEASE_MS
+    );
+
+    let takeover_at = wall_now_ms();
+    assert!(takeover_at < fixture.initial_lease_expires_at_unix_ms);
+    let consumed = db
+        .consume_agent_wake_at(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            &fixture.wake_id,
+            &fixture.consume_token,
+            takeover_at,
+        )
+        .unwrap();
+    assert!(!consumed.already_consumed);
+    assert!(consumed.state_changed);
+    let promoted_lease = takeover_at + AGENT_TASK_ENDPOINT_TAKEOVER_LEASE_MS;
+    assert_eq!(
+        attempt_lease_expires_at(&db, &fixture.task_attempt_id),
+        promoted_lease
+    );
+
+    let replay = db
+        .consume_agent_wake_at(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            &fixture.wake_id,
+            &fixture.consume_token,
+            takeover_at + 120_000,
+        )
+        .unwrap();
+    assert!(replay.already_consumed);
+    assert!(!replay.state_changed);
+    assert_eq!(
+        attempt_lease_expires_at(&db, &fixture.task_attempt_id),
+        promoted_lease,
+        "consume replay must not slide the active-turn lease"
+    );
+
+    drop(db);
+    let reopened = Database::open(&path).unwrap();
+    assert_eq!(
+        attempt_lease_expires_at(&reopened, &fixture.task_attempt_id),
+        promoted_lease,
+        "promoted lease must remain ordinary durable Attempt state after reopen"
+    );
+    let completion_at = fixture.initial_lease_expires_at_unix_ms + 1;
+    assert!(completion_at < promoted_lease);
+    let completed = reopened
+        .complete_agent_task_attempt_at(
+            &owner,
+            &fixture.task_id,
+            &fixture.task_attempt_id,
+            &fixture.assignee,
+            &fixture.task_attempt_fence,
+            fixture.task_attempt_controller_generation,
+            AgentTaskState::Succeeded,
+            Some("completed after original short lease"),
+            None,
+            "takeover-complete",
+            completion_at,
+        )
+        .unwrap();
+    assert_eq!(completed.task.state, AgentTaskState::Succeeded);
+}
+
+#[test]
+fn endpoint_consume_failures_and_expired_source_never_promote_or_revive_attempt() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-endpoint-stale-takeover.db")).unwrap();
+    let owner = principal('1');
+    let started_at = wall_now_ms();
+    let fixture = dispatched_endpoint_takeover_fixture(&db, &owner, "stale-takeover", started_at);
+    let initial_lease = fixture.initial_lease_expires_at_unix_ms;
+
+    let wrong_endpoint = format!("wc_endpoint_{}", "f".repeat(32));
+    assert!(db
+        .consume_agent_wake_at(
+            &owner,
+            &fixture.assignee,
+            &wrong_endpoint,
+            fixture.endpoint_controller_generation,
+            &fixture.wake_id,
+            &fixture.consume_token,
+            started_at + 10,
+        )
+        .is_err());
+    assert_eq!(
+        attempt_lease_expires_at(&db, &fixture.task_attempt_id),
+        initial_lease
+    );
+
+    assert!(db
+        .consume_agent_wake_at(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation + 1,
+            &fixture.wake_id,
+            &fixture.consume_token,
+            started_at + 20,
+        )
+        .is_err());
+    assert_eq!(
+        attempt_lease_expires_at(&db, &fixture.task_attempt_id),
+        initial_lease
+    );
+
+    let wrong_token = format!("wc_wake_consume_{}", "e".repeat(32));
+    assert_eq!(
+        db.consume_agent_wake_at(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            &fixture.wake_id,
+            &wrong_token,
+            started_at + 30,
+        )
+        .unwrap_err()
+        .code(),
+        "wake_consume_token_mismatch"
+    );
+    assert_eq!(
+        attempt_lease_expires_at(&db, &fixture.task_attempt_id),
+        initial_lease
+    );
+
+    let consumed = db
+        .consume_agent_wake_at(
+            &owner,
+            &fixture.assignee,
+            &fixture.endpoint_id,
+            fixture.endpoint_controller_generation,
+            &fixture.wake_id,
+            &fixture.consume_token,
+            initial_lease,
+        )
+        .unwrap();
+    assert!(!consumed.already_consumed);
+    assert_eq!(consumed.state, AgentWakeState::Consumed);
+    assert_eq!(
+        attempt_lease_expires_at(&db, &fixture.task_attempt_id),
+        initial_lease,
+        "consume after Attempt expiry must ACK the dispatched Wake without reviving work"
+    );
+
+    assert_eq!(
+        db.heartbeat_agent_task_attempt_at(
+            &owner,
+            &fixture.task_id,
+            &fixture.task_attempt_id,
+            &fixture.assignee,
+            &fixture.task_attempt_fence,
+            fixture.task_attempt_controller_generation,
+            initial_lease,
+        )
+        .unwrap_err()
+        .code(),
+        "agent_task_attempt_stale"
+    );
+    assert_eq!(
+        db.complete_agent_task_attempt_at(
+            &owner,
+            &fixture.task_id,
+            &fixture.task_attempt_id,
+            &fixture.assignee,
+            &fixture.task_attempt_fence,
+            fixture.task_attempt_controller_generation,
+            AgentTaskState::Succeeded,
+            Some("late completion must fail"),
+            None,
+            "late-stale-completion",
+            initial_lease,
+        )
+        .unwrap_err()
+        .code(),
+        "agent_task_attempt_stale"
+    );
+
+    let successor = start(
+        &db,
+        &owner,
+        &fixture.task_id,
+        &fixture.assignee,
+        "stale-takeover-successor",
+        initial_lease + 1,
+    );
+    assert_eq!(successor.attempt.attempt_number, 2);
+    assert_ne!(successor.attempt.attempt_id, fixture.task_attempt_id);
+    assert_eq!(
+        db.heartbeat_agent_task_attempt_at(
+            &owner,
+            &fixture.task_id,
+            &fixture.task_attempt_id,
+            &fixture.assignee,
+            &fixture.task_attempt_fence,
+            fixture.task_attempt_controller_generation,
+            initial_lease + 2,
+        )
+        .unwrap_err()
+        .code(),
+        "agent_task_attempt_stale",
+        "a later Attempt permanently fences the old owner"
+    );
 }
 
 #[test]

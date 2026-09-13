@@ -598,6 +598,42 @@ fn tool_specs_covers_expected_tool_set() {
 }
 
 #[test]
+fn bootstrap_agent_conversation_activation_key_is_inbox_only_contract() {
+    let specs = registered_tool_specs();
+    let bootstrap = spec_named(&specs, "bootstrap_agent_conversation");
+    let activation = &bootstrap.input_schema["properties"]["activation_idempotency_key"];
+    let description = activation["description"].as_str().unwrap();
+    for required in [
+        "Inbox-style Wake",
+        "OMIT this field",
+        "agent_task_attempt",
+        "attention_event",
+        "Endpoint carrier",
+    ] {
+        assert!(
+            description.contains(required),
+            "missing {required}: {description}"
+        );
+    }
+    assert!(!required_fields(bootstrap)
+        .iter()
+        .any(|field| field == "activation_idempotency_key"));
+    for required in [
+        "Inbox-style Wake",
+        "agent_task_attempt",
+        "attention_event",
+        "omit it",
+        "Endpoint carrier",
+    ] {
+        assert!(
+            bootstrap.description.contains(required),
+            "tool description missing {required}: {}",
+            bootstrap.description
+        );
+    }
+}
+
+#[test]
 fn agent_continuation_bind_requires_canonical_view_fence_without_model_exposure() {
     let specs = crate::registry::agent_continuation_app_tool_specs();
     let bind = specs

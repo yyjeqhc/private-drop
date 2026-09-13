@@ -98,8 +98,19 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     return value;
   }
 
+  function callToolResultOf(result) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+    const nested = result.result;
+    if (nested && typeof nested === "object" && !Array.isArray(nested) && (
+      nested.structuredContent || nested.structured_content || Array.isArray(nested.content)
+      || typeof nested.success === "boolean" || Object.prototype.hasOwnProperty.call(nested, "isError")
+    )) return nested;
+    return result;
+  }
+
   function extractPlan(result) {
-    const structured = result && (result.structuredContent || result.structured_content || result);
+    const callResult = callToolResultOf(result);
+    const structured = callResult && (callResult.structuredContent || callResult.structured_content || callResult);
     const output = structured && (structured.output || structured);
     return validPlan(output && output.goal_plan);
   }

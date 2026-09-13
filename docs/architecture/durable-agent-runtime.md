@@ -585,22 +585,52 @@ execution-provider abstraction.
 Task-origin Wakes are a second explicit Wake source, not fabricated Inbox activity.
 They carry exact Task/Attempt references while Conversation Message/Delivery ids and
 Inbox high-watermarks stay null. The Host continuation envelope re-reads durable Task
-truth and carries the exact current Attempt fence/generation, so Wake consumption proves
-only that one reasoning opportunity ran; exact AgentTask completion remains separate.
+truth and carries the exact current Attempt fence/generation. Wake consumption proves
+one reasoning takeover only; exact AgentTask completion remains a separate mutation.
+
+A4b intentionally has two bounded TaskAttempt lease phases:
+
+```text
+TaskAttempt start
+  -> short 60-second pre-takeover lease
+Endpoint carrier claim / prepare / Host dispatch
+  -> still short pre-takeover semantics
+exact model turn bootstrap + first exact consume
+  -> bounded 30-minute active-turn takeover lease
+ordinary coding work
+  -> no periodic 60-second heartbeat ceremony
+exact TaskAttempt completion
+  -> terminal Task -> correlated attention_event Wake when applicable
+abnormal/stalled model turn
+  -> takeover lease eventually expires -> old Attempt permanently stale
+  -> a new Attempt requires an explicit authorized start
+```
+
+The first successful exact consume of an `agent_task_attempt` Wake promotes only the
+same latest, active, unexpired, exact-assignee Attempt whose durable A4b Endpoint
+execution still matches that Wake and Endpoint generation. Promotion is atomic with
+Wake consumption and uses `max(existing_lease, now + 30 minutes)`. Consume replay does
+not slide the lease. An expired, terminal, superseded, or carrier-mismatched Attempt is
+never revived; its already-dispatched Wake can still be consumed/ACKed without lease
+promotion. `inbox_changed` and `attention_event` consumption never changes a TaskAttempt
+lease. Existing exact heartbeat remains available when work really may exceed the
+active-turn lease, but ordinary online coding should not heartbeat every 60 seconds.
 
 Claiming a Task-origin Wake atomically installs the actual Endpoint carrier and advances
 `attempt_controller_generation`. Releasing or losing that carrier before the dispatch
 fence clears the backend carrier; a replacement carrier must claim again and therefore
 advances the Attempt generation again. Older carrier turns are permanently stale.
-Endpoint lease and TaskAttempt lease remain independent correctness boundaries.
+Endpoint lease and TaskAttempt lease remain independent correctness boundaries; MCP App
+Endpoint heartbeats do not extend the TaskAttempt takeover lease.
 
 If no wake-capable Endpoint exists, startup still succeeds with a pending durable Wake
 and a null carrier. The existing event-driven continuation controller is scheduled once
 and later Endpoint registration schedules the Agent again; there is no busy wait, fake
 Message/Delivery, implicit Task failure, or lease extension. If the TaskAttempt expires
-before Host dispatch, claim/other authoritative mutation paths retire the pre-fence Task
-Wake, the old Attempt remains stale, and the existing Task retry/Ready semantics require
-an explicit new Attempt. A post-fence `delivery_unknown` observation is never blindly
+before exact model takeover, claim/other authoritative mutation paths retire the
+pre-fence Task Wake when still possible, the old Attempt remains stale, and the existing
+Task retry/Ready semantics require an explicit new Attempt. A post-fence
+`delivery_unknown` observation remains exactly consumable and is never blindly
 re-dispatched.
 
 The same delivery closes repeated Endpoint-successor recovery in App protocol v15.

@@ -1,3 +1,4 @@
+use super::agent_task::NewAgentTask;
 use super::agent_wake::{AgentWakeAttemptState, AgentWakeState};
 use super::communication::{
     CommunicationPrincipal, ConversationAccess, NewAgentEndpoint, NewAgentIdentity,
@@ -138,6 +139,94 @@ fn queued_delivery_ids(db: &Database, agent_id: &str) -> Vec<String> {
         .unwrap()
         .collect::<Result<Vec<String>, _>>()
         .unwrap()
+}
+
+#[test]
+fn inbox_wake_consume_does_not_modify_task_attempt_lease() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("inbox-consume-task-lease.db")).unwrap();
+    let fixture = create_fixture(&db, 'b');
+    let task_id = db
+        .create_agent_task(
+            &fixture.owner,
+            NewAgentTask {
+                title: "Unrelated active work".to_string(),
+                instruction: "Keep the ordinary Attempt lease unchanged.".to_string(),
+                assignee_agent_id: Some(fixture.receiver_agent_id.clone()),
+                source_conversation_id: None,
+                source_message_id: None,
+                referenced_project_id: None,
+                idempotency_key: "inbox-lease-task".to_string(),
+            },
+        )
+        .unwrap()
+        .task
+        .summary
+        .task_id;
+    let started = db
+        .start_agent_task_attempt(
+            &fixture.owner,
+            &task_id,
+            &fixture.receiver_agent_id,
+            "inbox-lease-attempt",
+        )
+        .unwrap();
+    let initial_lease = started.attempt.lease_expires_at_unix_ms;
+
+    post_to_receiver(&db, &fixture, "ordinary inbox wake", "inbox-lease-message");
+    let endpoint = attach_wake_endpoint(&db, &fixture, "ChatGPT", "inbox-lease-endpoint");
+    let claim = db
+        .claim_next_agent_wake(
+            &fixture.owner,
+            &fixture.receiver_agent_id,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "mcp_app",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.wake.trigger_kind, "inbox_changed");
+    db.prepare_agent_wake_dispatch(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+        &claim.consume_token,
+    )
+    .unwrap();
+    db.complete_agent_wake_delivery(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+    )
+    .unwrap();
+    db.consume_agent_wake(
+        &fixture.owner,
+        &fixture.receiver_agent_id,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.consume_token,
+    )
+    .unwrap();
+
+    assert_eq!(
+        db.read_agent_task(&fixture.owner, &task_id)
+            .unwrap()
+            .summary
+            .latest_attempt
+            .unwrap()
+            .lease_expires_at_unix_ms,
+        initial_lease,
+        "inbox_changed takeover must never promote an AgentTask lease"
+    );
 }
 
 #[test]

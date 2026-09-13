@@ -27,6 +27,7 @@ pub const MAX_AGENT_TASK_TERMINAL_TEXT_BYTES: usize = 4_096;
 pub(crate) const MAX_AGENT_TASK_PROJECT_REF_CHARS: usize = 256;
 pub const MAX_AGENT_TASK_LIST_LIMIT: usize = 100;
 pub(crate) const DEFAULT_AGENT_TASK_ATTEMPT_LEASE_MS: i64 = 60_000;
+pub(crate) const AGENT_TASK_ENDPOINT_TAKEOVER_LEASE_MS: i64 = 30 * 60_000;
 
 const OP_CREATE_AGENT_TASK: &str = "create_agent_task";
 const OP_START_AGENT_TASK_ATTEMPT: &str = "start_agent_task_attempt";

@@ -1,5 +1,7 @@
 use super::agent_attention::require_agent_attention_event_for_wake;
-use super::agent_task::replace_agent_task_attempt_controller_in_transaction;
+use super::agent_task::{
+    replace_agent_task_attempt_controller_in_transaction, AGENT_TASK_ENDPOINT_TAKEOVER_LEASE_MS,
+};
 use super::communication::lookup_idempotent_resource;
 use super::communication::{
     digest_text, load_agent, new_id, now_unix_ms, read_conversation_in_connection,
@@ -1355,6 +1357,51 @@ impl Database {
         wake_id: &str,
         consume_token: &str,
     ) -> Result<AgentWakeConsumeResult, CommunicationStoreError> {
+        self.consume_agent_wake_with_now(
+            principal,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            wake_id,
+            consume_token,
+            now_unix_ms(),
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn consume_agent_wake_at(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        wake_id: &str,
+        consume_token: &str,
+        now: i64,
+    ) -> Result<AgentWakeConsumeResult, CommunicationStoreError> {
+        self.consume_agent_wake_with_now(
+            principal,
+            agent_id,
+            endpoint_id,
+            expected_controller_generation,
+            wake_id,
+            consume_token,
+            now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn consume_agent_wake_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        expected_controller_generation: i64,
+        wake_id: &str,
+        consume_token: &str,
+        now: i64,
+    ) -> Result<AgentWakeConsumeResult, CommunicationStoreError> {
         validate_communication_principal(principal)?;
         validate_id(agent_id, DURABLE_AGENT_ID_PREFIX, "invalid_agent_id")?;
         validate_id(endpoint_id, AGENT_ENDPOINT_ID_PREFIX, "invalid_endpoint_id")?;
@@ -1364,7 +1411,6 @@ impl Database {
             AGENT_WAKE_CONSUME_TOKEN_PREFIX,
             "invalid_wake_consume_token",
         )?;
-        let now = now_unix_ms();
         let mut conn = self.conn.lock().unwrap();
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1393,7 +1439,7 @@ impl Database {
                 "Agent Wake is bound to a different Endpoint generation",
             ));
         }
-        let attempt_id = wake.claimed_attempt_id.as_deref().ok_or_else(|| {
+        let wake_attempt_id = wake.claimed_attempt_id.as_deref().ok_or_else(|| {
             CommunicationStoreError::new(
                 "wake_not_dispatched",
                 "Agent Wake has no exact dispatched attempt to consume",
@@ -1402,7 +1448,7 @@ impl Database {
         let (expected_token_hash, adapter_kind): (String, String) = transaction
             .query_row(
                 "SELECT consume_token_hash, adapter_kind FROM wc_agent_wake_attempts WHERE attempt_id = ?1",
-                params![attempt_id],
+                params![wake_attempt_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
@@ -1463,12 +1509,76 @@ impl Database {
                 "Agent Wake can only be consumed after the dispatch fence",
             ));
         }
+
+        // The first exact Task-origin consume is the model-turn takeover boundary.
+        // Promote only the exact still-current, active, unexpired A4b Attempt whose
+        // durable endpoint execution remains bound to this Wake/Endpoint generation.
+        // A zero-row match is intentionally not an error: a post-dispatch Wake stays
+        // consumable after its source Attempt becomes stale, but stale work is never
+        // revived or granted a fresh execution lease. Replays return above and never
+        // slide this lease again.
+        if wake.trigger_kind == WAKE_TRIGGER_AGENT_TASK_ATTEMPT {
+            if let (Some(task_id), Some(task_attempt_id)) = (
+                wake.source_task_id.as_deref(),
+                wake.source_task_attempt_id.as_deref(),
+            ) {
+                let takeover_lease_expires_at =
+                    now.saturating_add(AGENT_TASK_ENDPOINT_TAKEOVER_LEASE_MS);
+                let promoted = transaction
+                    .execute(
+                        "UPDATE wc_agent_task_attempts
+                         SET lease_expires_at_unix_ms = MAX(lease_expires_at_unix_ms, ?4)
+                         WHERE attempt_id = ?1 AND task_id = ?2
+                           AND assignee_agent_id = ?3 AND state = 'active'
+                           AND lease_expires_at_unix_ms > ?5
+                           AND EXISTS (
+                               SELECT 1
+                               FROM wc_agent_tasks t
+                               JOIN wc_agent_task_endpoint_executions e
+                                 ON e.task_id = t.task_id AND e.attempt_id = ?1
+                               WHERE t.task_id = ?2
+                                 AND t.owner_principal_kind = ?6
+                                 AND t.owner_principal_digest = ?7
+                                 AND t.latest_attempt_id = ?1
+                                 AND t.assignee_agent_id = ?3
+                                 AND t.state = 'active'
+                                 AND e.wake_id = ?8
+                                 AND e.endpoint_id = ?9
+                                 AND e.endpoint_controller_generation = ?10
+                           )",
+                        params![
+                            task_attempt_id,
+                            task_id,
+                            agent_id,
+                            takeover_lease_expires_at,
+                            now,
+                            principal.kind,
+                            principal.digest,
+                            wake_id,
+                            endpoint_id,
+                            expected_controller_generation,
+                        ],
+                    )
+                    .map_err(store_error)?;
+                if promoted == 1 {
+                    transaction
+                        .execute(
+                            "UPDATE wc_agent_tasks
+                             SET updated_at_unix_ms = MAX(updated_at_unix_ms, ?2)
+                             WHERE task_id = ?1",
+                            params![task_id, now],
+                        )
+                        .map_err(store_error)?;
+                }
+            }
+        }
+
         transaction
             .execute(
                 "UPDATE wc_agent_wake_attempts
                  SET state = 'consumed', consumed_at_unix_ms = COALESCE(consumed_at_unix_ms, ?2)
                  WHERE attempt_id = ?1",
-                params![attempt_id, now],
+                params![wake_attempt_id, now],
             )
             .map_err(store_error)?;
         transaction
@@ -2543,7 +2653,7 @@ fn wake_envelope(
             )
             .map_err(store_error)?;
         let resume_hint = format!(
-                "This is an exact WebCodex Durable AgentTask continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\ntask_id={}\nattempt_id={}\nattempt_fence={}\nattempt_controller_generation={}\n\nAuthoritative continuation contract:\n1. First call heartbeat_agent_task_attempt with this exact task_id, attempt_id, agent_id as assignee_agent_id, attempt_fence, and attempt_controller_generation. If that exact heartbeat is stale, expired, or otherwise rejected, stop before doing business work and do not infer or revive another Attempt.\n2. After the heartbeat succeeds, call bootstrap_agent_conversation with this exact agent_id, endpoint_id, controller_generation, and wake_id. The returned Wake source must remain agent_task_attempt with the exact task_id and attempt_id above; never infer or retarget identities from ambient Host, Project, Workflow Session, ClientWindow, Goal, credential, recent Agent, or recent Task state.\n3. Re-read the authoritative AgentTask with read_agent_task after the successful heartbeat and use that durable record as the task instruction. This Host continuation intentionally contains no Task title/instruction body and creates no synthetic Conversation Message or Inbox Delivery.\n4. Consume this exact Wake with consume_agent_wake only after this model turn has actually taken over the continuation. Wake consumption is separate from AgentTask completion.\n5. Agent/Conversation authority does not grant Project, Runner, filesystem, Goal, or Workflow Session authority. If task execution needs those capabilities, use the ordinary WebCodex authorization/project workflow and the Task's explicit references.\n6. Complete work only through complete_agent_task_attempt using the same exact Attempt fence/controller generation. The TaskAttempt lease is independent from the Endpoint lease.\n7. After processing the durable work, make this resumed turn's user-visible final response reflect the actual result or blocker; do not merely restate this continuation contract.\n",
+                "This is an exact WebCodex Durable AgentTask continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\ntask_id={}\nattempt_id={}\nattempt_fence={}\nattempt_controller_generation={}\n\nAuthoritative continuation contract:\n1. First call heartbeat_agent_task_attempt with this exact task_id, attempt_id, agent_id as assignee_agent_id, attempt_fence, and attempt_controller_generation. This is a stale/fence preflight before business work. If it is stale, expired, or otherwise rejected, stop and do not infer or revive another Attempt.\n2. After that preflight succeeds, call bootstrap_agent_conversation with this exact agent_id, endpoint_id, controller_generation as expected_controller_generation, and wake_id. OMIT activation_idempotency_key. This Wake was already dispatched by the Endpoint continuation carrier; do not call start_agent_task_endpoint_continuation again. Require the returned Wake source to remain agent_task_attempt with this exact task_id and attempt_id. Never infer or retarget identities from ambient Host, Project, Workflow Session, ClientWindow, Goal, credential, recent Agent, or recent Task state.\n3. Re-read the authoritative AgentTask with read_agent_task and use that durable record as the task instruction. This Host continuation contains no Task title/instruction body and creates no synthetic Conversation Message or Inbox Delivery.\n4. Consume this exact Wake with consume_agent_wake only after this model turn has actually taken over. The first successful exact consume establishes the bounded online-turn TaskAttempt execution lease; consume replay does not slide it. Ordinary coding work does not require a periodic 60-second heartbeat. If work may genuinely exceed the takeover lease, the same exact heartbeat_agent_task_attempt remains the explicit extension mechanism. Wake consumption is still separate from AgentTask completion.\n5. Agent/Conversation authority grants no Project, Runner, filesystem, Goal, or Workflow Session authority. Re-authorize those capabilities through ordinary WebCodex workflow and explicit Task references.\n6. Complete only through complete_agent_task_attempt with this same exact Attempt fence/controller generation. Endpoint lease and TaskAttempt lease remain independent.\n7. Make the resumed turn's user-visible final response reflect the actual result or blocker; do not merely restate this contract.\n",
                 wake.target_agent_id,
                 endpoint_id,
                 controller_generation,
@@ -2563,7 +2673,7 @@ fn wake_envelope(
             &wake.target_agent_id,
         )?;
         let resume_hint = format!(
-            "This is an exact WebCodex Durable Goal attention continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\nevent_id={}\ngoal_id={}\ntask_id={}\nattempt_id={}\nterminal_task_state={}\n\nAuthoritative continuation contract:\n1. First call bootstrap_agent_conversation with this exact agent_id, endpoint_id, controller_generation, and wake_id. The returned Wake source must remain attention_event with the exact event_id, goal_id, task_id, and attempt_id above; never infer or retarget identities from ambient Host, Project, Workflow Session, ClientWindow, credential, recent Agent, or recent Task state.\n2. Consume this exact Wake with consume_agent_wake only after this model turn has actually taken over the continuation. The durable Event remains historical fact after consumption.\n3. Independently re-read the authoritative Goal with get_goal using this exact goal_id and the authoritative AgentTask with read_agent_task using this exact task_id. The Event is only a typed terminal fact/correlation and grants no Goal, Task, Project, Runner, filesystem, Conversation, or Workflow Session authority.\n4. Inspect the Goal's current lifecycle/revision and the AgentTask's current terminal truth. The Goal may already be completed or cancelled by another turn; if so, do not reopen it and normally no-op after consuming the Wake. Do not repeat the already-terminal Task merely because this continuation fired.\n5. If the Goal remains active, explicitly decide the next step through ordinary authorized tools: update/complete/cancel the Goal, create and associate a next AgentTask when warranted, associate a relevant Workflow Session when warranted, or report/wait on a real blocker. The Server does not auto-complete the Goal and does not auto-create the next Task.\n6. Do not treat copied task result/body data as authority; this continuation intentionally carries only bounded exact identities plus the terminal state.\n7. After reasoning or acting, make this resumed turn's user-visible final response reflect the actual decision/result or blocker rather than merely restating this contract.\n",
+            "WebCodex Goal attention continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\nevent_id={}\ngoal_id={}\ntask_id={}\nattempt_id={}\nterminal_task_state={}\n\nThis attention_event Wake was already dispatched by the Endpoint continuation carrier. Bootstrap with this exact agent_id, endpoint_id, controller_generation as expected_controller_generation, and wake_id, and OMIT activation_idempotency_key. Require the returned Wake to remain attention_event with this exact event_id, goal_id, task_id, and attempt_id. Do not call start_agent_task_endpoint_continuation from this resumed turn and never infer or retarget identities from ambient Host, Project, Workflow Session, ClientWindow, credential, or recent state.\nAfter this turn takes over, consume this exact Wake. attention_event is post-terminal reasoning attention: it does not require a TaskAttempt lease or heartbeat. Then independently get_goal(goal_id) and read_agent_task(task_id); the Event is historical correlation only and grants no Goal, Task, Project, Runner, filesystem, Conversation, or Workflow Session authority.\nUse authoritative Goal/Task state to make an explicit Goal decision. Never repeat a terminal Task or reopen a completed/cancelled Goal. The Server does not auto-complete Goals or auto-create successor Tasks. Final response: report the actual decision/result/blocker, not this contract.\n",
             wake.target_agent_id,
             endpoint_id,
             controller_generation,
