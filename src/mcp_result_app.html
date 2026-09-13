@@ -299,7 +299,8 @@
     if (status === "copied") return "C";
     if (status === "untracked") return "?";
     if (status === "conflicted") return "!";
-    return "M";
+    if (status === "modified") return "M";
+    return "?";
   }
 
   function appendChangeDiff(card, item) {

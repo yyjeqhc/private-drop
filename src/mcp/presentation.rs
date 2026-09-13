@@ -698,7 +698,7 @@ fn safe_label(value: &Value) -> Option<String> {
     bounded_text(&Value::String(value.to_string()))
 }
 
-fn safe_repo_relative_path(value: &Value) -> Option<String> {
+fn validated_repo_relative_path(value: &Value) -> Option<&str> {
     let path = value.as_str()?;
     if path.is_empty()
         || path.starts_with('/')
@@ -719,6 +719,11 @@ fn safe_repo_relative_path(value: &Value) -> Option<String> {
     {
         return None;
     }
+    Some(path)
+}
+
+fn safe_repo_relative_path(value: &Value) -> Option<String> {
+    validated_repo_relative_path(value)?;
     bounded_text(value)
 }
 
@@ -781,7 +786,7 @@ fn bounded_diff_text(value: &Value) -> Option<(String, bool)> {
 
 fn show_changes_diff_hunks_for_path(
     output: &Value,
-    path: &str,
+    raw_path: &str,
     remaining_hunks: &mut usize,
 ) -> (Vec<Value>, bool) {
     let Some(files) = output.get("hunks").and_then(Value::as_array) else {
@@ -790,10 +795,10 @@ fn show_changes_diff_hunks_for_path(
     let mut result = Vec::new();
     let mut truncated = false;
     for file in files {
-        let Some(file_path) = file.get("path").and_then(safe_repo_relative_path) else {
+        let Some(file_path) = file.get("path").and_then(validated_repo_relative_path) else {
             continue;
         };
-        if file_path != path {
+        if file_path != raw_path {
             continue;
         }
         let Some(hunks) = file.get("hunks").and_then(Value::as_array) else {
@@ -830,7 +835,9 @@ fn show_changes_file_presentation(
     remaining_hunks: &mut usize,
 ) -> Option<Value> {
     file.as_object()?;
-    let path = file.get("path").and_then(safe_repo_relative_path)?;
+    let path_value = file.get("path")?;
+    let raw_path = validated_repo_relative_path(path_value)?;
+    let path = bounded_text(path_value)?;
     let mut item = Map::new();
     item.insert("path".to_string(), Value::String(path.clone()));
     if let Some(status) = file.get("status").and_then(safe_label) {
@@ -846,7 +853,7 @@ fn show_changes_file_presentation(
         item.insert("old_path".to_string(), Value::String(old_path));
     }
     let (diff_hunks, diff_truncated) =
-        show_changes_diff_hunks_for_path(output, &path, remaining_hunks);
+        show_changes_diff_hunks_for_path(output, raw_path, remaining_hunks);
     if !diff_hunks.is_empty() {
         item.insert("diff_hunks".to_string(), Value::Array(diff_hunks));
     }

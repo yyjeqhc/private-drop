@@ -1384,6 +1384,17 @@ fn enrich_show_changes_files_with_numstat(files: &mut [Value], frames: &ShowChan
         let Some(file) = file.as_object_mut() else {
             continue;
         };
+        // The producer intentionally uses `--no-renames` to keep the bounded
+        // numstat framing path-stable and simple. In that mode Git represents a
+        // rename/copy as full old-path deletion plus full new-path addition, so
+        // summing both paths would manufacture misleading line churn. Leave
+        // those stats unknown until a rename-aware producer is available.
+        if matches!(
+            file.get("status").and_then(Value::as_str),
+            Some("renamed" | "copied")
+        ) {
+            continue;
+        }
         let path = file.get("path").and_then(Value::as_str);
         let old_path = file.get("old_path").and_then(Value::as_str);
         let mut additions = 0u64;

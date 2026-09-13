@@ -6094,6 +6094,30 @@ fn show_changes_modern_framing_requires_exact_blocks_and_tail() {
     assert!(legacy_head["head"]["summary"].is_null());
 }
 
+#[test]
+fn show_changes_numstat_does_not_report_rename_as_full_line_churn() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "old.txt", "one\ntwo\nthree\n", "initial");
+    std::fs::rename(tmp.path().join("old.txt"), tmp.path().join("new.txt")).unwrap();
+    let (add_exit, _, add_stderr, _) = run_command_sync("git add -A", tmp.path(), 30);
+    assert_eq!(add_exit, 0, "git add failed: {add_stderr}");
+
+    let (_, stdout, stderr) = run_bounded_show_changes_full(tmp.path(), false, 20, 80);
+    let frames = split_show_changes_stdout(&stdout, false);
+    assert!(frames.framing_valid);
+    let output =
+        bounded_show_changes_output_from_frames(&frames, tmp.path(), false, 20, 80, &stderr);
+    assert_eq!(output["transport_safe"], true, "{output}");
+    assert_eq!(output["counts"]["renamed"], 1, "{output}");
+    let file = output["files"]
+        .as_array()
+        .and_then(|files| files.iter().find(|file| file["status"] == "renamed"))
+        .expect("rename record");
+    assert!(file.get("additions").is_none(), "{file}");
+    assert!(file.get("deletions").is_none(), "{file}");
+}
+
 #[tokio::test]
 async fn show_changes_preserves_sentinel_text_in_normal_diff_and_tool_result() {
     let tmp = tempfile::tempdir().unwrap();

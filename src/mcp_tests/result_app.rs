@@ -1398,6 +1398,49 @@ fn git_changes_presentation_bounds_diff_hunks_and_text() {
 }
 
 #[test]
+fn git_changes_presentation_matches_diff_hunks_before_display_path_truncation() {
+    let shared = format!("src/{}", "a".repeat(300));
+    let first_path = format!("{shared}-first.rs");
+    let second_path = format!("{shared}-second.rs");
+    let framed = projected_result(
+        "show_changes",
+        true,
+        json!({
+            "git_available": true,
+            "non_git_project": false,
+            "clean": false,
+            "files": [
+                {"path": first_path, "status": "modified", "kind": "tracked", "additions": 1, "deletions": 0},
+                {"path": second_path, "status": "modified", "kind": "tracked", "additions": 2, "deletions": 0}
+            ],
+            "files_total": 2,
+            "files_returned": 2,
+            "files_truncated": false,
+            "hunks": [{
+                "path": second_path,
+                "hunks": [{"diff": "@@ -1 +1 @@\n-old\n+second", "truncated": false}]
+            }],
+            "hunks_truncated": false
+        }),
+    );
+
+    let meta = presentation(&framed);
+    let files = meta["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0]["additions"], 1);
+    assert!(files[0].get("diff_hunks").is_none());
+    assert_eq!(files[1]["additions"], 2);
+    assert_eq!(
+        files[1]["diff_hunks"][0]["diff"],
+        "@@ -1 +1 @@\n-old\n+second"
+    );
+    assert_eq!(
+        files[0]["path"], files[1]["path"],
+        "fixture must exercise a display-path collision"
+    );
+}
+
+#[test]
 fn git_review_presentation_preserves_scope_stats_files_and_partial_state() {
     let base = "a".repeat(40);
     let head = "b".repeat(40);
