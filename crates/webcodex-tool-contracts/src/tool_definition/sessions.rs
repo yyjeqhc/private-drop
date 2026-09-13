@@ -421,9 +421,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )),
         15,
     ),
-    requires_explicit_business_session(context_recovery_only(model_spec(
-        def(
-            "session_handoff_summary",
+    adaptive_runtime_direct(
+        requires_explicit_business_session(context_recovery_only(model_spec(
+            def(
+                "session_handoff_summary",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("session_id"),
                 super::ToolAuditResultField::value("project"),
@@ -453,6 +454,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolSessionEvidencePolicy::NONE,
         ),
         "Read-only handoff for multi-step tasks, explicit session_id. Reads session ledger collaboration and ledger-derived validation. Diagnostics use bounded tails or safe result metadata; validation.parser.available is false if absent. Use the default full view to recover unknown context; summary_only, limit below 20, or disabled include_* components cannot establish a new ACK baseline. No checkpoint allocation; grants no authority.",
-        session_handoff_summary_input_schema,
-    ))),
+            session_handoff_summary_input_schema,
+        ))),
+        16,
+    ),
 ];
