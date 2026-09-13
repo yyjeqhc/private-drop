@@ -32,9 +32,9 @@ pub use self::agent_task::{
     AgentTaskCodingRunBindingRecord, AgentTaskCodingRunDispatchClaim,
     AgentTaskCodingRunDispatchState, AgentTaskCodingRunObservation, AgentTaskCodingRunPrepared,
     AgentTaskCodingRunReconcileMutation, AgentTaskCodingRunStartContext, AgentTaskDetail,
-    AgentTaskExecutionRecoveryKind, AgentTaskExecutionStatus, AgentTaskMutation, AgentTaskPage,
-    AgentTaskState, AgentTaskSummary, NewAgentTask, MAX_AGENT_TASK_LIST_LIMIT,
-    MAX_AGENT_TASK_TERMINAL_TEXT_BYTES,
+    AgentTaskExecutionKind, AgentTaskExecutionRecoveryKind, AgentTaskExecutionStatus,
+    AgentTaskMutation, AgentTaskPage, AgentTaskState, AgentTaskSummary, NewAgentTask,
+    MAX_AGENT_TASK_LIST_LIMIT, MAX_AGENT_TASK_TERMINAL_TEXT_BYTES,
 };
 #[allow(unused_imports)]
 pub use self::agent_wake::{

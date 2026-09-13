@@ -32,7 +32,7 @@ pub use agent_tasks::{
     create_agent_task_input_schema, heartbeat_agent_task_attempt_input_schema,
     list_agent_tasks_input_schema, read_agent_task_input_schema,
     reconcile_agent_task_coding_run_input_schema, start_agent_task_attempt_input_schema,
-    start_agent_task_coding_run_input_schema,
+    start_agent_task_coding_run_input_schema, start_agent_task_endpoint_continuation_input_schema,
 };
 pub use artifacts::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,

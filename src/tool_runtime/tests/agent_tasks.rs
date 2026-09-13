@@ -496,6 +496,60 @@ fn runtime_surface_exposes_fence_only_for_exact_start_and_never_requires_endpoin
         1
     );
     assert!(started.output["attempt"].get("attempt_fence").is_none());
+
+    let endpoint_execution = runtime.start_agent_task_endpoint_continuation(
+        None,
+        task_id.clone(),
+        attempt_id.clone(),
+        assignee.clone(),
+        fence.clone(),
+        1,
+    );
+    assert!(
+        endpoint_execution.success,
+        "{:?}",
+        endpoint_execution.output
+    );
+    assert_eq!(
+        endpoint_execution.output["execution"]["wake_state"],
+        "pending"
+    );
+    assert!(endpoint_execution.output["execution"]["endpoint_id"].is_null());
+    assert!(endpoint_execution.output["execution"]["endpoint_controller_generation"].is_null());
+    assert_eq!(endpoint_execution.output["replayed"], false);
+    assert_eq!(endpoint_execution.output["state_changed"], true);
+    let wake_id = endpoint_execution.output["execution"]["wake_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let endpoint_replay = runtime.start_agent_task_endpoint_continuation(
+        None,
+        task_id.clone(),
+        attempt_id.clone(),
+        assignee.clone(),
+        fence.clone(),
+        1,
+    );
+    assert!(endpoint_replay.success, "{:?}", endpoint_replay.output);
+    assert_eq!(endpoint_replay.output["execution"]["wake_id"], wake_id);
+    assert_eq!(endpoint_replay.output["replayed"], true);
+    assert_eq!(endpoint_replay.output["state_changed"], false);
+
+    let endpoint_bound_read = runtime.read_agent_task(None, task_id.clone());
+    assert!(endpoint_bound_read.success);
+    assert_eq!(
+        endpoint_bound_read.output["task"]["summary"]["execution_bound"],
+        true
+    );
+    assert_eq!(
+        endpoint_bound_read.output["task"]["summary"]["execution_status"],
+        "not_started"
+    );
+    assert_eq!(
+        endpoint_bound_read.output["task"]["summary"]["recovery_kind"],
+        "none"
+    );
     assert_eq!(
         _db.conn_for_tests()
             .query_row(
@@ -538,6 +592,10 @@ fn runtime_surface_exposes_fence_only_for_exact_start_and_never_requires_endpoin
     let terminal = runtime.read_agent_task(None, task_id);
     assert!(terminal.success);
     assert_eq!(terminal.output["task"]["summary"]["state"], "succeeded");
+    assert_eq!(
+        terminal.output["task"]["summary"]["execution_status"],
+        "terminal"
+    );
     assert!(terminal.output["task"].get("attempt_fence").is_none());
 }
 

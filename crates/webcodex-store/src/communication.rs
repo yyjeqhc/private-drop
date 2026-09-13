@@ -336,6 +336,7 @@ pub enum McpAppEndpointRecovery {
         endpoint: AgentEndpointRecord,
         replayed: bool,
         state_changed: bool,
+        successor_needs_recovery: bool,
     },
 }
 
@@ -791,7 +792,7 @@ impl Database {
                         (SELECT COUNT(*) FROM wc_agent_deliveries d
                          WHERE d.recipient_agent_id = a.agent_id AND d.state = 'queued'),
                         (SELECT COUNT(*) FROM wc_agent_wakes w
-                         WHERE w.target_agent_id = a.agent_id AND w.state != 'consumed'),
+                         WHERE w.target_agent_id = a.agent_id AND w.state NOT IN ('consumed', 'retired')),
                         (SELECT w.wake_id FROM wc_agent_wakes w
                          WHERE w.target_agent_id = a.agent_id
                          ORDER BY w.created_at_unix_ms DESC, w.wake_id DESC LIMIT 1),
@@ -1020,6 +1021,7 @@ impl Database {
                 previous_endpoint_id,
                 *previous_generation,
                 now,
+                true,
             )?;
         }
         transaction
@@ -1174,7 +1176,7 @@ impl Database {
                 .map_err(store_error)?;
             if replacement.agent_id != agent_id
                 || replacement.controller_generation != expected_replacement_generation
-                || current_controller_generation != replacement.controller_generation
+                || current_controller_generation < replacement.controller_generation
                 || replacement.lifecycle == AgentEndpointLifecycle::Detached
             {
                 return Err(CommunicationStoreError::new(
@@ -1190,17 +1192,27 @@ impl Database {
                 )
                 .map_err(store_error)?;
             if successor_window.as_deref() != Some(client_window_key) {
+                if current_controller_generation > replacement.controller_generation {
+                    return Err(CommunicationStoreError::new(
+                        "endpoint_generation_stale",
+                        "A newer unrelated Endpoint generation retired this recovery lineage",
+                    ));
+                }
                 return Err(CommunicationStoreError::new(
                     "host_binding_stale",
                     "Recovered Agent Endpoint no longer retains this Host ClientWindow",
                 ));
             }
+            let successor_needs_recovery = replacement.lifecycle == AgentEndpointLifecycle::Expired
+                || (replacement.lifecycle == AgentEndpointLifecycle::Attached
+                    && replacement.lease_expires_at_unix_ms <= now);
             return Ok(McpAppEndpointRecovery::Replaced {
                 from_endpoint_id: endpoint_id.to_string(),
                 from_controller_generation: expected_controller_generation,
                 endpoint: replacement,
                 replayed: true,
                 state_changed: false,
+                successor_needs_recovery,
             });
         }
 
@@ -1265,6 +1277,7 @@ impl Database {
             endpoint_id,
             expected_controller_generation,
             now,
+            true,
         )?;
         transaction
             .execute(
@@ -1351,6 +1364,7 @@ impl Database {
             endpoint,
             replayed: false,
             state_changed: true,
+            successor_needs_recovery: false,
         })
     }
 
@@ -1388,6 +1402,7 @@ impl Database {
             endpoint_id,
             current.controller_generation,
             now,
+            true,
         )?;
         transaction
             .execute(
@@ -1592,6 +1607,7 @@ impl Database {
                 endpoint_id,
                 expected_controller_generation,
                 now,
+                false,
             )?;
         }
         transaction
@@ -2210,6 +2226,12 @@ impl Database {
                     return Err(CommunicationStoreError::new(
                         "wake_already_consumed",
                         "Agent Wake was already consumed; re-read the Conversation before posting new work",
+                    ));
+                }
+                AgentWakeState::Retired => {
+                    return Err(CommunicationStoreError::new(
+                        "wake_retired",
+                        "Agent Wake was retired before dispatch and no longer authorizes a reply",
                     ));
                 }
             }
@@ -2870,7 +2892,7 @@ pub(super) fn load_agent(
                 (SELECT COUNT(*) FROM wc_agent_deliveries d
                  WHERE d.recipient_agent_id = a.agent_id AND d.state = 'queued'),
                 (SELECT COUNT(*) FROM wc_agent_wakes w
-                 WHERE w.target_agent_id = a.agent_id AND w.state != 'consumed'),
+                 WHERE w.target_agent_id = a.agent_id AND w.state NOT IN ('consumed', 'retired')),
                 (SELECT w.wake_id FROM wc_agent_wakes w
                  WHERE w.target_agent_id = a.agent_id
                  ORDER BY w.created_at_unix_ms DESC, w.wake_id DESC LIMIT 1),

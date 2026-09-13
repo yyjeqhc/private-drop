@@ -603,46 +603,65 @@ impl ToolRuntime {
             Ok(recovery) => recovery,
             Err(error) => return communication_error(error, RecoveryKind::Reconcile),
         };
-        let (current_endpoint_id, current_generation, replacement, replayed, state_changed) =
-            match recovery {
-                crate::db::McpAppEndpointRecovery::Live { endpoint } => (
-                    endpoint.endpoint_id,
-                    endpoint.controller_generation,
+        let (
+            current_endpoint_id,
+            current_generation,
+            replacement,
+            replayed,
+            state_changed,
+            successor_needs_recovery,
+        ) = match recovery {
+            crate::db::McpAppEndpointRecovery::Live { endpoint } => (
+                endpoint.endpoint_id,
+                endpoint.controller_generation,
+                json!({
+                    "kind": "controller_live",
+                    "replacement": null,
+                    "successor_needs_recovery": false,
+                }),
+                false,
+                false,
+                false,
+            ),
+            crate::db::McpAppEndpointRecovery::Replaced {
+                from_endpoint_id,
+                from_controller_generation,
+                endpoint,
+                replayed,
+                state_changed,
+                successor_needs_recovery,
+            } => {
+                let replacement_endpoint_id = endpoint.endpoint_id.clone();
+                let replacement_generation = endpoint.controller_generation;
+                (
+                    replacement_endpoint_id.clone(),
+                    replacement_generation,
                     json!({
-                        "kind": "controller_live",
-                        "replacement": null,
+                        "kind": "endpoint_replaced",
+                        "replacement": {
+                            "agent_id": agent_id,
+                            "from_endpoint_id": from_endpoint_id,
+                            "from_controller_generation": from_controller_generation,
+                            "endpoint_id": replacement_endpoint_id,
+                            "controller_generation": replacement_generation,
+                            "reason": "endpoint_expired",
+                        },
+                        "successor_needs_recovery": successor_needs_recovery,
                     }),
-                    false,
-                    false,
-                ),
-                crate::db::McpAppEndpointRecovery::Replaced {
-                    from_endpoint_id,
-                    from_controller_generation,
-                    endpoint,
                     replayed,
                     state_changed,
-                } => {
-                    let replacement_endpoint_id = endpoint.endpoint_id.clone();
-                    let replacement_generation = endpoint.controller_generation;
-                    (
-                        replacement_endpoint_id.clone(),
-                        replacement_generation,
-                        json!({
-                            "kind": "endpoint_replaced",
-                            "replacement": {
-                                "agent_id": agent_id,
-                                "from_endpoint_id": from_endpoint_id,
-                                "from_controller_generation": from_controller_generation,
-                                "endpoint_id": replacement_endpoint_id,
-                                "controller_generation": replacement_generation,
-                                "reason": "endpoint_expired",
-                            },
-                        }),
-                        replayed,
-                        state_changed,
-                    )
-                }
-            };
+                    successor_needs_recovery,
+                )
+            }
+        };
+        if successor_needs_recovery {
+            return ToolResult::ok(json!({
+                "agent_continuation": null,
+                "endpoint_recovery": replacement,
+                "replayed": replayed,
+                "state_changed": state_changed,
+            }));
+        }
         let bootstrap = match db.bootstrap_agent_conversation(
             &principal,
             &agent_id,

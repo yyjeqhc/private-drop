@@ -140,6 +140,19 @@ pub fn start_agent_task_attempt_input_schema() -> Value {
     })
 }
 
+pub fn start_agent_task_endpoint_continuation_input_schema() -> Value {
+    let properties = attempt_identity_properties();
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": [
+            "task_id", "attempt_id", "assignee_agent_id", "attempt_fence",
+            "attempt_controller_generation"
+        ],
+        "additionalProperties": false
+    })
+}
+
 pub fn start_agent_task_coding_run_input_schema() -> Value {
     let mut properties = attempt_identity_properties();
     properties.insert(

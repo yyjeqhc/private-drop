@@ -1891,6 +1891,21 @@ impl ToolRuntime {
                 idempotency_key,
             } => self.start_agent_task_attempt(auth, task_id, assignee_agent_id, idempotency_key),
 
+            ToolCall::StartAgentTaskEndpointContinuation {
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            } => self.start_agent_task_endpoint_continuation(
+                auth,
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            ),
+
             ToolCall::StartAgentTaskCodingRun {
                 project,
                 task_id,

@@ -270,8 +270,8 @@ fn offline_fifty_message_burst_preserves_facts_and_coalesces_wake() {
     let wake_id = wake_id_for(&db, &fixture.receiver_agent_id);
     let wake = db.agent_wake(&wake_id).unwrap().unwrap();
     assert_eq!(wake.state, AgentWakeState::Pending);
-    assert_eq!(wake.queued_delivery_count_snapshot, 50);
-    assert!(wake.inbox_high_watermark >= 50);
+    assert_eq!(wake.queued_delivery_count_snapshot, Some(50));
+    assert!(wake.inbox_high_watermark.is_some_and(|value| value >= 50));
     assert_ne!(
         wake.first_triggering_delivery_id,
         wake.latest_triggering_delivery_id
@@ -636,4 +636,178 @@ fn wake_storage_keeps_stable_refs_and_hashes_without_communication_payload() {
     assert_eq!(claim.wake.trigger_kind, "inbox_changed");
     assert_eq!(claim.wake.state.as_str(), "claimed");
     assert!(!format!("{:?}", claim.wake).contains(body));
+}
+
+#[test]
+fn a4b_wake_schema_migration_preserves_inbox_wake_and_rebuilds_indexes() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("wake-a4b-migration.db");
+    let db = Database::open(&path).unwrap();
+    let fixture = create_fixture(&db, 'e');
+    post_to_receiver(
+        &db,
+        &fixture,
+        "persist across migration",
+        "migration-message",
+    );
+    let wake_id = wake_id_for(&db, &fixture.receiver_agent_id);
+
+    {
+        let conn = db.conn_for_tests();
+        conn.execute_batch(
+            "
+            PRAGMA foreign_keys = OFF;
+            DROP TABLE wc_agent_task_endpoint_executions;
+            DROP INDEX IF EXISTS idx_wc_agent_wakes_target_state;
+            DROP INDEX IF EXISTS idx_wc_agent_wakes_one_queueable_inbox;
+            DROP INDEX IF EXISTS idx_wc_agent_wakes_task_attempt;
+            DROP INDEX IF EXISTS idx_wc_agent_wakes_one_dispatched;
+            DROP INDEX IF EXISTS idx_wc_agent_wake_attempts_wake;
+            DROP INDEX IF EXISTS idx_wc_agent_wake_attempts_endpoint;
+            ALTER TABLE wc_agent_wake_attempts RENAME TO wc_agent_wake_attempts_current;
+            ALTER TABLE wc_agent_wakes RENAME TO wc_agent_wakes_current;
+
+            CREATE TABLE wc_agent_wakes (
+                wake_id TEXT PRIMARY KEY,
+                target_agent_id TEXT NOT NULL,
+                trigger_kind TEXT NOT NULL,
+                first_triggering_delivery_id TEXT NOT NULL,
+                latest_triggering_delivery_id TEXT NOT NULL,
+                latest_conversation_id TEXT NOT NULL,
+                latest_message_id TEXT NOT NULL,
+                inbox_high_watermark INTEGER NOT NULL,
+                queued_delivery_count_snapshot INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL,
+                claimed_attempt_id TEXT,
+                claimed_endpoint_id TEXT,
+                claimed_controller_generation INTEGER,
+                claim_lease_expires_at_unix_ms INTEGER,
+                consumed_at_unix_ms INTEGER,
+                consumed_by_endpoint_id TEXT,
+                consumed_controller_generation INTEGER
+            );
+            INSERT INTO wc_agent_wakes (
+                wake_id, target_agent_id, trigger_kind,
+                first_triggering_delivery_id, latest_triggering_delivery_id,
+                latest_conversation_id, latest_message_id,
+                inbox_high_watermark, queued_delivery_count_snapshot,
+                state, revision, created_at_unix_ms, updated_at_unix_ms,
+                claimed_attempt_id, claimed_endpoint_id,
+                claimed_controller_generation, claim_lease_expires_at_unix_ms,
+                consumed_at_unix_ms, consumed_by_endpoint_id,
+                consumed_controller_generation
+            )
+            SELECT wake_id, target_agent_id, trigger_kind,
+                   first_triggering_delivery_id, latest_triggering_delivery_id,
+                   latest_conversation_id, latest_message_id,
+                   inbox_high_watermark, queued_delivery_count_snapshot,
+                   state, revision, created_at_unix_ms, updated_at_unix_ms,
+                   claimed_attempt_id, claimed_endpoint_id,
+                   claimed_controller_generation, claim_lease_expires_at_unix_ms,
+                   consumed_at_unix_ms, consumed_by_endpoint_id,
+                   consumed_controller_generation
+            FROM wc_agent_wakes_current;
+
+            CREATE TABLE wc_agent_wake_attempts (
+                attempt_id TEXT PRIMARY KEY,
+                wake_id TEXT NOT NULL,
+                endpoint_id TEXT NOT NULL,
+                controller_generation INTEGER NOT NULL,
+                adapter_kind TEXT NOT NULL,
+                state TEXT NOT NULL,
+                claim_fence_hash TEXT NOT NULL,
+                consume_token_hash TEXT NOT NULL,
+                claimed_at_unix_ms INTEGER NOT NULL,
+                claim_lease_expires_at_unix_ms INTEGER NOT NULL,
+                prepared_at_unix_ms INTEGER,
+                delivered_at_unix_ms INTEGER,
+                delivery_unknown_at_unix_ms INTEGER,
+                revoked_at_unix_ms INTEGER,
+                consumed_at_unix_ms INTEGER
+            );
+            INSERT INTO wc_agent_wake_attempts
+                SELECT * FROM wc_agent_wake_attempts_current;
+            DROP TABLE wc_agent_wake_attempts_current;
+            DROP TABLE wc_agent_wakes_current;
+
+            CREATE INDEX idx_wc_agent_wakes_target_state
+                ON wc_agent_wakes(target_agent_id, state, created_at_unix_ms, wake_id);
+            CREATE UNIQUE INDEX idx_wc_agent_wakes_one_queueable
+                ON wc_agent_wakes(target_agent_id)
+                WHERE state IN ('pending', 'claimed');
+            CREATE UNIQUE INDEX idx_wc_agent_wakes_one_dispatched
+                ON wc_agent_wakes(target_agent_id)
+                WHERE state IN ('prepared', 'delivered', 'delivery_unknown');
+            CREATE INDEX idx_wc_agent_wake_attempts_wake
+                ON wc_agent_wake_attempts(wake_id, claimed_at_unix_ms, attempt_id);
+            CREATE INDEX idx_wc_agent_wake_attempts_endpoint
+                ON wc_agent_wake_attempts(endpoint_id, controller_generation, state);
+            PRAGMA foreign_keys = ON;
+            ",
+        )
+        .unwrap();
+    }
+    drop(db);
+
+    let reopened = Database::open(&path).unwrap();
+    let wake = reopened.agent_wake(&wake_id).unwrap().unwrap();
+    assert_eq!(wake.trigger_kind, "inbox_changed");
+    assert_eq!(wake.state, AgentWakeState::Pending);
+    assert_eq!(wake.source_task_id, None);
+    assert_eq!(wake.source_task_attempt_id, None);
+    assert_eq!(
+        wake.latest_conversation_id.as_deref(),
+        Some(fixture.conversation_id.as_str())
+    );
+
+    let indexes: Vec<String> = {
+        let conn = reopened.conn_for_tests();
+        let mut statement = conn
+            .prepare(
+                "SELECT name FROM sqlite_master
+                 WHERE type = 'index'
+                   AND tbl_name IN ('wc_agent_wakes', 'wc_agent_wake_attempts')
+                 ORDER BY name",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    for expected in [
+        "idx_wc_agent_wakes_target_state",
+        "idx_wc_agent_wakes_one_queueable_inbox",
+        "idx_wc_agent_wakes_task_attempt",
+        "idx_wc_agent_wakes_one_dispatched",
+        "idx_wc_agent_wake_attempts_wake",
+        "idx_wc_agent_wake_attempts_endpoint",
+    ] {
+        assert!(
+            indexes.iter().any(|name| name == expected),
+            "migration must rebuild {expected}: {indexes:?}"
+        );
+    }
+    assert!(
+        !indexes
+            .iter()
+            .any(|name| name == "idx_wc_agent_wakes_one_queueable"),
+        "legacy queueable index must be replaced by the inbox-only index"
+    );
+
+    post_to_receiver(
+        &reopened,
+        &fixture,
+        "coalesce after migration",
+        "migration-message-2",
+    );
+    assert_eq!(
+        wake_id_for(&reopened, &fixture.receiver_agent_id),
+        wake_id,
+        "existing inbox Wake must remain the coalescing target after migration"
+    );
 }

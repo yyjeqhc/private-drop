@@ -1,4 +1,5 @@
 use super::agent_task::*;
+use super::agent_wake::AgentWakeState;
 use super::communication::{
     CommunicationPrincipal, NewAgentEndpoint, NewAgentIdentity, NewConversation,
     NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
@@ -209,6 +210,13 @@ fn coding_run_binding_is_unique_replayable_and_fenced_before_dispatch() {
         AgentTaskCodingRunDispatchState::Prepared
     );
     assert!(!prepared.replayed);
+    assert_eq!(
+        db.read_agent_task(&owner, &task_id)
+            .unwrap()
+            .summary
+            .execution_kind,
+        Some(AgentTaskExecutionKind::CodingAgentRun)
+    );
 
     let replay =
         prepare_coding_binding(&db, &owner, &task_id, &assignee, &started, &intent, now + 3);
@@ -2459,4 +2467,765 @@ fn replay_record_and_effect_commit_atomically_for_create_start_and_completion() 
         T0 + 104,
     )
     .unwrap();
+}
+
+#[test]
+fn endpoint_continuation_start_is_endpoint_independent_replay_safe_and_payload_free() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-endpoint-start.db")).unwrap();
+    let owner = principal('e');
+    let assignee = agent(&db, &owner, "endpoint-start-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "endpoint-start-task");
+    let now = wall_now_ms();
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "endpoint-start-attempt",
+        now,
+    );
+    let before_messages: i64 = db
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM wc_conversation_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let before_deliveries: i64 = db
+        .conn_for_tests()
+        .query_row("SELECT COUNT(*) FROM wc_agent_deliveries", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+
+    let first = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            started.attempt.attempt_controller_generation,
+            now + 1,
+        )
+        .unwrap();
+    assert!(first.state_changed);
+    assert!(!first.replayed);
+    assert_eq!(first.execution.wake_state, AgentWakeState::Pending);
+    assert_eq!(first.execution.endpoint_id, None);
+    assert_eq!(first.execution.endpoint_controller_generation, None);
+    let projected = db.read_agent_task(&owner, &task_id).unwrap();
+    assert!(projected.summary.execution_bound);
+    assert_eq!(
+        projected.summary.execution_kind,
+        Some(AgentTaskExecutionKind::AgentEndpoint)
+    );
+    assert_eq!(
+        projected.summary.execution_status,
+        Some(AgentTaskExecutionStatus::NotStarted)
+    );
+    assert_eq!(
+        projected.summary.recovery_kind,
+        AgentTaskExecutionRecoveryKind::None
+    );
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT COUNT(*) FROM wc_conversation_messages", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        before_messages,
+        "Task-origin execution must not synthesize a Conversation Message",
+    );
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT COUNT(*) FROM wc_agent_deliveries", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        before_deliveries,
+        "Task-origin execution must not synthesize an Inbox Delivery",
+    );
+
+    let replay = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            started.attempt.attempt_controller_generation,
+            now + 2,
+        )
+        .unwrap();
+    assert!(replay.replayed);
+    assert!(!replay.state_changed);
+    assert_eq!(replay.execution.wake_id, first.execution.wake_id);
+
+    let endpoint = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: assignee.clone(),
+                host: "task-host".to_string(),
+                client_attachment_id: Some("task-host-view".to_string()),
+                wake_capable: true,
+                idempotency_key: "task-host-endpoint".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    let claim = db
+        .claim_next_agent_wake(
+            &owner,
+            &assignee,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "task_host_adapter",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(claim.wake.wake_id, first.execution.wake_id);
+    assert_eq!(claim.wake.trigger_kind, "agent_task_attempt");
+    assert_eq!(claim.wake.latest_conversation_id, None);
+    assert_eq!(claim.wake.queued_delivery_count_snapshot, None);
+
+    let task_after_claim = db.read_agent_task(&owner, &task_id).unwrap();
+    let attempt_after_claim = task_after_claim.summary.latest_attempt.unwrap();
+    assert_eq!(attempt_after_claim.attempt_controller_generation, 2);
+
+    let replay_after_claim = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 3,
+        )
+        .unwrap();
+    assert!(replay_after_claim.replayed);
+    assert_eq!(
+        replay_after_claim.execution.wake_state,
+        AgentWakeState::Claimed
+    );
+    assert_eq!(
+        replay_after_claim.execution.endpoint_id.as_deref(),
+        Some(endpoint.endpoint_id.as_str())
+    );
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row(
+                "SELECT COUNT(*) FROM wc_agent_wakes WHERE source_task_attempt_id = ?1",
+                [started.attempt.attempt_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1,
+        "exact start replay must never mint a second Task Wake",
+    );
+    let prepared = db
+        .prepare_agent_wake_dispatch(
+            &owner,
+            &assignee,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            &claim.wake.wake_id,
+            &claim.attempt.attempt_id,
+            &claim.claim_fence,
+            &claim.consume_token,
+        )
+        .unwrap();
+    let heartbeat_pos = prepared
+        .envelope
+        .resume_hint
+        .find("First call heartbeat_agent_task_attempt")
+        .expect("Task continuation must require heartbeat before business work");
+    let bootstrap_pos = prepared
+        .envelope
+        .resume_hint
+        .find("bootstrap_agent_conversation")
+        .expect("Task continuation must still bootstrap the exact Wake");
+    assert!(heartbeat_pos < bootstrap_pos);
+    assert!(!prepared.envelope.resume_hint.contains("Durable work"));
+    assert!(!prepared
+        .envelope
+        .resume_hint
+        .contains("Perform bounded durable work without assuming a window or Endpoint."));
+}
+
+#[test]
+fn endpoint_continuation_pre_dispatch_carrier_replacement_advances_attempt_generation() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-endpoint-carrier.db")).unwrap();
+    let owner = principal('f');
+    let assignee = agent(&db, &owner, "endpoint-carrier-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "endpoint-carrier-task");
+    let now = wall_now_ms();
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "endpoint-carrier-attempt",
+        now,
+    );
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 1,
+        )
+        .unwrap();
+    let endpoint_one = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: assignee.clone(),
+                host: "task-host-one".to_string(),
+                client_attachment_id: None,
+                wake_capable: true,
+                idempotency_key: "task-endpoint-one".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    let first_claim = db
+        .claim_next_agent_wake(
+            &owner,
+            &assignee,
+            &endpoint_one.endpoint_id,
+            endpoint_one.controller_generation,
+            "task_host_adapter",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        db.read_agent_task(&owner, &task_id)
+            .unwrap()
+            .summary
+            .latest_attempt
+            .unwrap()
+            .attempt_controller_generation,
+        2
+    );
+
+    db.set_agent_endpoint_wake_capability(
+        &owner,
+        &assignee,
+        &endpoint_one.endpoint_id,
+        endpoint_one.controller_generation,
+        false,
+    )
+    .unwrap();
+    let released = db
+        .agent_wake(&execution.execution.wake_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(released.state, AgentWakeState::Pending);
+    let replay_after_loss = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 2,
+        )
+        .unwrap();
+    assert_eq!(replay_after_loss.execution.endpoint_id, None);
+
+    let endpoint_two = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: assignee.clone(),
+                host: "task-host-two".to_string(),
+                client_attachment_id: None,
+                wake_capable: true,
+                idempotency_key: "task-endpoint-two".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    let second_claim = db
+        .claim_next_agent_wake(
+            &owner,
+            &assignee,
+            &endpoint_two.endpoint_id,
+            endpoint_two.controller_generation,
+            "task_host_adapter",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(second_claim.wake.wake_id, first_claim.wake.wake_id);
+    assert_eq!(
+        db.read_agent_task(&owner, &task_id)
+            .unwrap()
+            .summary
+            .latest_attempt
+            .unwrap()
+            .attempt_controller_generation,
+        3,
+        "each new pre-dispatch carrier claim must fence the previous Attempt carrier generation",
+    );
+}
+
+#[test]
+fn endpoint_continuation_post_fence_endpoint_loss_fences_old_attempt_controller() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-endpoint-post-fence-loss.db")).unwrap();
+    let owner = principal('8');
+    let assignee = agent(&db, &owner, "endpoint-post-fence-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "endpoint-post-fence-task");
+    let now = wall_now_ms();
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "endpoint-post-fence-attempt",
+        now,
+    );
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 1,
+        )
+        .unwrap();
+    let endpoint = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: assignee.clone(),
+                host: "post-fence-host".to_string(),
+                client_attachment_id: None,
+                wake_capable: true,
+                idempotency_key: "post-fence-endpoint".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    let claim = db
+        .claim_next_agent_wake(
+            &owner,
+            &assignee,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "task_host_adapter",
+        )
+        .unwrap()
+        .unwrap();
+    db.prepare_agent_wake_dispatch(
+        &owner,
+        &assignee,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+        &claim.consume_token,
+    )
+    .unwrap();
+    let before_loss = db
+        .read_agent_task(&owner, &task_id)
+        .unwrap()
+        .summary
+        .latest_attempt
+        .unwrap()
+        .attempt_controller_generation;
+
+    db.detach_agent_endpoint(&owner, &endpoint.endpoint_id)
+        .unwrap();
+
+    let wake = db
+        .agent_wake(&execution.execution.wake_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake.state, AgentWakeState::DeliveryUnknown);
+    let task = db.read_agent_task(&owner, &task_id).unwrap();
+    let after_loss = task
+        .summary
+        .latest_attempt
+        .unwrap()
+        .attempt_controller_generation;
+    assert_eq!(after_loss, before_loss + 1);
+    let stale = db
+        .heartbeat_agent_task_attempt_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            before_loss,
+            now + 2,
+        )
+        .unwrap_err();
+    assert_eq!(stale.code(), "agent_task_attempt_stale");
+}
+
+#[test]
+fn endpoint_continuation_retires_when_attempt_expires_before_host_dispatch() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-endpoint-expiry.db")).unwrap();
+    let owner = principal('9');
+    let assignee = agent(&db, &owner, "endpoint-expiry-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "endpoint-expiry-task");
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "endpoint-expiry-attempt",
+        T0 + 10,
+    );
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            T0 + 11,
+        )
+        .unwrap();
+    let endpoint = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: assignee.clone(),
+                host: "late-task-host".to_string(),
+                client_attachment_id: None,
+                wake_capable: true,
+                idempotency_key: "late-task-endpoint".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    assert!(
+        db.claim_next_agent_wake(
+            &owner,
+            &assignee,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "task_host_adapter",
+        )
+        .unwrap()
+        .is_none(),
+        "expired Task Wake must retire before any Host carrier can claim it",
+    );
+    assert_eq!(
+        db.agent_wake(&execution.execution.wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::Retired
+    );
+    let task = db.read_agent_task(&owner, &task_id).unwrap();
+    assert_eq!(task.summary.state, AgentTaskState::Ready);
+    assert_eq!(
+        task.summary.latest_attempt.as_ref().unwrap().state,
+        AgentTaskAttemptState::Expired
+    );
+
+    let replay = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            wall_now_ms(),
+        )
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.execution.wake_state, AgentWakeState::Retired);
+
+    let second = db
+        .start_agent_task_attempt(
+            &owner,
+            &task_id,
+            &assignee,
+            "endpoint-expiry-second-attempt",
+        )
+        .unwrap();
+    assert_eq!(second.attempt.attempt_number, 2);
+    assert_ne!(second.attempt.attempt_id, started.attempt.attempt_id);
+}
+
+#[test]
+fn endpoint_continuation_and_coding_run_backends_are_mutually_exclusive() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-backend-exclusion.db")).unwrap();
+    let owner = principal('a');
+    let assignee = agent(&db, &owner, "backend-exclusion-agent");
+    let now = wall_now_ms();
+
+    let endpoint_task = create_assigned_task(&db, &owner, &assignee, "endpoint-first-task");
+    let endpoint_attempt = start(
+        &db,
+        &owner,
+        &endpoint_task,
+        &assignee,
+        "endpoint-first-attempt",
+        now,
+    );
+    db.start_agent_task_endpoint_continuation_at(
+        &owner,
+        &endpoint_task,
+        &endpoint_attempt.attempt.attempt_id,
+        &assignee,
+        &endpoint_attempt.attempt_fence,
+        1,
+        now + 1,
+    )
+    .unwrap();
+    let coding_after_endpoint = db
+        .agent_task_coding_run_start_context_at(
+            &owner,
+            "agent:special:reference-only",
+            &endpoint_task,
+            &endpoint_attempt.attempt.attempt_id,
+            &assignee,
+            &endpoint_attempt.attempt_fence,
+            1,
+            now + 2,
+        )
+        .unwrap_err();
+    assert_eq!(
+        coding_after_endpoint.code(),
+        "agent_task_execution_backend_conflict"
+    );
+
+    let coding_task = create_assigned_task(&db, &owner, &assignee, "coding-first-task");
+    let coding_attempt = start(
+        &db,
+        &owner,
+        &coding_task,
+        &assignee,
+        "coding-first-attempt",
+        now + 3,
+    );
+    let intent = coding_binding_intent("backend-exclusion-coding");
+    prepare_coding_binding(
+        &db,
+        &owner,
+        &coding_task,
+        &assignee,
+        &coding_attempt,
+        &intent,
+        now + 4,
+    );
+    let endpoint_after_coding = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &coding_task,
+            &coding_attempt.attempt.attempt_id,
+            &assignee,
+            &coding_attempt.attempt_fence,
+            1,
+            now + 5,
+        )
+        .unwrap_err();
+    assert_eq!(
+        endpoint_after_coding.code(),
+        "agent_task_execution_backend_conflict"
+    );
+}
+
+#[test]
+fn endpoint_continuation_terminal_completion_retires_pre_dispatch_wake() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-endpoint-terminal.db")).unwrap();
+    let owner = principal('b');
+    let assignee = agent(&db, &owner, "endpoint-terminal-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "endpoint-terminal-task");
+    let now = wall_now_ms();
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "endpoint-terminal-attempt",
+        now,
+    );
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 1,
+        )
+        .unwrap();
+
+    let completed = db
+        .complete_agent_task_attempt_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            AgentTaskState::Succeeded,
+            Some("completed without Host dispatch"),
+            None,
+            "endpoint-terminal-completion",
+            now + 2,
+        )
+        .unwrap();
+    assert_eq!(completed.task.state, AgentTaskState::Succeeded);
+    assert_eq!(completed.attempt.state, AgentTaskAttemptState::Succeeded);
+    assert_eq!(
+        db.agent_wake(&execution.execution.wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::Retired
+    );
+    let replay = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 3,
+        )
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.execution.wake_state, AgentWakeState::Retired);
+}
+
+#[test]
+fn endpoint_continuation_consumed_wake_stays_consumed_after_task_completion_but_execution_is_terminal(
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("agent-task-endpoint-consumed-terminal.db")).unwrap();
+    let owner = principal('c');
+    let assignee = agent(&db, &owner, "endpoint-consumed-terminal-agent");
+    let task_id = create_assigned_task(&db, &owner, &assignee, "endpoint-consumed-terminal-task");
+    let now = wall_now_ms();
+    let started = start(
+        &db,
+        &owner,
+        &task_id,
+        &assignee,
+        "endpoint-consumed-terminal-attempt",
+        now,
+    );
+    let execution = db
+        .start_agent_task_endpoint_continuation_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            1,
+            now + 1,
+        )
+        .unwrap();
+    let endpoint = db
+        .attach_agent_endpoint(
+            &owner,
+            NewAgentEndpoint {
+                agent_id: assignee.clone(),
+                host: "consumed-task-host".to_string(),
+                client_attachment_id: None,
+                wake_capable: true,
+                idempotency_key: "consumed-task-endpoint".to_string(),
+            },
+        )
+        .unwrap()
+        .endpoint;
+    let claim = db
+        .claim_next_agent_wake(
+            &owner,
+            &assignee,
+            &endpoint.endpoint_id,
+            endpoint.controller_generation,
+            "task_host_adapter",
+        )
+        .unwrap()
+        .unwrap();
+    db.prepare_agent_wake_dispatch(
+        &owner,
+        &assignee,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+        &claim.consume_token,
+    )
+    .unwrap();
+    db.complete_agent_wake_delivery(
+        &owner,
+        &assignee,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.attempt.attempt_id,
+        &claim.claim_fence,
+    )
+    .unwrap();
+    db.consume_agent_wake(
+        &owner,
+        &assignee,
+        &endpoint.endpoint_id,
+        endpoint.controller_generation,
+        &claim.wake.wake_id,
+        &claim.consume_token,
+    )
+    .unwrap();
+
+    let completed = db
+        .complete_agent_task_attempt_at(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &assignee,
+            &started.attempt_fence,
+            2,
+            AgentTaskState::Succeeded,
+            Some("completed after consumed Host continuation"),
+            None,
+            "endpoint-consumed-terminal-completion",
+            now + 2,
+        )
+        .unwrap();
+    assert_eq!(
+        completed.task.execution_status,
+        Some(AgentTaskExecutionStatus::Terminal)
+    );
+    assert_eq!(completed.attempt.state, AgentTaskAttemptState::Succeeded);
+    assert_eq!(
+        db.agent_wake(&execution.execution.wake_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        AgentWakeState::Consumed,
+        "Task completion must not rewrite a post-dispatch consumed Wake into pre-dispatch retirement"
+    );
+    let read = db.read_agent_task(&owner, &task_id).unwrap();
+    assert_eq!(read.summary.state, AgentTaskState::Succeeded);
+    assert_eq!(
+        read.summary.execution_status,
+        Some(AgentTaskExecutionStatus::Terminal)
+    );
 }

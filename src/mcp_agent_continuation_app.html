@@ -59,6 +59,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   const MAX_BIND_ATTEMPTS = 3;
   const MAX_RECOVERY_REBINDS = 1;
   const MAX_ENDPOINT_RECOVERY_ATTEMPTS = 2;
+  const MAX_ENDPOINT_SUCCESSOR_HOPS = 8;
   const RESTART_RECOVERY_KIND = "host_binding_missing_in_process";
   const MAX_AUTOMATIC_MESSAGE_CHARS = 4096;
   const VISIBLE_POLL_MS = 3000;
@@ -338,17 +339,22 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const output = outputOf(result);
     const recovery = output && output.endpoint_recovery;
     const replacement = recovery && recovery.kind === "endpoint_replaced" && recovery.replacement;
-    const projection = validProjection(output && output.agent_continuation);
-    return replacement && typeof replacement === "object" && !Array.isArray(replacement) && projection
-      ? { replacement, projection }
-      : null;
+    if (!replacement || typeof replacement !== "object" || Array.isArray(replacement)
+      || typeof recovery.successor_needs_recovery !== "boolean") return null;
+    if (recovery.successor_needs_recovery) {
+      return output.agent_continuation === null
+        ? { replacement, projection: null, successorNeedsRecovery: true }
+        : null;
+    }
+    const projection = validProjection(output.agent_continuation);
+    return projection ? { replacement, projection, successorNeedsRecovery: false } : null;
   }
 
   function acceptReplacementIdentity(result, stale) {
-    if (tornDown || !snapshotIsCurrent(stale)) return false;
+    if (tornDown || !snapshotIsCurrent(stale)) return null;
     const transition = replacementOf(result);
-    if (!transition) return false;
-    const { replacement, projection } = transition;
+    if (!transition) return null;
+    const { replacement, projection, successorNeedsRecovery } = transition;
     if (replacement.agent_id !== stale.agent_id
       || replacement.from_endpoint_id !== stale.endpoint_id
       || replacement.from_controller_generation !== stale.controller_generation
@@ -356,10 +362,10 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       || typeof replacement.endpoint_id !== "string" || !ENDPOINT_ID.test(replacement.endpoint_id)
       || !Number.isSafeInteger(replacement.controller_generation)
       || replacement.controller_generation !== stale.controller_generation + 1
-      || projection.agent_id !== stale.agent_id
-      || projection.endpoint_id !== replacement.endpoint_id
-      || projection.controller_generation !== replacement.controller_generation) {
-      return false;
+      || (!successorNeedsRecovery && (projection.agent_id !== stale.agent_id
+        || projection.endpoint_id !== replacement.endpoint_id
+        || projection.controller_generation !== replacement.controller_generation))) {
+      return null;
     }
     identity = {
       agent_id: replacement.agent_id,
@@ -380,7 +386,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     el("generation").textContent = String(identity.controller_generation);
     el("binding").textContent = "Reconnecting";
     el("status").textContent = "Restoring connection…";
-    return true;
+    return { successorNeedsRecovery };
   }
 
   function projectionSemanticFailure(value) {
@@ -644,36 +650,46 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   async function recoverExpiredEndpoint() {
-    const stale = identitySnapshot();
+    let stale = identitySnapshot();
     if (!stale || !viewBindingId || endpointRecoveryProbeEpoch === stale.epoch) return false;
     endpointRecoveryProbeEpoch = stale.epoch;
     el("binding").textContent = "Reconnecting";
     el("status").textContent = "Reconnecting…";
     let lastError = null;
-    for (let attempt = 0; attempt < MAX_ENDPOINT_RECOVERY_ATTEMPTS; attempt++) {
-      try {
-        const response = await callTool("agent_continuation_recover_endpoint", exactArgsFor(stale, {
-          binding_id: viewBindingId,
-        }));
-        if (tornDown || !snapshotIsCurrent(stale)) return false;
-        if (!toolCallSucceeded(response)) throw definitiveFailure();
-        const output = outputOf(response);
-        const recovery = output && output.endpoint_recovery;
-        if (recovery && recovery.kind === "controller_live" && recovery.replacement === null) {
-          const projection = projectionOf(response);
-          if (!projection || !sameIdentity(projection, stale)) throw malformedResult(response);
-          el("binding").textContent = "Unavailable";
-          el("status").textContent = "Connection unavailable. Queued work is preserved.";
-          return false;
+    for (let hop = 0; hop < MAX_ENDPOINT_SUCCESSOR_HOPS; hop++) {
+      let accepted = null;
+      for (let attempt = 0; attempt < MAX_ENDPOINT_RECOVERY_ATTEMPTS; attempt++) {
+        try {
+          const response = await callTool("agent_continuation_recover_endpoint", exactArgsFor(stale, {
+            binding_id: viewBindingId,
+          }));
+          if (tornDown || !snapshotIsCurrent(stale)) return false;
+          if (!toolCallSucceeded(response)) throw definitiveFailure();
+          const output = outputOf(response);
+          const recovery = output && output.endpoint_recovery;
+          if (recovery && recovery.kind === "controller_live" && recovery.replacement === null
+            && recovery.successor_needs_recovery === false) {
+            const projection = projectionOf(response);
+            if (!projection || !sameIdentity(projection, stale)) throw malformedResult(response);
+            el("binding").textContent = "Unavailable";
+            el("status").textContent = "Connection unavailable. Queued work is preserved.";
+            return false;
+          }
+          accepted = acceptReplacementIdentity(response, stale);
+          if (accepted) break;
+          throw malformedResult(response);
+        } catch (error) {
+          lastError = error;
+          if (tornDown || !snapshotIsCurrent(stale) || (error && error.definitive)) break;
         }
-        if (acceptReplacementIdentity(response, stale)) return true;
-        throw malformedResult(response);
-      } catch (error) {
-        lastError = error;
-        if (tornDown || !snapshotIsCurrent(stale) || (error && error.definitive)) break;
       }
+      if (!accepted) break;
+      if (!accepted.successorNeedsRecovery) return true;
+      stale = identitySnapshot();
+      if (!stale) return false;
+      endpointRecoveryProbeEpoch = stale.epoch;
     }
-    if (!tornDown && snapshotIsCurrent(stale)) {
+    if (!tornDown && identity) {
       const diagnostic = hostFailureDiagnostic(lastError);
       el("binding").textContent = "Unavailable";
       el("status").textContent = diagnostic
@@ -854,7 +870,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "14.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "15.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

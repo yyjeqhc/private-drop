@@ -461,6 +461,41 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_agent_task_endpoint_continuation(
+        &self,
+        auth: Option<&AuthContext>,
+        task_id: String,
+        attempt_id: String,
+        assignee_agent_id: String,
+        attempt_fence: String,
+        attempt_controller_generation: i64,
+    ) -> ToolResult {
+        let principal = match task_principal(auth) {
+            Ok(principal) => principal,
+            Err(result) => return result,
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return agent_task_store_unavailable();
+        };
+        match db.start_agent_task_endpoint_continuation(
+            &principal,
+            &task_id,
+            &attempt_id,
+            &assignee_agent_id,
+            &attempt_fence,
+            attempt_controller_generation,
+        ) {
+            Ok(result) => {
+                if let Some(controller) = self.agent_continuations.as_ref() {
+                    controller.schedule_agent(&assignee_agent_id);
+                }
+                serialized_task_success(result)
+            }
+            Err(error) => agent_task_error(error, RecoveryKind::RetrySame),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn start_agent_task_coding_run(
         &self,
         auth: Option<&AuthContext>,

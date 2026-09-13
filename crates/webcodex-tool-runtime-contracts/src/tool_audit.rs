@@ -292,6 +292,7 @@ enum AgentTaskRequestAudit {
     Read,
     Assign,
     StartAttempt,
+    StartEndpointContinuation,
     StartCodingRun,
     ReconcileCodingRun,
     HeartbeatAttempt,
@@ -356,6 +357,22 @@ fn typed_agent_task_request_audit(kind: AgentTaskRequestAudit, arguments: &Value
             out.insert(
                 "idempotency_key_present".to_string(),
                 Value::Bool(obj.get("idempotency_key").and_then(Value::as_str).is_some()),
+            );
+        }
+        AgentTaskRequestAudit::StartEndpointContinuation => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "task_id",
+                    "attempt_id",
+                    "assignee_agent_id",
+                    "attempt_controller_generation",
+                ],
+            );
+            out.insert(
+                "attempt_fence_present".to_string(),
+                Value::Bool(obj.get("attempt_fence").and_then(Value::as_str).is_some()),
             );
         }
         AgentTaskRequestAudit::StartCodingRun => {
@@ -3651,6 +3668,22 @@ impl ToolCall {
                     "task_id": task_id,
                     "assignee_agent_id": assignee_agent_id,
                     "idempotency_key": idempotency_key,
+                }),
+            ),
+            Self::StartAgentTaskEndpointContinuation {
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            } => typed_agent_task_request_audit(
+                AgentTaskRequestAudit::StartEndpointContinuation,
+                &serde_json::json!({
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "assignee_agent_id": assignee_agent_id,
+                    "attempt_fence": attempt_fence,
+                    "attempt_controller_generation": attempt_controller_generation,
                 }),
             ),
             Self::StartAgentTaskCodingRun {

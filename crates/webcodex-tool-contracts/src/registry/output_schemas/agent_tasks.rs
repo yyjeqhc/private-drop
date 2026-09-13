@@ -64,18 +64,25 @@ fn task_summary_properties() -> serde_json::Map<String, Value> {
             "updated_at_unix_ms": schema_type("integer", "Latest durable Task/Attempt ownership update time."),
             "terminal_at_unix_ms": nullable_integer("Task terminal time, or null while nonterminal."),
             "latest_attempt": nullable_attempt_schema()
-            ,"execution_bound": schema_type("boolean", "True when the latest AgentTaskAttempt has a durable CodingAgentRun binding. This high-level projection grants no execution authority."),
+            ,"execution_bound": schema_type("boolean", "True when the latest AgentTaskAttempt has a durable concrete execution backend binding (CodingAgentRun or Agent Endpoint continuation). This high-level projection grants no execution authority."),
+            "execution_kind": {
+                "anyOf": [
+                    {"type": "string", "enum": ["coding_agent_run", "agent_endpoint"]},
+                    {"type": "null"}
+                ],
+                "description": "Concrete durable execution backend selected for the latest AgentTaskAttempt, or null before backend selection. This is observation only and grants no authority."
+            },
             "execution_status": {
                 "anyOf": [
                     {"type": "string", "enum": ["not_started", "active", "waiting_permission", "outcome_unknown", "terminal"]},
                     {"type": "null"}
                 ],
-                "description": "High-level bound execution status only; no run id, provider instance, authority fingerprint, backend key, or private Runner identity is exposed by generic Task reads."
+                "description": "High-level bound execution status only; generic Task reads expose neither CodingAgentRun backend identity nor Agent Endpoint carrier identity and grant no execution authority."
             },
             "recovery_kind": {
                 "type": "string",
                 "enum": ["none", "observe", "reconcile"],
-                "description": "High-level recovery action for the latest bound execution."
+                "description": "High-level recovery action for the latest bound execution. Agent Endpoint continuation recovery remains owned by the Wake/continuation substrate and therefore reports none here."
             }
         }
     })["properties"]
@@ -94,7 +101,7 @@ fn task_summary_schema() -> Value {
             "task_id", "assignee_agent_id", "title", "source_conversation_id",
             "source_message_id", "referenced_project_id", "state", "created_at_unix_ms",
             "updated_at_unix_ms", "terminal_at_unix_ms", "latest_attempt",
-            "execution_bound", "execution_status", "recovery_kind"
+            "execution_bound", "execution_kind", "execution_status", "recovery_kind"
         ]
     })
 }
@@ -127,6 +134,27 @@ fn task_mutation_schema() -> Value {
             schema_type("boolean", "Whether durable AgentTask state changed."),
         ),
     ])
+}
+
+fn endpoint_execution_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "task_id": schema_type("string", "Owning durable AgentTask id."),
+            "attempt_id": schema_type("string", "Exact durable AgentTaskAttempt id."),
+            "wake_id": schema_type("string", "Durable Task-origin Wake used by the Agent Endpoint continuation backend."),
+            "wake_state": {"type": "string", "enum": ["pending", "claimed", "prepared", "delivered", "delivery_unknown", "consumed", "retired"]},
+            "endpoint_id": nullable_string("Current claimed continuation Endpoint carrier, or null while no Host carrier has claimed this Task execution."),
+            "endpoint_controller_generation": nullable_integer("Exact Endpoint generation of the current claimed carrier, or null before claim / after a pre-dispatch release."),
+            "created_at_unix_ms": schema_type("integer", "Endpoint backend selection time."),
+            "updated_at_unix_ms": schema_type("integer", "Latest durable backend carrier update time.")
+        },
+        "required": [
+            "task_id", "attempt_id", "wake_id", "wake_state", "endpoint_id",
+            "endpoint_controller_generation", "created_at_unix_ms", "updated_at_unix_ms"
+        ]
+    })
 }
 
 fn coding_run_terminal_schema() -> Value {
@@ -181,6 +209,11 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("attempt_fence", schema_type("string", "Opaque exact-Attempt freshness fence required for heartbeat/completion. It is returned only by exact start/replay, not generic list/read.")),
             ("replayed", schema_type("boolean", "True for exact keyed Attempt-start replay.")),
             ("state_changed", schema_type("boolean", "Whether this call first created the Attempt.")),
+        ]),
+        "start_agent_task_endpoint_continuation" => wrapped_output_schema(vec![
+            ("execution", endpoint_execution_schema()),
+            ("replayed", schema_type("boolean", "True when the exact Attempt already selected the Agent Endpoint continuation backend.")),
+            ("state_changed", schema_type("boolean", "True only when this call first creates the Task-origin Wake and backend selection.")),
         ]),
         "start_agent_task_coding_run" | "reconcile_agent_task_coding_run" => {
             coding_run_binding_output_schema()
