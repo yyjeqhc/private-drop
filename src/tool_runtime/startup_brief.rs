@@ -66,7 +66,7 @@ pub(crate) fn builtin_coding_workflow_projection() -> Value {
             "Complete authorized work through validation and review; ask only for missing requirements or authority.",
             "Verify Project, branch, HEAD, and existing changes; read nested rules for changed paths and recover truncated instructions.",
             "Preserve unrelated work; make the smallest coherent change. Push/publish/deploy/restart need an explicit action and target.",
-            "Use structured tools and edit guards; apply model_protocol only where the exposed schema supports it.",
+            "Use structured tools and edit guards; after source edits or a rustfmt check diff, prefer cargo_fmt(check=false) to ensure formatting instead of reproducing rustfmt edits manually; apply model_protocol only where the exposed schema supports it.",
             "Long required validation + independent read-only inspection: use short sync_wait_secs for same-execution Job handoff, inspect then observe; do not fan out heavy validations. Covered-source mutation makes that result stale/cache-warmup; final source needs fresh validation.",
             "Observe existing Jobs; inspect state before retrying an unknown outcome. Timeout does not prove no effect.",
             "Review the diff; report evidence, limits, and Jobs. finish_coding_task is advisory evidence, not proof."
