@@ -614,6 +614,16 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
         .as_str()
         .expect("go_test handoff observation token")
         .to_string();
+    assert_eq!(result.output["continuation"]["tool"], "observe_jobs");
+    assert_eq!(
+        result.output["continuation"]["arguments"]["items"][0]["job_id"],
+        job_id
+    );
+    assert_eq!(
+        result.output["continuation"]["arguments"]["items"][0]["after_observation_token"],
+        observation_token
+    );
+    assert_eq!(result.output["continuation"]["arguments"]["wait_secs"], 30);
     let observed = runtime
         .observe_jobs_for_auth(
             vec![ObserveJobsItem {

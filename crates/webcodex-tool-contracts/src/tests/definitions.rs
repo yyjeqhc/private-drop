@@ -158,6 +158,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         ("export_project_artifact", 56),
         ("run_detached_process", 72),
         ("run_shell", 75),
+        ("observe_jobs", 80),
     ] {
         let definition = derived
             .iter()
@@ -220,6 +221,26 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
             ToolAuthorityPolicy::Require(expected_authority)
         );
     }
+
+    let observe_jobs = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "observe_jobs")
+        .expect("observe_jobs ToolSpec");
+    let list_jobs = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "list_jobs")
+        .expect("list_jobs ToolSpec");
+    assert!(observe_jobs
+        .description
+        .contains("do not call list_jobs first"));
+    assert!(observe_jobs.description.contains("after_observation_token"));
+    assert!(observe_jobs.description.contains("bounded wait_secs"));
+    assert!(list_jobs
+        .description
+        .contains("Recovery and inventory primitive"));
+    assert!(list_jobs
+        .description
+        .contains("continue that Job with observe_jobs"));
 
     let git_review = registered_tool_specs()
         .into_iter()

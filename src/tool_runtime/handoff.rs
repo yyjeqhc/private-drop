@@ -226,7 +226,7 @@ impl ToolRuntime {
         };
         let jobs_project = (!jobs_project.is_empty()).then_some(jobs_project);
         let jobs = self
-            .active_jobs_summary(jobs_project.as_deref(), auth, 10)
+            .active_jobs_summary(jobs_project.as_deref(), Some(&summary.session_id), auth, 10)
             .await;
         if let Some(job_warnings) = jobs.get("warnings").and_then(Value::as_array) {
             warnings.extend(job_warnings.iter().cloned());
@@ -667,13 +667,17 @@ fn compact_handoff_output(output: &Value) -> Value {
 }
 
 pub(crate) fn compact_jobs(jobs: &Value) -> Value {
-    json!({
+    let mut compact = json!({
         "active_count": jobs.get("active_count").and_then(Value::as_u64).unwrap_or(0),
         "blocking_active_count": jobs.get("blocking_active_count").and_then(Value::as_u64).unwrap_or(0),
         "nonblocking_active_count": jobs.get("nonblocking_active_count").and_then(Value::as_u64).unwrap_or(0),
         "terminal_pending_count": jobs.get("terminal_pending_count").and_then(Value::as_u64).unwrap_or(0),
         "warnings": jobs.get("warnings").cloned().unwrap_or_else(|| json!([])),
-    })
+    });
+    if jobs.get("active_job").is_some_and(Value::is_object) {
+        compact["active_job"] = jobs["active_job"].clone();
+    }
+    compact
 }
 
 pub(crate) fn compact_permissions(permissions: &Value) -> Value {

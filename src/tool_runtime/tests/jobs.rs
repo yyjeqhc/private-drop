@@ -1363,6 +1363,15 @@ async fn model_facing_stop_job_stops_agent_job_with_same_session() {
         .await;
     assert!(run.success, "{:?}", run.error);
     let job_id = run.output["job_id"].as_str().unwrap().to_string();
+    assert_eq!(run.output["continuation"]["tool"], "observe_jobs");
+    assert_eq!(
+        run.output["continuation"]["arguments"]["items"][0]["job_id"],
+        job_id
+    );
+    assert_eq!(
+        run.output["continuation"]["arguments"]["items"][0]["after_observation_token"],
+        run.output["observation_token"]
+    );
 
     let result = runtime
         .dispatch_with_auth(
@@ -2103,7 +2112,12 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
             Some(&auth_a),
         )
         .await;
-    let mut a1_ids = listed_job_ids(&a1);
+    let ordered_a1_ids = listed_job_ids(&a1);
+    let expected_first_a1 = ordered_a1_ids
+        .first()
+        .cloned()
+        .expect("session A1 should have visible jobs");
+    let mut a1_ids = ordered_a1_ids;
     a1_ids.sort();
     let mut expected_a1 = vec![job_a1_running.clone(), job_a1_completed.clone()];
     expected_a1.sort();
@@ -2150,13 +2164,14 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
     assert_eq!(limited.output["matched_count"], 2);
     assert_eq!(limited.output["count"], 1);
     assert_eq!(limited.output["truncated"], true);
+    assert_eq!(listed_job_ids(&limited), vec![expected_first_a1]);
 
     let mismatched = runtime
         .dispatch_with_auth(
             ToolCall::ListJobs {
                 limit: None,
                 status: None,
-                project: Some(project_a),
+                project: Some(project_a.clone()),
                 session_id: Some(session_b1.session_id.clone()),
             },
             Some(&auth_a),
@@ -2176,7 +2191,7 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
             limit: None,
             status: None,
             project: None,
-            session_id: Some(session_b1.session_id),
+            session_id: Some(session_b1.session_id.clone()),
         },
     ] {
         let hidden = runtime
@@ -2186,6 +2201,46 @@ async fn list_jobs_filters_visible_jobs_by_project_session_and_status_before_lim
         assert_eq!(hidden.output["count"], 0);
         assert_eq!(hidden.output["matched_count"], 0);
     }
+
+    let unique = runtime
+        .active_jobs_summary(
+            Some(&project_a),
+            Some(&session_a1.session_id),
+            Some(&auth_a),
+            10,
+        )
+        .await;
+    assert_eq!(unique["active_job"]["job_id"], job_a1_running);
+    assert_eq!(unique["active_job"]["status"], "running");
+    assert!(unique["active_job"].get("project").is_none());
+
+    let no_exact_session = runtime
+        .active_jobs_summary(
+            Some(&project_a),
+            Some(&session_b1.session_id),
+            Some(&auth_a),
+            10,
+        )
+        .await;
+    assert!(no_exact_session.get("active_job").is_none());
+
+    let _second_a1 = start_agent_runtime_job_in_session(
+        &runtime,
+        "target-a",
+        "proj-a",
+        Some(&session_a1.session_id),
+        &auth_a,
+    )
+    .await;
+    let ambiguous = runtime
+        .active_jobs_summary(
+            Some(&project_a),
+            Some(&session_a1.session_id),
+            Some(&auth_a),
+            10,
+        )
+        .await;
+    assert!(ambiguous.get("active_job").is_none());
 
     let status = runtime
         .job_status_for_auth(job_a1_running, false, Some(&auth_a))

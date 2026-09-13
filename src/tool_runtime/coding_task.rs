@@ -1061,7 +1061,12 @@ impl ToolRuntime {
         // potentially slow startup probes, then share it across continuation,
         // the legacy full verdict, and the model-facing brief.
         let active_jobs = self
-            .active_jobs_summary(Some(&resolved.resolved_id), auth, 10)
+            .active_jobs_summary(
+                Some(&resolved.resolved_id),
+                Some(&session_outcome.summary.session_id),
+                auth,
+                10,
+            )
             .await;
         let continuation_feedback = self
             .startup_continuation_feedback(
@@ -1563,7 +1568,7 @@ impl ToolRuntime {
         append_hygiene_warnings(&hygiene, &mut final_warnings);
 
         let jobs = self
-            .active_jobs_summary(Some(&resolved.resolved_id), auth, 10)
+            .active_jobs_summary(Some(&resolved.resolved_id), Some(&session_id), auth, 10)
             .await;
         if let Some(warnings) = jobs.get("warnings").and_then(Value::as_array) {
             final_warnings.extend(warnings.iter().cloned());

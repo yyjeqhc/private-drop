@@ -74,6 +74,8 @@ pub struct RunnerRegistry {
     pub(crate) cleanup_intents: Arc<StdMutex<HashMap<String, Option<RunnerAccess>>>>,
     #[cfg(any(test, feature = "root-test-support"))]
     pub(crate) project_job_scan_count: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub(crate) filtered_job_refresh_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Default for RunnerRegistry {
@@ -92,12 +94,20 @@ impl RunnerRegistry {
             cleanup_intents: Arc::new(StdMutex::new(HashMap::new())),
             #[cfg(any(test, feature = "root-test-support"))]
             project_job_scan_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "root-test-support"))]
+            filtered_job_refresh_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
     #[cfg(any(test, feature = "root-test-support"))]
     pub fn project_job_scan_count_for_test(&self) -> usize {
         self.project_job_scan_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn filtered_job_refresh_count_for_test(&self) -> usize {
+        self.filtered_job_refresh_count
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

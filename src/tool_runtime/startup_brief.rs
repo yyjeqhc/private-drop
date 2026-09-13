@@ -1094,6 +1094,10 @@ fn continuation_projection(
         ),
     });
 
+    if active_jobs.get("active_job").is_some_and(Value::is_object) {
+        projected["jobs"]["active_job"] = active_jobs["active_job"].clone();
+    }
+
     if minimal {
         // The first action remains concrete, while bulk evidence lists are
         // represented only by their total/returned/truncated metadata.
@@ -2004,6 +2008,29 @@ mod tests {
         assert_eq!(standard["exploration"]["navigation_count"], 4);
         assert_eq!(standard["exploration"]["latest_tool"], "read_files");
         assert_eq!(standard["exploration"]["complete"], true);
+    }
+
+    #[test]
+    fn continuation_projection_preserves_only_explicit_active_job_handle() {
+        let feedback = json!({"status": "available", "attempt": {}, "validation_delta": {}});
+        let mut jobs = empty_active_jobs();
+        assert!(
+            continuation_projection(&feedback, &jobs, true, "continued")["jobs"]
+                .get("active_job")
+                .is_none()
+        );
+
+        jobs["active_job"] = json!({
+            "job_id": "job-exact",
+            "status": "running",
+            "kind": "shell"
+        });
+        let projected = continuation_projection(&feedback, &jobs, true, "continued");
+        assert_eq!(
+            projected["jobs"]["active_job"],
+            json!({"job_id": "job-exact", "status": "running", "kind": "shell"})
+        );
+        assert_eq!(projected["jobs"]["active_count"], 0);
     }
 
     #[test]

@@ -487,26 +487,33 @@ impl ToolRuntime {
             )
             .await
         {
-            Ok(job) => ToolResult::ok(json!({
-                "job_id": job.job_id,
-                "kind": job.kind,
-                "status": job.status,
-                "project": project,
-                "execution_source": "run_detached_process",
-                "purpose": declared_purpose.as_str(),
-                "process_summary": summary,
-                "cwd": resolved_cwd,
-                "shell": "direct_argv",
-                "executor": "agent",
-                "execution_state": "pending",
-                "command_started": false,
-                "command_completed": false,
-                "terminal": false,
-                "effective_timeout_secs": timeout,
-                "created_at": job.created_at,
-                "observation_token": job.observation_token,
-                "last_update_seq": job.last_update_seq,
-            })),
+            Ok(job) => {
+                let continuation = crate::tool_runtime::jobs::observe_job_continuation(
+                    &job.job_id,
+                    job.observation_token.as_deref(),
+                );
+                ToolResult::ok(json!({
+                    "job_id": job.job_id,
+                    "kind": job.kind,
+                    "status": job.status,
+                    "project": project,
+                    "execution_source": "run_detached_process",
+                    "purpose": declared_purpose.as_str(),
+                    "process_summary": summary,
+                    "cwd": resolved_cwd,
+                    "shell": "direct_argv",
+                    "executor": "agent",
+                    "execution_state": "pending",
+                    "command_started": false,
+                    "command_completed": false,
+                    "terminal": false,
+                    "effective_timeout_secs": timeout,
+                    "created_at": job.created_at,
+                    "observation_token": job.observation_token,
+                    "last_update_seq": job.last_update_seq,
+                    "continuation": continuation,
+                }))
+            }
             Err(error) => {
                 if let Some(job_id) = error.strip_prefix(DETACHED_IDEMPOTENCY_RECOVERY_PREFIX) {
                     return ToolResult::err_with_output(
@@ -805,6 +812,10 @@ impl ToolRuntime {
                             &observation.stderr_tail,
                             observation.job.activity.as_ref(),
                         );
+                    let continuation = crate::tool_runtime::jobs::observe_job_continuation(
+                        &observation.job.job_id,
+                        observation.job.observation_token.as_deref(),
+                    );
                     ToolResult::ok(json!({
                         "execution_state": execution_state,
                         "command_started": command_started,
@@ -829,6 +840,7 @@ impl ToolRuntime {
                         "stdout_truncated": observation.stdout_truncated,
                         "stderr_truncated": observation.stderr_truncated,
                         "detected_summary": detected_summary,
+                        "continuation": continuation,
                     }))
                 }
                 Err(error) => outcome_unknown_result(format!(

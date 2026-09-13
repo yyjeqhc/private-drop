@@ -105,6 +105,69 @@ async fn project_active_job_batch_preserves_visibility_lifecycle_and_bounds() {
 }
 
 #[tokio::test]
+async fn filtered_job_inventory_refreshes_only_authorized_static_candidates() {
+    let registry = RunnerRegistry::default();
+    register_with_instance(&registry, "oe", "filtered-inst").await;
+    let request = |command: &str| ShellJobOpRequest {
+        op: "start".to_string(),
+        client_id: Some("oe".to_string()),
+        cwd: None,
+        command: Some(command.to_string()),
+        timeout_secs: Some(60),
+        job_id: None,
+        since_stdout_line: None,
+        since_stderr_line: None,
+        tail_lines: None,
+        limit: None,
+        codex: None,
+    };
+    for (project, session) in [
+        ("agent:oe:target", "session-a"),
+        ("agent:oe:target", "session-b"),
+        ("agent:oe:other", "session-a"),
+    ] {
+        registry
+            .start_job_with_metadata(
+                request("sleep 60"),
+                "alice".to_string(),
+                ShellJobStartMetadata {
+                    project_id: Some(project.to_string()),
+                    session_id: Some(session.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let alice = auth_context(Some("alice"), false);
+    let bob = auth_context(Some("bob"), false);
+    assert_eq!(registry.filtered_job_refresh_count_for_test(), 0);
+
+    let focused = registry
+        .list_jobs_for_auth_filtered(Some(&alice), Some("agent:oe:target"), Some("session-a"))
+        .await;
+    assert_eq!(focused.len(), 1);
+    assert_eq!(registry.filtered_job_refresh_count_for_test(), 1);
+
+    let by_project = registry
+        .list_jobs_for_auth_filtered(Some(&alice), Some("agent:oe:target"), None)
+        .await;
+    assert_eq!(by_project.len(), 2);
+    assert_eq!(registry.filtered_job_refresh_count_for_test(), 3);
+
+    let before_denied = registry.filtered_job_refresh_count_for_test();
+    assert!(registry
+        .list_jobs_for_auth_filtered(Some(&bob), Some("agent:oe:target"), Some("session-a"),)
+        .await
+        .is_empty());
+    assert_eq!(
+        registry.filtered_job_refresh_count_for_test(),
+        before_denied,
+        "unauthorized Jobs must not become refresh candidates"
+    );
+}
+
+#[tokio::test]
 async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts() {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-jobs").await;

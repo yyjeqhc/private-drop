@@ -10,7 +10,7 @@ fn structured_execution_output(
     job_id: Option<&str>,
     job_status: Option<&str>,
 ) -> serde_json::Value {
-    serde_json::json!({
+    let mut instance = serde_json::json!({
         "success": promoted_to_job,
         "output": {
             "execution_source": execution_source,
@@ -36,7 +36,20 @@ fn structured_execution_output(
             "async_handoff_available": true
         },
         "error": null
-    })
+    });
+    if promoted_to_job {
+        instance["output"]["continuation"] = serde_json::json!({
+            "tool": "observe_jobs",
+            "arguments": {
+                "items": [{
+                    "job_id": job_id.expect("promoted Job id"),
+                    "after_observation_token": "observation"
+                }],
+                "wait_secs": 30
+            }
+        });
+    }
+    instance
 }
 
 fn continuation_feedback_subschema(specs: &[ToolSpec], tool: &str) -> Value {
@@ -617,6 +630,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         "job_status",
         "observation_token",
         "effective_timeout_secs",
+        "continuation",
         "sync_wait_secs",
         "async_handoff_available",
     ] {
@@ -785,6 +799,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         "job_status",
         "observation_token",
         "effective_timeout_secs",
+        "continuation",
         "sync_wait_secs",
         "async_handoff_available",
     ] {
@@ -1039,6 +1054,12 @@ fn key_tool_output_schemas_include_expected_fields() {
             output_schema_property(&specs, name, "observation_token")["maxLength"],
             webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN
         );
+        let continuation = output_schema_property(&specs, name, "continuation");
+        assert_eq!(continuation["properties"]["tool"]["const"], "observe_jobs");
+        assert_eq!(
+            continuation["properties"]["arguments"]["properties"]["wait_secs"]["maximum"],
+            60
+        );
         assert!(
             has_output_field(name, "failure_kind"),
             "{name} missing failure_kind"
@@ -1196,6 +1217,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         "project",
         "ssh_resource",
         "last_update_seq",
+        "continuation",
     ] {
         assert!(
             has_output_field("run_job", field),

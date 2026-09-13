@@ -646,6 +646,20 @@ pub(crate) fn agent_job_summary_value(job: &ShellJobInfo) -> Value {
     })
 }
 
+pub(crate) fn observe_job_continuation(job_id: &str, observation_token: Option<&str>) -> Value {
+    let mut item = json!({"job_id": job_id});
+    if let Some(token) = observation_token.filter(|token| !token.is_empty()) {
+        item["after_observation_token"] = json!(token);
+    }
+    json!({
+        "tool": "observe_jobs",
+        "arguments": {
+            "items": [item],
+            "wait_secs": 30,
+        },
+    })
+}
+
 fn invalid_job_observation_result(error_kind: &str, message: String) -> ToolResult {
     ToolResult::err_with_output(
         message,
@@ -909,6 +923,14 @@ fn active_job_brief(summary: &Value) -> Value {
     })
 }
 
+fn active_job_continuation_brief(summary: &Value) -> Value {
+    json!({
+        "job_id": summary.get("job_id").cloned().unwrap_or(Value::Null),
+        "status": summary.get("status").cloned().unwrap_or(Value::Null),
+        "kind": summary.get("kind").cloned().unwrap_or_else(|| json!("shell")),
+    })
+}
+
 impl ToolRuntime {
     pub(crate) async fn run_job_for_auth(
         &self,
@@ -1095,7 +1117,12 @@ impl ToolRuntime {
                 )
                 .await
             {
-                Ok(job) => ToolResult::ok(json!({
+                Ok(job) => {
+                    let continuation = observe_job_continuation(
+                        &job.job_id,
+                        job.observation_token.as_deref(),
+                    );
+                    ToolResult::ok(json!({
                     "job_id": job.job_id,
                     "kind": job.kind,
                     "status": job.status,
@@ -1117,7 +1144,9 @@ impl ToolRuntime {
                     "stderr_lines": 0,
                     "stdout_truncated": false,
                     "stderr_truncated": false,
-                })),
+                    "continuation": continuation,
+                }))
+                }
                 Err(e) => ToolResult::err(command_rejected_message(
                     e,
                     "confirm the agent is connected and async jobs are allowed, then retry or use run_shell for short commands.",
@@ -1463,7 +1492,11 @@ impl ToolRuntime {
         // behind unrelated recent Jobs.
         let agent_jobs = self
             .runner_registry
-            .list_all_jobs_for_auth(crate::runner_http::runner_access_from_auth(auth).as_ref())
+            .list_jobs_for_auth_filtered(
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                project_filter.as_deref(),
+                session_filter.as_deref(),
+            )
             .await;
         let mut summaries: Vec<Value> = agent_jobs
             .iter()
@@ -1472,14 +1505,6 @@ impl ToolRuntime {
                     .as_ref()
                     .map(|status| status == &job.status)
                     .unwrap_or(true)
-                    && project_filter
-                        .as_deref()
-                        .map(|project| job.project_id.as_deref() == Some(project))
-                        .unwrap_or(true)
-                    && session_filter
-                        .as_deref()
-                        .map(|session_id| job.session_id.as_deref() == Some(session_id))
-                        .unwrap_or(true)
             })
             .map(agent_job_summary_value)
             .collect();
@@ -1723,28 +1748,32 @@ impl ToolRuntime {
     pub(crate) async fn active_jobs_summary(
         &self,
         project: Option<&str>,
+        continuation_session_id: Option<&str>,
         auth: Option<&AuthContext>,
         limit: usize,
     ) -> Value {
         let max = limit.clamp(1, 20);
         let mut active = Vec::new();
+        let mut continuation_candidates = Vec::new();
         for job in self
             .runner_registry
-            .list_jobs_for_auth(
+            .list_jobs_for_auth_filtered(
                 crate::runner_http::runner_access_from_auth(auth).as_ref(),
-                Some(100),
+                project,
+                None,
             )
             .await
         {
             if !webcodex_runner_registry::job_status_is_active(&job.status) {
                 continue;
             }
-            if let Some(project) = project {
-                if job.project_id.as_deref() != Some(project) {
-                    continue;
-                }
+            let summary = agent_job_summary_value(&job);
+            if continuation_session_id.is_some()
+                && job.session_id.as_deref() == continuation_session_id
+            {
+                continuation_candidates.push(active_job_continuation_brief(&summary));
             }
-            active.push(agent_job_summary_value(&job));
+            active.push(summary);
         }
 
         active.sort_by(|a, b| {
@@ -1811,7 +1840,7 @@ impl ToolRuntime {
                 ),
             }));
         }
-        json!({
+        let mut output = json!({
             "active_count": active_count,
             "running_count": running_count,
             "recovering_count": recovering_count,
@@ -1823,7 +1852,11 @@ impl ToolRuntime {
             "recent_limit": max,
             "truncated": active_count > max,
             "warnings": warnings,
-        })
+        });
+        if continuation_candidates.len() == 1 {
+            output["active_job"] = continuation_candidates.pop().unwrap_or(Value::Null);
+        }
+        output
     }
 
     /// Hidden REST compatibility wrapper for stopping a runtime Job by id.
