@@ -53,9 +53,12 @@ pub(super) const MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
 // Temporary gray-card diagnostic: force the host to re-read the canonical App
 // resource for every card so resource reuse/cache is not an unobserved variable.
 pub(super) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
-pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/result/v3";
-pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] =
-    &["ui://webcodex/result/v1", "ui://webcodex/result/v2"];
+pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v1";
+pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
+    "ui://webcodex/result/v1",
+    "ui://webcodex/result/v2",
+    "ui://webcodex/result/v3",
+];
 pub(super) const MCP_GOAL_PLAN_UI_RESOURCE_URI: &str = "ui://webcodex/goal-plan/v2";
 pub(super) const MCP_AGENT_CONTINUATION_UI_RESOURCE_URI: &str =
     "ui://webcodex/agent-continuation/v15";
@@ -131,8 +134,8 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .expect("computer App resource list must be an array")
         .push(json!({
             "uri": MCP_RESULT_UI_RESOURCE_URI,
-            "name": "WebCodex Result",
-            "description": "Read-only bounded WebCodex milestone presentation for active/attention Job inventory, aggregate validation evidence, and committed-range review summaries. High-frequency execution tools keep native Host presentation; the App never performs tool calls or owns runtime state.",
+            "name": "WebCodex Changes",
+            "description": "Read-only bounded worktree Changes presentation for the sparse show_changes review milestone. Routine Job, execution, validation, and committed-range inspection tools keep native Host presentation; hidden legacy result URIs remain readable only for cached descriptors.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_result_app_resource_meta(domain)
         }));

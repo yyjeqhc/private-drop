@@ -4843,7 +4843,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
     });
     let req = wait_for_patch_agent_request(&runtime, "telemetry-show").await;
     let stdout = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         framed_block(
             'S',
             "## main\n M README.md\n",
@@ -4858,6 +4858,11 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
             'T',
             "README.md | 1 +\n",
             "diff_stat_exit=0\ndiff_stat_truncated=0\ndiff_stat_bytes=15\n"
+        ),
+        framed_block(
+            'N',
+            "1\t0\tREADME.md\n",
+            "numstat_exit=0\nnumstat_truncated=0\nnumstat_bytes=13\n"
         )
     );
     complete_patch_agent_request(&runtime, "telemetry-show", &req.request_id, 0, &stdout, "").await;
@@ -6011,7 +6016,7 @@ fn show_changes_modern_framing_requires_exact_blocks_and_tail() {
         let (_, stdout, stderr) = run_bounded_show_changes_full(tmp.path(), include_diff, 20, 80);
         assert_eq!(
             stdout.matches("WCSF1:").count(),
-            if include_diff { 4 } else { 3 }
+            if include_diff { 5 } else { 4 }
         );
         let frames = split_show_changes_stdout(&stdout, include_diff);
         assert!(frames.framing_valid);
@@ -6024,10 +6029,13 @@ fn show_changes_modern_framing_requires_exact_blocks_and_tail() {
             &stderr,
         );
         assert_eq!(output["transport_safe"], true, "{output}");
+        assert_eq!(output["files"][0]["path"], "README.md");
+        assert_eq!(output["files"][0]["additions"], 1);
+        assert_eq!(output["files"][0]["deletions"], 1);
     }
 
     let (_, valid, stderr) = run_bounded_show_changes_full(tmp.path(), false, 20, 80);
-    let trailer = valid.rfind("WCSF1:T:").unwrap();
+    let trailer = valid.rfind("WCSF1:N:").unwrap();
     let mut variants = Vec::new();
     variants.push(("extra_tail", format!("{valid}x")));
     variants.push(("missing_tail", valid[..valid.len() - 1].to_string()));
@@ -6057,10 +6065,11 @@ fn show_changes_modern_framing_requires_exact_blocks_and_tail() {
     }
 
     let synthetic = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         framed_block('S', "## main\n", "status_exit=0\n"),
         framed_block('H', "", "head_exit=1\n"),
-        framed_block('T', "", "diff_stat_exit=0\n")
+        framed_block('T', "", "diff_stat_exit=0\n"),
+        framed_block('N', "", "numstat_exit=0\n")
     );
     assert!(split_show_changes_stdout(&synthetic, false).framing_valid);
 
