@@ -1,9 +1,9 @@
-<div id="app" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;border:1px solid var(--color-border-primary,rgba(127,127,127,.35));border-radius:12px;max-width:760px;color:var(--color-text-primary,inherit);background:var(--color-background-primary,transparent)">
+<div id="app" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;border:1px solid color-mix(in srgb,var(--color-border-primary,#8b8b8b) 72%,#d99742 28%);border-radius:14px;max-width:760px;color:var(--color-text-primary,inherit);background:var(--color-background-primary,#fff);background:linear-gradient(145deg,color-mix(in srgb,var(--color-background-primary,#fff) 96%,#d99742 4%),var(--color-background-primary,#fff));box-shadow:0 10px 30px rgba(0,0,0,.055)">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-    <strong id="title" style="font-size:17px">WebCodex Changes</strong>
-    <span id="state" style="font-size:12px">HTML loaded</span>
+    <strong id="title" style="font-size:17px;letter-spacing:-.01em">WebCodex Changes</strong>
+    <span id="state" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-variant-numeric:tabular-nums;font-weight:600">HTML loaded</span>
   </div>
-  <div id="summary" style="margin-top:8px;font-size:13px">Waiting for a bounded Changes presentation</div>
+  <div id="summary" style="margin-top:8px;font-size:13px;color:var(--color-text-secondary,inherit)">Waiting for a bounded Changes presentation</div>
   <div id="cards" style="display:grid;gap:10px;margin-top:12px"></div>
 </div>
 <script>
@@ -13,7 +13,7 @@
   const MAX_ITEMS = 8;
   const MAX_TEXT = 256;
   const DEFAULT_VISIBLE_FILES = 3;
-  const MAX_DIFF_HUNKS = 4;
+  const MAX_DIFF_HUNKS = 8;
   const MAX_DIFF_LINES = 80;
   const MAX_DIFF_TEXT = 12 * 1024;
   const stateEl = document.getElementById("state");
@@ -62,6 +62,10 @@
 
   function clearCards() {
     while (cardsEl.firstChild) cardsEl.removeChild(cardsEl.firstChild);
+    cardsEl.style.maxHeight = "";
+    cardsEl.style.overflowY = "visible";
+    cardsEl.style.paddingRight = "";
+    cardsEl.scrollTop = 0;
   }
 
   function addRow(card, label, value) {
@@ -303,19 +307,82 @@
     return "?";
   }
 
+  function changeTone(item) {
+    const status = boundedString(item && item.status);
+    if (status === "added") {
+      return {
+        foreground: "var(--color-success-text,#2f9e44)",
+        background: "color-mix(in srgb,var(--color-success-text,#2f9e44) 13%,transparent)",
+        border: "color-mix(in srgb,var(--color-success-text,#2f9e44) 28%,transparent)"
+      };
+    }
+    if (status === "deleted" || status === "conflicted") {
+      return {
+        foreground: "var(--color-danger-text,#d9485f)",
+        background: "color-mix(in srgb,var(--color-danger-text,#d9485f) 12%,transparent)",
+        border: "color-mix(in srgb,var(--color-danger-text,#d9485f) 26%,transparent)"
+      };
+    }
+    if (status === "modified" || status === "renamed" || status === "copied") {
+      return {
+        foreground: "var(--color-warning-text,#d99742)",
+        background: "color-mix(in srgb,var(--color-warning-text,#d99742) 13%,transparent)",
+        border: "color-mix(in srgb,var(--color-warning-text,#d99742) 28%,transparent)"
+      };
+    }
+    return {
+      foreground: "var(--color-text-secondary,#6b7280)",
+      background: "color-mix(in srgb,var(--color-text-secondary,#6b7280) 9%,transparent)",
+      border: "color-mix(in srgb,var(--color-text-secondary,#6b7280) 20%,transparent)"
+    };
+  }
+
+  function addChangeStat(stats, prefix, value, color) {
+    if (!Number.isInteger(value) || value < 0) return;
+    const span = document.createElement("span");
+    span.style.color = color;
+    span.style.fontWeight = "650";
+    span.textContent = prefix + String(value);
+    stats.appendChild(span);
+  }
+
+  function appendDiffLine(pre, line) {
+    const span = document.createElement("span");
+    span.style.display = "block";
+    span.style.minHeight = "1.45em";
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      span.style.color = "var(--color-success-text,#2f9e44)";
+      span.style.background = "color-mix(in srgb,var(--color-success-text,#2f9e44) 8%,transparent)";
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      span.style.color = "var(--color-danger-text,#d9485f)";
+      span.style.background = "color-mix(in srgb,var(--color-danger-text,#d9485f) 8%,transparent)";
+    } else if (line.startsWith("@@")) {
+      span.style.color = "var(--color-warning-text,#d99742)";
+      span.style.fontWeight = "600";
+    } else {
+      span.style.color = "var(--color-text-secondary,inherit)";
+    }
+    span.textContent = line || " ";
+    pre.appendChild(span);
+  }
+
   function appendChangeDiff(card, item) {
     const hunks = Array.isArray(item.diff_hunks) ? item.diff_hunks.slice(0, MAX_DIFF_HUNKS) : [];
     if (!hunks.length) return;
     const details = document.createElement("details");
     details.style.marginTop = "9px";
-    details.style.borderTop = "1px solid var(--color-border-secondary,rgba(127,127,127,.18))";
+    details.style.borderTop = "1px solid color-mix(in srgb,var(--color-warning-text,#d99742) 18%,var(--color-border-secondary,rgba(127,127,127,.18)))";
     details.style.paddingTop = "8px";
     const summary = document.createElement("summary");
     summary.style.cursor = "pointer";
     summary.style.fontSize = "12px";
-    summary.style.fontWeight = "600";
+    summary.style.fontWeight = "650";
+    summary.style.color = "var(--color-warning-text,#d99742)";
     summary.textContent = "View diff";
     details.appendChild(summary);
+    details.addEventListener("toggle", () => {
+      summary.textContent = details.open ? "Hide diff" : "View diff";
+    });
     hunks.forEach((hunk) => {
       if (!hunk || typeof hunk !== "object") return;
       const diff = boundedDiffString(hunk.diff);
@@ -323,14 +390,26 @@
       const pre = document.createElement("pre");
       pre.style.margin = "8px 0 0";
       pre.style.padding = "9px 10px";
+      pre.style.border = "1px solid var(--color-border-secondary,rgba(127,127,127,.16))";
       pre.style.borderRadius = "8px";
       pre.style.overflowX = "auto";
+      pre.style.maxHeight = "320px";
+      pre.style.overflowY = "auto";
+      pre.style.fontFamily = "var(--font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)";
       pre.style.fontSize = "11px";
       pre.style.lineHeight = "1.45";
-      pre.style.background = "var(--color-background-secondary,rgba(127,127,127,.08))";
-      pre.textContent = diff;
+      pre.style.background = "color-mix(in srgb,var(--color-background-secondary,#f5f5f5) 78%,transparent)";
+      diff.split(/\r?\n/).forEach((line) => appendDiffLine(pre, line));
       details.appendChild(pre);
     });
+    if (item.diff_truncated === true) {
+      const note = document.createElement("div");
+      note.style.marginTop = "7px";
+      note.style.fontSize = "11px";
+      note.style.color = "var(--color-text-tertiary,var(--color-text-secondary,inherit))";
+      note.textContent = "Bounded diff preview";
+      details.appendChild(note);
+    }
     if (details.childNodes.length > 1) card.appendChild(details);
   }
 
@@ -338,32 +417,46 @@
     if (!item || typeof item !== "object") return null;
     const path = boundedString(item.path);
     if (!path) return null;
+    const tone = changeTone(item);
     const card = document.createElement("div");
-    card.style.border = "1px solid var(--color-border-secondary,rgba(127,127,127,.22))";
+    card.style.border = "1px solid color-mix(in srgb,var(--color-border-secondary,#b7b7b7) 82%," + tone.foreground + " 18%)";
     card.style.borderRadius = "10px";
     card.style.padding = "10px 12px";
+    card.style.background = "color-mix(in srgb,var(--color-background-secondary,#f5f5f5) 62%,transparent)";
     const row = document.createElement("div");
     row.style.display = "grid";
-    row.style.gridTemplateColumns = "22px minmax(0,1fr) auto";
-    row.style.alignItems = "baseline";
-    row.style.gap = "8px";
+    row.style.gridTemplateColumns = "24px minmax(0,1fr) auto";
+    row.style.alignItems = "center";
+    row.style.gap = "9px";
     const kind = document.createElement("strong");
-    kind.style.fontSize = "12px";
-    kind.style.opacity = ".72";
+    kind.style.display = "grid";
+    kind.style.width = "22px";
+    kind.style.height = "22px";
+    kind.style.placeItems = "center";
+    kind.style.border = "1px solid " + tone.border;
+    kind.style.borderRadius = "6px";
+    kind.style.background = tone.background;
+    kind.style.color = tone.foreground;
+    kind.style.fontFamily = "var(--font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)";
+    kind.style.fontSize = "11px";
+    kind.style.fontWeight = "750";
     kind.textContent = changeKindLabel(item);
     const name = document.createElement("span");
-    name.style.fontSize = "13px";
+    name.style.fontFamily = "var(--font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)";
+    name.style.fontSize = "12px";
     name.style.fontWeight = "600";
     name.style.overflowWrap = "anywhere";
     const oldPath = boundedString(item.old_path);
     name.textContent = path + (oldPath && oldPath !== path ? " ← " + oldPath : "");
     const stats = document.createElement("span");
+    stats.style.display = "inline-flex";
+    stats.style.gap = "6px";
+    stats.style.fontFamily = "var(--font-mono,ui-monospace,SFMono-Regular,Consolas,monospace)";
     stats.style.fontSize = "12px";
     stats.style.fontVariantNumeric = "tabular-nums";
-    const facts = [];
-    if (Number.isInteger(item.additions) && item.additions >= 0) facts.push("+" + String(item.additions));
-    if (Number.isInteger(item.deletions) && item.deletions >= 0) facts.push("−" + String(item.deletions));
-    stats.textContent = facts.join(" ");
+    stats.style.whiteSpace = "nowrap";
+    addChangeStat(stats, "+", item.additions, "var(--color-success-text,#2f9e44)");
+    addChangeStat(stats, "−", item.deletions, "var(--color-danger-text,#d9485f)");
     row.appendChild(kind);
     row.appendChild(name);
     row.appendChild(stats);
@@ -394,12 +487,23 @@
     titleEl.textContent = "Changed " + String(total) + (total === 1 ? " file" : " files");
     const hasLineStats = Number.isInteger(presentation.additions) && presentation.additions >= 0
       && Number.isInteger(presentation.deletions) && presentation.deletions >= 0;
-    stateEl.textContent = hasLineStats
-      ? "+" + String(presentation.additions) + " −" + String(presentation.deletions)
-        + (presentation.line_stats_partial === true ? " · partial" : "")
-      : "Changes";
+    stateEl.replaceChildren();
+    if (hasLineStats) {
+      addChangeStat(stateEl, "+", presentation.additions, "var(--color-success-text,#2f9e44)");
+      addChangeStat(stateEl, "−", presentation.deletions, "var(--color-danger-text,#d9485f)");
+      if (presentation.line_stats_partial === true) {
+        const partial = document.createElement("span");
+        partial.style.color = "var(--color-text-tertiary,var(--color-text-secondary,inherit))";
+        partial.style.fontWeight = "500";
+        partial.textContent = "partial";
+        stateEl.appendChild(partial);
+      }
+    } else {
+      stateEl.textContent = "Changes";
+    }
     const parts = [];
     if (branch) parts.push(branch);
+    if (total > files.length) parts.push(String(files.length) + " of " + String(total) + " files shown");
     const counts = presentation.counts && typeof presentation.counts === "object" ? presentation.counts : null;
     if (counts && Number.isInteger(counts.conflicted) && counts.conflicted > 0) {
       parts.push(String(counts.conflicted) + " conflicts");
@@ -411,22 +515,45 @@
 
     const safeCards = files.map(changeFileCard).filter(Boolean);
     const initiallyVisible = Math.min(DEFAULT_VISIBLE_FILES, safeCards.length);
-    safeCards.slice(0, initiallyVisible).forEach((card) => cardsEl.appendChild(card));
+    safeCards.forEach((card, index) => {
+      if (index >= initiallyVisible) card.style.display = "none";
+      cardsEl.appendChild(card);
+    });
     if (safeCards.length > initiallyVisible) {
       const button = document.createElement("button");
       button.type = "button";
-      button.style.justifySelf = "start";
-      button.style.padding = "6px 10px";
+      button.style.justifySelf = "stretch";
+      button.style.padding = "7px 11px";
       button.style.borderRadius = "8px";
-      button.style.border = "1px solid var(--color-border-secondary,rgba(127,127,127,.28))";
-      button.style.background = "transparent";
-      button.style.color = "inherit";
+      button.style.border = "1px solid color-mix(in srgb,var(--color-warning-text,#d99742) 28%,var(--color-border-secondary,rgba(127,127,127,.28)))";
+      button.style.background = "color-mix(in srgb,var(--color-warning-text,#d99742) 8%,transparent)";
+      button.style.color = "var(--color-warning-text,#d99742)";
+      button.style.fontWeight = "650";
       button.style.cursor = "pointer";
-      button.textContent = "Show " + String(safeCards.length - initiallyVisible) + " more files";
+      button.style.textAlign = "left";
+      button.style.position = "sticky";
+      button.style.bottom = "0";
+      button.style.zIndex = "3";
+      let expanded = false;
+      const hiddenCount = safeCards.length - initiallyVisible;
+      const syncExpandedFiles = () => {
+        safeCards.slice(initiallyVisible).forEach((card) => {
+          card.style.display = expanded ? "block" : "none";
+        });
+        button.setAttribute("aria-expanded", expanded ? "true" : "false");
+        cardsEl.style.maxHeight = expanded ? "520px" : "";
+        cardsEl.style.overflowY = expanded ? "auto" : "visible";
+        cardsEl.style.paddingRight = expanded ? "3px" : "";
+        if (!expanded) cardsEl.scrollTop = 0;
+        button.textContent = expanded
+          ? "Show fewer files"
+          : "Show " + String(hiddenCount) + " more files";
+      };
+      syncExpandedFiles();
       button.addEventListener("click", () => {
-        safeCards.slice(initiallyVisible).forEach((card) => cardsEl.insertBefore(card, button));
-        button.remove();
-      }, { once: true });
+        expanded = !expanded;
+        syncExpandedFiles();
+      });
       cardsEl.appendChild(button);
     }
   }
@@ -746,7 +873,7 @@
     try {
       const result = await request("ui/initialize", {
         protocolVersion: APP_PROTOCOL,
-        appInfo: { name: "webcodex-changes-app", title: "WebCodex Changes", version: "2.0.0" },
+        appInfo: { name: "webcodex-changes-app", title: "WebCodex Changes", version: "2.1.0" },
         appCapabilities: {}
       });
       const protocol = result && typeof result === "object" ? boundedString(result.protocolVersion) : null;

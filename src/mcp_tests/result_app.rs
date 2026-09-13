@@ -161,7 +161,8 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     const PUBLIC_URL: &str = "https://self-host.example";
     let runtime =
         test_runtime_with_surface_and_public_url(ModelSurface::FullOperatorRuntime, PUBLIC_URL);
-    assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v1");
+    assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v2");
+    assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/changes/v1"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v1"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v2"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v3"));
@@ -1398,6 +1399,60 @@ fn git_changes_presentation_bounds_diff_hunks_and_text() {
 }
 
 #[test]
+fn git_changes_presentation_distributes_diff_preview_across_presented_files() {
+    let files = (0..6)
+        .map(|index| {
+            json!({
+                "path": format!("src/file-{index}.rs"),
+                "status": "modified",
+                "kind": "tracked",
+                "additions": 1,
+                "deletions": 1
+            })
+        })
+        .collect::<Vec<_>>();
+    let hunks = (0..6)
+        .map(|index| {
+            json!({
+                "path": format!("src/file-{index}.rs"),
+                "hunks": [{
+                    "diff": format!("@@ -1 +1 @@\n-old-{index}\n+new-{index}"),
+                    "truncated": false
+                }]
+            })
+        })
+        .collect::<Vec<_>>();
+    let framed = projected_result(
+        "show_changes",
+        true,
+        json!({
+            "git_available": true,
+            "non_git_project": false,
+            "clean": false,
+            "files": files,
+            "files_total": 6,
+            "files_returned": 6,
+            "files_truncated": false,
+            "hunks": hunks,
+            "hunks_truncated": false
+        }),
+    );
+
+    let meta = presentation(&framed);
+    let projected_files = meta["files"].as_array().unwrap();
+    assert_eq!(projected_files.len(), 6);
+    for (index, file) in projected_files.iter().enumerate() {
+        let diff_hunks = file["diff_hunks"].as_array().unwrap();
+        assert_eq!(diff_hunks.len(), 1, "file {index} lost its diff preview");
+        assert!(diff_hunks[0]["diff"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("+new-{index}")));
+    }
+    assert!(meta.get("diff_truncated").is_none());
+}
+
+#[test]
 fn git_changes_presentation_matches_diff_hunks_before_display_path_truncation() {
     let shared = format!("src/{}", "a".repeat(300));
     let first_path = format!("{shared}-first.rs");
@@ -1659,7 +1714,11 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "git_review",
         "Changed ",
         "Show ",
+        "Show fewer files",
+        "setAttribute(\"aria-expanded\"",
+        "520px",
         "View diff",
+        "Hide diff",
         "boundedDiffString",
         "No bounded WebCodex presentation metadata was attached.",
         "!presentation || typeof presentation !== \"object\" || presentation.version !== 1",
@@ -1687,6 +1746,7 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "callServerTool",
         "ui/update-model-context",
         "ui/message",
+        "button.remove()",
         "<button",
     ] {
         assert!(

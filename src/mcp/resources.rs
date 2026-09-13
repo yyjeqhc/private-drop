@@ -53,8 +53,9 @@ pub(super) const MCP_COMPUTER_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
 // Temporary gray-card diagnostic: force the host to re-read the canonical App
 // resource for every card so resource reuse/cache is not an unobserved variable.
 pub(super) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
-pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v1";
+pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v2";
 pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
+    "ui://webcodex/changes/v1",
     "ui://webcodex/result/v1",
     "ui://webcodex/result/v2",
     "ui://webcodex/result/v3",
