@@ -593,6 +593,46 @@ fn terminal_attention_uses_continuation_without_requiring_live_task_attempt() {
     assert!(prepared.envelope.resume_hint.contains(&goal_id));
     assert!(prepared.envelope.resume_hint.contains(&task_id));
     assert!(prepared.envelope.resume_hint.contains(&attempt_id));
+    assert!(prepared
+        .envelope
+        .resume_hint
+        .contains(&format!("agent_id={assignee}")));
+    assert!(prepared
+        .envelope
+        .resume_hint
+        .contains(&format!("endpoint_id={}", endpoint.endpoint_id)));
+    assert!(prepared.envelope.resume_hint.contains(&format!(
+        "controller_generation={}",
+        endpoint.controller_generation
+    )));
+    assert!(prepared
+        .envelope
+        .resume_hint
+        .contains(&format!("wake_id={wake_id}")));
+    assert!(prepared
+        .envelope
+        .resume_hint
+        .contains(&format!("consume_token={}", claim.consume_token)));
+    assert!(prepared
+        .envelope
+        .resume_hint
+        .contains("terminal_task_state=succeeded"));
+    for required_semantic in [
+        "Bootstrap this agent/endpoint generation/wake first",
+        "require the returned Wake to remain attention_event",
+        "replay/retry keeps these identities and consume_token unchanged",
+        "consume this exact Wake",
+        "independently get_goal(goal_id) and read_agent_task(task_id)",
+        "grants no Goal, Task, Project, Runner, filesystem, Conversation, or Workflow Session authority",
+        "never repeat an already-terminal Task",
+        "never reopen a completed/cancelled Goal",
+        "make an explicit decision through ordinary authorized tools",
+        "does not auto-complete Goals or auto-create successor Tasks",
+        "report the actual decision/result/blocker",
+    ] {
+        assert!(prepared.envelope.resume_hint.contains(required_semantic));
+    }
+    assert!(prepared.envelope.resume_hint.len() < 2_000);
     assert!(!prepared
         .envelope
         .resume_hint
