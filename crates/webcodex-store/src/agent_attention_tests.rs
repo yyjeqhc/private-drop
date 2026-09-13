@@ -618,20 +618,25 @@ fn terminal_attention_uses_continuation_without_requiring_live_task_attempt() {
         .resume_hint
         .contains("terminal_task_state=succeeded"));
     for required_semantic in [
-        "Bootstrap this agent/endpoint generation/wake first",
-        "require the returned Wake to remain attention_event",
-        "replay/retry keeps these identities and consume_token unchanged",
+        "already dispatched by the Endpoint continuation carrier",
+        "OMIT activation_idempotency_key",
+        "Require the returned Wake to remain attention_event",
+        "Do not call start_agent_task_endpoint_continuation",
         "consume this exact Wake",
+        "does not require a TaskAttempt lease or heartbeat",
         "independently get_goal(goal_id) and read_agent_task(task_id)",
         "grants no Goal, Task, Project, Runner, filesystem, Conversation, or Workflow Session authority",
-        "never repeat an already-terminal Task",
-        "never reopen a completed/cancelled Goal",
-        "make an explicit decision through ordinary authorized tools",
+        "make an explicit Goal decision",
+        "Never repeat a terminal Task",
         "does not auto-complete Goals or auto-create successor Tasks",
         "report the actual decision/result/blocker",
     ] {
         assert!(prepared.envelope.resume_hint.contains(required_semantic));
     }
+    assert!(!prepared
+        .envelope
+        .resume_hint
+        .contains("heartbeat_agent_task_attempt"));
     assert!(prepared.envelope.resume_hint.len() < 2_000);
     assert!(!prepared
         .envelope
@@ -685,6 +690,14 @@ fn terminal_attention_uses_continuation_without_requiring_live_task_attempt() {
         )
         .unwrap();
 
+    let terminal_attempt_lease = db
+        .read_agent_task(&owner, &task_id)
+        .unwrap()
+        .summary
+        .latest_attempt
+        .unwrap()
+        .lease_expires_at_unix_ms;
+
     let consumed = db
         .consume_agent_wake(
             &owner,
@@ -697,9 +710,19 @@ fn terminal_attention_uses_continuation_without_requiring_live_task_attempt() {
         .unwrap();
     assert_eq!(consumed.state, AgentWakeState::Consumed);
     assert_eq!(events(&db, &attempt_id).len(), 1);
+    let task_after_attention = db.read_agent_task(&owner, &task_id).unwrap();
     assert_eq!(
-        db.read_agent_task(&owner, &task_id).unwrap().summary.state,
+        task_after_attention.summary.state,
         AgentTaskState::Succeeded
+    );
+    assert_eq!(
+        task_after_attention
+            .summary
+            .latest_attempt
+            .unwrap()
+            .lease_expires_at_unix_ms,
+        terminal_attempt_lease,
+        "attention_event consume must not mutate the terminal TaskAttempt lease"
     );
     assert_eq!(
         db.read_goal(&owner, &goal_id).unwrap().summary.lifecycle,

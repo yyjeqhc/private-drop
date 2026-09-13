@@ -537,7 +537,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Verify an exact Agent/Endpoint generation and return bounded turn context without Message bodies. With an activation idempotency key, accept one pending Wake into this already-active explicit turn and return a replayable consume token; this does not request a new model turn.",
+            "Verify an exact Agent/Endpoint generation and return bounded turn context without Message bodies. activation_idempotency_key is only for explicit activation of an eligible pending Inbox-style Wake into this already-active turn; omit it for agent_task_attempt and attention_event Wakes already dispatched by an Endpoint carrier. Explicit activation never requests a new model turn.",
             bootstrap_agent_conversation_input_schema,
         ),
         COMMUNICATION_MANAGE_SCOPES,

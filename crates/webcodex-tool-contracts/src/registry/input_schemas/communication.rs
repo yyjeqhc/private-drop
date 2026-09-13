@@ -478,7 +478,10 @@ pub fn bootstrap_agent_conversation_input_schema() -> Value {
             "expected_controller_generation": expected_controller_generation(),
             "conversation_id": canonical_id(CONVERSATION_ID_PATTERN, "Optional explicit current Conversation. When omitted, an exact Wake may select its latest Conversation; no hidden Host selection is inferred."),
             "wake_id": canonical_id(WAKE_ID_PATTERN, "Optional exact Wake identity from a continuation envelope or explicit pending-work activation."),
-            "activation_idempotency_key": idempotency_key()
+            "activation_idempotency_key": bounded_string(
+                "Caller-generated key used only to accept/replay an eligible pending Inbox-style Wake through explicit activation into this already-active model turn. OMIT this field for agent_task_attempt and attention_event continuations already dispatched by an Endpoint carrier; bootstrap those exact Wakes directly instead of converting them to explicit activation.",
+                128,
+            )
         },
         "required": ["agent_id", "endpoint_id", "expected_controller_generation"],
         "additionalProperties": false
