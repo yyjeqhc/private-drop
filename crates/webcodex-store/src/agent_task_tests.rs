@@ -4,6 +4,7 @@ use super::communication::{
     CommunicationPrincipal, NewAgentEndpoint, NewAgentIdentity, NewConversation,
     NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
 };
+use super::goal::{GoalCorrelationKind, GoalLifecycle, NewGoal};
 use super::Database;
 use rusqlite::params;
 use std::sync::{mpsc, Arc, Barrier};
@@ -494,6 +495,30 @@ fn backend_terminal_truth_reconciles_exact_attempt_after_ordinary_lease_expiry()
     let assignee = agent(&db, &owner, "coding-terminal-agent");
     let now = wall_now_ms();
     let task_id = create_assigned_task(&db, &owner, &assignee, "coding-terminal-task");
+    let goal_id = db
+        .create_goal_at(
+            &owner,
+            NewGoal {
+                title: "Coding terminal Goal".to_string(),
+                objective: "Re-evaluate high-level intent after backend terminal truth."
+                    .to_string(),
+                idempotency_key: "coding-terminal-goal".to_string(),
+            },
+            now,
+        )
+        .unwrap()
+        .goal
+        .summary
+        .goal_id;
+    db.associate_goal_reference_at(
+        &owner,
+        &goal_id,
+        GoalCorrelationKind::AgentTask,
+        &task_id,
+        "coding-terminal-goal-link",
+        now + 1,
+    )
+    .unwrap();
     let started = start(
         &db,
         &owner,
@@ -551,12 +576,31 @@ fn backend_terminal_truth_reconciles_exact_attempt_after_ordinary_lease_expiry()
         )
         .unwrap();
     assert!(reconciled.state_changed);
+    assert_eq!(reconciled.attention_event_count, 1);
     assert_eq!(reconciled.task.state, AgentTaskState::Succeeded);
     assert_eq!(reconciled.attempt.state, AgentTaskAttemptState::Succeeded);
     assert_eq!(
         reconciled.binding.dispatch_state,
         AgentTaskCodingRunDispatchState::Terminal
     );
+    let attention_count: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*)
+             FROM wc_agent_attention_events e
+             JOIN wc_agent_wakes w ON w.source_event_id = e.event_id
+             WHERE e.kind = 'agent_task_terminal' AND e.goal_id = ?1
+               AND e.task_id = ?2 AND e.task_attempt_id = ?3
+               AND e.target_agent_id = ?4 AND e.terminal_task_state = 'succeeded'
+               AND w.trigger_kind = 'attention_event' AND w.state = 'pending'",
+            params![goal_id, task_id, started.attempt.attempt_id, assignee],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(attention_count, 1);
+    let goal = db.read_goal(&owner, &goal_id).unwrap();
+    assert_eq!(goal.summary.lifecycle, GoalLifecycle::Active);
+    assert_eq!(goal.summary.revision, 2);
 
     let replay_observation = db
         .record_agent_task_coding_run_observation(
@@ -581,6 +625,17 @@ fn backend_terminal_truth_reconciles_exact_attempt_after_ordinary_lease_expiry()
         )
         .unwrap();
     assert!(!replay.state_changed);
+    assert_eq!(replay.attention_event_count, 0);
+    let replay_attention_count: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT COUNT(*) FROM wc_agent_attention_events
+             WHERE goal_id = ?1 AND task_attempt_id = ?2",
+            params![goal_id, started.attempt.attempt_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(replay_attention_count, 1);
 }
 
 #[test]

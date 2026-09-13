@@ -396,18 +396,20 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                                 "wake_id": schema_type("string", "Exact unresolved durable Wake identity."),
                                 "state": {"type": "string", "enum": ["pending", "claimed", "prepared", "delivered", "delivery_unknown"]},
                                 "revision": schema_type("integer", "Current Wake revision."),
-                                "trigger_kind": {"type": "string", "enum": ["inbox_changed", "agent_task_attempt"]},
-                                "conversation_id": nullable_string("Latest Conversation represented by an inbox_changed Wake; null for an AgentTask-origin Wake."),
-                                "latest_message_id": nullable_string("Latest Message id represented by an inbox_changed Wake; null for an AgentTask-origin Wake and no Message body is included."),
-                                "queued_delivery_count": nullable_integer("Bounded queued count snapshot for an inbox_changed Wake; null for an AgentTask-origin Wake."),
-                                "inbox_high_watermark": nullable_integer("Durable delivery high-watermark for an inbox_changed Wake; null for an AgentTask-origin Wake."),
-                                "task_id": nullable_string("Exact durable AgentTask id for an agent_task_attempt Wake; null for an inbox_changed Wake."),
-                                "task_attempt_id": nullable_string("Exact durable AgentTaskAttempt id for an agent_task_attempt Wake; null for an inbox_changed Wake.")
+                                "trigger_kind": {"type": "string", "enum": ["inbox_changed", "agent_task_attempt", "attention_event"]},
+                                "conversation_id": nullable_string("Latest Conversation represented by an inbox_changed Wake; null for task and attention sources."),
+                                "latest_message_id": nullable_string("Latest Message id represented by an inbox_changed Wake; null for task and attention sources and no Message body is included."),
+                                "queued_delivery_count": nullable_integer("Bounded queued count snapshot for an inbox_changed Wake; null for task and attention sources."),
+                                "inbox_high_watermark": nullable_integer("Durable delivery high-watermark for an inbox_changed Wake; null for task and attention sources."),
+                                "task_id": nullable_string("Exact durable AgentTask id for agent_task_attempt or attention_event; null for inbox_changed."),
+                                "task_attempt_id": nullable_string("Exact durable AgentTaskAttempt id for agent_task_attempt or attention_event; null for inbox_changed."),
+                                "event_id": nullable_string("Exact durable semantic attention Event id for attention_event; null for other Wake sources."),
+                                "goal_id": nullable_string("Exact correlated Goal id for attention_event; null for other Wake sources. Identity grants no Goal authority.")
                             },
                             "required": [
                                 "wake_id", "state", "revision", "trigger_kind", "conversation_id",
                                 "latest_message_id", "queued_delivery_count", "inbox_high_watermark",
-                                "task_id", "task_attempt_id"
+                                "task_id", "task_attempt_id", "event_id", "goal_id"
                             ]
                         },
                         {"type": "null"}
