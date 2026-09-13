@@ -327,6 +327,16 @@ fn operator_extension_families_are_definition_owned_and_registry_derived() {
         );
     }
 
+    for definition in
+        tool_definitions().filter(|definition| definition.operator_extension_family.is_some())
+    {
+        assert!(
+            definition.visibility.is_model_hidden(),
+            "{} operator extension must remain ModelHidden and surface-gated",
+            definition.name
+        );
+    }
+
     let declared_names = tool_definitions()
         .filter(|definition| definition.operator_extension_family.is_some())
         .map(|definition| definition.name)
