@@ -462,19 +462,30 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
   });
 }
 
-test("input-only background carrier heartbeats and reconciles immediately on foreground", async () => {
+test("input-only background carrier keeps bounded heartbeat cadence", async () => {
+  const view = await boundView();
+  const quiet = { ...projection, wake: null, queued_delivery_count: 0 };
+  await view.visibility(true);
+  await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: quiet }));
+  assert.equal(view.calls("agent_continuation_wake_acquire").length, 0);
+  await view.fireTimers(15000);
+  assert.equal(view.calls("agent_continuation_state").length, 2);
+});
+
+test("input-only hidden carrier acquires prepares and dispatches exactly once", async () => {
   const view = await boundView();
   await view.visibility(true);
   await view.reply(view.calls("agent_continuation_state")[0], toolResult({ agent_continuation: projection }));
-  await view.fireTimers(15000);
-  assert.equal(view.calls("agent_continuation_state").length, 2);
-  await view.reply(view.calls("agent_continuation_state")[1], toolResult({ agent_continuation: projection }));
-  assert.equal(view.calls("agent_continuation_wake_acquire").length, 0);
-  await view.visibility(false);
-  assert.equal(view.calls("agent_continuation_state").length, 3);
-  await view.reply(view.calls("agent_continuation_state")[2], toolResult({ agent_continuation: projection }));
   assert.equal(view.calls("agent_continuation_wake_acquire").length, 1);
-  assert.equal(view.nodes.status.textContent, "Continuing queued work…");
+  await view.reply(view.calls("agent_continuation_wake_acquire")[0], toolResult({ wake }));
+  assert.equal(view.calls("agent_continuation_wake_prepare").length, 1);
+  await view.reply(view.calls("agent_continuation_wake_prepare")[0], prepared());
+  assert.equal(hostMessages(view).length, 1);
+  await view.reply(hostMessages(view)[0], {});
+  const finish = view.calls("agent_continuation_wake_finish")[0];
+  assert.equal(finish.params.arguments.outcome, "dispatch_accepted");
+  await view.reply(finish, toolResult({}));
+  assert.equal(hostMessages(view).length, 1);
 });
 
 test("input-only dispatch never displays its private binding or consume envelope", async () => {
@@ -524,24 +535,56 @@ for (const outcome of ["success", "error", "timeout"]) {
   }
 }
 
-for (const stage of ["acquire", "prepare"]) {
-  test(`backgrounding during ${stage} does not dispatch a Host message`, async () => {
-    const view = await boundView();
-    await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
-    const acquisition = view.calls("agent_continuation_wake_acquire").at(-1);
-    if (stage === "acquire") await view.visibility(true);
-    await view.reply(acquisition, toolResult({ wake }));
-    if (stage === "prepare") {
-      await view.visibility(true);
-      await view.reply(view.calls("agent_continuation_wake_prepare").at(-1), prepared());
-      assert.equal(hostMessages(view).length, 0);
-      assert.equal(view.calls("agent_continuation_wake_finish").at(-1).params.arguments.outcome, "delivery_unknown");
-    } else {
-      assert.equal(view.calls("agent_continuation_wake_prepare").length, 0);
-    }
-    assert.equal(hostMessages(view).length, 0);
-  });
-}
+test("visible to hidden transition during prepare still dispatches exactly once", async () => {
+  const view = await boundView();
+  await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
+  await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake }));
+  const prepareCall = view.calls("agent_continuation_wake_prepare").at(-1);
+  await view.visibility(true);
+  await view.reply(prepareCall, prepared());
+  assert.equal(hostMessages(view).length, 1);
+  await view.reply(hostMessages(view)[0], {});
+  assert.equal(view.calls("agent_continuation_wake_finish").at(-1).params.arguments.outcome, "dispatch_accepted");
+  assert.equal(hostMessages(view).length, 1);
+});
+
+test("hidden to visible transition during Host dispatch never duplicates ui/message", async () => {
+  const view = await boundView();
+  await view.visibility(true);
+  await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
+  await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake }));
+  await view.reply(view.calls("agent_continuation_wake_prepare").at(-1), prepared());
+  assert.equal(hostMessages(view).length, 1);
+  await view.visibility(false);
+  assert.equal(hostMessages(view).length, 1);
+  await view.reply(hostMessages(view)[0], {});
+  assert.equal(view.calls("agent_continuation_wake_finish").at(-1).params.arguments.outcome, "dispatch_accepted");
+  assert.equal(hostMessages(view).length, 1);
+});
+
+test("teardown before a prepare response never dispatches a Host message", async () => {
+  const view = await boundView();
+  await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
+  await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake }));
+  const prepareCall = view.calls("agent_continuation_wake_prepare").at(-1);
+  await view.teardown();
+  await view.reply(prepareCall, prepared());
+  assert.equal(hostMessages(view).length, 0);
+});
+
+test("Host dispatch rejection after prepare is unknown and never resent", async () => {
+  const view = await boundView();
+  await view.visibility(true);
+  await view.reply(view.calls("agent_continuation_state").at(-1), toolResult({ agent_continuation: projection }));
+  await view.reply(view.calls("agent_continuation_wake_acquire").at(-1), toolResult({ wake }));
+  await view.reply(view.calls("agent_continuation_wake_prepare").at(-1), prepared());
+  assert.equal(hostMessages(view).length, 1);
+  await view.reject(hostMessages(view)[0]);
+  const finish = view.calls("agent_continuation_wake_finish").at(-1);
+  assert.equal(finish.params.arguments.outcome, "delivery_unknown");
+  await view.reply(finish, toolResult({}));
+  assert.equal(hostMessages(view).length, 1);
+});
 
 test("Host dispatch timeout is finished as unknown and the same Attempt is never resent", async () => {
   const view = await boundView();

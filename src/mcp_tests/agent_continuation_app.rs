@@ -241,7 +241,7 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v15"
+        "ui://webcodex/agent-continuation/v16"
     );
     let (_temp, _db, adaptive) = continuation_runtime(ModelSurface::AdaptiveRuntime);
     let auth = continuation_auth("continuation-surface");
@@ -446,6 +446,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
                     | "ui://webcodex/agent-continuation/v12"
                     | "ui://webcodex/agent-continuation/v13"
                     | "ui://webcodex/agent-continuation/v14"
+                    | "ui://webcodex/agent-continuation/v15"
             )
         )));
     for uri in [
@@ -464,6 +465,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         "ui://webcodex/agent-continuation/v12",
         "ui://webcodex/agent-continuation/v13",
         "ui://webcodex/agent-continuation/v14",
+        "ui://webcodex/agent-continuation/v15",
     ] {
         let read = handle_with_server_apps_enabled(
             &adaptive,
@@ -594,11 +596,11 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML
             .contains("for (let hop = 0; hop < MAX_ENDPOINT_SUCCESSOR_HOPS; hop++)"),
-        "v15 successor recovery must remain explicitly bounded"
+        "v16 successor recovery must remain explicitly bounded"
     );
     assert!(
-        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"15.0.0\""),
-        "App protocol version must advance with the v15 resource"
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("version: \"16.0.0\""),
+        "App protocol version must advance with the v16 resource"
     );
     assert!(
         MCP_AGENT_CONTINUATION_APP_HTML.contains("const DEBUG_DIAGNOSTICS = false;"),
