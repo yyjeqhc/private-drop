@@ -30,9 +30,10 @@ pub use handlers::{
 };
 pub(crate) use telemetry::tool_request_trace_telemetry;
 pub(crate) use webcodex_runner_registry::{
-    command_preview, process_preview, recovery_timeout_sweep, script_preview, EnqueueLspError,
-    RunnerFeature, RunnerFeatureSet, RunnerRegistry, RunnerSemanticView, RunnerTransport,
-    ShellJobStartMetadata, ShellJobVisibility, StructuredJobExecution, COMMAND_PREVIEW_MAX_CHARS,
+    command_preview, process_preview, recovery_timeout_sweep, script_preview,
+    EnqueueConfiguredSkillRootsError, EnqueueLspError, EnqueueSkillStoreError, RunnerFeature,
+    RunnerFeatureSet, RunnerRegistry, RunnerSemanticView, RunnerTransport, ShellJobStartMetadata,
+    ShellJobVisibility, StructuredJobExecution, COMMAND_PREVIEW_MAX_CHARS,
     DETACHED_IDEMPOTENCY_CONFLICT, DETACHED_IDEMPOTENCY_RECOVERY_PREFIX,
     RECOVERY_SWEEP_INTERVAL_SECS, RUNNER_ONLINE_WINDOW_SECS,
 };

@@ -12,6 +12,18 @@ fn write_skill(root: &Path, package: &str, name: &str, body: &str) {
 }
 
 #[test]
+fn configured_skill_scan_triggers_are_closed_and_identity_free() {
+    assert_eq!(
+        ConfiguredSkillScanTrigger::CatalogList.as_str(),
+        "catalog_list"
+    );
+    assert_eq!(
+        ConfiguredSkillScanTrigger::ExactReadResolution.as_str(),
+        "exact_read_resolution"
+    );
+}
+
+#[test]
 fn empty_roots_preserve_empty_source() {
     let result = handle_configured_skill_roots_request(
         &SkillsConfig::default(),

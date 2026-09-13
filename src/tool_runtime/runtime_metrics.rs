@@ -21,9 +21,78 @@ impl McpCallMetricObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkillSourceMetricSource {
+    Project,
+    RunnerConfigured,
+    RunnerManaged,
+}
+
+impl SkillSourceMetricSource {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::RunnerConfigured => "runner_configured",
+            Self::RunnerManaged => "runner_managed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkillSourceMetricOperation {
+    CatalogList,
+    CatalogDefinitionRead,
+    ResourceRead,
+    DefinitionRecheck,
+}
+
+impl SkillSourceMetricOperation {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::CatalogList => "catalog_list",
+            Self::CatalogDefinitionRead => "catalog_definition_read",
+            Self::ResourceRead => "resource_read",
+            Self::DefinitionRecheck => "definition_recheck",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SkillSourceMetricOutcomeClass {
+    Success,
+    RunnerError,
+    Unavailable,
+    InvalidResponse,
+}
+
+impl SkillSourceMetricOutcomeClass {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::RunnerError => "runner_error",
+            Self::Unavailable => "unavailable",
+            Self::InvalidResponse => "invalid_response",
+        }
+    }
+}
+
+/// One issued Skill source request. All dimensions are closed enums; identities,
+/// paths, content, queries, and dynamic error strings deliberately have no slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SkillSourceMetricObservation {
+    pub(crate) source: SkillSourceMetricSource,
+    pub(crate) operation: SkillSourceMetricOperation,
+    pub(crate) outcome_class: SkillSourceMetricOutcomeClass,
+    pub(crate) elapsed_ms: u64,
+    pub(crate) runner_duration_ms: Option<u64>,
+    pub(crate) response_bytes: Option<u64>,
+    pub(crate) item_count: Option<u64>,
+}
+
 pub(crate) trait RuntimeMetrics: std::fmt::Debug + Send + Sync {
     fn observe_tool_call(&self, record: &ModelErgonomicsRecord);
     fn observe_mcp_call(&self, observation: McpCallMetricObservation);
+    fn observe_skill_source(&self, observation: SkillSourceMetricObservation);
     fn observe_window_transition(&self, transition: WindowLoopTransition);
 }
 
@@ -46,6 +115,13 @@ pub(crate) fn observe_mcp_call(
     observation: McpCallMetricObservation,
 ) {
     observe_fail_open("mcp_call", || metrics.observe_mcp_call(observation));
+}
+
+pub(crate) fn observe_skill_source(
+    metrics: &dyn RuntimeMetrics,
+    observation: SkillSourceMetricObservation,
+) {
+    observe_fail_open("skill_source", || metrics.observe_skill_source(observation));
 }
 
 pub(crate) fn observe_window_transition(
@@ -123,6 +199,58 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
         }
     }
 
+    fn observe_skill_source(&self, observation: SkillSourceMetricObservation) {
+        let source = observation.source.as_str();
+        let operation = observation.operation.as_str();
+        let outcome_class = observation.outcome_class.as_str();
+        tracing::info!(
+            metric = "skill_source_requests_total",
+            value = 1_u64,
+            source,
+            operation,
+            outcome_class,
+            "runtime_metric"
+        );
+        tracing::info!(
+            metric = "skill_source_request_duration_seconds",
+            value = observation.elapsed_ms as f64 / 1000.0,
+            source,
+            operation,
+            outcome_class,
+            "runtime_metric"
+        );
+        if let Some(duration_ms) = observation.runner_duration_ms {
+            tracing::info!(
+                metric = "skill_source_runner_duration_seconds",
+                value = duration_ms as f64 / 1000.0,
+                source,
+                operation,
+                outcome_class,
+                "runtime_metric"
+            );
+        }
+        if let Some(response_bytes) = observation.response_bytes {
+            tracing::info!(
+                metric = "skill_source_response_bytes",
+                value = response_bytes,
+                source,
+                operation,
+                outcome_class,
+                "runtime_metric"
+            );
+        }
+        if let Some(item_count) = observation.item_count {
+            tracing::info!(
+                metric = "skill_source_returned_items",
+                value = item_count,
+                source,
+                operation,
+                outcome_class,
+                "runtime_metric"
+            );
+        }
+    }
+
     fn observe_window_transition(&self, transition: WindowLoopTransition) {
         match transition {
             WindowLoopTransition::Serial { gap_ms } => tracing::info!(
@@ -162,6 +290,10 @@ mod tests {
             panic!("test metrics sink failure");
         }
 
+        fn observe_skill_source(&self, _observation: SkillSourceMetricObservation) {
+            panic!("test metrics sink failure");
+        }
+
         fn observe_window_transition(&self, _transition: WindowLoopTransition) {
             panic!("test metrics sink failure");
         }
@@ -179,6 +311,49 @@ mod tests {
     }
 
     #[test]
+    fn skill_source_metric_dimensions_are_closed_and_identity_free() {
+        let sources = [
+            SkillSourceMetricSource::Project.as_str(),
+            SkillSourceMetricSource::RunnerConfigured.as_str(),
+            SkillSourceMetricSource::RunnerManaged.as_str(),
+        ];
+        assert_eq!(sources, ["project", "runner_configured", "runner_managed"]);
+
+        let operations = [
+            SkillSourceMetricOperation::CatalogList.as_str(),
+            SkillSourceMetricOperation::CatalogDefinitionRead.as_str(),
+            SkillSourceMetricOperation::ResourceRead.as_str(),
+            SkillSourceMetricOperation::DefinitionRecheck.as_str(),
+        ];
+        assert_eq!(
+            operations,
+            [
+                "catalog_list",
+                "catalog_definition_read",
+                "resource_read",
+                "definition_recheck",
+            ]
+        );
+
+        let outcomes = [
+            SkillSourceMetricOutcomeClass::Success.as_str(),
+            SkillSourceMetricOutcomeClass::RunnerError.as_str(),
+            SkillSourceMetricOutcomeClass::Unavailable.as_str(),
+            SkillSourceMetricOutcomeClass::InvalidResponse.as_str(),
+        ];
+        assert_eq!(
+            outcomes,
+            ["success", "runner_error", "unavailable", "invalid_response"]
+        );
+
+        for label in sources.into_iter().chain(operations).chain(outcomes) {
+            assert!(!label.contains("wc_skill_"));
+            assert!(!label.contains('/'));
+            assert!(!label.contains('\\'));
+        }
+    }
+
+    #[test]
     fn metrics_sink_panics_are_fail_open() {
         let sink = PanicMetrics;
         observe_mcp_call(
@@ -188,6 +363,18 @@ mod tests {
                 outcome_class: "success",
                 meaningful: true,
                 streaming: false,
+            },
+        );
+        observe_skill_source(
+            &sink,
+            SkillSourceMetricObservation {
+                source: SkillSourceMetricSource::Project,
+                operation: SkillSourceMetricOperation::ResourceRead,
+                outcome_class: SkillSourceMetricOutcomeClass::RunnerError,
+                elapsed_ms: 10,
+                runner_duration_ms: Some(8),
+                response_bytes: Some(32),
+                item_count: None,
             },
         );
         observe_window_transition(&sink, WindowLoopTransition::Overlap);

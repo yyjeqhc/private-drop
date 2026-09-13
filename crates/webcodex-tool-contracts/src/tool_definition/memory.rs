@@ -1,5 +1,7 @@
 use super::ToolVisibility::ModelHidden;
-use super::{def, require_all_scopes, ToolDefinition, TOOL_CATEGORY_RUNTIME};
+use super::{
+    def, require_all_scopes, ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_RUNTIME,
+};
 use crate::metadata::{
     ToolPathHint::None as NoPath,
     ToolRisk::{MemoryManage, Read},
@@ -51,7 +53,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolSessionEvidencePolicy::NONE,
         ),
         MEMORY_READ_SCOPES,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryRuntime),
     require_all_scopes(
         def(
             "memory_read",
@@ -94,7 +97,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolSessionEvidencePolicy::NONE,
         ),
         MEMORY_READ_SCOPES,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryRuntime),
     require_all_scopes(
         def(
             "memory_set",
@@ -135,7 +139,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolSessionEvidencePolicy::NONE,
         ),
         MEMORY_MANAGE_SCOPES,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
     require_all_scopes(
         def(
             "memory_delete",
@@ -174,7 +179,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolSessionEvidencePolicy::NONE,
         ),
         MEMORY_MANAGE_SCOPES,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
     def(
         "memory_scope_list",
         super::ToolAuditPolicy::typed_fields(&[
@@ -201,7 +207,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
     def(
         "memory_scope_purge",
         super::ToolAuditPolicy::typed_fields(&[
@@ -229,5 +236,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         true,
         false,
         super::ToolSessionEvidencePolicy::NONE,
-    ),
+    )
+    .with_operator_extension_family(ToolOperatorExtensionFamily::MemoryManagement),
 ];

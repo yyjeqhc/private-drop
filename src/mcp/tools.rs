@@ -21,7 +21,8 @@ use crate::tool_runtime::model_ergonomics_telemetry::{
 };
 use crate::tool_runtime::specialized::SpecializedGovernanceDenial;
 use crate::tool_runtime::tool_definition::{
-    is_adaptive_runtime_direct_tool, runtime_tool_accepts_context_ack, LOCAL_CODING_TOOL_NAMES,
+    is_adaptive_runtime_direct_tool, runtime_tool_accepts_context_ack,
+    runtime_tool_operator_extension_family, ToolOperatorExtensionFamily, LOCAL_CODING_TOOL_NAMES,
 };
 use crate::tool_runtime::{registered_tool_specs, ToolCall, ToolResult, ToolRuntime, ToolSpec};
 use serde::Deserialize;
@@ -66,17 +67,23 @@ fn full_operator_runtime_specs_for_auth(
         specs.extend(
             crate::tool_runtime::stateless_operator_extension_tool_specs()
                 .into_iter()
-                .filter(|spec| {
-                    if crate::tool_runtime::skills::is_skill_runtime_tool_name(&spec.name) {
-                        !oauth_scope_projection
-                            || check_runtime_tool_scope(auth, &spec.name).is_ok()
-                    } else if crate::tool_runtime::skills::is_skill_management_tool_name(&spec.name)
-                    {
-                        auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN))
-                    } else {
-                        check_runtime_tool_scope(auth, &spec.name).is_ok()
-                    }
-                }),
+                .filter(
+                    |spec| match runtime_tool_operator_extension_family(&spec.name) {
+                        Some(ToolOperatorExtensionFamily::SkillRuntime) => {
+                            !oauth_scope_projection
+                                || check_runtime_tool_scope(auth, &spec.name).is_ok()
+                        }
+                        Some(ToolOperatorExtensionFamily::SkillManagement) => {
+                            auth.is_some_and(|auth| auth.has_scope(crate::auth::SCOPE_ADMIN))
+                        }
+                        Some(
+                            ToolOperatorExtensionFamily::MemoryRuntime
+                            | ToolOperatorExtensionFamily::MemoryManagement
+                            | ToolOperatorExtensionFamily::TraceDiagnostics,
+                        ) => check_runtime_tool_scope(auth, &spec.name).is_ok(),
+                        None => false,
+                    },
+                ),
         );
     }
     specs

@@ -181,7 +181,7 @@ async fn call_kernel_with_fake_operator_store(
     tool_name: &str,
     arguments: Value,
     operator: Arc<Mutex<FakeOperatorSkillState>>,
-) -> ToolResult {
+) -> (ToolResult, Vec<String>) {
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let tool_name = tool_name.to_string();
@@ -208,12 +208,14 @@ async fn call_kernel_with_fake_operator_store(
         }
     });
     let deadline = Instant::now() + Duration::from_secs(10);
+    let mut kinds = Vec::new();
     while !task.is_finished() {
         assert!(
             Instant::now() < deadline,
             "operator Skill fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
+            kinds.push(request.kind.clone());
             if request.kind == "configured_skill_roots" {
                 let operation: ConfiguredSkillRootsRequest = serde_json::from_str(
                     request
@@ -435,10 +437,12 @@ async fn call_kernel_with_fake_operator_store(
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     }
-    task.await
+    let result = task
+        .await
         .unwrap()
         .result
-        .unwrap_or_else(|| panic!("missing model-facing operator Skill result"))
+        .unwrap_or_else(|| panic!("missing model-facing operator Skill result"));
+    (result, kinds)
 }
 
 #[tokio::test]
@@ -485,7 +489,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
         resource_text: "resource-a".to_string(),
     }));
 
-    let listed_a = call_kernel_with_fake_operator_store(
+    let (listed_a, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_list",
@@ -508,7 +512,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
         .unwrap()
         .to_string();
 
-    let listed_b = call_kernel_with_fake_operator_store(
+    let (listed_b, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_list",
@@ -526,7 +530,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
         state.package_revision = package_b.clone();
         state.resource_text = "resource-b".to_string();
     }
-    let after_activation = call_kernel_with_fake_operator_store(
+    let (after_activation, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_list",
@@ -540,7 +544,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     assert_eq!(operator_after["package_revision"], package_b);
     assert_ne!(after_activation.output["catalog_revision"], catalog_a);
 
-    let stale_read = call_kernel_with_fake_operator_store(
+    let (stale_read, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_read_file",
@@ -558,7 +562,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     assert_eq!(stale_read.output["error_kind"], "skill_package_changed");
     assert!(stale_read.output.get("text").is_none());
 
-    let pinned_read = call_kernel_with_fake_operator_store(
+    let (pinned_read, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_read_file",
@@ -632,7 +636,7 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
         resource_text: "managed resource".to_string(),
     }));
 
-    let listed = call_kernel_with_fake_operator_store(
+    let (listed, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_list",
@@ -663,7 +667,7 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
         .unwrap();
     assert_eq!(project_skill["trust"], "project_content");
 
-    let configured_read = call_kernel_with_fake_operator_store(
+    let (configured_read, configured_read_kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_read_file",
@@ -683,8 +687,18 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
         "operator_configured_guidance"
     );
     assert!(configured_read.output["package_revision"].is_null());
+    assert_eq!(
+        configured_read_kinds,
+        vec![
+            "file_skill_list_packages",
+            "file_skill_read_file",
+            "configured_skill_roots",
+            "skill_store",
+            "configured_skill_roots",
+        ]
+    );
 
-    let managed_read = call_kernel_with_fake_operator_store(
+    let (managed_read, managed_read_kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
         "skill_read_file",
@@ -701,6 +715,140 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
     assert!(managed_read.success, "{:?}", managed_read.error);
     assert_eq!(managed_read.output["text"], "managed resource");
     assert_eq!(managed_read.output["trust"], "operator_installed_guidance");
+    assert_eq!(
+        managed_read_kinds,
+        vec![
+            "file_skill_list_packages",
+            "file_skill_read_file",
+            "configured_skill_roots",
+            "skill_store",
+            "skill_store",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn configured_skill_exact_read_observes_project_and_configured_catalog_first() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "configured-skill-read-fanout";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            file_read: true,
+            configured_skill_roots_read: true,
+            ..Default::default()
+        },
+        vec![registered_project(
+            "project",
+            root.path().to_string_lossy().as_ref(),
+        )],
+    )
+    .await;
+    let project = crate::tool_runtime::runner_project_runtime_id(client_id, "project");
+    let configured_id = format!("wc_skill_{}", "2".repeat(32));
+    let configured_revision = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    let sources = Arc::new(Mutex::new(FakeOperatorSkillState {
+        skill_id: format!("wc_skill_{}", "3".repeat(32)),
+        skill_key: "unused-managed".to_string(),
+        name: "unused-managed".to_string(),
+        description: "Unused managed guidance".to_string(),
+        package_revision: format!("wc_skillpkg_{}", "a".repeat(64)),
+        definition_revision: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            .to_string(),
+        configured: Some(FakeConfiguredSkillState {
+            skill_id: configured_id.clone(),
+            name: "configured".to_string(),
+            description: "Configured guidance".to_string(),
+            definition_revision: configured_revision.to_string(),
+            definition_text: "configured definition".to_string(),
+            resource_text: "configured resource".to_string(),
+        }),
+        resource_text: "unused managed resource".to_string(),
+    }));
+
+    let (read, kinds) = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": configured_id,
+            "path": "references/guide.md",
+            "expected_definition_revision": configured_revision,
+        }),
+        sources,
+    )
+    .await;
+    assert!(read.success, "{:?}", read.error);
+    assert_eq!(read.output["text"], "configured resource");
+    assert_eq!(
+        kinds,
+        vec![
+            "file_skill_list_packages",
+            "configured_skill_roots",
+            "configured_skill_roots",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn managed_skill_exact_read_observes_project_and_managed_catalog_first() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "managed-skill-read-fanout";
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            file_read: true,
+            skill_store_read: true,
+            ..Default::default()
+        },
+        vec![registered_project(
+            "project",
+            root.path().to_string_lossy().as_ref(),
+        )],
+    )
+    .await;
+    let project = crate::tool_runtime::runner_project_runtime_id(client_id, "project");
+    let managed_id = format!("wc_skill_{}", "3".repeat(32));
+    let managed_revision = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    let managed_package = format!("wc_skillpkg_{}", "a".repeat(64));
+    let sources = Arc::new(Mutex::new(FakeOperatorSkillState {
+        skill_id: managed_id.clone(),
+        skill_key: "managed".to_string(),
+        name: "managed".to_string(),
+        description: "Managed guidance".to_string(),
+        package_revision: managed_package.clone(),
+        definition_revision: managed_revision.to_string(),
+        configured: None,
+        resource_text: "managed resource".to_string(),
+    }));
+
+    let (read, kinds) = call_kernel_with_fake_operator_store(
+        &runtime,
+        client_id,
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": managed_id,
+            "path": "references/guide.md",
+            "expected_package_revision": managed_package,
+            "expected_definition_revision": managed_revision,
+        }),
+        sources,
+    )
+    .await;
+    assert!(read.success, "{:?}", read.error);
+    assert_eq!(read.output["text"], "managed resource");
+    assert_eq!(
+        kinds,
+        vec!["file_skill_list_packages", "skill_store", "skill_store"]
+    );
 }
 
 #[tokio::test]
@@ -863,6 +1011,86 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     )
     .await;
     assert_eq!(after_delete.output["total_count"], 1);
+}
+
+#[tokio::test]
+async fn project_skill_exact_read_request_fanout_is_characterized() {
+    let root = tempfile::tempdir().unwrap();
+    write_skill(
+        root.path(),
+        "alpha",
+        "alpha",
+        "Alpha guidance",
+        "alpha body\n",
+    );
+    write_skill(root.path(), "beta", "beta", "Beta guidance", "beta body\n");
+    let refs = root.path().join(".agents/skills/alpha/references");
+    fs::create_dir_all(&refs).unwrap();
+    fs::write(refs.join("guide.md"), "resource body\n").unwrap();
+
+    let runtime = ToolRuntime::new_for_tests();
+    let project =
+        register_runner_project_at_path(&runtime, "project-skill-read-fanout", "demo", root.path())
+            .await;
+    let (listed, _) = call_kernel_with_local_agent(
+        &runtime,
+        "project-skill-read-fanout",
+        "skill_list",
+        json!({"project": project}),
+        true,
+    )
+    .await;
+    assert!(listed.success, "{:?}", listed.error);
+    assert_eq!(listed.output["total_count"], 2);
+    let alpha = skill_by_name(&listed, "alpha");
+    let skill_id = alpha["skill_id"].as_str().unwrap().to_string();
+    let definition_revision = alpha["definition_revision"].as_str().unwrap().to_string();
+
+    let (definition, definition_kinds) = call_kernel_with_local_agent(
+        &runtime,
+        "project-skill-read-fanout",
+        "skill_read_file",
+        json!({"project": project, "skill_id": skill_id}),
+        true,
+    )
+    .await;
+    assert!(definition.success, "{:?}", definition.error);
+    assert_eq!(definition.output["path"], "SKILL.md");
+    assert_eq!(
+        definition_kinds,
+        vec![
+            "file_skill_list_packages",
+            "file_skill_read_file",
+            "file_skill_read_file",
+            "file_skill_read_file",
+        ]
+    );
+
+    let (resource, resource_kinds) = call_kernel_with_local_agent(
+        &runtime,
+        "project-skill-read-fanout",
+        "skill_read_file",
+        json!({
+            "project": project,
+            "skill_id": skill_id,
+            "path": "references/guide.md",
+            "expected_definition_revision": definition_revision,
+        }),
+        true,
+    )
+    .await;
+    assert!(resource.success, "{:?}", resource.error);
+    assert_eq!(resource.output["text"], "resource body");
+    assert_eq!(
+        resource_kinds,
+        vec![
+            "file_skill_list_packages",
+            "file_skill_read_file",
+            "file_skill_read_file",
+            "file_skill_read_file",
+            "file_skill_read_file",
+        ]
+    );
 }
 
 #[tokio::test]

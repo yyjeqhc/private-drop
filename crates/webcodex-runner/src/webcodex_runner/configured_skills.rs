@@ -34,6 +34,56 @@ struct LiveDiscovery {
     discovery_truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfiguredSkillScanTrigger {
+    CatalogList,
+    ExactReadResolution,
+}
+
+impl ConfiguredSkillScanTrigger {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CatalogList => "catalog_list",
+            Self::ExactReadResolution => "exact_read_resolution",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ConfiguredSkillScanStats {
+    roots_examined: usize,
+    directory_entries_scanned: usize,
+    definitions_attempted: usize,
+    definitions_read: usize,
+    definition_bytes_read: usize,
+}
+
+fn observe_configured_skill_scan(
+    stats: &ConfiguredSkillScanStats,
+    discovery: &LiveDiscovery,
+    started: Instant,
+    trigger: ConfiguredSkillScanTrigger,
+    outcome_class: &'static str,
+) {
+    tracing::info!(
+        event = "configured_skill_source_scan",
+        source = "runner_configured",
+        operation = "catalog_scan",
+        trigger = trigger.as_str(),
+        outcome_class,
+        roots_examined = stats.roots_examined as u64,
+        directory_entries_scanned = stats.directory_entries_scanned as u64,
+        definitions_attempted = stats.definitions_attempted as u64,
+        definitions_read = stats.definitions_read as u64,
+        definition_bytes_read = stats.definition_bytes_read as u64,
+        valid_count = discovery.skills.len() as u64,
+        invalid_count = discovery.invalid_count as u64,
+        truncated = discovery.discovery_truncated,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "configured_skill_source_scan"
+    );
+}
+
 pub(crate) fn handle_configured_skill_roots_request(
     config: &SkillsConfig,
     request: ConfiguredSkillRootsRequest,
@@ -89,13 +139,23 @@ pub(crate) fn handle_configured_skill_roots_request(
 }
 
 fn discover(config: &SkillsConfig) -> Result<LiveDiscovery, String> {
+    discover_with_trigger(config, ConfiguredSkillScanTrigger::CatalogList)
+}
+
+fn discover_with_trigger(
+    config: &SkillsConfig,
+    trigger: ConfiguredSkillScanTrigger,
+) -> Result<LiveDiscovery, String> {
     let mut discovery = LiveDiscovery::default();
+    let started = Instant::now();
+    let mut stats = ConfiguredSkillScanStats::default();
     let mut seen_ids = BTreeSet::new();
     for configured_root in &config.roots {
         if discovery.skills.len() >= MAX_CONFIGURED_SKILL_PACKAGES {
             discovery.discovery_truncated = true;
             break;
         }
+        stats.roots_examined = stats.roots_examined.saturating_add(1);
         let root_metadata = match fs::symlink_metadata(configured_root) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -137,7 +197,7 @@ fn discover(config: &SkillsConfig) -> Result<LiveDiscovery, String> {
                 continue;
             }
         };
-        let entries = match bounded_root_entries(&root) {
+        let entries = match bounded_root_entries(&root, &mut stats) {
             Ok(entries) => entries,
             Err(code) => {
                 if code == "configured_skill_root_scan_limit_exceeded" {
@@ -152,9 +212,12 @@ fn discover(config: &SkillsConfig) -> Result<LiveDiscovery, String> {
                 discovery.discovery_truncated = true;
                 break;
             }
-            match load_live_skill(configured_root, &root, &package_name) {
+            match load_live_skill(configured_root, &root, &package_name, &mut stats) {
                 Ok(skill) => {
                     if !seen_ids.insert(skill.descriptor.skill_id.clone()) {
+                        observe_configured_skill_scan(
+                            &stats, &discovery, started, trigger, "error",
+                        );
                         return Err("configured_skill_identity_collision".to_string());
                     }
                     discovery.skills.push(skill);
@@ -169,15 +232,20 @@ fn discover(config: &SkillsConfig) -> Result<LiveDiscovery, String> {
     discovery
         .skills
         .sort_by(|left, right| left.descriptor.skill_id.cmp(&right.descriptor.skill_id));
+    observe_configured_skill_scan(&stats, &discovery, started, trigger, "success");
     Ok(discovery)
 }
 
-fn bounded_root_entries(root: &Path) -> Result<Vec<String>, &'static str> {
+fn bounded_root_entries(
+    root: &Path,
+    stats: &mut ConfiguredSkillScanStats,
+) -> Result<Vec<String>, &'static str> {
     let read_dir = fs::read_dir(root).map_err(|_| "configured_skill_root_unavailable")?;
     let mut candidates = Vec::new();
     let mut scanned = 0usize;
     for entry in read_dir {
         scanned = scanned.saturating_add(1);
+        stats.directory_entries_scanned = stats.directory_entries_scanned.saturating_add(1);
         if scanned > MAX_CONFIGURED_SKILL_ROOT_SCAN_ENTRIES {
             return Err("configured_skill_root_scan_limit_exceeded");
         }
@@ -202,6 +270,7 @@ fn load_live_skill(
     configured_root: &Path,
     canonical_root: &Path,
     package_name: &str,
+    stats: &mut ConfiguredSkillScanStats,
 ) -> Result<LiveSkill, &'static str> {
     if !valid_package_name(package_name) {
         return Err("invalid_skill_package");
@@ -220,6 +289,7 @@ fn load_live_skill(
     if !crate::runner_config::paths::path_is_within(&package_root, canonical_root) {
         return Err("invalid_skill_package");
     }
+    stats.definitions_attempted = stats.definitions_attempted.saturating_add(1);
     let definition = resolve_regular_package_file(
         &package_root,
         canonical_root,
@@ -233,6 +303,8 @@ fn load_live_skill(
             "invalid_utf8" => "invalid_utf8_skill_definition",
             _ => "invalid_skill_package",
         })?;
+    stats.definitions_read = stats.definitions_read.saturating_add(1);
+    stats.definition_bytes_read = stats.definition_bytes_read.saturating_add(bytes.len());
     let text = std::str::from_utf8(&bytes).map_err(|_| "invalid_utf8_skill_definition")?;
     let skill_metadata = parse_skill_metadata(text)?;
     let definition_revision = sha256_hex(&bytes);
@@ -261,7 +333,7 @@ fn read_resource(
     if webcodex_core::sensitive_paths::is_secret_path(&path) {
         return Err("skill_sensitive_path".to_string());
     }
-    let discovery = discover(config)?;
+    let discovery = discover_with_trigger(config, ConfiguredSkillScanTrigger::ExactReadResolution)?;
     let skill = discovery
         .skills
         .into_iter()

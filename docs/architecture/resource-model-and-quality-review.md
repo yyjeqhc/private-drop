@@ -88,15 +88,15 @@ Memory provider    Skill providers    Plugin provider
 
 ## 4. 优先改进项与源码证据
 
-### A. 收敛扩展家族分类的所有权（建议优先级 P1，维护风险）
+### A. 收敛扩展家族分类的所有权（后续 consolidation 已落地）
 
-`is_skill_runtime_tool_name` / `is_skill_management_tool_name` 在 Skill 实现模块；Memory 有另一组类似函数。Kernel、发现 surface 和 MCP adapter 都依赖这些实现模块来判断工具家族。
+最初探索时，Skill/Memory 的 runtime/management 分类分别由实现模块中的 `is_*_tool_name` helpers 持有，Kernel、发现 surface、MCP adapter 与 registry 又各自消费或重复维护这些名字集合。这不是已证明的权限漏洞，而是“新增工具时容易改漏一处”的结构风险。
 
-证据：[skills.rs](../../src/tool_runtime/skills.rs)，50–59；[memory.rs](../../src/tool_runtime/memory.rs)，22–30；[kernel.rs](../../src/tool_runtime/kernel.rs)，338–421；[surface.rs](../../src/tool_runtime/surface.rs)，75–112；[mcp/tools.rs](../../src/mcp/tools.rs)，47–80。
+后续 consolidation 已将这一个静态事实收敛到 canonical `ToolDefinition`：`ToolOperatorExtensionFamily` 只描述 `SkillRuntime / SkillManagement / MemoryRuntime / MemoryManagement / TraceDiagnostics` 的 Stateless Operator protocol admission family，各定义在 Skill、Memory、diagnostic 的 ToolDefinition 旁显式声明。Registry、Kernel capability gate、tool manifest surface 和 MCP Full Operator projection 统一通过 `runtime_tool_operator_extension_family` 消费；旧 Skill/Memory classifier 和 registry 中对应的硬编码 family name sets 已从 live code 删除。
 
-这不是已证明的权限漏洞，而是“新增工具时容易改漏一处”的结构风险。建议把封闭的 admission 分类声明收敛到现有 ToolDefinition/相邻 contracts 层，发现与执行消费同一分类。不要把真实授权对象、数据库句柄、provider 回调放进 contracts crate。
+证据：[tool_definition.rs](../../crates/webcodex-tool-contracts/src/tool_definition.rs)、[tool_policy.rs](../../crates/webcodex-tool-contracts/src/tool_policy.rs)、[tool_specs.rs](../../crates/webcodex-tool-contracts/src/registry/tool_specs.rs)、[kernel.rs](../../src/tool_runtime/kernel.rs)、[surface.rs](../../src/tool_runtime/surface.rs)、[mcp/tools.rs](../../src/mcp/tools.rs)。
 
-验收不能只看函数去重：必须逐个 surface/principal 验证可发现与可调用集合，保留管理操作的 admin 要求、Memory conjunctive scopes、隐藏工具拒绝、错误语义以及 direct/gateway 一致性。不要把两种 OAuth 投影分支机械合并。
+这个收敛没有把 authorization 混入 family：Skill Management 的 admin 要求、Memory conjunctive scopes、Project/Runner authority、permission 与 Session evidence 仍由原 canonical policy 所有；Goal Plan、Work Result、Agent Continuation 的 MCP App/Host capability 也保持独立。Definition invariant 还要求 operator-extension family 必须保持 `ModelHidden`，避免普通 model-visible 工具因误标 family 同时进入通用 registry 与 extension projection。
 
 ### B. Skill 发现与精确读取耦合过紧（P1 设计风险；延迟尚未量化）
 
@@ -107,6 +107,23 @@ Memory provider    Skill providers    Plugin provider
 可行顺序：先按来源记录扫描次数、条目数、耗时、字节量和不可用原因；再分离目录观察与已知引用解析；最后才考虑有界并发或缓存。缓存键至少绑定 Project authority、Runner 实例、source/配置版本及适用 revision。缓存 descriptor 不是缓存授权，已移除资源不能被缓存复活；不通过猜 opaque id 格式路由。
 
 将来源失败降级为 partial catalog 会改变外部语义，应单独评审并显式报告 incomplete；本轮没有把失败偷偷转换成成功空目录。
+
+#### B.1 2026-09-13 follow-up：Skill source fanout 基线与观测边界
+
+后续 consolidation 已用现有 fake/local Runner request recorder 固定当前 request fanout；这些测试记录的是**优化前事实**，不是把现状永久定义成目标。空 Project catalog 的 `skill_list` 只发 1 次 `file_skill_list_packages`。若 Project 有 `N` 个 Skill，完整 Project catalog 是 `1` 次 package list 加 `N` 次 `SKILL.md` definition read；在此基础上，已知 Project Skill 的精确 `SKILL.md` read 当前总计 `1 + N + 1` 个 Runner requests，普通 resource read 则为 `1 + N + 1 + 1`，最后一个 request 是 definition revision recheck。lexical invalid resource path 仍在任何 Runner request 前 fail closed，因此保持 0 request。
+
+Runner configured / managed 的 Server 协议请求虽然携带精确 `skill_id`，`skill_read_file` 目前仍先观察完整跨来源 catalog。仅启用 configured capability 且 Project 为空时，实测 sequence 是 `Project package list -> Configured List -> Configured Read`；仅启用 managed capability 时是 `Project package list -> Managed ListActive -> Managed Read`。mixed project + configured + managed、且 Project 有 1 个 Skill 时，读取 configured target 的 sequence 是 `Project list -> Project definition -> Configured List -> Managed ListActive -> Configured Read`，读取 managed target 只把最后一步换成 `Managed Read`。这明确证明 known-id read 仍观察非目标来源。
+
+Server 侧现已增加 fail-open、低基数的 Skill source observation。固定 `source` 只有 `project / runner_configured / runner_managed`；固定 `operation` 只有 `catalog_list / catalog_definition_read / resource_read / definition_recheck`。Project 层能可靠区分四种操作；configured/managed 在 Server 只声称 `catalog_list` 或 `resource_read`，不伪造 Runner 内部扫描细节。每个已发出的 source request 可观察 request count=1、Server elapsed、Runner response 中已有的 `duration_ms`、stdout response bytes、catalog item count（仅当前层有 authoritative count 时）以及 bounded outcome class。metric sink 仍由 `runtime_metrics` 的 panic guard fail-open；没有 Project/Skill/package/root/resource/query/error body/content/绝对路径/principal 作为 label，也没有修改 ToolResult、Skill JSON、MCP tools/list、Session、Memory、数据库或 Runner wire schema。
+
+Runner-local blind spot 也用纯 structured tracing 补齐，不新增跨进程 telemetry protocol。configured `discover` 现在记录 `roots_examined`、`directory_entries_scanned`、`definitions_attempted`、`definitions_read`、`definition_bytes_read`、valid/invalid count、truncated、elapsed，并用封闭 `trigger = catalog_list / exact_read_resolution` 区分 catalog observation 与 exact Read 内部重新执行的完整 `discover(config)`；因此两次扫描即使连续发生也不会在 Runner 日志里混成同一种事件。managed exact read 记录 `skill_keys_listed`、为了 opaque-id 匹配实际比较的 `skill_keys_examined`、hit 与 elapsed；其中 `list_skill_keys()` 仍先枚举完整 installed-key 集合，而后续 id 比较在命中时可以提前结束。Server 仍只看到一次 typed Read 的 duration/bytes/outcome，Runner-local scan counters 不会回传或写入业务结果，因此跨进程集中关联这些内部计数仍是明确 blind spot。
+
+下一轮 observer/resolver split 必须保持以下前提：
+
+- **Project**：opaque `skill_id` 不能反推出 package name。可以评估“有界枚举 package names -> 本地计算 candidate opaque ids -> 只读取命中的 package definition/resource”，但删除、重命名、definition revision race、resource 后置 recheck 与 sensitive-path boundary 都必须继续 fail closed。
+- **Configured**：当前 exact `Read` 内部仍完整 `discover(config)`。真正的优化应提供与 configured-root lifecycle 一致的 exact identity resolution/index，而不是让 Server 按错误码盲试来源。
+- **Managed**：协议是 exact `skill_id` Read，但实现仍通过 `list_skill_keys()` 解析 opaque id。可以评估 stable reverse mapping/index，但必须与 Skill store lock、active state、revision install/remove lifecycle 一致；删除后旧 id 绝不能因缓存或索引残留复活。
+- **Cross-source**：不能从 opaque id 前缀猜 source；完整 catalog 当前承担 duplicate `skill_id` fail-closed、name conflict、catalog revision 和 optional-provider failure 语义。optional source unavailable 时是否允许其它 source exact resolution 继续属于外部语义变更，本阶段不改。减少扫描与 partial catalog 必须保持为两个独立改动。
 
 ### C. 区分仓库知识身份与执行 worktree 身份（P1 产品设计）
 
@@ -134,11 +151,13 @@ Memory provider    Skill providers    Plugin provider
 
 适合提炼的是启动专用的泛型目录投影，不是引入所有资源共用的存储、动态 provider trait 或统一执行方法。这是一个有两个真实消费者、可用差分测试约束的抽象。
 
-### G. 字符串错误分类应停留在边界（P2，维护风险）
+### G. 字符串错误分类应停留在边界（后续 Runner Skill provider 小切片已落地）
 
-[runner_skill_store_request](../../src/tool_runtime/skills.rs)，200–207，按 `error.contains(...)` 区分 capability/实例变更等错误。内部文本一变，映射可能失去精确原因。建议为该调用链提取小型 typed error，再在 wire/model-facing 边界编码既有 error code；不全仓机械替换 String。
+最初探索时，[runner_skill_store_request](../../src/tool_runtime/skills.rs) 通过 `error.contains(...)` 区分 capability、exact Runner 变化与一般不可用，内部文本变化可能改变模型侧 error kind。后续小切片已经为 Runner Registry 的 managed Skill-store 与 configured Skill roots enqueue 分别增加 `EnqueueSkillStoreError` / `EnqueueConfiguredSkillRootsError`，Tool Runtime 通过 typed variants 映射回各自既有稳定 error kind，不再解析这两个 provider 的 presentation text。
 
-同理，内容 revision、catalog revision、状态 CAS、Job observation token、Session context ACK 虽然都长得像字符串，不应共用“版本号”的业务语义。只在误传风险高的接口引入 newtype，不要求每个字符串都包装。
+原有 `enqueue_skill_store -> Result<_, String>` 与 `enqueue_configured_skill_roots -> Result<_, String>` public entry points 仍作为文本兼容边界保留，内部需要分类的调用走对应 typed entry point；因此这不是全仓错误框架重写，也没有借机修正或重新命名既有 wire/model-facing 错误语义。
+
+同理，内容 revision、catalog revision、状态 CAS、Job observation token、Session context ACK 虽然都长得像字符串，不应共用“版本号”的业务语义。只在误传风险高、已有具体消费者的接口引入 typed boundary 或 newtype，不要求每个字符串都包装。
 
 ## 5. 可以类推到其他领域的设计
 
@@ -192,12 +211,14 @@ Plugin 已有 `NotStarted / OutcomeUnknown / Completed`，见 [plugin.rs](../../
 | 阶段 | 交付 | 保持不变的边界 | 验收方式 |
 |---|---|---|---|
 | 0，本轮 | 启动目录投影的小型复用、基线表征测试、本文 | JSON 形状、顺序、hint、预算、来源发现和权限均不改 | 新旧 JSON oracle 对照，空/不可用/上游截断、Unicode/转义、超大条目；既有 startup 测试 |
-| 1 | 扩展家族 admission 声明归 ToolDefinition；内部 typed error 小切片 | 外部错误、scope、surface、direct/gateway 语义不改 | 表驱动 surface/principal 矩阵、拒绝前无 provider 效果 |
+| 1，后续已完成 | 扩展家族 admission 声明归 ToolDefinition；Runner Skill provider enqueue typed error 小切片 | 外部错误、scope、surface、direct/gateway 语义不改 | family/registry invariant、ModelHidden invariant、surface/principal focused tests、typed-to-legacy error-kind 对照 |
 | 2 | Skill observer/resolver 分离；增加来源级诊断与测量 | opaque identity 和请求时授权不改 | 读取触发扫描次数、cold/warm latency、删除/重配/断线/换实例测试 |
 | 3 | 实测需要的缓存、有界并发、DB worker 隔离 | 未知结果/事务/重放语义不改 | 与基线比较 p50/p95、锁等待、内存/字节上限、故障注入 |
 | 4，独立功能设计 | 用户私有命名空间、显式仓库知识复用、统一资源浏览界面 | 不隐式继承权限，不改变执行 cwd | principal 隔离、分享撤销、worktree 来源、冲突展示与迁移方案 |
 
 区分纯重构和新增功能很重要：共同描述结构可以先不改变任何用户功能；跨 worktree 共享或 user namespace 一定要另行定义产品行为。阶段 4 不应成为阶段 1/2 的前提。
+
+后续复查也进一步收紧了阶段 2 的前置条件：managed Skill 的 wire request 已是 opaque `skill_id` 精确 Read，但 Runner 内部仍扫描 `list_skill_keys()` 来解析该 id；configured Skill 的 Runner read 当前仍会在来源内部执行完整 `discover(config)`；Project Skill 的 opaque id 又不能反推出 package name，只能从有界包名集合计算匹配；完整 catalog 还承担跨来源 duplicate-id fail-closed 检查。因此不要简单把 `skill_read_file` 的 `discover_skills` 删除后按来源盲试。当前已完成来源级 fanout characterization、Server metrics 与不改 wire 的 Runner-local scan tracing；下一步应在这些事实基础上先定义 exact resolution 的失败、重复身份和 lifecycle 一致性语义，再做 observer/resolver 分离。
 
 建议持续关注的指标不是抽象数量，而是：新增一个工具需要改多少个独立分类点；精确 Skill 读取触发多少次 Runner 请求；为了做一个简单选择要给模型多少 schema 字节；失败是否直接给出可执行的下一步；核心改动需要编译和运行哪些无关测试。
 

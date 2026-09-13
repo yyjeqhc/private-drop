@@ -41,7 +41,7 @@ async fn skill_store_enqueue_requires_exact_instance_and_independent_capability(
         .unwrap();
     let auth = alice();
 
-    let read_error = registry
+    let legacy_read_error = registry
         .enqueue_skill_store(
             "skill-store-runner",
             "instance-a",
@@ -51,11 +51,31 @@ async fn skill_store_enqueue_requires_exact_instance_and_independent_capability(
         )
         .await
         .unwrap_err();
-    assert!(read_error.contains("skill_store_capability_unavailable"));
-    assert!(read_error.contains("skill_store_read"));
+    assert_eq!(
+        legacy_read_error,
+        "skill_store_capability_unavailable: exact Runner does not support skill_store_read"
+    );
+
+    let read_error = registry
+        .enqueue_skill_store_typed(
+            "skill-store-runner",
+            "instance-a",
+            SkillStoreRequest::ListActive,
+            Some(&auth),
+            "test".to_string(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        read_error,
+        EnqueueSkillStoreError::UnsupportedCapability {
+            capability: "skill_store_read",
+            ..
+        }
+    ));
 
     let stale_error = registry
-        .enqueue_skill_store(
+        .enqueue_skill_store_typed(
             "skill-store-runner",
             "replacement-instance",
             SkillStoreRequest::ListActive,
@@ -64,14 +84,17 @@ async fn skill_store_enqueue_requires_exact_instance_and_independent_capability(
         )
         .await
         .unwrap_err();
-    assert!(stale_error.contains("stale Runner"));
+    assert!(matches!(
+        stale_error,
+        EnqueueSkillStoreError::RunnerChanged { .. }
+    ));
 
     registry
         .register(skill_store_registration("instance-a", true, false))
         .await
         .unwrap();
     let manage_error = registry
-        .enqueue_skill_store(
+        .enqueue_skill_store_typed(
             "skill-store-runner",
             "instance-a",
             SkillStoreRequest::Versions {
@@ -84,8 +107,13 @@ async fn skill_store_enqueue_requires_exact_instance_and_independent_capability(
         )
         .await
         .unwrap_err();
-    assert!(manage_error.contains("skill_store_capability_unavailable"));
-    assert!(manage_error.contains("skill_store_manage"));
+    assert!(matches!(
+        manage_error,
+        EnqueueSkillStoreError::UnsupportedCapability {
+            capability: "skill_store_manage",
+            ..
+        }
+    ));
 
     let inner = registry.inner.lock().await;
     assert!(inner.pending_by_id.is_empty());
@@ -100,7 +128,7 @@ async fn skill_store_dequeue_rejects_replacement_runner_before_dispatch() {
         .unwrap();
     let auth = alice();
     let (_request_id, receiver) = registry
-        .enqueue_skill_store(
+        .enqueue_skill_store_typed(
             "skill-store-runner",
             "instance-a",
             SkillStoreRequest::Versions {

@@ -267,3 +267,90 @@ fn tool_definitions_drive_metadata_visibility_and_categories() {
         assert_eq!(definition.metadata().authority, metadata.authority);
     }
 }
+
+#[test]
+fn operator_extension_families_are_definition_owned_and_registry_derived() {
+    use ToolOperatorExtensionFamily::{
+        MemoryManagement, MemoryRuntime, SkillManagement, SkillRuntime, TraceDiagnostics,
+    };
+
+    let cases: &[(ToolOperatorExtensionFamily, &[&str])] = &[
+        (SkillRuntime, &["skill_list", "skill_read_file"]),
+        (
+            SkillManagement,
+            &[
+                "skill_versions",
+                "skill_install",
+                "skill_activate",
+                "skill_remove_revision",
+            ],
+        ),
+        (MemoryRuntime, &["memory_search", "memory_read"]),
+        (
+            MemoryManagement,
+            &[
+                "memory_set",
+                "memory_delete",
+                "memory_scope_list",
+                "memory_scope_purge",
+            ],
+        ),
+        (TraceDiagnostics, &["read_tool_trace"]),
+    ];
+
+    for (family, expected_names) in cases {
+        for name in *expected_names {
+            assert_eq!(runtime_tool_operator_extension_family(name), Some(*family));
+            assert_eq!(
+                lookup_tool_definition(name)
+                    .and_then(|definition| definition.operator_extension_family),
+                Some(*family)
+            );
+        }
+
+        let actual_names = match family {
+            SkillRuntime => skill_runtime_tool_specs(),
+            SkillManagement => skill_management_tool_specs(),
+            MemoryRuntime => memory_runtime_tool_specs(),
+            MemoryManagement => memory_management_tool_specs(),
+            TraceDiagnostics => operator_diagnostic_tool_specs(),
+        }
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            actual_names,
+            expected_names
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    for definition in
+        tool_definitions().filter(|definition| definition.operator_extension_family.is_some())
+    {
+        assert!(
+            definition.visibility.is_model_hidden(),
+            "{} operator extension must remain ModelHidden and surface-gated",
+            definition.name
+        );
+    }
+
+    let declared_names = tool_definitions()
+        .filter(|definition| definition.operator_extension_family.is_some())
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    let registry_names = stateless_operator_extension_tool_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        declared_names,
+        registry_names.iter().map(String::as_str).collect(),
+        "registry operator-extension membership must be derived from ToolDefinition families"
+    );
+
+    assert_eq!(runtime_tool_operator_extension_family("run_shell"), None);
+    assert_eq!(runtime_tool_operator_extension_family("unknown_tool"), None);
+}
