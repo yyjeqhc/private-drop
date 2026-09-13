@@ -138,7 +138,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .push(json!({
             "uri": MCP_WORK_RESULT_UI_RESOURCE_URI,
             "name": "WebCodex Work",
-            "description": "Persistent read-only coding Work Result for one explicitly presented project-scoped Workflow Session. The App polls only bounded current worktree and existing Session validation/review facts; ordinary work tools keep native Host presentation. Legacy Changes resources remain hidden readable compatibility aliases.",
+            "description": "Persistent read-only coding Work Result for one explicitly presented project-scoped Workflow Session. The initial present_work_result ToolResult is the authoritative snapshot; the mounted App stays static until the user explicitly refreshes, then performs one exact bounded state read. Ordinary work tools keep native Host presentation. Legacy Changes resources remain hidden readable compatibility aliases.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_app_resource_meta(domain)
         }));

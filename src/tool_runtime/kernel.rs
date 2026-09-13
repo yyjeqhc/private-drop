@@ -109,8 +109,8 @@ pub(crate) struct ToolProtocolCapabilities {
     /// Protocol-surface support for the ModelHidden Goal Plan App polling read.
     /// This never replaces canonical communication/Goal authorization.
     pub(crate) goal_plan_app: bool,
-    /// Protocol-surface support for the ModelHidden Work Result App polling
-    /// read. Exact Project + Session authority is still checked per call.
+    /// Protocol-surface support for the ModelHidden Work Result App explicit
+    /// refresh read. Exact Project + Session authority is still checked per call.
     pub(crate) work_result_app: bool,
     /// Protocol-surface support for ModelHidden MCP App Host-continuation
     /// coordination. Canonical communication authorization and exact

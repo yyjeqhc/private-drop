@@ -188,6 +188,13 @@ async fn work_result_resource_is_canonical_while_changes_resources_are_hidden_co
     assert!(resources
         .iter()
         .any(|resource| resource["uri"] == MCP_WORK_RESULT_UI_RESOURCE_URI));
+    let work_resource = resources
+        .iter()
+        .find(|resource| resource["uri"] == MCP_WORK_RESULT_UI_RESOURCE_URI)
+        .expect("canonical Work Result resource");
+    let work_description = work_resource["description"].as_str().unwrap();
+    assert!(work_description.contains("user explicitly refreshes"));
+    assert!(!work_description.contains("poll"));
     assert!(!resources
         .iter()
         .any(|resource| resource["uri"] == MCP_RESULT_UI_RESOURCE_URI));
@@ -296,15 +303,15 @@ async fn work_result_state_discards_unadvertised_recording_session_wrapper() {
 }
 
 #[test]
-fn work_result_html_is_bounded_display_only_polling_ui() {
+fn work_result_html_is_bounded_display_only_manual_refresh_ui() {
     for required in [
         "work_result_state",
         "ui/notifications/tool-input",
         "ui/notifications/tool-result",
-        "visibilitychange",
+        "id=\"refresh\"",
+        "Refreshing…",
         "ui/resource-teardown",
         "state_version",
-        "setInterval",
         "pagehide",
         "beforeunload",
         "WebCodex Work",
@@ -315,6 +322,11 @@ fn work_result_html_is_bounded_display_only_polling_ui() {
         );
     }
     for forbidden in [
+        "setInterval",
+        "clearInterval",
+        "visibilitychange",
+        "POLL_MS",
+        "pollTimer",
         "localStorage",
         "indexedDB",
         "fetch(",

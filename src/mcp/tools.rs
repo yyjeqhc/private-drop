@@ -1948,11 +1948,11 @@ pub(super) async fn handle_call(
             return McpOutcome::BadRequest(rpc_error(id, -32602, message));
         }
     };
-    // Work Result polling is an App-only observation of the exact business
+    // Work Result refresh is an App-only observation of the exact business
     // Session carried inside the tool's own arguments. Never let the generic
-    // Stateless recording wrapper turn a poll into a write to that or any
-    // other Workflow Session, even if a caller hand-crafts an unadvertised
-    // recording_session_id field.
+    // Stateless recording wrapper turn a user-driven refresh into a write to
+    // that or any other Workflow Session, even if a caller hand-crafts an
+    // unadvertised recording_session_id field.
     if params.name == "work_result_state" {
         session_id = None;
     }

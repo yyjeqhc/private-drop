@@ -9,9 +9,12 @@
 * { box-sizing: border-box; }
 body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
 .card { display: grid; gap: 11px; }
-.header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.actions { display: flex; align-items: center; gap: 7px; }
 h1 { margin: 0; font-size: 15px; font-weight: 650; }
 .badge { padding: 2px 7px; border: 1px solid color-mix(in srgb, CanvasText 22%, transparent); border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.refresh { appearance: none; border: 1px solid color-mix(in srgb, CanvasText 24%, transparent); border-radius: 7px; padding: 3px 8px; color: CanvasText; background: color-mix(in srgb, CanvasText 7%, Canvas); font: inherit; font-size: 11px; cursor: pointer; }
+.refresh:disabled { opacity: .52; cursor: default; }
 .section { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, CanvasText 13%, transparent); }
 .section:first-of-type { padding-top: 0; border-top: 0; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -24,7 +27,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
 </head>
 <body>
 <main class="card" aria-live="polite">
-  <div class="header"><h1>WebCodex Work</h1><span id="badge" class="badge">Loading</span></div>
+  <div class="header"><h1>WebCodex Work</h1><div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div></div>
   <section class="section">
     <div class="section-head"><h2>Changes</h2><span id="changesStats" class="secondary"></span></div>
     <div id="changesTitle" class="primary">Waiting for Work state…</div>
@@ -46,7 +49,6 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   const APP_PROTOCOL = "2026-01-26";
   const SESSION_ID = /^wc_sess_[A-Za-z0-9_]+$/;
   const STATE_VERSION = /^wr1_[0-9a-f]{64}$/;
-  const POLL_MS = 3000;
   const CALL_TIMEOUT_MS = 10000;
   const MAX_PROJECT = 512;
   const MAX_PATH = 512;
@@ -57,8 +59,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   let identity = null;
   let lastStateVersion = null;
   let hostInitialized = false;
-  let pollTimer = null;
-  let pollInFlight = false;
+  let refreshInFlight = false;
   let tornDown = false;
   const pending = new Map();
   const el = id => document.getElementById(id);
@@ -105,6 +106,8 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
       return false;
     }
     identity = candidate;
+    updateRefreshControl();
+    if (hostInitialized && lastStateVersion === null) el("status").textContent = "Waiting for Work snapshot · Refresh available";
     return true;
   }
 
@@ -142,13 +145,14 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   function validValidation(value) {
     return !!value && typeof value === "object" && !Array.isArray(value)
       && VALIDATION.has(value.status) && VALIDATION.has(value.latest_status) && VALIDATION.has(value.current_status)
+      && typeof value.history_partial === "boolean"
       && (value.successes === undefined || safeCount(value.successes))
       && (value.failures === undefined || safeCount(value.failures))
       && safeCount(value.unresolved_failures) && safeCount(value.evidence_gaps);
   }
 
   function validReview(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.available !== "boolean" || !Array.isArray(value.tools) || value.tools.length > MAX_TOOLS) return false;
+    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.available !== "boolean" || typeof value.history_partial !== "boolean" || !Array.isArray(value.tools) || value.tools.length > MAX_TOOLS) return false;
     for (const key of ["total", "read_only_inspection_count", "search_count", "diff_review_count", "workspace_review_count", "hygiene_review_count"]) if (!safeCount(value[key])) return false;
     return value.tools.every(tool => typeof tool === "string" && tool.length > 0 && tool.length <= 64);
   }
@@ -161,6 +165,13 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
     return value;
   }
 
+  function toolSuccess(result) {
+    const structured = result && (result.structuredContent || result.structured_content || result);
+    return structured && typeof structured === "object" && !Array.isArray(structured) && typeof structured.success === "boolean"
+      ? structured.success
+      : null;
+  }
+
   function extractState(result) {
     const structured = result && (result.structuredContent || result.structured_content || result);
     const output = structured && (structured.output || structured);
@@ -168,14 +179,15 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   }
 
   function changeCode(file) {
-    const status = file.status || "modified";
+    const status = file.status;
     if (status === "added") return "A";
     if (status === "deleted") return "D";
     if (status === "renamed") return "R";
     if (status === "copied") return "C";
     if (status === "untracked") return "?";
     if (status === "conflicted") return "!";
-    return "M";
+    if (status === "modified") return "M";
+    return "?";
   }
 
   function renderChanges(workspace) {
@@ -196,8 +208,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
       return;
     }
     el("badge").textContent = "Changed";
-    const suffix = workspace.truncated ? "+" : "";
-    el("changesTitle").textContent = `Changed ${workspace.files_total}${suffix} ${workspace.files_total === 1 ? "file" : "files"}`;
+    el("changesTitle").textContent = `Changed ${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"}`;
     if (safeCount(workspace.additions) && safeCount(workspace.deletions)) {
       el("changesStats").textContent = `+${workspace.additions} −${workspace.deletions}${workspace.line_stats_partial ? " · partial" : ""}`;
     } else {
@@ -222,20 +233,25 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   }
 
   function renderValidation(validation) {
-    const status = validation.current_status !== "unknown" ? validation.current_status : validation.status;
-    el("validationStatus").textContent = validationLabel(status);
+    el("validationStatus").textContent = validationLabel(validation.current_status);
     const pieces = [];
     if (safeCount(validation.successes)) pieces.push(`${validation.successes} validations`);
     if (validation.unresolved_failures > 0) pieces.push(`${validation.unresolved_failures} unresolved`);
     else if (safeCount(validation.failures) && validation.failures > 0) pieces.push(`${validation.failures} historical failures`);
     if (validation.evidence_gaps > 0) pieces.push(`${validation.evidence_gaps} evidence gaps`);
+    if (validation.history_partial) pieces.push("history partial");
     el("validationMeta").textContent = pieces.join(" · ");
   }
 
   function renderReview(review) {
-    if (!review.available || review.total === 0) {
-      el("reviewStatus").textContent = "No recorded review evidence";
-      el("reviewMeta").textContent = "";
+    if (review.total === 0) {
+      if (review.history_partial) {
+        el("reviewStatus").textContent = "Review history partial";
+        el("reviewMeta").textContent = "Earlier review evidence may be outside the bounded window";
+      } else {
+        el("reviewStatus").textContent = "No recorded review evidence";
+        el("reviewMeta").textContent = "";
+      }
       return;
     }
     const labels = [];
@@ -245,7 +261,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
     if (review.hygiene_review_count > 0) labels.push("Hygiene inspected");
     if (labels.length === 0) labels.push("Review evidence recorded");
     el("reviewStatus").textContent = labels.join(" · ");
-    el("reviewMeta").textContent = `${review.total} review ${review.total === 1 ? "event" : "events"}`;
+    el("reviewMeta").textContent = `${review.total} review ${review.total === 1 ? "event" : "events"}${review.history_partial ? " · history partial" : ""}`;
   }
 
   function render(state) {
@@ -253,20 +269,27 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
     renderChanges(state.workspace);
     renderValidation(state.validation);
     renderReview(state.review);
-    el("status").textContent = "Tracking authoritative Work state";
   }
 
-  function stopPolling() {
-    if (pollTimer !== null) clearInterval(pollTimer);
-    pollTimer = null;
+  function updateRefreshControl() {
+    const button = el("refresh");
+    button.disabled = tornDown || !hostInitialized || !identity || refreshInFlight;
+    button.textContent = refreshInFlight ? "Refreshing…" : "Refresh";
   }
 
-  async function poll() {
-    if (tornDown || !hostInitialized || !identity || pollInFlight) return;
-    pollInFlight = true;
+  async function refresh() {
+    if (tornDown || !hostInitialized || !identity || refreshInFlight) return;
+    const hadSnapshot = lastStateVersion !== null;
+    refreshInFlight = true;
+    updateRefreshControl();
+    el("status").textContent = "Refreshing…";
     try {
       const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project, session_id: identity.session_id } });
       if (tornDown) return;
+      if (toolSuccess(response) === false) {
+        el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
+        return;
+      }
       const state = extractState(response);
       if (!state || !acceptIdentity(pair(state.project, state.session_id))) {
         if (!tornDown) failClosed("Invalid authoritative Work state");
@@ -275,29 +298,21 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
       if (state.state_version !== lastStateVersion) {
         lastStateVersion = state.state_version;
         render(state);
-      } else if (el("status").textContent === "State refresh pending") {
-        el("status").textContent = "Tracking authoritative Work state";
+        el("status").textContent = "Updated";
+      } else {
+        el("status").textContent = "Up to date";
       }
     } catch (_) {
-      if (!tornDown) el("status").textContent = "State refresh pending";
+      if (!tornDown) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
     } finally {
-      pollInFlight = false;
-    }
-  }
-
-  function ensurePolling() {
-    if (!hostInitialized || !identity || tornDown) return stopPolling();
-    if (pollTimer === null) {
-      el("status").textContent = "Exact identity received · reading authoritative Work state";
-      pollTimer = setInterval(poll, POLL_MS);
-      void poll();
+      refreshInFlight = false;
+      updateRefreshControl();
     }
   }
 
   function acceptToolInput(params) {
     const args = params && params.arguments;
-    if (!acceptIdentity(pair(args && !Array.isArray(args) && args.project, args && !Array.isArray(args) && args.session_id))) return;
-    ensurePolling();
+    acceptIdentity(pair(args && !Array.isArray(args) && args.project, args && !Array.isArray(args) && args.session_id));
   }
 
   function acceptToolResult(result) {
@@ -311,13 +326,15 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
       lastStateVersion = state.state_version;
       render(state);
     }
-    ensurePolling();
+    el("status").textContent = "Snapshot ready";
+    updateRefreshControl();
   }
 
   function teardown() {
     if (tornDown) return;
     tornDown = true;
-    stopPolling();
+    refreshInFlight = false;
+    updateRefreshControl();
     for (const entry of pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(new Error("App torn down"));
@@ -351,7 +368,8 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
     }
   });
 
-  addEventListener("visibilitychange", () => { if (!document.hidden) void poll(); });
+  el("refresh").onclick = () => { void refresh(); };
+  updateRefreshControl();
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
@@ -359,9 +377,9 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;
-      el("status").textContent = identity ? "Exact identity received · reading authoritative Work state" : "Host initialized · waiting for exact tool identity";
+      el("status").textContent = lastStateVersion !== null ? "Snapshot ready" : identity ? "Waiting for Work snapshot · Refresh available" : "Host initialized · waiting for exact tool identity";
       notify("ui/notifications/initialized", {});
-      ensurePolling();
+      updateRefreshControl();
     })
     .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
 })();

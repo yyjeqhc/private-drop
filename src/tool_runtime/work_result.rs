@@ -93,8 +93,8 @@ impl ToolRuntime {
         }
 
         // Deliberately omit business session_id here. This is a live Project
-        // read, not Session evidence, and App polling must never append to the
-        // target Session merely because the card is open.
+        // read, not Session evidence, and an explicit App refresh must never
+        // append to the target Session merely because the card requested it.
         let workspace_result = self
             .show_changes(
                 resolved.resolved_id.clone(),
@@ -111,6 +111,7 @@ impl ToolRuntime {
             current_validation_evidence_for_session(&summary, WORK_RESULT_VALIDATION_LIMIT)
                 .evidence;
         let review = review_evidence_summary_for_session(&summary);
+        let history_partial = summary.events_truncated;
         let mut projection = build_work_result_projection(
             &resolved.resolved_id,
             &session_id,
@@ -119,6 +120,7 @@ impl ToolRuntime {
             &validation,
             &current_validation,
             &review,
+            history_partial,
         );
         let state_bytes = serde_json::to_vec(&projection).unwrap_or_default();
         projection["state_version"] = json!(format!("wr1_{:x}", Sha256::digest(state_bytes)));
@@ -134,14 +136,15 @@ pub(crate) fn build_work_result_projection(
     validation_source: &Value,
     current_validation_source: &Value,
     review_source: &Value,
+    history_partial: bool,
 ) -> Value {
     json!({
         "version": 1,
         "project": project,
         "session_id": session_id,
         "workspace": work_result_workspace(workspace_call_succeeded, workspace_source),
-        "validation": work_result_validation(validation_source, current_validation_source),
-        "review": work_result_review(review_source),
+        "validation": work_result_validation(validation_source, current_validation_source, history_partial),
+        "review": work_result_review(review_source, history_partial),
     })
 }
 
@@ -330,20 +333,28 @@ fn work_result_counts(source: Option<&Value>) -> Value {
     Value::Object(counts)
 }
 
-fn work_result_validation(historical: &Value, current: &Value) -> Value {
+fn work_result_validation(historical: &Value, current: &Value, history_partial: bool) -> Value {
     let mut validation = Map::new();
+    let historical_status = validation_status(historical.get("status").and_then(Value::as_str));
+    let historical_latest =
+        validation_latest_status(historical.get("latest_status").and_then(Value::as_str));
     validation.insert(
         "status".to_string(),
-        json!(validation_status(
-            historical.get("status").and_then(Value::as_str)
-        )),
+        json!(if history_partial && historical_status == "not_run" {
+            "unknown"
+        } else {
+            historical_status
+        }),
     );
     validation.insert(
         "latest_status".to_string(),
-        json!(validation_latest_status(
-            historical.get("latest_status").and_then(Value::as_str)
-        )),
+        json!(if history_partial && historical_latest == "not_run" {
+            "unknown"
+        } else {
+            historical_latest
+        }),
     );
+    validation.insert("history_partial".to_string(), json!(history_partial));
     validation.insert(
         "current_status".to_string(),
         json!(current_validation_status(
@@ -379,8 +390,9 @@ fn work_result_validation(historical: &Value, current: &Value) -> Value {
     Value::Object(validation)
 }
 
-fn work_result_review(source: &Value) -> Value {
+fn work_result_review(source: &Value, history_partial: bool) -> Value {
     let mut review = Map::new();
+    review.insert("history_partial".to_string(), json!(history_partial));
     review.insert(
         "available".to_string(),
         json!(source

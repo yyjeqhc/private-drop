@@ -81,6 +81,7 @@ fn work_result_projection_is_sparse_bounded_and_honest() {
         &validation("mixed", "passed", 8, 1),
         &current_validation("failed", 1, 2),
         &review(2),
+        false,
     );
     assert_eq!(
         projected["workspace"]["files"].as_array().unwrap().len(),
@@ -94,6 +95,8 @@ fn work_result_projection_is_sparse_bounded_and_honest() {
     assert_eq!(projected["validation"]["unresolved_failures"], 1);
     assert_eq!(projected["validation"]["evidence_gaps"], 2);
     assert_eq!(projected["review"]["total"], 2);
+    assert_eq!(projected["validation"]["history_partial"], false);
+    assert_eq!(projected["review"]["history_partial"], false);
     assert!(projected["review"].get("passed").is_none());
     let serialized = projected.to_string();
     for private in ["stdout", "stderr", "job_id", "continuation", "message_body"] {
@@ -117,6 +120,7 @@ fn work_result_projection_handles_clean_non_git_and_unknown_validation_without_i
         &validation("not_run", "not_run", 0, 0),
         &current_validation("not_run", 0, 0),
         &json!({"available": true, "total": 0}),
+        false,
     );
     assert_eq!(clean["workspace"]["clean"], true);
     assert_eq!(clean["workspace"]["additions"], 0);
@@ -138,6 +142,7 @@ fn work_result_projection_handles_clean_non_git_and_unknown_validation_without_i
         &json!({"status": "future_value", "latest_status": "future_value"}),
         &json!({"status": "future_value"}),
         &Value::Null,
+        false,
     );
     assert_eq!(unavailable["workspace"]["git_available"], false);
     assert_eq!(unavailable["workspace"]["reason_code"], "non_git_project");
@@ -146,7 +151,50 @@ fn work_result_projection_handles_clean_non_git_and_unknown_validation_without_i
     assert_eq!(unavailable["review"]["available"], false);
 }
 
-async fn poll_once(
+#[test]
+fn work_result_projection_marks_bounded_history_partial_without_inventing_absence() {
+    let workspace = json!({
+        "git_available": true,
+        "clean": true,
+        "counts": counts(0),
+        "files_total": 0,
+        "files": []
+    });
+    let session_id = format!("wc_sess_{}", "4".repeat(32));
+    let partial = build_work_result_projection(
+        "agent:special:demo",
+        &session_id,
+        true,
+        &workspace,
+        &validation("not_run", "not_run", 0, 0),
+        &current_validation("unknown", 0, 0),
+        &json!({"available": false, "total": 0}),
+        true,
+    );
+    assert_eq!(partial["validation"]["history_partial"], true);
+    assert_eq!(partial["validation"]["status"], "unknown");
+    assert_eq!(partial["validation"]["latest_status"], "unknown");
+    assert_eq!(partial["validation"]["current_status"], "unknown");
+    assert_eq!(partial["review"]["history_partial"], true);
+    assert_eq!(partial["review"]["total"], 0);
+
+    for current in ["passed", "failed", "stale"] {
+        let projected = build_work_result_projection(
+            "agent:special:demo",
+            &session_id,
+            true,
+            &workspace,
+            &validation("not_run", "not_run", 0, 0),
+            &current_validation(current, 0, 0),
+            &json!({"available": false, "total": 0}),
+            true,
+        );
+        assert_eq!(projected["validation"]["current_status"], current);
+        assert_eq!(projected["validation"]["history_partial"], true);
+    }
+}
+
+async fn refresh_once(
     runtime: &ToolRuntime,
     client_id: &str,
     project: &str,
@@ -177,7 +225,7 @@ async fn poll_once(
 }
 
 #[tokio::test]
-async fn work_result_state_reauthorizes_exact_identity_and_polling_does_not_record_target_session()
+async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_record_target_session()
 {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
@@ -188,11 +236,11 @@ async fn work_result_state_reauthorizes_exact_identity_and_polling_does_not_reco
     let auth = auth_context(None, true);
     let session = runtime.sessions.start_session(
         Some(project.clone()),
-        Some("Work Result polling".to_string()),
+        Some("Work Result refresh".to_string()),
     );
     let before = runtime.sessions.summary(&session.session_id, None).unwrap();
 
-    let first = poll_once(
+    let first = refresh_once(
         &runtime,
         "work-result",
         &project,
@@ -205,7 +253,7 @@ async fn work_result_state_reauthorizes_exact_identity_and_polling_does_not_reco
         .as_str()
         .unwrap()
         .to_string();
-    let second = poll_once(
+    let second = refresh_once(
         &runtime,
         "work-result",
         &project,
@@ -215,6 +263,21 @@ async fn work_result_state_reauthorizes_exact_identity_and_polling_does_not_reco
     .await;
     assert!(second.success, "{:?}", second.error);
     assert_eq!(second.output["work_result"]["state_version"], first_version);
+
+    std::fs::write(tmp.path().join("README.md"), "changed\n").unwrap();
+    let changed = refresh_once(
+        &runtime,
+        "work-result",
+        &project,
+        &session.session_id,
+        &auth,
+    )
+    .await;
+    assert!(changed.success, "{:?}", changed.error);
+    assert_ne!(
+        changed.output["work_result"]["state_version"],
+        first_version
+    );
 
     let alias_state = runtime
         .work_result_state("demo".to_string(), session.session_id.clone(), Some(&auth))
@@ -286,6 +349,55 @@ async fn work_result_state_reauthorizes_exact_identity_and_polling_does_not_reco
 }
 
 #[tokio::test]
+async fn work_result_state_marks_truncated_session_evidence_partial_without_recording_refresh() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project =
+        register_runner_project_at_path(&runtime, "work-result-partial", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("Work Result bounded evidence".to_string()),
+    );
+    seed_model_facing_recovery_events(&runtime, &session.session_id, &project, 110);
+    let bounded = runtime
+        .sessions
+        .summary(&session.session_id, Some(200))
+        .unwrap();
+    assert!(bounded.events_truncated);
+    let before = runtime.sessions.summary(&session.session_id, None).unwrap();
+
+    let state = refresh_once(
+        &runtime,
+        "work-result-partial",
+        &project,
+        &session.session_id,
+        &auth,
+    )
+    .await;
+    assert!(state.success, "{:?}", state.error);
+    assert_eq!(
+        state.output["work_result"]["validation"]["history_partial"],
+        true
+    );
+    assert_eq!(
+        state.output["work_result"]["validation"]["current_status"],
+        "unknown"
+    );
+    assert_eq!(
+        state.output["work_result"]["review"]["history_partial"],
+        true
+    );
+    assert_eq!(state.output["work_result"]["review"]["total"], 0);
+
+    let after = runtime.sessions.summary(&session.session_id, None).unwrap();
+    assert_eq!(after.events_total, before.events_total);
+    assert_eq!(after.updated_at, before.updated_at);
+}
+
+#[tokio::test]
 async fn work_result_state_fails_closed_for_foreign_session_authority() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
@@ -330,7 +442,7 @@ async fn work_result_state_fails_closed_for_foreign_session_authority() {
         probe_patch_agent_request(&runtime, "work-result-auth")
             .await
             .is_none(),
-        "an inaccessible Session must fail before any workspace polling request"
+        "an inaccessible Session must fail before any workspace refresh request"
     );
 }
 

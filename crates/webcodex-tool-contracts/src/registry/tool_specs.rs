@@ -25,13 +25,13 @@ pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
     )]
 }
 
-/// Fixed read-only Work Result polling contract for MCP App Views. The
+/// Fixed read-only Work Result explicit-refresh contract for MCP App Views. The
 /// canonical ToolDefinition remains globally ModelHidden and deliberately
 /// outside the generic Adaptive gateway; only the MCP Apps adapter projects it.
 pub fn work_result_app_tool_specs() -> Vec<ToolSpec> {
     vec![tool_spec(
         "work_result_state",
-        "App-only exact read of the current bounded Work Result projection. Requires explicit project + session_id, independently re-authorizes both on every call, grants no authority, runs no validation/review, and never records the poll into the target Workflow Session ledger.",
+        "App-only exact read used only for explicit user-driven Work Result refresh. Requires explicit project + session_id, independently re-authorizes both on every call, grants no authority, runs no validation/review, and never records the refresh into the target Workflow Session ledger.",
         super::input_schemas::work_result_input_schema(),
     )]
 }

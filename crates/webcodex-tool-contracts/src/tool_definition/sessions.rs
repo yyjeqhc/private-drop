@@ -121,7 +121,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Optionally present one exact coding Workflow Session as a persistent read-only Work Result MCP App card when a user-visible work summary is genuinely useful. Requires explicit project + session_id, creates no work, runs no validation/review, changes no Session lifecycle, and grants no authority. Do not call merely to acknowledge a clean worktree and do not call repeatedly to refresh: an existing card self-refreshes through app-only state reads. Presentation is UX only, never a correctness requirement; repeated explicit presentation may create another Host card.",
+            "Optionally present one exact coding Workflow Session as a persistent read-only Work Result MCP App card when a user-visible work summary is genuinely useful. Requires explicit project + session_id, creates no work, runs no validation/review, changes no Session lifecycle, and grants no authority. The returned Work Result is the card's initial authoritative snapshot; do not call merely to acknowledge a clean worktree and do not call repeatedly to refresh. Later refresh is user-driven inside the existing card through one exact app-only state read per click. Presentation is UX only, never a correctness requirement; repeated explicit presentation may create another Host card.",
             work_result_input_schema,
         )),
         155,
