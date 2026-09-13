@@ -548,11 +548,47 @@ impl SkillStore {
         }
         let path = validate_resource_path(path)?;
         let _lock = self.lock()?;
-        let skill_key = self
-            .list_skill_keys()?
-            .into_iter()
-            .find(|key| self.skill_id(key) == skill_id)
-            .ok_or_else(|| "skill_not_found".to_string())?;
+        let resolution_started = Instant::now();
+        let skill_keys = match self.list_skill_keys() {
+            Ok(skill_keys) => skill_keys,
+            Err(error) => {
+                tracing::info!(
+                    event = "skill_store_exact_read_resolution_scan",
+                    source = "runner_managed",
+                    operation = "skill_id_resolution",
+                    outcome_class = "error",
+                    skill_keys_listed = 0_u64,
+                    skill_keys_examined = 0_u64,
+                    hit = false,
+                    elapsed_ms = resolution_started.elapsed().as_millis() as u64,
+                    "skill_store_exact_read_resolution_scan"
+                );
+                return Err(error);
+            }
+        };
+        let skill_keys_listed = skill_keys.len();
+        let mut skill_keys_examined = 0usize;
+        let mut resolved_skill_key = None;
+        for key in skill_keys {
+            skill_keys_examined = skill_keys_examined.saturating_add(1);
+            if self.skill_id(&key) == skill_id {
+                resolved_skill_key = Some(key);
+                break;
+            }
+        }
+        let hit = resolved_skill_key.is_some();
+        tracing::info!(
+            event = "skill_store_exact_read_resolution_scan",
+            source = "runner_managed",
+            operation = "skill_id_resolution",
+            outcome_class = if hit { "success" } else { "not_found" },
+            skill_keys_listed = skill_keys_listed as u64,
+            skill_keys_examined = skill_keys_examined as u64,
+            hit,
+            elapsed_ms = resolution_started.elapsed().as_millis() as u64,
+            "skill_store_exact_read_resolution_scan"
+        );
+        let skill_key = resolved_skill_key.ok_or_else(|| "skill_not_found".to_string())?;
         let before = self.read_state(&skill_key)?;
         let active = before
             .active_package_revision
