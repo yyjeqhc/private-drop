@@ -194,6 +194,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "validation_summary" => Some(validation_summary_tool_output_schema()),
+        "present_work_result" | "work_result_state" => Some(wrapped_output_schema(vec![(
+            "work_result",
+            open_object_schema("Bounded deterministic Work Result projection for one exact project-scoped Workflow Session."),
+        )])),
         "post_session_message" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             (

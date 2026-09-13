@@ -1670,6 +1670,26 @@ async fn http_tools_call_rejects_arguments_even_when_params_are_present() {
 }
 
 #[tokio::test]
+async fn http_tools_call_rejects_app_only_work_result_state() {
+    let (_tmp, service) = phase2_service();
+    let (status, body) = http_tool_call(
+        &service,
+        json!({
+            "tool": "work_result_state",
+            "params": {
+                "project": "agent:canonical:p",
+                "session_id": format!("wc_sess_{}", "1".repeat(32))
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("Work Result App state")));
+}
+
+#[tokio::test]
 async fn http_tools_call_generic_path_dispatches_representative_project_tools() {
     // One read-side and one write-side tool are sufficient to prove the generic
     // extraction -> ToolCall -> ToolRuntime -> HTTP ToolResult path.

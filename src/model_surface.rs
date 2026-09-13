@@ -362,6 +362,7 @@ mod tests {
         "show_changes",
         "workspace_hygiene_check",
         "finish_coding_task",
+        "present_work_result",
     ];
 
     #[test]

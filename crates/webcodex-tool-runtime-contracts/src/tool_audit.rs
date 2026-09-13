@@ -4741,6 +4741,17 @@ impl ToolCall {
                 "include_handoff": include_handoff,
                 "include_validation_summary": include_validation_summary,
             }),
+            Self::PresentWorkResult {
+                project,
+                session_id,
+            }
+            | Self::WorkResultState {
+                project,
+                session_id,
+            } => serde_json::json!({
+                "project": project,
+                "session_id": session_id,
+            }),
             Self::ListProjects {
                 client_id,
                 project,

@@ -351,6 +351,27 @@ pub fn validation_summary_input_schema() -> Value {
     })
 }
 
+pub fn work_result_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Required exact runtime Project input. It is independently resolved and authorized on every call and must match the project scoped to session_id."
+            },
+            "session_id": {
+                "type": "string",
+                "pattern": "^wc_sess_[A-Za-z0-9_]+$",
+                "description": "Required exact project-scoped Workflow Session id. Identity is never inferred from current/recent Session, Window, transport, or credential context."
+            }
+        },
+        "required": ["project", "session_id"],
+        "additionalProperties": false
+    })
+}
+
 pub fn session_discussion_summary_input_schema() -> Value {
     json!({
         "type": "object",

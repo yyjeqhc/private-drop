@@ -18,8 +18,9 @@ fn presentation<'a>(call_result: &'a Value) -> &'a Value {
     &call_result["_meta"][super::super::presentation::MCP_PRESENTATION_META_KEY]
 }
 
-const RESULT_APP_TOOLS: [&str; 1] = ["show_changes"];
-const UNBOUND_RESULT_APP_TOOLS: [&str; 16] = [
+const RESULT_APP_TOOLS: [&str; 0] = [];
+const UNBOUND_RESULT_APP_TOOLS: [&str; 17] = [
+    "show_changes",
     "list_jobs",
     "observe_jobs",
     "cargo_check",
@@ -129,6 +130,10 @@ fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
             tool(&enabled, "present_agent_continuation")["_meta"]["ui"]["resourceUri"],
             MCP_AGENT_CONTINUATION_UI_RESOURCE_URI
         );
+        assert_eq!(
+            tool(&enabled, "present_work_result")["_meta"]["ui"]["resourceUri"],
+            MCP_WORK_RESULT_UI_RESOURCE_URI
+        );
 
         let disabled = mcp_tools_list_payload_with_compact_and_app(
             ModelSurface::FullOperatorRuntime,
@@ -162,6 +167,10 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     let runtime =
         test_runtime_with_surface_and_public_url(ModelSurface::FullOperatorRuntime, PUBLIC_URL);
     assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v2");
+    assert_eq!(
+        MCP_WORK_RESULT_UI_RESOURCE_URI,
+        "ui://webcodex/work-result/v1"
+    );
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/changes/v1"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v1"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v2"));
@@ -182,15 +191,13 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     let McpOutcome::Ok(ui_tools) = ui_tools else {
         panic!("expected UI-capable tools/list");
     };
-    for name in RESULT_APP_TOOLS {
-        assert_eq!(
-            tool(&ui_tools["result"], name)["_meta"]["ui"]["resourceUri"],
-            MCP_RESULT_UI_RESOURCE_URI
-        );
-        assert!(tool(&ui_tools["result"], name)["_meta"]
-            .get("ui/resourceUri")
-            .is_none());
-    }
+    assert_eq!(
+        tool(&ui_tools["result"], "present_work_result")["_meta"]["ui"]["resourceUri"],
+        MCP_WORK_RESULT_UI_RESOURCE_URI
+    );
+    assert!(tool(&ui_tools["result"], "present_work_result")["_meta"]
+        .get("ui/resourceUri")
+        .is_none());
     for name in UNBOUND_RESULT_APP_TOOLS {
         assert_ne!(
             tool(&ui_tools["result"], name)
@@ -229,14 +236,17 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     let resources = resources["result"]["resources"].as_array().unwrap();
     assert!(resources
         .iter()
-        .any(|resource| resource["uri"] == MCP_COMPUTER_UI_RESOURCE_URI));
-    let result_resource = resources
+        .all(|resource| resource["uri"] != MCP_RESULT_UI_RESOURCE_URI));
+    assert!(resources
         .iter()
-        .find(|resource| resource["uri"] == MCP_RESULT_UI_RESOURCE_URI)
-        .expect("Result App resource");
-    assert_eq!(result_resource["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
+        .any(|resource| resource["uri"] == MCP_COMPUTER_UI_RESOURCE_URI));
+    let work_resource = resources
+        .iter()
+        .find(|resource| resource["uri"] == MCP_WORK_RESULT_UI_RESOURCE_URI)
+        .expect("Work Result App resource");
+    assert_eq!(work_resource["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
     assert_eq!(
-        result_resource["_meta"],
+        work_resource["_meta"],
         json!({
             "ui": {
                 "prefersBorder": true,
@@ -378,9 +388,12 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
     let McpOutcome::Ok(enabled) = enabled else {
         panic!("enabled MCP Apps tools/list failed");
     };
+    assert!(tool(&enabled["result"], "show_changes")
+        .pointer("/_meta/ui/resourceUri")
+        .is_none());
     assert_eq!(
-        tool(&enabled["result"], "show_changes")["_meta"]["ui"]["resourceUri"],
-        MCP_RESULT_UI_RESOURCE_URI
+        tool(&enabled["result"], "present_work_result")["_meta"]["ui"]["resourceUri"],
+        MCP_WORK_RESULT_UI_RESOURCE_URI
     );
 
     let discover = handle_with_server_apps_enabled(

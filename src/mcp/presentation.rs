@@ -9,11 +9,17 @@ pub(super) const MAX_MCP_PRESENTATION_DIFF_HUNKS: usize = MAX_MCP_PRESENTATION_I
 pub(super) const MAX_MCP_PRESENTATION_DIFF_LINES: usize = 80;
 pub(super) const MAX_MCP_PRESENTATION_DIFF_CHARS: usize = 12 * 1024;
 
-/// Static MCP App descriptor eligibility only. One advertised App binding creates
-/// one extra Host presentation per tool result, so keep this deliberately sparse:
-/// routine execution/observation stays on the Host's native tool card.
-pub(super) fn tool_supports_result_app(tool_name: &str) -> bool {
-    tool_name == "show_changes"
+/// Legacy Result/Changes presentation projections remain readable for cached
+/// descriptors, but ordinary result tools no longer receive new descriptor-level
+/// App admission. ToolResult metadata alone cannot create a Host App post-hoc.
+pub(super) fn tool_supports_result_app(_tool_name: &str) -> bool {
+    false
+}
+
+/// Explicit persistent Work Result presentation entry. Ordinary coding,
+/// validation, review, observation, and closeout tools never create this App.
+pub(super) fn tool_supports_work_result_app(tool_name: &str) -> bool {
+    tool_name == "present_work_result"
 }
 
 /// Dedicated sparse Goal Plan App binding. Only the explicit presentation entry
