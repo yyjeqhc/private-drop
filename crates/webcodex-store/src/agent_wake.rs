@@ -1,3 +1,4 @@
+use super::agent_attention::require_agent_attention_event_for_wake;
 use super::agent_task::replace_agent_task_attempt_controller_in_transaction;
 use super::communication::lookup_idempotent_resource;
 use super::communication::{
@@ -23,6 +24,7 @@ const DEFAULT_WAKE_CLAIM_LEASE_MS: i64 = 30_000;
 const MAX_ADAPTER_KIND_CHARS: usize = 64;
 const WAKE_TRIGGER_INBOX_CHANGED: &str = "inbox_changed";
 pub(crate) const WAKE_TRIGGER_AGENT_TASK_ATTEMPT: &str = "agent_task_attempt";
+pub(crate) const WAKE_TRIGGER_ATTENTION_EVENT: &str = "attention_event";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -110,6 +112,7 @@ pub struct AgentWakeRecord {
     pub queued_delivery_count_snapshot: Option<i64>,
     pub source_task_id: Option<String>,
     pub source_task_attempt_id: Option<String>,
+    pub source_event_id: Option<String>,
     pub state: AgentWakeState,
     pub revision: i64,
     pub created_at_unix_ms: i64,
@@ -197,6 +200,8 @@ pub struct AgentWakeBootstrapSummary {
     pub inbox_high_watermark: Option<i64>,
     pub task_id: Option<String>,
     pub task_attempt_id: Option<String>,
+    pub event_id: Option<String>,
+    pub goal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -385,12 +390,205 @@ impl Database {
                 ",
             )?;
         }
+        let has_event_source: bool = if wake_table_exists {
+            transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('wc_agent_wakes') WHERE name = 'source_event_id')",
+                [],
+                |row| row.get(0),
+            )?
+        } else {
+            false
+        };
+        if wake_table_exists && !has_event_source {
+            let endpoint_execution_table_exists: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wc_agent_task_endpoint_executions')",
+                [],
+                |row| row.get(0),
+            )?;
+            if endpoint_execution_table_exists {
+                transaction.execute_batch(
+                    "ALTER TABLE wc_agent_task_endpoint_executions RENAME TO wc_agent_task_endpoint_executions_pre_attention;
+                     DROP INDEX IF EXISTS idx_wc_agent_task_endpoint_executions_task;",
+                )?;
+            }
+            transaction.execute_batch(
+                "
+                ALTER TABLE wc_agent_wake_attempts RENAME TO wc_agent_wake_attempts_pre_attention;
+                ALTER TABLE wc_agent_wakes RENAME TO wc_agent_wakes_pre_attention;
+                DROP INDEX IF EXISTS idx_wc_agent_wakes_target_state;
+                DROP INDEX IF EXISTS idx_wc_agent_wakes_one_queueable_inbox;
+                DROP INDEX IF EXISTS idx_wc_agent_wakes_task_attempt;
+                DROP INDEX IF EXISTS idx_wc_agent_wakes_one_dispatched;
+                DROP INDEX IF EXISTS idx_wc_agent_wake_attempts_wake;
+                DROP INDEX IF EXISTS idx_wc_agent_wake_attempts_endpoint;
+                CREATE TABLE wc_agent_wakes (
+                    wake_id TEXT PRIMARY KEY,
+                    target_agent_id TEXT NOT NULL,
+                    trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('inbox_changed', 'agent_task_attempt', 'attention_event')),
+                    first_triggering_delivery_id TEXT,
+                    latest_triggering_delivery_id TEXT,
+                    latest_conversation_id TEXT,
+                    latest_message_id TEXT,
+                    inbox_high_watermark INTEGER CHECK(inbox_high_watermark IS NULL OR inbox_high_watermark >= 1),
+                    queued_delivery_count_snapshot INTEGER CHECK(queued_delivery_count_snapshot IS NULL OR queued_delivery_count_snapshot >= 1),
+                    source_task_id TEXT,
+                    source_task_attempt_id TEXT,
+                    source_event_id TEXT,
+                    state TEXT NOT NULL CHECK(state IN (
+                        'pending', 'claimed', 'prepared', 'delivered', 'delivery_unknown', 'consumed', 'retired'
+                    )),
+                    revision INTEGER NOT NULL CHECK(revision >= 1),
+                    created_at_unix_ms INTEGER NOT NULL,
+                    updated_at_unix_ms INTEGER NOT NULL,
+                    claimed_attempt_id TEXT,
+                    claimed_endpoint_id TEXT,
+                    claimed_controller_generation INTEGER,
+                    claim_lease_expires_at_unix_ms INTEGER,
+                    consumed_at_unix_ms INTEGER,
+                    consumed_by_endpoint_id TEXT,
+                    consumed_controller_generation INTEGER,
+                    FOREIGN KEY(target_agent_id) REFERENCES wc_agent_identities(agent_id),
+                    FOREIGN KEY(first_triggering_delivery_id) REFERENCES wc_agent_deliveries(delivery_id),
+                    FOREIGN KEY(latest_triggering_delivery_id) REFERENCES wc_agent_deliveries(delivery_id),
+                    FOREIGN KEY(latest_conversation_id) REFERENCES wc_conversations(conversation_id),
+                    FOREIGN KEY(latest_message_id) REFERENCES wc_conversation_messages(message_id),
+                    FOREIGN KEY(source_task_id) REFERENCES wc_agent_tasks(task_id),
+                    FOREIGN KEY(source_task_attempt_id) REFERENCES wc_agent_task_attempts(attempt_id),
+                    FOREIGN KEY(claimed_endpoint_id) REFERENCES wc_agent_endpoints(endpoint_id),
+                    FOREIGN KEY(consumed_by_endpoint_id) REFERENCES wc_agent_endpoints(endpoint_id),
+                    CHECK(
+                        (trigger_kind = 'inbox_changed'
+                            AND first_triggering_delivery_id IS NOT NULL
+                            AND latest_triggering_delivery_id IS NOT NULL
+                            AND latest_conversation_id IS NOT NULL
+                            AND latest_message_id IS NOT NULL
+                            AND inbox_high_watermark IS NOT NULL
+                            AND queued_delivery_count_snapshot IS NOT NULL
+                            AND source_task_id IS NULL
+                            AND source_task_attempt_id IS NULL
+                            AND source_event_id IS NULL)
+                        OR (trigger_kind = 'agent_task_attempt'
+                            AND first_triggering_delivery_id IS NULL
+                            AND latest_triggering_delivery_id IS NULL
+                            AND latest_conversation_id IS NULL
+                            AND latest_message_id IS NULL
+                            AND inbox_high_watermark IS NULL
+                            AND queued_delivery_count_snapshot IS NULL
+                            AND source_task_id IS NOT NULL
+                            AND source_task_attempt_id IS NOT NULL
+                            AND source_event_id IS NULL)
+                        OR (trigger_kind = 'attention_event'
+                            AND first_triggering_delivery_id IS NULL
+                            AND latest_triggering_delivery_id IS NULL
+                            AND latest_conversation_id IS NULL
+                            AND latest_message_id IS NULL
+                            AND inbox_high_watermark IS NULL
+                            AND queued_delivery_count_snapshot IS NULL
+                            AND source_task_id IS NULL
+                            AND source_task_attempt_id IS NULL
+                            AND source_event_id IS NOT NULL)
+                    ),
+                    CHECK(
+                        (state IN ('pending', 'retired')
+                            AND claimed_attempt_id IS NULL
+                            AND claimed_endpoint_id IS NULL
+                            AND claimed_controller_generation IS NULL
+                            AND claim_lease_expires_at_unix_ms IS NULL)
+                        OR state IN ('claimed', 'prepared', 'delivered', 'delivery_unknown', 'consumed')
+                    ),
+                    CHECK(
+                        state != 'consumed'
+                        OR (consumed_at_unix_ms IS NOT NULL
+                            AND consumed_by_endpoint_id IS NOT NULL
+                            AND consumed_controller_generation IS NOT NULL)
+                    )
+                );
+                INSERT INTO wc_agent_wakes (
+                    wake_id, target_agent_id, trigger_kind,
+                    first_triggering_delivery_id, latest_triggering_delivery_id,
+                    latest_conversation_id, latest_message_id,
+                    inbox_high_watermark, queued_delivery_count_snapshot,
+                    source_task_id, source_task_attempt_id, source_event_id,
+                    state, revision, created_at_unix_ms, updated_at_unix_ms,
+                    claimed_attempt_id, claimed_endpoint_id,
+                    claimed_controller_generation, claim_lease_expires_at_unix_ms,
+                    consumed_at_unix_ms, consumed_by_endpoint_id,
+                    consumed_controller_generation
+                )
+                SELECT wake_id, target_agent_id, trigger_kind,
+                       first_triggering_delivery_id, latest_triggering_delivery_id,
+                       latest_conversation_id, latest_message_id,
+                       inbox_high_watermark, queued_delivery_count_snapshot,
+                       source_task_id, source_task_attempt_id, NULL,
+                       state, revision, created_at_unix_ms, updated_at_unix_ms,
+                       claimed_attempt_id, claimed_endpoint_id,
+                       claimed_controller_generation, claim_lease_expires_at_unix_ms,
+                       consumed_at_unix_ms, consumed_by_endpoint_id,
+                       consumed_controller_generation
+                FROM wc_agent_wakes_pre_attention;
+                CREATE TABLE wc_agent_wake_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    wake_id TEXT NOT NULL,
+                    endpoint_id TEXT NOT NULL,
+                    controller_generation INTEGER NOT NULL CHECK(controller_generation >= 1),
+                    adapter_kind TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN (
+                        'claimed', 'prepared', 'delivered', 'delivery_unknown', 'revoked', 'consumed'
+                    )),
+                    claim_fence_hash TEXT NOT NULL,
+                    consume_token_hash TEXT NOT NULL,
+                    claimed_at_unix_ms INTEGER NOT NULL,
+                    claim_lease_expires_at_unix_ms INTEGER NOT NULL,
+                    prepared_at_unix_ms INTEGER,
+                    delivered_at_unix_ms INTEGER,
+                    delivery_unknown_at_unix_ms INTEGER,
+                    revoked_at_unix_ms INTEGER,
+                    consumed_at_unix_ms INTEGER,
+                    FOREIGN KEY(wake_id) REFERENCES wc_agent_wakes(wake_id),
+                    FOREIGN KEY(endpoint_id) REFERENCES wc_agent_endpoints(endpoint_id)
+                );
+                INSERT INTO wc_agent_wake_attempts SELECT * FROM wc_agent_wake_attempts_pre_attention;
+                ",
+            )?;
+            if endpoint_execution_table_exists {
+                transaction.execute_batch(
+                    "CREATE TABLE wc_agent_task_endpoint_executions (
+                        task_id TEXT NOT NULL,
+                        attempt_id TEXT NOT NULL UNIQUE,
+                        wake_id TEXT NOT NULL UNIQUE,
+                        start_identity_fingerprint TEXT NOT NULL CHECK(length(start_identity_fingerprint) = 64),
+                        endpoint_id TEXT,
+                        endpoint_controller_generation INTEGER,
+                        created_at_unix_ms INTEGER NOT NULL,
+                        updated_at_unix_ms INTEGER NOT NULL,
+                        PRIMARY KEY(task_id, attempt_id),
+                        CHECK(
+                            (endpoint_id IS NULL AND endpoint_controller_generation IS NULL)
+                            OR (endpoint_id IS NOT NULL AND endpoint_controller_generation >= 1)
+                        ),
+                        FOREIGN KEY(task_id) REFERENCES wc_agent_tasks(task_id),
+                        FOREIGN KEY(attempt_id) REFERENCES wc_agent_task_attempts(attempt_id),
+                        FOREIGN KEY(wake_id) REFERENCES wc_agent_wakes(wake_id),
+                        FOREIGN KEY(endpoint_id) REFERENCES wc_agent_endpoints(endpoint_id)
+                     );
+                     INSERT INTO wc_agent_task_endpoint_executions
+                         SELECT * FROM wc_agent_task_endpoint_executions_pre_attention;
+                     DROP TABLE wc_agent_task_endpoint_executions_pre_attention;
+                     CREATE INDEX idx_wc_agent_task_endpoint_executions_task
+                         ON wc_agent_task_endpoint_executions(task_id, updated_at_unix_ms DESC);",
+                )?;
+            }
+            transaction.execute_batch(
+                "DROP TABLE wc_agent_wake_attempts_pre_attention;
+                 DROP TABLE wc_agent_wakes_pre_attention;",
+            )?;
+        }
         transaction.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS wc_agent_wakes (
                 wake_id TEXT PRIMARY KEY,
                 target_agent_id TEXT NOT NULL,
-                trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('inbox_changed', 'agent_task_attempt')),
+                trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('inbox_changed', 'agent_task_attempt', 'attention_event')),
                 first_triggering_delivery_id TEXT,
                 latest_triggering_delivery_id TEXT,
                 latest_conversation_id TEXT,
@@ -399,6 +597,7 @@ impl Database {
                 queued_delivery_count_snapshot INTEGER CHECK(queued_delivery_count_snapshot IS NULL OR queued_delivery_count_snapshot >= 1),
                 source_task_id TEXT,
                 source_task_attempt_id TEXT,
+                source_event_id TEXT,
                 state TEXT NOT NULL CHECK(state IN (
                     'pending', 'claimed', 'prepared', 'delivered', 'delivery_unknown', 'consumed', 'retired'
                 )),
@@ -430,7 +629,8 @@ impl Database {
                         AND inbox_high_watermark IS NOT NULL
                         AND queued_delivery_count_snapshot IS NOT NULL
                         AND source_task_id IS NULL
-                        AND source_task_attempt_id IS NULL)
+                        AND source_task_attempt_id IS NULL
+                        AND source_event_id IS NULL)
                     OR (trigger_kind = 'agent_task_attempt'
                         AND first_triggering_delivery_id IS NULL
                         AND latest_triggering_delivery_id IS NULL
@@ -439,7 +639,18 @@ impl Database {
                         AND inbox_high_watermark IS NULL
                         AND queued_delivery_count_snapshot IS NULL
                         AND source_task_id IS NOT NULL
-                        AND source_task_attempt_id IS NOT NULL)
+                        AND source_task_attempt_id IS NOT NULL
+                        AND source_event_id IS NULL)
+                    OR (trigger_kind = 'attention_event'
+                        AND first_triggering_delivery_id IS NULL
+                        AND latest_triggering_delivery_id IS NULL
+                        AND latest_conversation_id IS NULL
+                        AND latest_message_id IS NULL
+                        AND inbox_high_watermark IS NULL
+                        AND queued_delivery_count_snapshot IS NULL
+                        AND source_task_id IS NULL
+                        AND source_task_attempt_id IS NULL
+                        AND source_event_id IS NOT NULL)
                 ),
                 CHECK(
                     (state IN ('pending', 'retired')
@@ -464,6 +675,9 @@ impl Database {
             CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_wakes_task_attempt
                 ON wc_agent_wakes(source_task_attempt_id)
                 WHERE trigger_kind = 'agent_task_attempt';
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_wakes_attention_event
+                ON wc_agent_wakes(source_event_id)
+                WHERE trigger_kind = 'attention_event';
             CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_agent_wakes_one_dispatched
                 ON wc_agent_wakes(target_agent_id)
                 WHERE state IN ('prepared', 'delivered', 'delivery_unknown');
@@ -658,6 +872,14 @@ impl Database {
                 endpoint_id,
                 expected_controller_generation,
                 now,
+            )?;
+        }
+        if selected_wake.trigger_kind == WAKE_TRIGGER_ATTENTION_EVENT {
+            require_agent_attention_event_for_wake(
+                &transaction,
+                principal,
+                selected_wake.source_event_id.as_deref(),
+                agent_id,
             )?;
         }
         let attempt_id = new_id(AGENT_WAKE_ATTEMPT_ID_PREFIX);
@@ -871,6 +1093,14 @@ impl Database {
                 "AgentTaskAttempt expired or became stale before Host continuation dispatch",
             ));
         }
+        if wake.trigger_kind == WAKE_TRIGGER_ATTENTION_EVENT {
+            require_agent_attention_event_for_wake(
+                &transaction,
+                principal,
+                wake.source_event_id.as_deref(),
+                agent_id,
+            )?;
+        }
         transaction
             .execute(
                 "UPDATE wc_agent_wake_attempts
@@ -892,6 +1122,7 @@ impl Database {
         let attempt = load_attempt(&transaction, attempt_id)?.expect("prepared Attempt must exist");
         let envelope = wake_envelope(
             &transaction,
+            principal,
             &wake,
             endpoint_id,
             expected_controller_generation,
@@ -989,6 +1220,14 @@ impl Database {
                 "wake_attempt_not_prepared",
                 "Agent Wake Attempt is no longer prepared for dispatch",
             ));
+        }
+        if wake.trigger_kind == WAKE_TRIGGER_ATTENTION_EVENT {
+            require_agent_attention_event_for_wake(
+                &transaction,
+                principal,
+                wake.source_event_id.as_deref(),
+                agent_id,
+            )?;
         }
         transaction.commit().map_err(store_error)?;
         Ok(())
@@ -1367,18 +1606,40 @@ impl Database {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(store_error)?;
-        let wake = wake.map(|wake| AgentWakeBootstrapSummary {
-            wake_id: wake.wake_id,
-            state: wake.state,
-            revision: wake.revision,
-            trigger_kind: wake.trigger_kind,
-            conversation_id: wake.latest_conversation_id,
-            latest_message_id: wake.latest_message_id,
-            queued_delivery_count: wake.queued_delivery_count_snapshot,
-            inbox_high_watermark: wake.inbox_high_watermark,
-            task_id: wake.source_task_id,
-            task_attempt_id: wake.source_task_attempt_id,
-        });
+        let wake = wake
+            .map(|wake| {
+                let attention_event = if wake.trigger_kind == WAKE_TRIGGER_ATTENTION_EVENT {
+                    Some(require_agent_attention_event_for_wake(
+                        &conn,
+                        principal,
+                        wake.source_event_id.as_deref(),
+                        agent_id,
+                    )?)
+                } else {
+                    None
+                };
+                Ok::<_, CommunicationStoreError>(AgentWakeBootstrapSummary {
+                    wake_id: wake.wake_id,
+                    state: wake.state,
+                    revision: wake.revision,
+                    trigger_kind: wake.trigger_kind,
+                    conversation_id: wake.latest_conversation_id,
+                    latest_message_id: wake.latest_message_id,
+                    queued_delivery_count: wake.queued_delivery_count_snapshot,
+                    inbox_high_watermark: wake.inbox_high_watermark,
+                    task_id: attention_event
+                        .as_ref()
+                        .map(|event| event.task_id.clone())
+                        .or(wake.source_task_id),
+                    task_attempt_id: attention_event
+                        .as_ref()
+                        .map(|event| event.task_attempt_id.clone())
+                        .or(wake.source_task_attempt_id),
+                    event_id: attention_event.as_ref().map(|event| event.event_id.clone()),
+                    goal_id: attention_event.map(|event| event.goal_id),
+                })
+            })
+            .transpose()?;
 
         Ok(AgentConversationBootstrapRecord {
             acting_agent,
@@ -1472,6 +1733,12 @@ impl Database {
             return Err(CommunicationStoreError::new(
                 "agent_task_wake_requires_endpoint_dispatch",
                 "AgentTask-origin Wake must be claimed through the continuation Endpoint carrier path",
+            ));
+        }
+        if wake.trigger_kind == WAKE_TRIGGER_ATTENTION_EVENT {
+            return Err(CommunicationStoreError::new(
+                "attention_wake_requires_endpoint_dispatch",
+                "Attention-event Wake must be claimed through the continuation Endpoint carrier path",
             ));
         }
         if wake.state != AgentWakeState::Pending {
@@ -1664,13 +1931,13 @@ pub(super) fn coalesce_agent_wake_for_delivery(
                 first_triggering_delivery_id, latest_triggering_delivery_id,
                 latest_conversation_id, latest_message_id,
                 inbox_high_watermark, queued_delivery_count_snapshot,
-                source_task_id, source_task_attempt_id,
+                source_task_id, source_task_attempt_id, source_event_id,
                 state, revision, created_at_unix_ms, updated_at_unix_ms,
                 claimed_attempt_id, claimed_endpoint_id,
                 claimed_controller_generation, claim_lease_expires_at_unix_ms,
                 consumed_at_unix_ms, consumed_by_endpoint_id,
                 consumed_controller_generation
-             ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, NULL, NULL,
+             ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, NULL, NULL, NULL,
                        'pending', 1, ?9, ?9, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
             params![
                 wake_id,
@@ -2245,6 +2512,7 @@ fn require_exact_claim(
 
 fn wake_envelope(
     transaction: &Transaction<'_>,
+    principal: &CommunicationPrincipal,
     wake: &AgentWakeRecord,
     endpoint_id: &str,
     controller_generation: i64,
@@ -2286,6 +2554,27 @@ fn wake_envelope(
                 attempt_fence,
                 attempt_controller_generation,
             );
+        (0, 0, resume_hint)
+    } else if wake.trigger_kind == WAKE_TRIGGER_ATTENTION_EVENT {
+        let event = require_agent_attention_event_for_wake(
+            transaction,
+            principal,
+            wake.source_event_id.as_deref(),
+            &wake.target_agent_id,
+        )?;
+        let resume_hint = format!(
+            "This is an exact WebCodex Durable Goal attention continuation.\n\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\nevent_id={}\ngoal_id={}\ntask_id={}\nattempt_id={}\nterminal_task_state={}\n\nAuthoritative continuation contract:\n1. First call bootstrap_agent_conversation with this exact agent_id, endpoint_id, controller_generation, and wake_id. The returned Wake source must remain attention_event with the exact event_id, goal_id, task_id, and attempt_id above; never infer or retarget identities from ambient Host, Project, Workflow Session, ClientWindow, credential, recent Agent, or recent Task state.\n2. Consume this exact Wake with consume_agent_wake only after this model turn has actually taken over the continuation. The durable Event remains historical fact after consumption.\n3. Independently re-read the authoritative Goal with get_goal using this exact goal_id and the authoritative AgentTask with read_agent_task using this exact task_id. The Event is only a typed terminal fact/correlation and grants no Goal, Task, Project, Runner, filesystem, Conversation, or Workflow Session authority.\n4. Inspect the Goal's current lifecycle/revision and the AgentTask's current terminal truth. The Goal may already be completed or cancelled by another turn; if so, do not reopen it and normally no-op after consuming the Wake. Do not repeat the already-terminal Task merely because this continuation fired.\n5. If the Goal remains active, explicitly decide the next step through ordinary authorized tools: update/complete/cancel the Goal, create and associate a next AgentTask when warranted, associate a relevant Workflow Session when warranted, or report/wait on a real blocker. The Server does not auto-complete the Goal and does not auto-create the next Task.\n6. Do not treat copied task result/body data as authority; this continuation intentionally carries only bounded exact identities plus the terminal state.\n7. After reasoning or acting, make this resumed turn's user-visible final response reflect the actual decision/result or blocker rather than merely restating this contract.\n",
+            wake.target_agent_id,
+            endpoint_id,
+            controller_generation,
+            wake.wake_id,
+            consume_token,
+            event.event_id,
+            event.goal_id,
+            event.task_id,
+            event.task_attempt_id,
+            event.terminal_task_state.as_str(),
+        );
         (0, 0, resume_hint)
     } else {
         let queued_delivery_count = wake.queued_delivery_count_snapshot.ok_or_else(|| {
@@ -2333,7 +2622,7 @@ fn load_wake(
                 first_triggering_delivery_id, latest_triggering_delivery_id,
                 latest_conversation_id, latest_message_id,
                 inbox_high_watermark, queued_delivery_count_snapshot,
-                source_task_id, source_task_attempt_id,
+                source_task_id, source_task_attempt_id, source_event_id,
                 state, revision, created_at_unix_ms, updated_at_unix_ms,
                 claimed_attempt_id, claimed_endpoint_id,
                 claimed_controller_generation, claim_lease_expires_at_unix_ms,
@@ -2348,7 +2637,7 @@ fn load_wake(
 }
 
 fn row_to_wake(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentWakeRecord> {
-    let state: String = row.get(11)?;
+    let state: String = row.get(12)?;
     Ok(AgentWakeRecord {
         wake_id: row.get(0)?,
         target_agent_id: row.get(1)?,
@@ -2361,17 +2650,18 @@ fn row_to_wake(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentWakeRecord> {
         queued_delivery_count_snapshot: row.get(8)?,
         source_task_id: row.get(9)?,
         source_task_attempt_id: row.get(10)?,
-        state: AgentWakeState::from_db(&state, 11)?,
-        revision: row.get(12)?,
-        created_at_unix_ms: row.get(13)?,
-        updated_at_unix_ms: row.get(14)?,
-        claimed_attempt_id: row.get(15)?,
-        claimed_endpoint_id: row.get(16)?,
-        claimed_controller_generation: row.get(17)?,
-        claim_lease_expires_at_unix_ms: row.get(18)?,
-        consumed_at_unix_ms: row.get(19)?,
-        consumed_by_endpoint_id: row.get(20)?,
-        consumed_controller_generation: row.get(21)?,
+        source_event_id: row.get(11)?,
+        state: AgentWakeState::from_db(&state, 12)?,
+        revision: row.get(13)?,
+        created_at_unix_ms: row.get(14)?,
+        updated_at_unix_ms: row.get(15)?,
+        claimed_attempt_id: row.get(16)?,
+        claimed_endpoint_id: row.get(17)?,
+        claimed_controller_generation: row.get(18)?,
+        claim_lease_expires_at_unix_ms: row.get(19)?,
+        consumed_at_unix_ms: row.get(20)?,
+        consumed_by_endpoint_id: row.get(21)?,
+        consumed_controller_generation: row.get(22)?,
     })
 }
 

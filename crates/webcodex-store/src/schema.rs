@@ -663,6 +663,11 @@ impl Database {
         // correlate AgentTasks and Workflow Sessions, but owns no execution authority.
         Self::ensure_goal_schema(&mut conn)?;
 
+        // Agent attention is a narrow semantic-fact domain. The first and only
+        // event kind records terminal Goal-correlated AgentTask facts; it is not
+        // a generic event bus and owns no scheduling or Goal authority.
+        Self::ensure_agent_attention_schema(&mut conn)?;
+
         // Project Memory was introduced after v0.3.9. Only the current schema is
         // supported; development-only intermediate shapes are rejected.
         Self::ensure_project_memory_schema(&mut conn)?;

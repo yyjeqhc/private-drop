@@ -723,6 +723,11 @@ impl ToolRuntime {
             Some(&terminal_reason),
         ) {
             Ok(mutation) => {
+                if mutation.state_changed && mutation.attention_event_count > 0 {
+                    if let Some(controller) = self.agent_continuations.as_ref() {
+                        controller.schedule_agent(&mutation.attempt.assignee_agent_id);
+                    }
+                }
                 let mut output =
                     coding_run_binding_projection(&mutation.binding, mutation.state_changed, false);
                 if let Some(object) = output.as_object_mut() {
@@ -818,7 +823,14 @@ impl ToolRuntime {
             terminal_reason.as_deref(),
             &completion_key,
         ) {
-            Ok(result) => serialized_task_success(result),
+            Ok(result) => {
+                if result.state_changed && result.attention_event_count > 0 {
+                    if let Some(controller) = self.agent_continuations.as_ref() {
+                        controller.schedule_agent(&assignee_agent_id);
+                    }
+                }
+                serialized_task_success(result)
+            }
             Err(error) => agent_task_error(error, RecoveryKind::RetrySame),
         }
     }

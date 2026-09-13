@@ -48,8 +48,8 @@ this concrete Agent/Conversation model. Standing rules are:
 - Conversation participation governs communication only. It never confers Project,
   Workflow Session, Job, Artifact, shell, Computer, CodingAgent, or filesystem
   authority;
-- Message, Delivery, Wake, and execution are separate durable facts. Message/read
-  state never proves model-context retention, and Wake never proves Agent Task completion;
+- Message, Delivery, Attention Event, Wake, and execution are separate durable facts. Message/read
+  state never proves model-context retention; Event records a bounded semantic fact; Wake is only a reasoning/processing opportunity and never proves Agent Task or Goal completion;
 - each concrete execution may still use an independent Workflow Session for tool
   calls, validation, Jobs, checkpoints, and review evidence; pure communication
   does not require an execution Session;
@@ -62,6 +62,9 @@ this concrete Agent/Conversation model. Standing rules are:
 - **Goal** is an independent `wc_goal_*` high-level durable intent/control domain. It is not an Agent Task, Workflow Session, Job, Project selector, execution primitive, or scheduler; Goal identity/status/revision/correlation is never a bearer credential;
 - Goal selection is exact durable identity or explicit creation only. Never infer the current Goal from Project, ClientWindow, credential, MCP/OpenAI session data, Conversation membership, Workflow Session, or shared timing;
 - Goal lifecycle is currently closed to `active | completed | cancelled`. `finish_coding_task`, AgentTask/TaskAttempt completion, Job terminal state, or validation evidence do not automatically transition a Goal;
+- the first durable **Attention Event** kind is narrowly `agent_task_terminal`. Event is a semantic terminal fact, not a generic bus, scheduler, authority snapshot, or copied business payload. Exact TaskAttempt terminalization commits the required per-active-Goal Event/Wake facts atomically with Task/Attempt completion and keyed replay;
+- `attention_event` Wake is distinct from A4b `agent_task_attempt` Wake: the former targets the completed Task's explicit assignee for Goal re-evaluation and never requires the terminal Attempt to heartbeat/hold a live lease; the latter still means execute one exact active fenced Attempt;
+- the resumed attention turn must independently re-read exact Goal and AgentTask truth through ordinary authorization and explicitly decide Goal progression. Neither terminal Task outcome nor Event/Wake consumption auto-completes/reopens a Goal or auto-creates a successor Task;
 - references among Goal, Conversation, Agent Task, Workflow Session, Job, CodingAgentRun,
   commit, PR, or Artifact provide correlation only. Dereferencing always re-runs
   the referenced object's normal authorization;

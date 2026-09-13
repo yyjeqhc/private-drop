@@ -475,7 +475,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (projection.dispatch_observation === "continuation_consumed") {
       el("status").textContent = "Work resumed successfully";
     } else if (document.hidden) {
-      el("status").textContent = "Connected in background; queued work is preserved";
+      el("status").textContent = projection.wake ? "Continuing queued work in background…" : "Connected in background";
     } else if (projection.wake) {
       el("status").textContent = "Continuing queued work…";
     } else {
@@ -618,13 +618,6 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     }
 
     if (tornDown) return;
-    if (document.hidden) {
-      // Visibility may change while prepare is in flight. The fence already
-      // crossed, so reconcile conservatively without sending a background turn.
-      await finishAttempt(wake, "delivery_unknown");
-      return;
-    }
-
     // This process-local marker is set before the Host call. Reload/loss cannot
     // cause a blind resend: replacement binding reconciles prepared -> unknown.
     dispatchStarted = wake.attempt_id;
@@ -636,7 +629,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       });
       outcome = "dispatch_accepted";
     } catch (_) {
-      // After prepare, rejection/timeout/background loss is conservatively unknown.
+      // After prepare, Host rejection/timeout/response loss is conservatively unknown.
     }
     await finishAttempt(wake, outcome);
   }
@@ -708,10 +701,10 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       if (!projection) return;
       // Acquiring a successor retires the old Server-side claim. Reconcile its
       // pending ACK first while still renewing the Endpoint on every poll.
-      if (document.hidden || pendingFinish) return;
+      if (pendingFinish) return;
       if (!projection.wake || projection.dispatch_observation === "continuation_consumed") return;
       const wake = await acquire();
-      if (!wake || document.hidden || tornDown) return;
+      if (!wake || tornDown) return;
       if (wake.dispatch_observation === "dispatch_accepted" || wake.dispatch_observation === "dispatch_unknown") return;
       if (wake.dispatch_observation === "dispatch_prepared") {
         // A prepared Attempt without this View's pre-call marker is never resent.
@@ -863,14 +856,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     el("visibility").textContent = document.hidden ? "Background" : "Foreground";
     if (timer !== null) clearTimeout(timer);
     timer = null;
-    if (!document.hidden) void reconcile(); else scheduleNext();
+    void reconcile();
   });
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "15.0.0" },
+    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "16.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

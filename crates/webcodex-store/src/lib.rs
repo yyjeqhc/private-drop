@@ -9,6 +9,7 @@ use std::sync::Mutex;
 mod accounts;
 mod activity;
 mod admin_project_lifecycle;
+mod agent_attention;
 mod agent_task;
 mod agent_wake;
 mod audit;
@@ -133,6 +134,8 @@ impl Database {
     }
 }
 
+#[cfg(test)]
+mod agent_attention_tests;
 #[cfg(test)]
 mod agent_task_tests;
 #[cfg(test)]

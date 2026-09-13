@@ -653,9 +653,9 @@ fn goal_agent_task_link_reauthorizes_task_and_task_completion_never_completes_go
         .to_string();
     let completed = runtime.complete_agent_task_attempt(
         Some(&bob),
-        bob_task_id,
-        attempt_id,
-        bob_agent_id,
+        bob_task_id.clone(),
+        attempt_id.clone(),
+        bob_agent_id.clone(),
         fence,
         1,
         "succeeded".to_string(),
@@ -666,11 +666,81 @@ fn goal_agent_task_link_reauthorizes_task_and_task_completion_never_completes_go
     assert!(completed.success, "{:?}", completed.output);
     assert_eq!(completed.output["task"]["state"], "succeeded");
 
-    let goal = runtime.get_goal(Some(&bob), goal_id);
+    let goal = runtime.get_goal(Some(&bob), goal_id.clone());
     assert!(goal.success, "{:?}", goal.output);
     assert_eq!(goal.output["goal"]["summary"]["lifecycle"], "active");
     assert_eq!(goal.output["goal"]["summary"]["revision"], 2);
     assert!(goal.output["goal"]["summary"]["terminal_at_unix_ms"].is_null());
+
+    let (event_id, wake_id): (String, String) = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT e.event_id, w.wake_id
+             FROM wc_agent_attention_events e
+             JOIN wc_agent_wakes w ON w.source_event_id = e.event_id
+             WHERE e.kind = 'agent_task_terminal'
+               AND e.goal_id = ?1 AND e.task_id = ?2 AND e.task_attempt_id = ?3
+               AND e.target_agent_id = ?4 AND e.terminal_task_state = 'succeeded'
+               AND w.trigger_kind = 'attention_event' AND w.state = 'pending'",
+            rusqlite::params![goal_id, bob_task_id, attempt_id, bob_agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    let endpoint = runtime.attach_agent_endpoint(
+        Some(&bob),
+        bob_agent_id.clone(),
+        "ChatGPT".to_string(),
+        Some("goal-attention-runtime".to_string()),
+        "goal-attention-runtime-endpoint".to_string(),
+    );
+    assert!(endpoint.success, "{:?}", endpoint.output);
+    let endpoint_id = endpoint.output["endpoint"]["endpoint_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let generation = endpoint.output["endpoint"]["controller_generation"]
+        .as_i64()
+        .unwrap();
+    let bootstrap = runtime.bootstrap_agent_conversation(
+        Some(&bob),
+        bob_agent_id,
+        endpoint_id,
+        generation,
+        None,
+        Some(wake_id),
+        None,
+    );
+    assert!(bootstrap.success, "{:?}", bootstrap.output);
+    assert_eq!(bootstrap.output["wake"]["trigger_kind"], "attention_event");
+    assert_eq!(bootstrap.output["wake"]["event_id"], event_id);
+    assert_eq!(bootstrap.output["wake"]["goal_id"], goal_id);
+    assert_eq!(bootstrap.output["wake"]["task_id"], bob_task_id);
+    assert_eq!(bootstrap.output["wake"]["task_attempt_id"], attempt_id);
+
+    let explicitly_completed = runtime.update_goal(
+        Some(&bob),
+        goal_id.clone(),
+        2,
+        None,
+        None,
+        Some("completed".to_string()),
+        Some("Explicit model decision after terminal task attention".to_string()),
+        "bob-goal-after-attention-complete".to_string(),
+    );
+    assert!(
+        explicitly_completed.success,
+        "{:?}",
+        explicitly_completed.output
+    );
+    assert_eq!(
+        explicitly_completed.output["goal"]["summary"]["lifecycle"],
+        "completed"
+    );
+    assert_eq!(
+        explicitly_completed.output["goal"]["summary"]["revision"],
+        3
+    );
 }
 
 #[tokio::test]

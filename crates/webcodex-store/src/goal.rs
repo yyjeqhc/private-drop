@@ -768,6 +768,29 @@ impl Database {
                     format!("Goal correlation count is limited to {MAX_GOAL_CORRELATIONS}"),
                 ));
             }
+            if kind == GoalCorrelationKind::AgentTask {
+                let active_goal_fanout = transaction
+                    .query_row(
+                        "SELECT COUNT(*)
+                         FROM wc_goal_correlations c
+                         JOIN wc_goals g ON g.goal_id = c.goal_id
+                         WHERE c.kind = 'agent_task' AND c.reference_id = ?1
+                           AND g.lifecycle = 'active'
+                           AND g.owner_principal_kind = ?2
+                           AND g.owner_principal_digest = ?3",
+                        params![reference_id, principal.kind, principal.digest],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(goal_store_error)?;
+                if active_goal_fanout >= MAX_GOAL_CORRELATIONS {
+                    return Err(GoalStoreError::new(
+                        "goal_agent_task_fanout_capacity_exceeded",
+                        format!(
+                            "One AgentTask may be correlated to at most {MAX_GOAL_CORRELATIONS} active Goals per owner"
+                        ),
+                    ));
+                }
+            }
             transaction
                 .execute(
                     "INSERT INTO wc_goal_correlations (

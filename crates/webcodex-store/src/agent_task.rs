@@ -1,3 +1,4 @@
+use super::agent_attention::create_agent_task_terminal_attention_in_transaction;
 use super::agent_wake::{AgentWakeState, AGENT_WAKE_ID_PREFIX, WAKE_TRIGGER_AGENT_TASK_ATTEMPT};
 use super::communication::{
     authorize_conversation_access, digest_text, lookup_idempotent_resource, new_id, now_unix_ms,
@@ -61,7 +62,7 @@ impl AgentTaskState {
         }
     }
 
-    fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
+    pub(crate) fn from_db(value: &str, index: usize) -> rusqlite::Result<Self> {
         match value {
             "ready" => Ok(Self::Ready),
             "active" => Ok(Self::Active),
@@ -75,7 +76,7 @@ impl AgentTaskState {
         }
     }
 
-    const fn terminal(self) -> bool {
+    pub(crate) const fn terminal(self) -> bool {
         matches!(self, Self::Succeeded | Self::Failed)
     }
 }
@@ -335,6 +336,7 @@ pub struct AgentTaskCodingRunReconcileMutation {
     pub attempt: AgentTaskAttemptRecord,
     pub binding: AgentTaskCodingRunBindingRecord,
     pub state_changed: bool,
+    pub attention_event_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -418,6 +420,8 @@ pub struct AgentTaskAttemptCompletionMutation {
     pub attempt: AgentTaskAttemptRecord,
     pub replayed: bool,
     pub state_changed: bool,
+    #[serde(skip_serializing)]
+    pub attention_event_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1345,13 +1349,13 @@ impl Database {
                     first_triggering_delivery_id, latest_triggering_delivery_id,
                     latest_conversation_id, latest_message_id,
                     inbox_high_watermark, queued_delivery_count_snapshot,
-                    source_task_id, source_task_attempt_id,
+                    source_task_id, source_task_attempt_id, source_event_id,
                     state, revision, created_at_unix_ms, updated_at_unix_ms,
                     claimed_attempt_id, claimed_endpoint_id,
                     claimed_controller_generation, claim_lease_expires_at_unix_ms,
                     consumed_at_unix_ms, consumed_by_endpoint_id,
                     consumed_controller_generation
-                 ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, NULL, NULL, ?4, ?5,
+                 ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, NULL, NULL, NULL, ?4, ?5, NULL,
                            'pending', 1, ?6, ?6, NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
                 params![
                     wake_id,
@@ -1683,6 +1687,7 @@ impl Database {
                 attempt: attempt.record(now),
                 replayed: true,
                 state_changed: false,
+                attention_event_count: 0,
             });
         }
 
@@ -1727,6 +1732,15 @@ impl Database {
             )
             .map_err(store_error)?;
         retire_pre_dispatch_endpoint_execution_for_attempt(&transaction, attempt_id, now)?;
+        let attention_event_count = create_agent_task_terminal_attention_in_transaction(
+            &transaction,
+            principal,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            outcome,
+            now,
+        )?;
         record_idempotent_resource(
             &transaction,
             principal,
@@ -1750,6 +1764,7 @@ impl Database {
             attempt: attempt.record(now),
             replayed: false,
             state_changed: true,
+            attention_event_count,
         })
     }
 
@@ -2372,6 +2387,7 @@ impl Database {
                 attempt: attempt.record(now),
                 binding,
                 state_changed: false,
+                attention_event_count: 0,
             });
         }
         let attempt_state = match desired_task_state {
@@ -2419,6 +2435,15 @@ impl Database {
                 "terminal CodingAgent binding revision CAS did not update the exact durable binding",
             ));
         }
+        let attention_event_count = create_agent_task_terminal_attention_in_transaction(
+            &transaction,
+            principal,
+            task_id,
+            attempt_id,
+            &attempt.assignee_agent_id,
+            desired_task_state,
+            now,
+        )?;
         let task = load_owned_task(&transaction, principal, task_id, now)?;
         let attempt =
             load_attempt_for_task(&transaction, task_id, attempt_id, now)?.ok_or_else(|| {
@@ -2440,6 +2465,7 @@ impl Database {
             attempt: attempt.record(now),
             binding,
             state_changed: true,
+            attention_event_count,
         })
     }
 }
